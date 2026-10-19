@@ -39,12 +39,23 @@ export interface Call {
   auth: string | undefined;
 }
 
+/** A table write (POST / PATCH / DELETE on /rest/v1/<table>), as PostgREST would receive it. */
+export interface Write extends Call {
+  table: string;
+  body: unknown;
+  prefer: string | undefined;
+}
+
 export class FakeSupabase {
   readonly calls: Call[] = [];
   /** Bodies of every RPC call, by function name. */
   readonly rpc = new Map<string, unknown[]>();
   /** Answers for RPCs other than whoami, and for GET /rest/v1/editions. */
   readonly answers = new Map<string, unknown>();
+  /** Rows a GET of /rest/v1/<table> answers (any filter); [] when unset. */
+  readonly tables = new Map<string, unknown[]>();
+  /** Every table write, in order. A POST answers its rows back with ids, as `return=representation` does. */
+  readonly writes: Write[] = [];
   /** When set, whoami answers 401 unless the request carries exactly this bearer — like PostgREST. */
   token: string | null = null;
   /** What /auth/v1/token?grant_type=pkce answers (and the body it was sent). */
@@ -78,8 +89,20 @@ export class FakeSupabase {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.pkceSession) });
     }
     if (u.pathname === "/auth/v1/logout") return route.fulfill({ status: 204, body: "" });
-    if (u.pathname === "/rest/v1/editions") {
+    if (u.pathname === "/rest/v1/editions" && req.method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.answers.get("editions") ?? []) });
+    }
+    if (u.pathname.startsWith("/rest/v1/") && !u.pathname.startsWith("/rest/v1/rpc/")) {
+      const table = u.pathname.slice("/rest/v1/".length);
+      const one = (req.headers()["accept"] ?? "").includes("vnd.pgrst.object");
+      if (req.method() === "GET") {
+        const rows = this.tables.get(table) ?? [];
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(one ? rows[0] : rows) });
+      }
+      const body = req.postData() ? req.postDataJSON() : null;
+      this.writes.push({ path: u.pathname, query: u.searchParams, method: req.method(), auth: req.headers()["authorization"], table, body, prefer: req.headers()["prefer"] });
+      const rows = (Array.isArray(body) ? body : [body ?? {}]).map((r, i) => ({ id: 100 + this.writes.length + i, active: true, ...r }));
+      return route.fulfill({ status: req.method() === "POST" ? 201 : 200, contentType: "application/json", body: JSON.stringify(one ? rows[0] : rows) });
     }
     if (u.pathname.startsWith("/rest/v1/rpc/")) {
       const fn = u.pathname.slice("/rest/v1/rpc/".length);

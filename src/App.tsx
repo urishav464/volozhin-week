@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { gateFor, gateForError, type Gate } from "./data/gate";
+import { Navigate, Route, Routes, useLocation } from "react-router";
+import { gateFor, gateForError, isSettingsAdmin, type Gate } from "./data/gate";
 import { makePort } from "./data";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
 import { Notice } from "./screens/Notice";
+import { SettingsScreen } from "./screens/settings/SettingsScreen";
 import { Shell } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { WeekScreen } from "./screens/WeekScreen";
@@ -16,6 +18,7 @@ export default function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const atWeek = useLocation().pathname === "/";
   const shown = useRef<State>(state);
   shown.current = state;
 
@@ -60,8 +63,9 @@ export default function App() {
   return (
     <Shell
       demo={demo}
-      full={!!me}
+      full={!!me && atWeek}
       user={me ? { name: me.display_name || me.email, roleLabel: ROLE_LABEL[topRole(me)] } : null}
+      settingsLink={!!me && isSettingsAdmin(me)}
       onSignOut={signedIn && !demo ? () => void signOut() : undefined}
     >
       {state.kind === "loading" && <p className="text-ink-soft text-center mt-10">טוען…</p>}
@@ -76,7 +80,9 @@ export default function App() {
           </p>
         </Notice>
       )}
-      {state.kind === "gate" && <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} />}
+      {state.kind === "gate" && (
+        <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} onRefresh={refresh} />
+      )}
     </Shell>
   );
 }
@@ -89,6 +95,8 @@ function GateScreen(props: {
   authError: string | null;
   onSignIn: () => void;
   onSignOut: () => void;
+  /** Re-reads whoami() — after an admin renames themselves, the header follows. */
+  onRefresh: () => Promise<void>;
 }) {
   const { gate, email } = props;
   switch (gate.screen) {
@@ -122,6 +130,17 @@ function GateScreen(props: {
         </Notice>
       );
     case "home":
-      return <WeekScreen port={props.port} me={gate.me} />;
+      // The gate above stays in front of every route. «הגדרות» is for admins
+      // only; anyone else who opens it lands on the week.
+      return (
+        <Routes>
+          <Route path="/" element={<WeekScreen port={props.port} me={gate.me} />} />
+          <Route
+            path="/settings/:tab?"
+            element={isSettingsAdmin(gate.me) ? <SettingsScreen port={props.port} me={gate.me} onMeChanged={props.onRefresh} /> : <Navigate to="/" replace />}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      );
   }
 }

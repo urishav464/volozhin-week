@@ -71,7 +71,12 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - `docs/CONTRACT.md` — what every grid command does. Two implementations: the SQL RPCs and
   `src/data/engine.ts` (behind DemoPort). **Change both together**; `tests/parity` runs the same
   scenarios on both and fails on any difference in result or state.
-- All grid writes are SECURITY DEFINER functions in `public`; `authenticated` has SELECT only.
+- All grid writes are SECURITY DEFINER functions in `public`; `authenticated` has SELECT only on
+  the grid's tables.
+- `src/screens/settings/` — «הגדרות» (`/settings/<tab>`, react-router), admins only: edition, team,
+  roster, rooms, categories, through `port.settings` (`src/data/settings.ts`; SupabaseSettings /
+  DemoSettings refuse with the same codes). Settings are direct writes under RLS — column grants
+  and guard triggers keep their rules (`schema.sql` «Settings»; `docs/DECISIONS.md`).
 - `supabase/seed_gate.sql` / `unseed_gate.sql` — the decision gate's synthetic practice week.
 - `supabase/schema.sql` — the whole database; `tests/sql/` — its tests on PostgreSQL 16 with a
   Supabase-like bootstrap (`tests/sql/bootstrap.sql`).

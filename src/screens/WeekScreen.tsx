@@ -2,6 +2,7 @@
 // panels, and every command — through the DataPort, so the demo and the real
 // database behave the same (docs/CONTRACT.md).
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "../data/commands";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
@@ -207,7 +208,16 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     return (
       <div className="mx-auto mt-8 max-w-lg rounded-xl border border-line bg-card p-5">
         <h2 className="mb-2 font-display text-lg font-semibold">עוד לא נפתח מחזור</h2>
-        <p className="text-ink-soft">{isAdmin ? "פתיחת מחזור חדש (תשפ״ז) תהיה זמינה מההגדרות." : "המדריך/ה עוד לא פתח/ה את המחזור של השנה."}</p>
+        {me.global_admin ? (
+          <>
+            <p className="mb-4 text-ink-soft">פותחים את המחזור של השנה בהגדרות, ואז מוסיפים את הצוות.</p>
+            <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
+              לפתיחת מחזור
+            </Link>
+          </>
+        ) : (
+          <p className="text-ink-soft">המדריך/ה עוד לא פתח/ה את המחזור של השנה.</p>
+        )}
       </div>
     );
   }
