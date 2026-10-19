@@ -1,4 +1,4 @@
-# The grid contract (Phase 1) and the speaker pool (milestone 2)
+# The grid contract (Phase 1), the speaker pool (milestone 2), and from placement to arrival (milestone 3)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -100,8 +100,8 @@ actor is not admin → `approved_locked`. Deletes its `lesson_speakers`; its `ac
 Owner or admin for a closed lesson; any content member for a draft. Bounds and
 lesson-row containment as in `propose` (a range may span several consecutive lesson rows of
 the day — a merged lesson moved whole). Room and speaker invariants apply (`room_taken`,
-`speaker_busy`). If the lesson is closed and `confirm_sent_at` is set and the time, day or room
-changed → `needs_reconfirm = true`. Increments `version`.
+`speaker_busy`). A closed lesson whose message was sent is flagged by the reconfirm rule
+(«From placement to arrival»). Increments `version`.
 
 ### `reshape(edition, day, row_start, op, …)`
 
@@ -119,7 +119,7 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
   starting at or after its end). Any closed lesson in the swallowed range → `merge_blocked`.
   Drafts in the swallowed range: their live pitches move onto the extended lesson (deduplicated),
   then they are deleted. Room and speaker invariants apply. A closed lesson that changes time
-  with `confirm_sent_at` set → `needs_reconfirm`.
+  with `confirm_sent_at` set → `needs_reconfirm` (the reconfirm rule).
 - `reset()`: the lessons overlapping the row: any closed → `cell_closed`. Otherwise all are
   deleted; if they held live pitches, one plain draft is created on the row (default room)
   carrying them (deduplicated per approach). A merged lesson that started on this row is reset to
@@ -129,7 +129,7 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
 
 `patch ⊆ { title, category_id, audience, teach_min }`. Content or admin. Version must match
 (`stale`). `title` and `audience` are trimmed; an empty one becomes null. `teach_min` must be > 0 and ≤ the lesson's length → `bad_shape`. Increments
-`version`.
+`version`. A new title or teaching time after the message was sent → the reconfirm rule.
 
 ## Errors
 
@@ -147,7 +147,7 @@ Parameter names are part of the contract — `SupabasePort` calls them by name.
 
 | RPC | Parameters | Returns |
 |---|---|---|
-| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team`) |
+| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team roster`; `roster` since v7) |
 | `propose` | `p_edition bigint, p_speaker bigint, p_lesson bigint` (null for a cell), `p_day int, p_start int, p_end int, p_room bigint` (null = default room), `p_mode text` (`self`/`offer`) | `jsonb {lesson_id, pitch_id}` |
 | `unpropose` | `p_pitch bigint` | `void` |
 | `set_pitch` | `p_pitch bigint, p_state text` | `void` |
@@ -328,3 +328,136 @@ contacts_hidden bad_phone bad_contact_email name_required bad_value` — plus th
 
 `load_week` (v6) also returns each speaker's `disambiguator contact_pref vetted_by vetted_note
 version` and each approach's `offered_to` — still never a contact detail.
+
+# From placement to arrival (milestone 3, schema v7)
+
+A closed lesson's stages: payment and transport (with the instructor's approval), the summary
+message to the speaker, the escort, the sources. The same two implementations: the SQL functions
+of `supabase/schema.sql` «Milestone 3» and `src/data/engine.ts` (behind `DemoPort`); the cleaning
+rules are `src/data/stageRules.ts` in the browser. `tests/parity` runs the same scenarios on both.
+`lessons` stays SELECT-only for a browser; every write below is a `SECURITY DEFINER` function in
+`public` (`search_path = ''`) that checks the caller.
+
+"Handler" = the owner of the approach of the lesson's **lead** speaker in the edition
+(`app.lesson_handler`); a closed lesson has one. "Handler or admin" = that member, or an admin of
+the edition (`app.require_handler`: `not_closed` for a lesson that is not closed, then
+`not_handler`). A lesson the command names that does not exist (or is cancelled) → `stale`.
+Every successful lesson write increments `version` and sets `updated_by`.
+
+## The reconfirm rule (all commands)
+
+A **closed** lesson whose `confirm_sent_at` is set gets `needs_reconfirm = true` when a command
+changes what the message says: `day start_min end_min room_id title teach_min pay_amount`, or
+when it becomes closed again (closed after a reopen). A write that sets a **new** `confirm_sent_at`
+(the message re-sent) is the one exception. In SQL this is one trigger
+(`app.lessons_reconfirm`, so it holds for any write path — the SQL Editor too); in the engine,
+one check after every command (`Engine.reconfirm`). Drafts are never flagged. Only
+`mark_confirm_sent` clears the flag.
+
+## Text and values (what both sides accept)
+
+| Rule | Detail | Code |
+|---|---|---|
+| amount | `null` (none asked: a volunteer, or not decided — never a default), or a whole number 1–100000 (a typo guard, «הצעה») | `bad_amount` |
+| transport | `none`, `one_way`, `round_trip` | `bad_value` |
+| decision | `approved` or `rejected`; note one line ≤ 300 | `bad_value` |
+| escort | a `roster` row **of the lesson's edition**, or null; `self_intro` a boolean; note a block ≤ 300 | `bad_escort` / `bad_value` |
+| sources | kind `pending sheet presentation sheet_presentation sheet_video none other`; print_when `none before same_day`; note a block ≤ 500; `in_reader` a boolean, stored **false** for `pending`, `none` and `presentation` (nothing to print) | `bad_value` |
+| presentation_url | null, or one line ≤ 500 matching `^https?://[^ ]+$` (case-insensitive) | `bad_url` |
+| transport details | pickup_address ≤ 200, pickup_time ≤ 60 (as the team writes it), driver_name ≤ 80 — one line each; driver_phone ≤ 40 with ≥ 6 digits; `arranged` true/false (null = false) | `bad_value` / `bad_phone` |
+| template | a block ≤ 4000; empty removes it | `bad_value` |
+| duty phrases | a JSON array of `{when, text}`: `when` ∈ `always self_intro escort_intro transport memorial`, `text` one line ≤ 200; empty texts and repeats (the first kept) dropped; at most 30; empty removes them | `bad_value` |
+
+## Commands
+
+### `setPayment(lesson, version, amount, transport)` — `set_payment` → `void`
+
+Editor (`app.require_editor`: logistics `forbidden`, an archive `archived` for non-admins);
+handler or admin; `version` (`stale`); amount and transport (above). The same amount and transport
+as stored, and the approval not `rejected` → no-op. Otherwise: `pay_amount`, `transport`;
+`approval` := `none` when nothing is asked (amount null and transport `none`), else `pending`;
+`approval_note`, `approved_by`, `approved_at` := null. So changing an approved request sends it
+back to the instructor, and asking a rejected one again re-opens it. Transport `none` deletes the
+lesson's transport details.
+
+### `decidePayments(items[{lesson, version}], decision, note)` — `decide_payments` → `void`
+
+A global admin (`forbidden`); decision (`bad_value`); `p_lessons` and `p_versions` of one length
+(`bad_value`). Each item in ascending (lesson, version) order, all or nothing: the lesson missing,
+at another version, or not `pending` → `stale` (the queue on screen is out of date; an amount
+changed since is never approved unseen). Sets `approval`, `approval_note`, `approved_by` (the
+global admin's row), `approved_at`.
+
+### `markConfirmSent(lesson, version)` — `mark_confirm_sent` → `void`
+
+Editor; handler or admin; `version`; approval `pending` → `approval_pending`, `rejected` →
+`approval_rejected` (DESIGN: no summary while a payment or transport waits). Sets
+`confirm_sent_at = now`, `confirm_sent_by`, `needs_reconfirm = false` — every time (sending again
+refreshes it).
+
+### `setEscort(lesson, version, {roster_id, self_intro, escort_note})` — `set_escort` → `void`
+
+Editor (any content member or admin); the lesson closed (`not_closed`); `version`; values (above).
+Nothing changed → no-op.
+
+### `setSources(lesson, version, {sources_kind, print_when, sources_note, presentation_url, in_reader})` — `set_sources` → `void`
+
+Editor; closed (`not_closed`); `version`; values in that order (above). Nothing changed → no-op.
+
+### `setPaid(lesson, paid)` — `set_paid` → `void`
+
+`app.require_logistics`: logistics or an admin of the edition (content → `forbidden`; an archive
+`archived` for non-admins). The lesson has an amount and `approval = 'approved'`, else
+`payment_not_approved`; `paid` a boolean (`bad_value`). Already so → no-op; else `paid_at` :=
+now / null.
+
+### Transport details — `get_transport_details` / `set_transport_details`
+
+Personal data (an address, a driver's phone): `transport_details(lesson_id PK, pickup_address,
+pickup_time, driver_name, driver_phone, arranged)`, never in `load_week`, never in Realtime.
+`app.may_see_transport(lesson)`: a **global admin**; or, in a **real, non-archived** edition, the
+lesson's **handler** (content or admin there) — and that edition's **logistics** members once the
+lesson's transport is not `none` and `approval = 'approved'`. Nobody else: not another content
+member, not the edition's admin who is not the handler, not a practice or demo week's team, not
+last year's.
+- `transport(lesson)` — `get_transport_details(p_lesson)`, `SECURITY INVOKER` (read through the
+  policy `transport_details_read`, whose predicate is the same function): null when hidden; no row
+  yet → four nulls and `arranged: false`.
+- `setTransport(lesson, details)` — any member (`not_member`); the lesson exists (`stale`);
+  `may_see_transport` (`transport_hidden`); `transport <> 'none'` (`no_transport`); values (above).
+  All five replaced; nothing changed → no-op; logged (`lessons transport {fields}`) with the field
+  names only, never a value.
+
+### Templates — `set_confirm_template` / `set_duty_phrases`
+
+An admin of the edition (`app.require_edition_admin`: `not_member`, then `forbidden`). They write
+`editions.settings.confirm_template` (the summary message's template — `src/domain/message.ts`)
+and `editions.settings.duty_phrases` (the escorts' phrases — `src/domain/escorts.ts`), the
+instructor's own wording: **never seeded**, absent until pasted. `start_edition` carries both over
+from the live real edition (else the newest real one) to the new one.
+
+## Errors (milestone 3)
+
+`not_closed not_handler bad_amount approval_pending approval_rejected bad_escort bad_url
+no_transport transport_hidden payment_not_approved bad_phone bad_value` — plus `not_member
+forbidden archived stale`.
+
+## RPC signatures (milestone 3)
+
+| RPC | Parameters | Returns |
+|---|---|---|
+| `set_payment` | `p_lesson bigint, p_version integer, p_pay_amount numeric, p_transport text` | `void` |
+| `decide_payments` | `p_lessons bigint[], p_versions integer[], p_decision text, p_note text` (default null) | `void` |
+| `mark_confirm_sent` | `p_lesson bigint, p_version integer` | `void` |
+| `set_escort` | `p_lesson bigint, p_version integer, p_roster bigint, p_self_intro boolean, p_note text` (default null) | `void` |
+| `set_sources` | `p_lesson bigint, p_version integer, p_kind text, p_print_when text, p_note text, p_url text, p_in_reader boolean` | `void` |
+| `set_paid` | `p_lesson bigint, p_paid boolean` | `void` |
+| `get_transport_details` | `p_lesson bigint` (invoker) | `jsonb` or null |
+| `set_transport_details` | `p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean` (default false) | `void` |
+| `set_confirm_template` | `p_edition bigint, p_body text` | `void` |
+| `set_duty_phrases` | `p_edition bigint, p_phrases jsonb` | `void` |
+
+`load_week` (v7) also returns the edition's `roster` (`id full_name gender` — names only), and each
+lesson's stage columns (`pay_amount transport approval approval_note approved_by approved_at
+paid_at confirm_sent_at confirm_sent_by needs_reconfirm escort_roster_id self_intro escort_note
+sources_kind print_when sources_note presentation_url in_reader`) — never a transport detail.

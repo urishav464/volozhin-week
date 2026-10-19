@@ -81,6 +81,15 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
   availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
   «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
+- **From placement to arrival (milestone 3, schema v7):** a closed lesson's stages — payment and
+  transport (the handler asks, a global admin decides), the summary message, escorts, sources —
+  are `WeekCommands` (`src/data/commands.ts`), SQL functions in `schema.sql` «Milestone 3» and the
+  engine (CONTRACT «From placement to arrival»); cleaning rules in `src/data/stageRules.ts`.
+  `needs_reconfirm` is ONE rule: the trigger `app.lessons_reconfirm` / `Engine.reconfirm`.
+  Transport details are personal data: `transport_details`, `app.may_see_transport`, fetched one
+  lesson at a time — never in a Week or Realtime. `src/domain/message.ts` composes the summary
+  message from the instructor's template (`editions.settings.confirm_template` — never seeded;
+  every TBD blocks); `src/domain/escorts.ts` the escorts' load and duty notes.
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
