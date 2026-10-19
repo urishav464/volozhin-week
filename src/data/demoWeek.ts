@@ -1,0 +1,155 @@
+// The demo edition: synthetic people only («מרצה 07»), no dates (TBD), and every
+// shape last year's grid had — a parallel pair, a 60+30 split, an all-night
+// merge, memorial slots — so the decision gate exercises them all.
+import { TEMPLATE_2026 } from "../domain/template2026";
+import type { Day } from "../domain/time";
+import type { Approach, Category, Gender, Lesson, LessonSpeaker, Pitch, Speaker, Week } from "../domain/types";
+
+export const DEMO_CATEGORIES: Category[] = [
+  ["תנ\"ך", "#8a5a2b"],
+  ["תלמוד, הלכה ומדרש", "#5b4a8b"],
+  ["מחשבת ישראל", "#2f6f73"],
+  ["חסידות וקבלה", "#7a3e6d"],
+  ["פילוסופיה", "#3d5a99"],
+  ["ספרות ואמנות", "#a0522d"],
+  ["ציונות והיסטוריה", "#5e7a2e"],
+  ["חברה ואקטואליה", "#9a6b00"],
+  ["מדע ונפש", "#2e7d5b"],
+  ["דתות ותרבויות העולם", "#6b6b2e"],
+].map(([name, color], i) => ({ id: i + 1, name, color, sort: i + 1, active: true }));
+
+const TITLES: [string | null, Gender][] = [
+  ["ד״ר", "m"], ["ד״ר", "f"], ["פרופ׳", "m"], ["פרופ׳", "f"], ["הרב", "m"], ["הרבנית", "f"], [null, "m"], [null, "f"],
+];
+
+export function demoWeek(): Week {
+  const speakers: Speaker[] = Array.from({ length: 60 }, (_, i) => {
+    const [title, gender] = TITLES[i % TITLES.length];
+    const n = String(i + 1).padStart(2, "0");
+    const cat = DEMO_CATEGORIES[i % DEMO_CATEGORIES.length];
+    return {
+      id: i + 1,
+      title,
+      name: `מרצה ${n}`,
+      gender: i === 59 ? null : gender, // one unknown, so the "gender missing" path shows
+      affiliation: "מוסד לדוגמה",
+      bio_short: `מלמד/ת ${cat.name} (נתון לדוגמה)`,
+      topics: [cat.name],
+      vetted: i >= 55 ? "pending" : "approved",
+      retired: false,
+      name_key: `מרצה ${n}`,
+    };
+  });
+
+  const lessons: Lesson[] = [];
+  const lessonSpeakers: LessonSpeaker[] = [];
+  const approaches: Approach[] = [];
+  const pitches: Pitch[] = [];
+  let lessonId = 0;
+  let approachId = 0;
+  let pitchId = 0;
+
+  const approachOf = (speakerId: number, status: Approach["status"] = "approached", owner = 1 + (speakerId % 4)) => {
+    let a = approaches.find((x) => x.speaker_id === speakerId);
+    if (!a) {
+      a = { id: ++approachId, speaker_id: speakerId, owner_member_id: owner, status, avail_note: null, version: 1 };
+      approaches.push(a);
+    }
+    return a;
+  };
+
+  const lesson = (day: Day, start: number, end: number, extra: Partial<Lesson> = {}): Lesson => {
+    const l: Lesson = {
+      id: ++lessonId, kind: "lesson", state: "draft", day, start_min: start, end_min: end, room_id: 1,
+      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, pay_amount: null,
+      transport: "none", approval: "none", confirm_sent_at: null, needs_reconfirm: false, escort_roster_id: null,
+      self_intro: false, sources_kind: "pending", in_reader: false, version: 1, updated_by: null, ...extra,
+    };
+    lessons.push(l);
+    return l;
+  };
+
+  const closed = (day: Day, start: number, end: number, speakerId: number, extra: Partial<Lesson> = {}) => {
+    const s = speakers[speakerId - 1];
+    const cat = DEMO_CATEGORIES.find((c) => c.name === s.topics[0])!;
+    const l = lesson(day, start, end, { state: "closed", title: `שיעור לדוגמה ${lessonId + 1}`, category_id: cat.id, ...extra });
+    lessonSpeakers.push({ lesson_id: l.id, speaker_id: speakerId, role: "lead" });
+    const a = approachOf(speakerId, "positive");
+    pitches.push({ id: ++pitchId, lesson_id: l.id, approach_id: a.id, state: "accepted", proposed_by: a.owner_member_id, at: "2026-11-01T10:00:00Z" });
+    return l;
+  };
+
+  const drafted = (day: Day, start: number, end: number, speakerIds: number[], state: Pitch["state"] = "approached") => {
+    const l = lesson(day, start, end);
+    for (const id of speakerIds) {
+      const a = approachOf(id);
+      pitches.push({ id: ++pitchId, lesson_id: l.id, approach_id: a.id, state, proposed_by: a.owner_member_id, at: "2026-11-02T10:00:00Z" });
+    }
+    return l;
+  };
+
+  // Sunday (opens 08:30 in this demo): mostly men so far → the day asks for women.
+  closed(0, 510, 600, 1, { title: "פתיחת השבוע (לדוגמה)", category_id: 3, teach_min: 75 });
+  closed(0, 600, 690, 3);
+  closed(0, 690, 780, 5, { category_id: 3 });
+  closed(0, 870, 960, 7);
+  drafted(0, 960, 1050, [9, 11]);
+  closed(0, 1470, 1560, 2);
+
+  // Monday: a 60+30 split at 14:30, and the all-night merge 00:30–05:00.
+  closed(1, 510, 600, 4);
+  closed(1, 600, 690, 6);
+  closed(1, 870, 930, 8, { teach_min: 60 });
+  closed(1, 930, 960, 10, { teach_min: 30 });
+  closed(1, 1200, 1290, 12);
+  closed(1, 1470, 1740, 14, { title: "סדר לילה לדוגמה (כל הלילה)", teach_min: 270 });
+
+  // Tuesday: a parallel pair at 16:00 in two rooms; back-to-back same category in the morning.
+  closed(2, 510, 600, 21, { category_id: 1 });
+  closed(2, 600, 690, 31, { category_id: 1 });
+  closed(2, 960, 1050, 16, { room_id: 1 });
+  closed(2, 960, 1050, 17, { room_id: 2, parallel_reason: "דוגמה לשיעורים מקבילים" });
+  drafted(2, 1200, 1290, [56], "candidate"); // not yet vetted → candidate only
+
+  // Wednesday: a declined approach still pitched, and an empty evening.
+  closed(3, 600, 690, 19);
+  closed(3, 690, 780, 20);
+  const declined = approachOf(23, "declined");
+  pitches.push({ id: ++pitchId, lesson_id: lesson(3, 870, 960).id, approach_id: declined.id, state: "approached", proposed_by: 2, at: "2026-11-03T10:00:00Z" });
+
+  // Thursday: a shaped-but-empty cell (a draft with no pitch), and the parents' lesson.
+  lesson(4, 690, 780);
+  closed(4, 1050, 1140, 24, { audience: "שיעור להורים" });
+
+  // Memorial slots: placeholders only — names of the fallen are entered by the instructor, never seeded.
+  for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 780, 795, { kind: "memorial", title: "זמן זיכרון" });
+
+  const availability = [
+    { id: 1, approach_id: approachOf(9).id, day: 0 as Day, from_min: 390, to_min: 780, kind: "cannot" as const, note: "דוגמה: לא בבקרים" },
+    { id: 2, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1200, to_min: 1830, kind: "can" as const, note: null },
+  ];
+
+  return {
+    edition: { id: 1, label: "הדגמה", kind: "demo", start_date: null, first_day_from: 510, last_day_until: 1140, status: "planning", settings: { lesson_minutes: 75, row_minutes: 90 } },
+    rows: TEMPLATE_2026,
+    rooms: [
+      { id: 1, name: "בית מדרש", sort: 1, is_default: true },
+      { id: 2, name: "כיתת בית מדרש", sort: 2, is_default: false },
+      { id: 3, name: "כיתה ג׳", sort: 3, is_default: false },
+    ],
+    categories: DEMO_CATEGORIES,
+    speakers,
+    approaches,
+    availability,
+    lessons,
+    lessonSpeakers,
+    pitches,
+    team: [
+      { id: 1, display_name: "מדריך/ה (הדגמה)", gender: null, role: "admin" },
+      { id: 2, display_name: "חניך/ה א׳", gender: null, role: "content" },
+      { id: 3, display_name: "חניך/ה ב׳", gender: null, role: "content" },
+      { id: 4, display_name: "חניך/ה ג׳", gender: null, role: "content" },
+      { id: 5, display_name: "לוגיסטיקה (הדגמה)", gender: null, role: "logistics" },
+    ],
+  };
+}

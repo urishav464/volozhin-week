@@ -1,0 +1,28 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.log
+
+# Personal data never enters git. Last year's files (speakers, escorts, reader)
+# are imported through the app in the browser, straight into the database.
+imports/
+private/
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.ods
+*.numbers
+*.docx
+*.doc
+*.odt
+*.pages
+*.rtf
+*.pdf
+*.csv
+*.tsv
+*.zip
+.env
+.env.*
+dist-e2e/
