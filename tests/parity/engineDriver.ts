@@ -4,7 +4,7 @@ import { Engine } from "../../src/data/engine";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
 import type { Week } from "../../src/domain/types";
-import { type At, CATEGORIES, type Driver, EDITION, lessonKey, MEMBERS, type Normal, ROOMS, SPEAKERS, type Step } from "./fixture";
+import { type At, CATEGORIES, type Driver, EDITION, FOREIGN_ROOM, lessonKey, MEMBERS, type Normal, ROOMS, SPEAKERS, type Step } from "./fixture";
 
 export function engineDriver(): Driver {
   let week: Week = {
@@ -21,7 +21,7 @@ export function engineDriver(): Driver {
     team: MEMBERS.map((m, i) => ({ id: i + 1, display_name: m.name, gender: null, role: m.role })),
   };
   const memberId = (key: string) => MEMBERS.findIndex((m) => m.key === key) + 1;
-  const roomId = (name?: string) => (name ? week.rooms.find((r) => r.name === name)!.id : week.rooms.find((r) => r.is_default)!.id);
+  const roomId = (name?: string) => (name === FOREIGN_ROOM ? 999 : name ? week.rooms.find((r) => r.name === name)!.id : week.rooms.find((r) => r.is_default)!.id);
   const lessonAt = ([day, start, room]: At) =>
     week.lessons.find((l) => l.day === day && l.start_min === start && l.room_id === roomId(room) && l.state !== "cancelled");
   const speakerId = (name: string) => week.speakers.find((s) => s.name === name)!.id;

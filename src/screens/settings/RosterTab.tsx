@@ -6,7 +6,7 @@ import type { RosterEntry } from "../../data/settings";
 import { nameKey } from "../../domain/nameKey";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { type PasteStatus, parseRosterPaste, previewPaste } from "../../settings/roster";
+import { type PasteStatus, parseRosterPaste, pasteColumns, previewPaste } from "../../settings/roster";
 import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
 
 interface Props {
@@ -60,7 +60,7 @@ export function RosterTab({ editions, editionId, setEditionId }: Props) {
       ) : (
         <>
           <PasteNames key={editionId} editionId={editionId} existing={list} onAdded={load} />
-          <Panel title="רשימת החניכים" aside={<span aria-live="polite">{list.length} חניכים</span>}>
+          <Panel title="רשימת החניכים" aside={<span aria-live="polite">{list.length === 1 ? "חניך/ה אחד/ת" : `${list.length} חניכים`}</span>}>
             {list.length === 0 ? (
               <p className="text-ink-soft">הרשימה ריקה. מדביקים את השמות בטופס שלמעלה.</p>
             ) : (
@@ -92,10 +92,16 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
   const { port, notify } = useSettings();
   const { busy, run } = useAction();
   const [text, setText] = useState("");
+  const [picked, setPicked] = useState<number | null>(null);
   const id = useId();
-  const preview = useMemo(() => previewPaste(parseRosterPaste(text), new Set(existing.map((r) => r.name_key))), [text, existing]);
+  // From a spreadsheet one column is read in every row — the likeliest by default, another if the admin picks it.
+  const cols = useMemo(() => pasteColumns(text), [text]);
+  const column = picked != null && cols.columns.some((c) => c.index === picked) ? picked : cols.best;
+  const preview = useMemo(() => previewPaste(parseRosterPaste(text, column), new Set(existing.map((r) => r.name_key))), [text, column, existing]);
   const fresh = preview.filter((p) => p.status === "new").map((p) => p.name);
   const count = (s: PasteStatus) => preview.filter((p) => p.status === s).length;
+  const exists = count("exists");
+  const repeat = count("repeat");
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,6 +119,7 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
     if (ok) {
       notify("ok", added === 1 ? "נוסף שם אחד לרשימה" : `נוספו ${added} שמות לרשימה`);
       setText("");
+      setPicked(null);
       await onAdded();
     }
   };
@@ -134,16 +141,34 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
             aria-describedby={`${id}-paste-hint`}
           />
         </Field>
+        {cols.columns.length > 1 && (
+          <fieldset className="min-w-0">
+            <legend className="mb-1 text-sm font-semibold">מאיזו עמודה לקחת את השמות?</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {cols.columns.map((c) => (
+                <label
+                  key={c.index}
+                  className={`inline-flex min-h-11 min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-lg border px-3 ${column === c.index ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}
+                >
+                  <input type="radio" name={`${id}-column`} checked={column === c.index} onChange={() => setPicked(c.index)} className="accent-ink" />
+                  <span className="min-w-0 truncate">
+                    עמודה {c.index + 1}: {c.sample}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         {preview.length > 0 && (
           <div>
             <p className="mb-1.5 text-sm" aria-live="polite">
-              <b>{fresh.length} חדשים</b>
-              {count("exists") > 0 && ` · ${count("exists")} כבר ברשימה`}
-              {count("repeat") > 0 && ` · ${count("repeat")} כפולים בהדבקה`}
+              <b>{fresh.length === 1 ? "שם חדש אחד" : `${fresh.length} חדשים`}</b>
+              {exists > 0 && ` · ${exists === 1 ? "אחד כבר ברשימה" : `${exists} כבר ברשימה`}`}
+              {repeat > 0 && ` · ${repeat === 1 ? "כפול אחד בהדבקה" : `${repeat} כפולים בהדבקה`}`}
             </p>
             <ul aria-label="תצוגה מקדימה" className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line bg-paper">
               {preview.map((p, i) => (
-                <li key={i} className={`flex min-w-0 items-center gap-2 px-3 py-1.5 ${p.status === "new" ? "" : "text-ink-faint"}`}>
+                <li key={i} className={`flex min-w-0 items-center gap-2 px-3 py-1.5 ${p.status === "new" ? "" : "text-ink-soft"}`}>
                   <span className="min-w-0 flex-1 break-words">
                     {p.name.full_name}
                     {p.name.gender && <span className="text-ink-soft"> · {GENDER_LABEL[p.name.gender]}</span>}
@@ -156,9 +181,18 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
         )}
         <div className="flex flex-wrap gap-2">
           <Button kind="primary" type="submit" busy={busy === "add"} busyLabel="מוסיף…" disabled={fresh.length === 0}>
-            {fresh.length === 1 ? "הוספת שם אחד" : `הוספת ${fresh.length} שמות`}
+            {fresh.length === 0 ? "הוספה לרשימה" : fresh.length === 1 ? "הוספת שם אחד" : `הוספת ${fresh.length} שמות`}
           </Button>
-          {text && <Button onClick={() => setText("")}>ניקוי</Button>}
+          {text && (
+            <Button
+              onClick={() => {
+                setText("");
+                setPicked(null);
+              }}
+            >
+              ניקוי
+            </Button>
+          )}
         </div>
       </form>
     </Panel>
@@ -166,7 +200,7 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
 }
 
 function RosterItem({ r, onChanged }: { r: RosterEntry; onChanged: () => Promise<void> }) {
-  const { port } = useSettings();
+  const { port, wide } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
   const [name, setName] = useState(r.full_name);
@@ -222,6 +256,9 @@ function RosterItem({ r, onChanged }: { r: RosterEntry; onChanged: () => Promise
               >
                 ביטול
               </Button>
+              <Button kind="danger" className="ms-auto" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.full_name}`}>
+                מחיקה
+              </Button>
             </div>
           </form>
         }
@@ -256,9 +293,12 @@ function RosterItem({ r, onChanged }: { r: RosterEntry; onChanged: () => Promise
           <Button kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${r.full_name}`}>
             עריכה
           </Button>
-          <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.full_name}`}>
-            מחיקה
-          </Button>
+          {/* on a phone «מחיקה» is inside «עריכה», so a row of ~61 stays one line */}
+          {wide && (
+            <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.full_name}`}>
+              מחיקה
+            </Button>
+          )}
         </>
       }
     />

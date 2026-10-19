@@ -3,7 +3,7 @@
 // admin) belong to a global admin — the database refuses anything else
 // (members_admin_write), so the screen never offers it. Nobody who has done
 // anything is deleted: they are deactivated, and their history stays.
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { MemberRow } from "../../data/settings";
 import type { Role } from "../../data/types";
@@ -30,10 +30,17 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
   const [everywhere, setEverywhere] = useState<Everywhere[] | null>(null);
   const [failed, setFailed] = useState(false);
 
+  const none = editions.length === 0;
   const load = useCallback(async () => {
-    if (editionId == null) return;
+    if (editionId == null && !none) return; // the edition is about to be picked
     setFailed(false);
     try {
+      // Before the first edition there is no edition's team — but my own (global) row, with my gender, is still read.
+      if (editionId == null) {
+        setRows([]);
+        setEverywhere(me.global_admin ? await port.members(null) : []);
+        return;
+      }
       const mine = await port.members(editionId);
       let all: Everywhere[];
       if (me.global_admin) all = await port.members(null);
@@ -46,7 +53,7 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
     } catch {
       setFailed(true);
     }
-  }, [port, editionId, me.global_admin]);
+  }, [port, editionId, none, me.global_admin]);
 
   useEffect(() => {
     setRows(null);
@@ -54,10 +61,13 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
   }, [load]);
 
   const myRow = [...(everywhere ?? []), ...(rows ?? [])].find((r) => r.email === me.email);
+  const activeCount = rows?.filter((r) => r.active).length ?? 0;
+  const inactiveCount = rows?.filter((r) => !r.active).length ?? 0;
 
   return (
     <>
-      <MyProfile gender={myRow?.gender ?? null} onSaved={load} />
+      {/* gender undefined = not read yet: the form waits, so a save never wipes a saved gender */}
+      <MyProfile gender={rows && everywhere ? (myRow?.gender ?? null) : undefined} onSaved={load} />
       {editions.length === 0 ? (
         <NoEdition />
       ) : (
@@ -74,8 +84,8 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                 title="צוות המחזור"
                 aside={
                   <>
-                    {rows.filter((r) => r.active).length} פעילים
-                    {rows.some((r) => !r.active) && ` · ${rows.filter((r) => !r.active).length} מושבתים`}
+                    {activeCount === 1 ? "פעיל/ה אחד/ת" : `${activeCount} פעילים`}
+                    {inactiveCount > 0 && ` · ${inactiveCount === 1 ? "מושבת/ת אחד/ת" : `${inactiveCount} מושבתים`}`}
                   </>
                 }
               >
@@ -92,7 +102,7 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                   <p className="mt-3 text-xs text-ink-soft">שורה של מדריך/ה משנה רק מי שמדריך/ה בכל המחזורים.</p>
                 )}
               </Panel>
-              <Panel title="בכל המחזורים" aside={me.global_admin ? "מוסיפים רק ב-SQL Editor, לפי מדריך ההקמה" : "לצפייה בלבד"}>
+              <Panel title="בכל המחזורים" aside={me.global_admin ? "מוסיפים רק לפי מדריך ההקמה" : "לצפייה בלבד"}>
                 {everywhere.length === 0 ? (
                   <p className="text-ink-soft">אין.</p>
                 ) : (
@@ -103,7 +113,7 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                         muted={!m.active}
                         cells={[
                           <>
-                            {m.display_name || "(בלי שם)"} {m.email === me.email && <Badge tone="accent">זה/זו את/ה</Badge>}
+                            {m.display_name || "(בלי שם)"} {m.email === me.email && <Badge tone="accent">החשבון שלך</Badge>}
                           </>,
                           m.email ? <bdi dir="ltr">{m.email}</bdi> : "",
                           m.gender ? GENDER_LABEL[m.gender] : "",
@@ -137,17 +147,22 @@ function NoEdition() {
   );
 }
 
-/** My own name and gender — the header shows the address until a name is set. */
-function MyProfile({ gender, onSaved }: { gender: Gender | null; onSaved: () => Promise<void> }) {
+/**
+ * My own name and gender — the header shows the address until a name is set.
+ * `gender` is undefined until my row is read: set_my_profile() writes both, so
+ * saving before then would erase a gender saved earlier.
+ */
+function MyProfile({ gender, onSaved }: { gender: Gender | null | undefined; onSaved: () => Promise<void> }) {
   const { port, me, onMeChanged } = useSettings();
   const { busy, run } = useAction();
   const [editing, setEditing] = useState(!me.display_name);
   const [name, setName] = useState(me.display_name ?? "");
-  const [g, setG] = useState<Gender | null>(gender);
+  const [g, setG] = useState<Gender | null>(gender ?? null);
   const [problem, setProblem] = useState<string | null>(null);
   const id = useId();
+  const known = gender !== undefined;
 
-  useEffect(() => setG(gender), [gender]);
+  useEffect(() => setG(gender ?? null), [gender]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -197,7 +212,7 @@ function MyProfile({ gender, onSaved }: { gender: Gender | null; onSaved: () => 
           </p>
         )}
         <div className="flex flex-wrap gap-2 sm:col-span-2">
-          <Button kind="primary" type="submit" busy={busy === "me"} busyLabel="שומר…">
+          <Button kind="primary" type="submit" busy={busy === "me" || !known} busyLabel={known ? "שומר…" : "טוען…"}>
             שמירה
           </Button>
           {me.display_name && <Button onClick={() => setEditing(false)}>ביטול</Button>}
@@ -236,8 +251,11 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
   const [name, setName] = useState("");
   const [gender, setGender] = useState<Gender | null>(null);
   const [role, setRole] = useState<Role>("content");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<{ code: string; text: string } | null>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const id = useId();
+  // A refusal about the address marks the address field itself.
+  const emailBad = problem?.code === "bad_email" || problem?.code === "member_exists";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -249,7 +267,8 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
       `${shown} ${byGender(gender, "נוסף", "נוספה")} לצוות`,
       (code) => {
         if (!code || !FORM_REFUSALS.includes(code)) return false;
-        setProblem(errorMessage(code));
+        setProblem({ code, text: errorMessage(code) });
+        if (code === "bad_email" || code === "member_exists") emailRef.current?.focus();
         return true;
       },
     );
@@ -267,8 +286,10 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2" noValidate aria-describedby={problem ? `${id}-problem` : undefined}>
         <Field id={`${id}-email`} label="כתובת Gmail" hint="הכתובת שאיתה נכנסים עם Google.">
           <input
+            ref={emailRef}
             id={`${id}-email`}
-            className={INPUT}
+            className={`${INPUT} aria-[invalid=true]:border-bad aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-bad`}
+            aria-invalid={emailBad || undefined}
             type="email"
             dir="ltr"
             inputMode="email"
@@ -280,7 +301,7 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
               setEmail(e.target.value);
               setProblem(null);
             }}
-            aria-describedby={`${id}-email-hint`}
+            aria-describedby={emailBad ? `${id}-email-hint ${id}-problem` : `${id}-email-hint`}
           />
         </Field>
         <Field id={`${id}-name`} label="שם">
@@ -290,7 +311,7 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
         <RoleField name={`${id}-role`} value={role} onChange={setRole} />
         {problem && (
           <p id={`${id}-problem`} role="alert" className="text-sm text-bad sm:col-span-2">
-            {problem}
+            {problem.text}
           </p>
         )}
         <div className="sm:col-span-2">
@@ -304,7 +325,7 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
 }
 
 function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<void> }) {
-  const { port, me } = useSettings();
+  const { port, me, wide } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete" | "history">("view");
   const isMe = m.email === me.email;
@@ -334,7 +355,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
 
   const cells = [
     <>
-      {m.display_name || "(בלי שם)"} {isMe && <Badge tone="accent">זה/זו את/ה</Badge>}
+      {m.display_name || "(בלי שם)"} {isMe && <Badge tone="accent">החשבון שלך</Badge>}
     </>,
     <bdi dir="ltr">{m.email}</bdi>,
     m.gender ? GENDER_LABEL[m.gender] : "",
@@ -346,7 +367,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
     setMode("view");
     if (saved) await onChanged();
   };
-  if (mode === "edit") return <Row cells={cells} editing={<EditMember m={m} onDone={(saved) => void doneEditing(saved)} />} />;
+  if (mode === "edit") return <Row cells={cells} editing={<EditMember m={m} onDone={(saved) => void doneEditing(saved)} onDelete={() => setMode("delete")} />} />;
   if (mode === "delete") {
     return (
       <Row
@@ -373,10 +394,23 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
         cells={cells}
         editing={
           m.active ? (
-            <Confirm text={errorMessage("member_has_history")} confirm="השבתה" danger={false} busy={busy === "active"} onConfirm={() => void setActive(false)} onCancel={() => setMode("view")} />
+            <Confirm
+              text={
+                <>
+                  <b>{shown}</b>: {errorMessage("member_has_history")}
+                </>
+              }
+              confirm="השבתה"
+              danger={false}
+              busy={busy === "active"}
+              onConfirm={() => void setActive(false)}
+              onCancel={() => setMode("view")}
+            />
           ) : (
             <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
-              <p className="mb-2">{shown} כבר מושבת/ת, וההיסטוריה נשמרת. אי אפשר למחוק.</p>
+              <p className="mb-2">
+                <b>{shown}</b> כבר מושבת/ת, וההיסטוריה נשמרת. אי אפשר למחוק.
+              </p>
               <Button onClick={() => setMode("view")}>הבנתי</Button>
             </div>
           )
@@ -403,9 +437,12 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
                 החזרה
               </Button>
             )}
-            <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${shown}`}>
-              מחיקה
-            </Button>
+            {/* on a phone «מחיקה» is inside «עריכה», so a row stays one line */}
+            {wide && (
+              <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${shown}`}>
+                מחיקה
+              </Button>
+            )}
           </>
         )
       }
@@ -413,7 +450,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
   );
 }
 
-function EditMember({ m, onDone }: { m: MemberRow; onDone: (saved: boolean) => void }) {
+function EditMember({ m, onDone, onDelete }: { m: MemberRow; onDone: (saved: boolean) => void; onDelete: () => void }) {
   const { port } = useSettings();
   const { busy, run } = useAction();
   const [name, setName] = useState(m.display_name);
@@ -453,6 +490,9 @@ function EditMember({ m, onDone }: { m: MemberRow; onDone: (saved: boolean) => v
           שמירה
         </Button>
         <Button onClick={() => onDone(false)}>ביטול</Button>
+        <Button kind="danger" className="ms-auto" onClick={onDelete} aria-label={`מחיקת ${m.display_name || m.email}`}>
+          מחיקה
+        </Button>
       </div>
     </form>
   );

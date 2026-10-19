@@ -14,6 +14,9 @@ export const ROOMS = [
   { name: "ספרייה", sort: 3, is_default: false },
 ];
 
+/** A room that belongs to another edition: the SQL driver makes one there; the engine has no such room. */
+export const FOREIGN_ROOM = "חדר של מחזור אחר";
+
 export const SPEAKERS: { name: string; gender: "m" | "f" | null; vetted?: "pending" | "approved"; retired?: boolean }[] = [
   { name: "אלפא", gender: "f" },
   { name: "בטא", gender: "m" },

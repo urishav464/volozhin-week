@@ -7,7 +7,7 @@ interface Props {
   onSignOut?: () => void;
   /** An admin's way to «הגדרות» (and back to the week from there). */
   settingsLink?: boolean;
-  /** The grid needs the whole width; notices and forms stay in a reading column. */
+  /** The grid needs the whole width; notices and forms stay in a reading column (the signed-in header is always full width). */
   full?: boolean;
   children: ReactNode;
 }
@@ -24,7 +24,8 @@ export function Shell({ demo, user, onSignOut, settingsLink = false, full = fals
         </div>
       )}
       <header className="bg-ink text-paper">
-        <div className={`mx-auto ${full ? "max-w-none" : "max-w-6xl"} px-4 h-14 flex items-center gap-2 sm:gap-3`}>
+        {/* Signed in, the header keeps one width on every screen, so «הגדרות» / «לשבוע» stays under the pointer. */}
+        <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 h-14 flex items-center gap-2 sm:gap-3`}>
           <h1 className="shrink-0 font-display font-extrabold text-xl tracking-tight">
             {settingsLink ? (
               <Link to="/" className="rounded-sm">

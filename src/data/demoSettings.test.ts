@@ -82,11 +82,18 @@ describe("demo settings", () => {
     expect(await code(s.deleteCategory(3))).toBe("category_in_use");
     await s.updateCategory(3, { active: false });
     expect((await port.loadWeek(1)).categories.find((c) => c.id === 3)?.active).toBe(false);
-    expect(await code(s.addCategory({ name: "קטגוריה לדוגמה", color: "red" }))).toBe("bad_value");
+    expect(await code(s.addCategory({ name: "קטגוריה לדוגמה", color: "red" }))).toBe("bad_color");
     expect(await code(s.addCategory({ name: 'תנ"ך', color: "#a23b3b" }))).toBe("category_exists");
     await s.addCategory({ name: "קטגוריה לדוגמה", color: "#A23B3B" });
     const added = (await s.categories()).find((c) => c.name === "קטגוריה לדוגמה")!;
     expect(added).toMatchObject({ color: "#a23b3b", sort: 11, active: true });
+    expect(await code(s.updateCategory(added.id, { color: "blue" }))).toBe("bad_color");
+    // a colour typed in the SQL Editor before the palette stays until someone changes it
+    const legacy = port.categories.find((c) => c.id === 4)!;
+    legacy.color = "red";
+    expect(await code(s.updateCategory(legacy.id, { active: false }))).toBe("ok");
+    expect(await code(s.reorderCategories([legacy.id, ...(await s.categories()).filter((c) => c.id !== legacy.id).map((c) => c.id)]))).toBe("ok");
+    expect(await code(s.updateCategory(legacy.id, { name: "שם חדש לדוגמה" }))).toBe("ok");
     expect(await code(s.deleteCategory(added.id))).toBe("ok");
   });
 

@@ -58,7 +58,7 @@ export function RoomsTab({ editions, editionId, setEditionId }: Props) {
         <Loading />
       ) : (
         <>
-          <Panel title="חדרים" aside={`${rooms.length}`}>
+          <Panel title="חדרים" aside={rooms.length === 1 ? "חדר אחד" : `${rooms.length} חדרים`}>
             <p className="mb-3 text-sm text-ink-soft">מרצה שמשבצים נכנס/ת לחדר ברירת המחדל. בפיצול למקבילים, השיעור הנוסף הולך לחדר הפנוי הבא לפי הסדר כאן.</p>
             {rooms.length === 0 ? (
               <p className="text-ink-soft">עוד אין חדרים. החדר הראשון שמוסיפים יהיה ברירת המחדל.</p>
@@ -80,7 +80,7 @@ export function RoomsTab({ editions, editionId, setEditionId }: Props) {
 function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; first: boolean; last: boolean; moving: boolean; onMove: (by: -1 | 1) => void; onChanged: () => Promise<void> }) {
   const { port } = useSettings();
   const { busy, run } = useAction();
-  const [mode, setMode] = useState<"view" | "rename" | "delete">("view");
+  const [mode, setMode] = useState<"view" | "rename" | "delete" | "used">("view");
   const [name, setName] = useState(r.name);
   const [problem, setProblem] = useState<string | null>(null);
   const id = useId();
@@ -103,9 +103,13 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
     if (await run("default", () => port.setDefaultRoom(r.id), `«${r.name}» הוא עכשיו חדר ברירת המחדל`)) await onChanged();
   };
   const remove = async () => {
-    const ok = await run("delete", () => port.deleteRoom(r.id), `«${r.name}» נמחק`);
-    setMode("view");
+    const ok = await run("delete", () => port.deleteRoom(r.id), `«${r.name}» נמחק`, (code) => {
+      if (code !== "room_in_use") return false;
+      setMode("used"); // said in the row, like a member or a category with history
+      return true;
+    });
     if (ok) await onChanged();
+    else setMode((m) => (m === "delete" ? "view" : m));
   };
 
   if (mode === "rename") {
@@ -114,7 +118,7 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
         cells={cells}
         editing={
           <form onSubmit={rename} className="flex flex-wrap items-end gap-2 rounded-lg border border-line bg-paper p-3" noValidate>
-            <div className="min-w-0 flex-1 basis-48">
+            <div className="min-w-0 basis-full sm:flex-1 sm:basis-48">
               <Field id={`${id}-name`} label="שם החדר">
                 <input id={`${id}-name`} className={INPUT} value={name} maxLength={60} autoFocus onChange={(e) => setName(e.target.value)} />
               </Field>
@@ -137,6 +141,26 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
               </p>
             )}
           </form>
+        }
+      />
+    );
+  }
+  if (mode === "used") {
+    return (
+      <Row
+        cells={cells}
+        editing={
+          <div role="group" aria-label="אי אפשר למחוק" className="rounded-lg border border-line bg-paper p-3 text-sm">
+            <p className="mb-2">
+              <b>{r.name}</b>: {errorMessage("room_in_use")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button kind="primary" autoFocus onClick={() => setMode("rename")}>
+                שינוי שם
+              </Button>
+              <Button onClick={() => setMode("view")}>הבנתי</Button>
+            </div>
+          </div>
         }
       />
     );
@@ -165,16 +189,11 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
     <Row
       cells={cells}
       actions={
+        // ↑↓ come last, so they sit at the same edge in every row (the default room has fewer buttons)
         <>
-          <Button kind="quiet" disabled={first || moving} onClick={() => onMove(-1)} aria-label={`הזזת ${r.name} למעלה`} title="למעלה">
-            ↑
-          </Button>
-          <Button kind="quiet" disabled={last || moving} onClick={() => onMove(1)} aria-label={`הזזת ${r.name} למטה`} title="למטה">
-            ↓
-          </Button>
           {!r.is_default && (
-            <Button kind="quiet" busy={busy === "default"} onClick={() => void makeDefault()} aria-label={`${r.name} כברירת מחדל`}>
-              ברירת מחדל
+            <Button kind="quiet" busy={busy === "default"} onClick={() => void makeDefault()} aria-label={`קביעת ${r.name} כחדר ברירת המחדל`}>
+              לקבוע כברירת מחדל
             </Button>
           )}
           <Button kind="quiet" onClick={() => setMode("rename")} aria-label={`שינוי השם של ${r.name}`}>
@@ -185,6 +204,12 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
               מחיקה
             </Button>
           )}
+          <Button kind="quiet" disabled={first || moving} onClick={() => onMove(-1)} aria-label={`הזזת ${r.name} למעלה`} title="למעלה">
+            ↑
+          </Button>
+          <Button kind="quiet" disabled={last || moving} onClick={() => onMove(1)} aria-label={`הזזת ${r.name} למטה`} title="למטה">
+            ↓
+          </Button>
         </>
       }
     />

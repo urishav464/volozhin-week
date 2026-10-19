@@ -178,7 +178,7 @@ describe("settings writes", () => {
   });
 
   describe("categories", () => {
-    it("only a global admin writes them; a used one is deactivated, never deleted; colours are hex", async () => {
+    it("only a global admin writes them; a used one is deactivated, never deleted; colours are #rrggbb", async () => {
       for (const who of [ED_ADMIN, CONTENT, LOGISTICS]) {
         await as(db, "authenticated", google(who), async (q) => {
           expect(await sqlstate(q("insert into public.categories (name, color) values ('x', '#123456')")), who).toBe("42501");
@@ -192,7 +192,8 @@ describe("settings writes", () => {
       await as(db, "authenticated", google(ADMIN), async (q) => {
         const added = await q("insert into public.categories (name, color, sort) values ('קטגוריה לדוגמה', '#a23b3b', 11) returning id");
         expect((await q("update public.categories set color = '#1f6f8b', sort = 12 where id = $1 returning id", [added.rows[0].id])).rows).toHaveLength(1);
-        expect(await sqlstate(q("update public.categories set color = 'red' where id = $1", [added.rows[0].id]))).toBe("23514");
+        expect(await refusal(q("update public.categories set color = 'red' where id = $1", [added.rows[0].id]))).toBe("bad_color");
+        expect(await refusal(q("insert into public.categories (name, color) values ('קטגוריה לדוגמה ב', 'blue')"))).toBe("bad_color");
         expect(await sqlstate(q("insert into public.categories (name, color) values ('תנ\"ך', '#123456')"))).toBe("23505");
         expect(await sqlstate(q("insert into public.categories (id, name) overriding system value values (999, 'x')"))).toBe("42501");
         expect(await refusal(q("delete from public.categories where id = $1", [used]))).toBe("category_in_use");
@@ -201,10 +202,27 @@ describe("settings writes", () => {
       });
       await db.query("delete from public.lessons where id = $1", [lesson.rows[0].id]);
     });
+
+    it("a colour typed in the SQL Editor before the palette does not freeze its category", async () => {
+      // written as the owner with the triggers off, like a row from before v5
+      await db.query("begin");
+      await db.query("set local session_replication_role = replica");
+      const legacy = Number((await db.query("insert into public.categories (name, color, sort) values ('קטגוריה ישנה לדוגמה', 'red', 20) returning id")).rows[0].id);
+      await db.query("commit");
+      await db.query(SCHEMA); // the file still runs over it
+      await as(db, "authenticated", google(ADMIN), async (q) => {
+        expect((await q("update public.categories set active = false where id = $1 returning id", [legacy])).rows).toHaveLength(1);
+        expect((await q("update public.categories set sort = 21, name = 'קטגוריה ישנה ב' where id = $1 returning id", [legacy])).rows).toHaveLength(1);
+        expect((await q("update public.categories set color = color where id = $1 returning id", [legacy])).rows).toHaveLength(1);
+        expect(await refusal(q("update public.categories set color = 'blue' where id = $1", [legacy]))).toBe("bad_color");
+        expect((await q("update public.categories set color = '#1f6f8b' where id = $1 returning id", [legacy])).rows).toHaveLength(1);
+      });
+      await db.query("delete from public.categories where id = $1", [legacy]);
+    });
   });
 
   describe("members", () => {
-    it("everyone sets their own name and gender — on every row of theirs — and nothing else", async () => {
+    it("an admin sets their own name and gender — on every row of theirs — and nothing else; a trainee cannot", async () => {
       await as(db, "authenticated", google(ED_ADMIN), async (q) => {
         await q("select public.set_my_profile('  מנהל/ת לדוגמה ', 'f')");
         expect((await q("select display_name, gender, role from public.members where email = $1", [ED_ADMIN])).rows).toEqual([
@@ -213,9 +231,17 @@ describe("settings writes", () => {
         expect((await q("select public.whoami() as w")).rows[0].w.display_name).toBe("מנהל/ת לדוגמה");
         expect(await refusal(q("select public.set_my_profile(' ', null)"))).toBe("name_required");
         expect(await refusal(q("select public.set_my_profile('x', 'x')"))).toBe("bad_value");
+        expect(await refusal(q("select public.set_my_profile(repeat('א', 81), null)"))).toBe("bad_value");
+        expect(await refusal(q("select public.set_my_profile(repeat('א', 2000000), null)"))).toBe("bad_value");
         // an edition's admin still cannot touch their own admin row directly
         expect((await q("update public.members set display_name = 'x' where email = $1 returning id", [ED_ADMIN])).rows).toEqual([]);
       });
+      // a trainee's name is the admins' to set (the screen is theirs) — nobody renames themselves into the instructor
+      for (const who of [CONTENT, LOGISTICS]) {
+        await as(db, "authenticated", google(who), async (q) => {
+          expect(await refusal(q("select public.set_my_profile('המדריכה', 'f')")), who).toBe("forbidden");
+        });
+      }
       await as(db, "authenticated", google("stranger@example.org"), async (q) => {
         expect(await refusal(q("select public.set_my_profile('x', null)"))).toBe("not_member");
       });
@@ -228,6 +254,9 @@ describe("settings writes", () => {
         expect((await q("update public.members set display_name = 'x' where id = $1 returning id", [id[PEER_ADMIN]])).rows).toEqual([]);
         expect((await q("delete from public.members where id = $1 returning id", [id[PEER_ADMIN]])).rows).toEqual([]);
         expect(await sqlstate(q("update public.members set role = 'admin' where id = $1", [id[CONTENT]]))).toBe("42501");
+        // a row's address and edition are fixed: no re-pointing someone's history (and the contacts they handle) to another account
+        expect(await sqlstate(q("update public.members set email = 'sock@example.org' where id = $1", [id[CONTENT]]))).toBe("42501");
+        expect(await sqlstate(q("update public.members set edition_id = $2 where id = $1", [id[CONTENT], otherEd]))).toBe("42501");
         expect(await sqlstate(q("insert into public.members (email, role, edition_id) values ('x@example.org', 'admin', $1)", [ed]))).toBe("42501");
         expect(await sqlstate(q("insert into public.members (email, role, edition_id) values ($1, 'logistics', $2)", [CONTENT, ed]))).toBe("23505");
         expect((await q("select email from public.members where edition_id is null")).rows).toEqual([]); // the global rows are not theirs to see
@@ -256,7 +285,8 @@ describe("settings writes", () => {
       await as(db, "authenticated", google(ADMIN), async (q) => {
         expect(await refusal(q("update public.members set active = false where id = $1", [id[ADMIN]]))).toBe("self_lockout");
         expect(await refusal(q("update public.members set role = 'content' where id = $1", [id[ADMIN]]))).toBe("self_lockout");
-        expect(await refusal(q("update public.members set email = 'else@example.org' where id = $1", [id[ADMIN]]))).toBe("self_lockout");
+        expect(await sqlstate(q("update public.members set email = 'else@example.org' where id = $1", [id[ADMIN]]))).toBe("42501"); // no address changes at all
+        expect(await sqlstate(q("update public.members set email = 'else@example.org' where id = $1", [id[PEER_ADMIN]]))).toBe("42501");
         expect(await refusal(q("delete from public.members where id = $1", [id[ADMIN]]))).toBe("self_lockout");
         // a global admin may still change another admin
         expect((await q("update public.members set display_name = 'מנהל/ת נוסף/ת' where id = $1 returning id", [id[PEER_ADMIN]])).rows).toHaveLength(1);

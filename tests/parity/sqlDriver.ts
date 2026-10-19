@@ -3,7 +3,7 @@
 // member's Google claims — and committed, like PostgREST would.
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
-import { type At, type Driver, EDITION, lessonKey, MEMBERS, type Normal, ROOMS, SPEAKERS, type Step } from "./fixture";
+import { type At, type Driver, EDITION, FOREIGN_ROOM, lessonKey, MEMBERS, type Normal, ROOMS, SPEAKERS, type Step } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
   const db: pg.Client = await freshDatabase(dbName, "new");
@@ -12,6 +12,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   const ed = Number((await db.query("insert into public.editions (label, first_day_from, last_day_until) values ($1, $2, $3) returning id", [EDITION.label, EDITION.first_day_from, EDITION.last_day_until])).rows[0].id);
   await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template", [ed]);
   for (const r of ROOMS) await db.query("insert into public.rooms (edition_id, name, sort, is_default) values ($1, $2, $3, $4)", [ed, r.name, r.sort, r.is_default]);
+  const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ('מחזור אחר', 'practice') returning id")).rows[0].id);
+  const foreignRoom = Number((await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, $2, true) returning id", [elsewhere, FOREIGN_ROOM])).rows[0].id);
   for (const m of MEMBERS) {
     await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $2, $3, $4)", [m.email, m.name, m.role, m.role === "admin" ? null : ed]);
   }
@@ -21,7 +23,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
 
   const one = async (sql: string, params: unknown[]) => (await db.query(sql, params)).rows[0];
   const roomId = async (name?: string) =>
-    Number((await one(name ? "select id from public.rooms where edition_id = $1 and name = $2" : "select id from public.rooms where edition_id = $1 and is_default", name ? [ed, name] : [ed])).id);
+    name === FOREIGN_ROOM ? foreignRoom : Number((await one(name ? "select id from public.rooms where edition_id = $1 and name = $2" : "select id from public.rooms where edition_id = $1 and is_default", name ? [ed, name] : [ed])).id);
   const lessonAt = async ([day, start, room]: At) =>
     one("select id, version from public.lessons where edition_id = $1 and day = $2 and start_min = $3 and room_id = $4 and state <> 'cancelled'", [ed, day, start, await roomId(room)]);
   const speakerId = async (name: string) => Number((await one("select id from public.speakers where name = $1", [name])).id);

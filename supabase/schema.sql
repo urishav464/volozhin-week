@@ -844,6 +844,11 @@ create or replace function public.propose(
       if not exists (select 1 from app.lesson_rows(p_edition, p_day) r where r.start_min <= p_start and p_end <= r.end_min) then
         perform app.refuse('outside_grid');
       end if;
+      -- A room of this edition only (as in move_lesson): another edition's room
+      -- would pin it there — its admin could no longer delete it (rooms_guard).
+      if p_room is not null and not exists (select 1 from public.rooms where id = p_room and edition_id = p_edition) then
+        perform app.refuse('bad_shape');
+      end if;
       v_room := coalesce(p_room, app.default_room(p_edition));
       select * into v_lesson from public.lessons
        where edition_id = p_edition and kind = 'lesson' and state = 'draft'
@@ -1198,7 +1203,8 @@ create or replace function public.start_edition(p_label text, p_start_date date,
 -- is a trigger or a small function:
 --   * members    RLS (above) + members_guard: nobody who has done anything is
 --                deleted (deactivate instead), and no admin locks themselves
---                out. Everyone sets their own name through set_my_profile().
+--                out. An admin sets their own name through set_my_profile();
+--                a row's address and edition never change (column grants).
 --   * roster     RLS only. Names (and gender) of the year's trainees — never a
 --                contact detail. Not in Realtime.
 --   * rooms      RLS + column grants (name, sort): the default room moves only
@@ -1206,7 +1212,8 @@ create or replace function public.start_edition(p_label text, p_start_date date,
 --                the default and refuses deleting the default or a used room.
 --   * categories RLS (global admin) + categories_guard: a category a lesson
 --                uses is deactivated, never deleted (lessons.category_id would
---                silently go NULL).
+--                silently go NULL); categories_color checks a colour when
+--                it is written or changed.
 -- docs/DECISIONS.md has the reasons; src/errors.ts the Hebrew for each code.
 -- =============================================================================
 
@@ -1256,14 +1263,20 @@ drop trigger if exists members_guard on public.members;
 create trigger members_guard before update or delete on public.members
   for each row execute function app.members_guard();
 
--- My own name and gender, on every row of mine (an admin's row is otherwise
--- out of an edition admin's reach, and app.add_admin sets no name).
+-- An admin's own name and gender, on every row of theirs (an admin's row is
+-- otherwise out of an edition admin's reach, and app.add_admin sets no name).
+-- Admins only, like the screen: a trainee's name is set by the admins, so
+-- nobody renames themselves into someone else (e.g. the instructor).
 create or replace function public.set_my_profile(p_display_name text, p_gender text) returns void
   language plpgsql security definer set search_path = ''
   as $$
   begin
     if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not exists (select 1 from public.members where email = app.my_email() and role = 'admin' and active) then
+      perform app.refuse('forbidden');
+    end if;
     if btrim(coalesce(p_display_name, '')) = '' then perform app.refuse('name_required'); end if;
+    if length(btrim(p_display_name)) > 80 then perform app.refuse('bad_value'); end if;  -- as the screen (cleanName 80)
     if p_gender is not null and p_gender not in ('m', 'f') then perform app.refuse('bad_value'); end if;
     update public.members set display_name = btrim(p_display_name), gender = p_gender
      where email = app.my_email();
@@ -1343,14 +1356,26 @@ create or replace function public.set_default_room(p_room bigint) returns void
 
 -- ------------------------------------------------------------- categories
 
--- Colours come from the screen's palette. NOT VALID: a colour typed earlier in
--- the SQL Editor does not stop this file from running; new writes are checked.
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conname = 'categories_color_hex' and conrelid = 'public.categories'::regclass) then
-    alter table public.categories add constraint categories_color_hex check (color ~ '^#[0-9a-fA-F]{6}$') not valid;
-  end if;
-end $$;
+-- Colours come from the screen's palette (#rrggbb). Checked only when a colour
+-- is written or changed — a trigger, not a CHECK: a NOT VALID check would
+-- still re-check a whole row on every later UPDATE, so a category whose colour
+-- was typed in the SQL Editor before v5 could not be renamed, moved or
+-- deactivated. (An early v5 run added that check; it goes.)
+alter table public.categories drop constraint if exists categories_color_hex;
+
+create or replace function app.categories_color() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if (tg_op = 'INSERT' or new.color is distinct from old.color) and new.color !~ '^#[0-9a-fA-F]{6}$' then
+      perform app.refuse('bad_color');
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists categories_color on public.categories;
+create trigger categories_color before insert or update of color on public.categories
+  for each row execute function app.categories_color();
 
 create or replace function app.categories_guard() returns trigger
   language plpgsql security definer set search_path = ''
@@ -1393,7 +1418,13 @@ grant execute on function app.is_member()            to authenticated;
 grant execute on function app.can_see_edition(bigint) to authenticated;
 
 grant select, insert, update, delete on public.editions to authenticated;
-grant select, insert, update, delete on public.members  to authenticated;
+-- members: whole rows to read and delete, but a row's address and edition are
+-- fixed once written — re-pointing a member's row (and with it their history and
+-- the speakers' contacts they handle) to another Google account is not a write
+-- the screen ever needs: a wrong address is deleted and added again (DECISIONS).
+grant select, delete on public.members to authenticated;
+grant insert (email, display_name, gender, role, edition_id, active),
+      update (display_name, gender, role, active) on public.members to authenticated;
 
 grant execute on function app.my_member_id(bigint) to authenticated;
 

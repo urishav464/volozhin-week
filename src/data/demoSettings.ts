@@ -132,6 +132,9 @@ export class DemoSettings implements SettingsPort {
   async deleteMember(id: number): Promise<void> {
     const m = this.member(id);
     if (m.email === this.s.myEmail && m.role === "admin") fail("self_lockout");
+    // app.member_has_history, for every column the demo keeps: activity, lessons'
+    // approved_by / confirm_sent_by and speakers' created_by / vetted_by are not
+    // in the demo's week (src/domain/types.ts), so nothing there can name anyone.
     const used = this.weeks().some(
       (w) =>
         w.approaches.some((a) => a.owner_member_id === id) ||
@@ -148,6 +151,7 @@ export class DemoSettings implements SettingsPort {
     const gender = cleanGender(p.gender);
     const mine = this.me();
     if (mine.length === 0) fail("not_member");
+    if (!mine.some((m) => m.role === "admin")) fail("forbidden"); // admins only, as set_my_profile()
     for (const m of this.s.members) if (m.email === this.s.myEmail) Object.assign(m, { display_name: name, gender });
     this.done(null);
   }

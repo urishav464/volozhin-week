@@ -13,6 +13,8 @@ export interface SettingsContext {
   me: Me;
   wide: boolean;
   notify: (kind: "ok" | "error", text: string) => void;
+  /** Takes the last toast away — something new has started. */
+  clear: () => void;
   /** Re-reads who I am (my name in the header). */
   onMeChanged: () => Promise<void> | void;
 }
@@ -28,13 +30,15 @@ export function useSettings(): SettingsContext {
 /**
  * Runs one action at a time: `busy` names it (its button shows progress), a
  * success is toasted, a refusal is toasted in Hebrew — unless `onRefused`
- * handles the code itself (returns true).
+ * handles the code itself (returns true), beside the form. A new action first
+ * takes the last toast away, so an old «נשמר» never covers a new error.
  */
 export function useAction() {
-  const { notify } = useSettings();
+  const { notify, clear } = useSettings();
   const [busy, setBusy] = useState<string | null>(null);
   const run = useCallback(
     async (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean): Promise<boolean> => {
+      clear();
       setBusy(key);
       try {
         await fn();
@@ -48,7 +52,7 @@ export function useAction() {
         setBusy(null);
       }
     },
-    [notify],
+    [notify, clear],
   );
   return { busy, run };
 }
@@ -75,7 +79,7 @@ export function Button({
       {...rest}
       disabled={rest.disabled || busy}
       aria-busy={busy || undefined}
-      className={`inline-flex min-h-11 items-center justify-center gap-1 rounded-lg px-3 font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON[kind]} ${className}`}
+      className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2.5 font-semibold sm:px-3 disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON[kind]} ${className}`}
     >
       {busy ? busyLabel : children}
     </button>
@@ -211,8 +215,10 @@ export function Rows({ head, children, label }: { head: string[]; children: Reac
 /**
  * One row: on a wide screen its cells, then the actions; on a phone the first
  * cell as the title, the rest as a line under it (`labelled`: each with its
- * column's name, where a bare value would be unclear), the actions below.
- * While `editing` is set, the row is that form instead.
+ * column's name, where a bare value would be unclear), the actions beside the
+ * title while they fit (a list of ~61 names stays short to scroll), else
+ * under it. While `editing` is set, the row is that form instead. A muted row
+ * (deactivated, archived) stays readable — its badge says why.
  */
 export function Row({ cells, actions, editing, muted = false, labelled = false }: { cells: ReactNode[]; actions?: ReactNode; editing?: ReactNode; muted?: boolean; labelled?: boolean }) {
   const { wide } = useSettings();
@@ -228,7 +234,7 @@ export function Row({ cells, actions, editing, muted = false, labelled = false }
       );
     }
     return (
-      <tr className={muted ? "text-ink-faint" : ""}>
+      <tr className={muted ? "text-ink-soft" : ""}>
         {cells.map((c, i) => (
           <td key={i} className={`px-2 py-1.5 align-middle ${i === 0 ? "font-semibold" : ""}`}>
             {c}
@@ -241,26 +247,28 @@ export function Row({ cells, actions, editing, muted = false, labelled = false }
     );
   }
   return (
-    <li className={`py-2.5 ${muted ? "text-ink-faint" : ""}`}>
+    <li className={editing ? "py-2.5" : `flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 ${muted ? "text-ink-soft" : ""}`}>
       {editing ?? (
         <>
-          <div className="font-semibold break-words">{cells[0]}</div>
-          {cells.length > 1 &&
-            (labelled ? (
-              <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
-                {cells.slice(1).map((c, i) => (
-                  <div key={i} className="contents">
-                    <dt className="text-ink-soft">{head[i + 1]}</dt>
-                    <dd className="min-w-0 break-words">{c}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-sm text-ink-soft">
-                {cells.slice(1).map((c, i) => c != null && c !== "" && <span key={i} className="min-w-0 break-all">{c}</span>)}
-              </div>
-            ))}
-          {actions && <div className="mt-1 flex flex-wrap gap-1">{actions}</div>}
+          <div className="min-w-0 flex-1 basis-32">
+            <div className="font-semibold break-words">{cells[0]}</div>
+            {cells.length > 1 &&
+              (labelled ? (
+                <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
+                  {cells.slice(1).map((c, i) => (
+                    <div key={i} className="contents">
+                      <dt className="text-ink-soft">{head[i + 1]}</dt>
+                      <dd className="min-w-0 break-words">{c}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-sm text-ink-soft">
+                  {cells.slice(1).map((c, i) => c != null && c !== "" && <span key={i} className="min-w-0 break-all">{c}</span>)}
+                </div>
+              ))}
+          </div>
+          {actions && <div className="flex max-w-full shrink-0 flex-wrap gap-1">{actions}</div>}
         </>
       )}
     </li>

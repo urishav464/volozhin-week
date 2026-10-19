@@ -60,6 +60,6 @@ export function cleanNewEdition(e: NewEdition): NewEdition {
 
 export function cleanColor(c: string): string {
   const v = c.trim().toLowerCase();
-  if (!/^#[0-9a-f]{6}$/.test(v)) fail("bad_value");
+  if (!/^#[0-9a-f]{6}$/.test(v)) fail("bad_color");
   return v;
 }

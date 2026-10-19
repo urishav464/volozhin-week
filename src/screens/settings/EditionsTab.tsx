@@ -28,7 +28,7 @@ function clockToMin(s: string): number | null {
 export function EditionsTab({ editions, reload, onStarted }: { editions: Edition[]; reload: () => Promise<void>; onStarted: (id: number) => void }) {
   const { me } = useSettings();
   const list = (
-    <Panel title="המחזורים" aside={`${editions.length}`}>
+    <Panel title="המחזורים" aside={editions.length === 1 ? "מחזור אחד" : `${editions.length} מחזורים`}>
       {editions.length === 0 ? (
         <p className="text-ink-soft">עוד לא נפתח אף מחזור.</p>
       ) : (
@@ -65,9 +65,9 @@ function EditionItem({ e, onChanged }: { e: Edition; onChanged: () => Promise<vo
   const cells = [
     e.label,
     KIND_LABEL[e.kind],
-    <Badge tone={e.status === "archived" ? "muted" : "ok"}>{STATUS_LABEL[e.status]}</Badge>,
-    <span className={e.start_date ? "" : "text-ink-faint"}>{fmtDate(e.start_date)}</span>,
-    <span className={e.first_day_from != null ? "" : "text-ink-faint"}>
+    <Badge tone={e.status === "archived" ? "muted" : e.status === "active" ? "ok" : "accent"}>{STATUS_LABEL[e.status]}</Badge>,
+    <span className={e.start_date ? "" : "text-ink-soft italic"}>{fmtDate(e.start_date)}</span>,
+    <span className={e.first_day_from != null ? "" : "text-ink-soft italic"}>
       {e.first_day_from != null ? <bdi>{fmt(e.first_day_from)}</bdi> : "TBD"}
     </span>,
   ];
@@ -178,6 +178,14 @@ function StartEdition({ editions, onStarted }: { editions: Edition[]; onStarted:
   const id = useId();
   // start_edition() archives the current real edition (kind real, not archived yet).
   const current = editions.find((e) => e.kind === "real" && e.status !== "archived");
+  // The one setting that archives a live week: behind a button while a week is live.
+  const [open, setOpen] = useState(!current);
+  const again = () => {
+    setOpened(null);
+    setLabel(hebrewYearLabel());
+    setProblem(null);
+    setOpen(true);
+  };
 
   const start = async () => {
     setProblem(null);
@@ -198,6 +206,7 @@ function StartEdition({ editions, onStarted }: { editions: Edition[]; onStarted:
     );
     if (ok) {
       setOpened(name);
+      setOpen(false);
       setDate("");
       setTime("");
       await onStarted(newId);
@@ -209,18 +218,33 @@ function StartEdition({ editions, onStarted }: { editions: Edition[]; onStarted:
     else void start();
   };
 
-  return (
-    <Panel title="פתיחת מחזור חדש">
-      {opened && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-ok/10 px-3 py-2 text-sm">
-          <span>
-            המחזור <b>{opened}</b> נפתח, עם הרשת של 2026 וחדר «בית מדרש». עכשיו מוסיפים את הצוות.
-          </span>
-          <Link to="/settings/team" className="font-semibold text-ink underline">
+  if (opened) {
+    return (
+      <Panel title="פתיחת מחזור חדש">
+        <div className="mb-3 rounded-lg bg-ok/10 px-3 py-2 text-sm">
+          המחזור <b>{opened}</b> נפתח, עם הרשת של 2026 וחדר «בית מדרש». עכשיו מוסיפים את הצוות.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link to="/settings/team" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
             להוספת הצוות
           </Link>
+          <Button onClick={again}>פתיחת מחזור נוסף</Button>
         </div>
-      )}
+      </Panel>
+    );
+  }
+  if (!open && current) {
+    return (
+      <Panel title="פתיחת מחזור חדש">
+        <p className="mb-3 text-sm text-ink-soft">
+          פותחים מחזור פעם בשנה. פתיחת מחזור חדש מעבירה את <b className="text-ink">{current.label}</b> לארכיון.
+        </p>
+        <Button onClick={() => setOpen(true)}>לפתיחת מחזור חדש</Button>
+      </Panel>
+    );
+  }
+  return (
+    <Panel title="פתיחת מחזור חדש">
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2" noValidate>
         <Field id={`${id}-label`} label="שם המחזור" hint="השנה העברית, כמו על הפוסטר.">
           <input
@@ -262,9 +286,21 @@ function StartEdition({ editions, onStarted }: { editions: Edition[]; onStarted:
               onCancel={() => setConfirming(false)}
             />
           ) : (
-            <Button kind="primary" type="submit" busy={busy === "start"} busyLabel="פותח…" disabled={!label.trim()}>
-              פתיחת המחזור
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button kind="primary" type="submit" busy={busy === "start"} busyLabel="פותח…" disabled={!label.trim()}>
+                פתיחת המחזור
+              </Button>
+              {current && (
+                <Button
+                  onClick={() => {
+                    setProblem(null);
+                    setOpen(false);
+                  }}
+                >
+                  ביטול
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </form>

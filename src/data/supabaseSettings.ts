@@ -91,9 +91,12 @@ export class SupabaseSettings implements SettingsPort {
   }
 
   async updateMember(id: number, patch: MemberPatch): Promise<void> {
-    const p: MemberPatch = { ...patch };
-    if ("display_name" in p) p.display_name = cleanName(p.display_name, 80);
-    if ("gender" in p) p.gender = cleanGender(p.gender);
+    // The four columns `authenticated` may UPDATE — an address or an edition never moves.
+    const p: MemberPatch = {};
+    if ("display_name" in patch) p.display_name = cleanName(patch.display_name, 80);
+    if ("gender" in patch) p.gender = cleanGender(patch.gender);
+    if ("role" in patch) p.role = patch.role;
+    if ("active" in patch) p.active = patch.active;
     await this.one(this.sb.from("members").update(p).eq("id", id).select("id"), "member_exists");
   }
 

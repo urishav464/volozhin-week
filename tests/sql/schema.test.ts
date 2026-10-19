@@ -227,24 +227,27 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
   });
 
   describe("authenticated's table privileges", () => {
-    // The complete list, on purpose. editions/members: whole-row writes under
-    // RLS. roster/rooms/categories (settings, v5): DELETE on the row, INSERT and
-    // UPDATE only on the columns below — never an id, never rooms.is_default.
+    // The complete list, on purpose. editions: whole-row writes under RLS.
+    // members/roster/rooms/categories (settings, v5): DELETE on the row, INSERT
+    // and UPDATE only on the columns below — never an id, never rooms.is_default,
+    // and a member's address and edition never change once written.
     // Everything else: SELECT only (the grid writes through functions).
     const TABLE_WRITES: Record<string, string> = {
       editions: "DELETE,INSERT,SELECT,UPDATE",
-      members: "DELETE,INSERT,SELECT,UPDATE",
+      members: "DELETE,SELECT",
       roster: "DELETE,SELECT",
       rooms: "DELETE,SELECT",
       categories: "DELETE,SELECT",
     };
     const COLUMN_WRITES = [
       "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
+      "members.active:INSERT,UPDATE", "members.display_name:INSERT,UPDATE", "members.edition_id:INSERT", "members.email:INSERT",
+      "members.gender:INSERT,UPDATE", "members.role:INSERT,UPDATE",
       "rooms.edition_id:INSERT", "rooms.name:INSERT,UPDATE", "rooms.sort:INSERT,UPDATE",
       "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
     ];
 
-    it("are SELECT everywhere it reads, row writes only on editions/members, column writes on the settings tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
+    it("are SELECT everywhere it reads, row writes only on editions, column writes on the settings tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
       const grants = (
         await db.query(`
           select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
@@ -255,7 +258,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       for (const g of grants) expect(g.p, g.table_name).toBe(TABLE_WRITES[g.table_name] ?? "SELECT");
       expect(grants.map((g) => g.table_name)).toEqual(expect.arrayContaining(["lessons", ...Object.keys(TABLE_WRITES)]));
 
-      // Column grants beyond what the table grant already gives (members/editions have whole-row grants).
+      // Column grants beyond what the table grant already gives (editions has whole-row grants).
       const cols = (
         await db.query(`
           select c.relname || '.' || a.attname || ':' ||
@@ -263,7 +266,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
                                 case when has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE') then 'UPDATE' end) as g
             from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid
            where n.nspname = 'public' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
-             and c.relname not in ('editions', 'members')
+             and c.relname <> 'editions'
              and (has_column_privilege('authenticated', c.oid, a.attnum, 'INSERT')
                   or has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE'))
            order by 1`)

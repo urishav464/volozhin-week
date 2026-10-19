@@ -56,7 +56,7 @@ test.describe("demo build — an admin", () => {
     // pasting the same names again adds nothing
     await page.getByLabel("הדבקת שמות").fill("חניך/ה לדוגמה 01\nחניך/ה  לדוגמה-02");
     await expect(preview.getByText("כבר ברשימה")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "הוספת 0 שמות" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "הוספה לרשימה" })).toBeDisabled();
 
     // the tabs answer the keyboard: ← is the next one in a right-to-left row
     await page.getByRole("tab", { name: "חניכים" }).focus();
@@ -208,5 +208,34 @@ test.describe("mock build", () => {
     await page.getByRole("button", { name: "הוספה לצוות" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "הכתובת כבר ברשימה" })).toBeVisible();
     await expect(page.getByText("duplicate key")).toHaveCount(0);
+    await expect(page.getByLabel("כתובת Gmail")).toHaveAttribute("aria-invalid", "true");
+    await expect(page.getByLabel("כתובת Gmail")).toBeFocused();
+  });
+
+  test("a member with history: the DELETE's P0001 offers deactivation in the row; a write RLS drops reads as refused, not saved", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
+    const sb = new FakeSupabase({ status: 200, body: admin });
+    sb.answers.set("editions", [edition]);
+    sb.tables.set("members", [{ id: 5, email: "member@example.org", display_name: "חבר/ת צוות לדוגמה", gender: null, role: "content", edition_id: 7, active: true }]);
+    await sb.attach(page);
+    await signIn(page, "admin@example.org");
+    const sent: string[] = [];
+    await page.route("**/rest/v1/members?*", (route) => {
+      const m = route.request().method();
+      if (m === "GET") return route.fallback();
+      sent.push(`${m} ${new URL(route.request().url()).searchParams.get("id")}`);
+      return m === "DELETE"
+        ? route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ code: "P0001", message: "member_has_history", details: null, hint: null }) })
+        : route.fulfill({ status: 200, contentType: "application/json", body: "[]" }); // RLS filtered the PATCH: no row back
+    });
+    await page.goto(`${mockUrl()}/settings/team`);
+    await page.getByRole("button", { name: "מחיקת חבר/ת צוות לדוגמה" }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה" }).click();
+    const offer = page.getByRole("group", { name: "אישור" });
+    await expect(offer).toContainText("חבר/ת צוות לדוגמה: לחבר/ת הצוות כבר יש פעולות במערכת");
+    await offer.getByRole("button", { name: "השבתה" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "הפעולה הזו שמורה למדריך/ה" })).toBeVisible();
+    await expect(toast(page, /הושבת/)).toHaveCount(0);
+    expect(sent).toEqual(["DELETE eq.5", "PATCH eq.5"]);
   });
 });

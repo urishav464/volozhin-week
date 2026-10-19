@@ -347,6 +347,7 @@ export class Engine {
     const { day, start_min, end_min } = target;
     this.checkBounds(day, start_min, end_min);
     if (!this.lessonRows(day).some((r) => r.start_min <= start_min && end_min <= r.end_min)) fail("outside_grid");
+    if (target.room_id != null && !this.week.rooms.some((r) => r.id === target.room_id)) fail("bad_shape"); // a room of this edition only
     const room = target.room_id ?? this.defaultRoom();
     const existing = this.live().find((l) => l.kind === "lesson" && l.state === "draft" && l.day === day && l.start_min === start_min && l.end_min === end_min && l.room_id === room);
     if (existing) return existing;

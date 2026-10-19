@@ -48,7 +48,8 @@ draft) or `{ day, start_min, end_min, room_id | null }` (a cell). `mode` is `sel
    - `{ lesson_id }`: must be a non-cancelled `lesson`-kind lesson of the edition in state
      `draft` → else `cell_closed`.
    - a cell: the range must lie within one lesson row of that day → else `outside_grid`.
-     `room_id null` = the edition's default room. If a draft with exactly that
+     `room_id null` = the edition's default room; a room of another edition → `bad_shape`
+     (as in `move_lesson`). If a draft with exactly that
      `(day, start, end, room)` exists, use it; else create a draft there (the room invariant may
      refuse with `room_taken`).
 3. Approach for `(edition, speaker)`:

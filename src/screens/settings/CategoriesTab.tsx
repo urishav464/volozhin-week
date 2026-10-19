@@ -39,7 +39,16 @@ export function CategoriesTab() {
         <p className="mb-3 text-sm text-ink-soft">הקטגוריה שייכת לשיעור, וצבעה מסמן אותו ברשת. קטגוריה שיש בה שיעורים משביתים — היא נשארת בשיעורים של שנים קודמות.</p>
         <Rows label="קטגוריות" head={["קטגוריה", "צבע", "מצב"]}>
           {list.map((c, i) => (
-            <CategoryItem key={c.id} c={c} first={i === 0} last={i === list.length - 1} moving={busy === `move-${c.id}`} onMove={(by) => void move(c, by)} onChanged={load} />
+            <CategoryItem
+              key={c.id}
+              c={c}
+              taken={new Set(list.filter((x) => x.id !== c.id).map((x) => x.color))}
+              first={i === 0}
+              last={i === list.length - 1}
+              moving={busy === `move-${c.id}`}
+              onMove={(by) => void move(c, by)}
+              onChanged={load}
+            />
           ))}
         </Rows>
       </Panel>
@@ -52,12 +61,18 @@ function Swatch({ color }: { color: string }) {
   return <span aria-hidden className="inline-block size-4 shrink-0 rounded-full border border-ink/10 align-[-2px]" style={{ background: color }} />;
 }
 
-/** A radio group of the palette's colours — names for screen readers, a ring for the chosen one. */
+/**
+ * A radio group of the palette's colours — names for screen readers, a ring
+ * for the chosen one, and a dot under a colour another category already has
+ * (two categories in one colour blur the grid's colour coding).
+ */
 function ColorField({ name, value, onChange, taken }: { name: string; value: string; onChange: (c: string) => void; taken?: Set<string> }) {
   const options = PALETTE.some((p) => p.color === value) || !value ? PALETTE : [{ color: value, name: "הצבע הנוכחי" }, ...PALETTE];
+  const anyTaken = !!taken && options.some((p) => taken.has(p.color));
   return (
     <fieldset className="min-w-0">
       <legend className="mb-1 text-sm font-semibold">צבע</legend>
+      {anyTaken && <p className="mb-1 text-xs text-ink-soft">נקודה מתחת לצבע = כבר בשימוש בקטגוריה אחרת.</p>}
       <div className="flex flex-wrap gap-1.5">
         {options.map((p) => (
           <label
@@ -67,6 +82,7 @@ function ColorField({ name, value, onChange, taken }: { name: string; value: str
           >
             <input type="radio" name={name} value={p.color} checked={value === p.color} onChange={() => onChange(p.color)} className="sr-only" aria-label={`${p.name}${taken?.has(p.color) ? " (כבר בשימוש)" : ""}`} />
             <span aria-hidden className="size-8 rounded-full" style={{ background: p.color }} />
+            {taken?.has(p.color) && <span aria-hidden className="absolute bottom-0 size-1.5 rounded-full bg-ink-soft" />}
             {value === p.color && (
               <span aria-hidden className="absolute text-sm font-bold text-paper">
                 ✓
@@ -79,7 +95,23 @@ function ColorField({ name, value, onChange, taken }: { name: string; value: str
   );
 }
 
-function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Category; first: boolean; last: boolean; moving: boolean; onMove: (by: -1 | 1) => void; onChanged: () => Promise<void> }) {
+function CategoryItem({
+  c,
+  taken,
+  first,
+  last,
+  moving,
+  onMove,
+  onChanged,
+}: {
+  c: Category;
+  taken: Set<string>;
+  first: boolean;
+  last: boolean;
+  moving: boolean;
+  onMove: (by: -1 | 1) => void;
+  onChanged: () => Promise<void>;
+}) {
   const { port } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete" | "used">("view");
@@ -99,8 +131,9 @@ function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Catego
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
-    const ok = await run("save", () => port.updateCategory(c.id, { name, color }), "נשמר", (code) => {
-      if (code !== "category_exists" && code !== "name_required" && code !== "bad_value") return false;
+    // The colour goes out only when it changed: a colour from before the palette stays until someone picks a new one.
+    const ok = await run("save", () => port.updateCategory(c.id, color === c.color ? { name } : { name, color }), "נשמר", (code) => {
+      if (code !== "category_exists" && code !== "name_required" && code !== "bad_value" && code !== "bad_color") return false;
       setProblem(errorMessage(code));
       return true;
     });
@@ -134,7 +167,7 @@ function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Catego
             <Field id={`${id}-name`} label="שם">
               <input id={`${id}-name`} className={`${INPUT} max-w-sm`} value={name} maxLength={60} autoFocus onChange={(e) => setName(e.target.value)} />
             </Field>
-            <ColorField name={`${id}-color`} value={color} onChange={setColor} />
+            <ColorField name={`${id}-color`} value={color} onChange={setColor} taken={taken} />
             {problem && (
               <p role="alert" className="text-sm text-bad">
                 {problem}
@@ -178,10 +211,23 @@ function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Catego
               onCancel={() => setMode("view")}
             />
           ) : c.active ? (
-            <Confirm text={errorMessage("category_in_use")} confirm="השבתה" danger={false} busy={busy === "active"} onConfirm={() => void setActive(false)} onCancel={() => setMode("view")} />
+            <Confirm
+              text={
+                <>
+                  <b>{c.name}</b>: {errorMessage("category_in_use")}
+                </>
+              }
+              confirm="השבתה"
+              danger={false}
+              busy={busy === "active"}
+              onConfirm={() => void setActive(false)}
+              onCancel={() => setMode("view")}
+            />
           ) : (
             <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
-              <p className="mb-2">יש שיעורים בקטגוריה הזו, והיא כבר מושבתת. היא נשארת בשיעורים הקיימים.</p>
+              <p className="mb-2">
+                <b>{c.name}</b>: יש שיעורים בקטגוריה הזו, והיא כבר מושבתת. היא נשארת בשיעורים הקיימים.
+              </p>
               <Button onClick={() => setMode("view")}>הבנתי</Button>
             </div>
           )
@@ -194,13 +240,8 @@ function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Catego
       muted={!c.active}
       cells={cells}
       actions={
+        // ↑↓ come last, so they sit at the same edge in every row
         <>
-          <Button kind="quiet" disabled={first || moving} onClick={() => onMove(-1)} aria-label={`הזזת ${c.name} למעלה`} title="למעלה">
-            ↑
-          </Button>
-          <Button kind="quiet" disabled={last || moving} onClick={() => onMove(1)} aria-label={`הזזת ${c.name} למטה`} title="למטה">
-            ↓
-          </Button>
           <Button kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${c.name}`}>
             עריכה
           </Button>
@@ -209,6 +250,12 @@ function CategoryItem({ c, first, last, moving, onMove, onChanged }: { c: Catego
           </Button>
           <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${c.name}`}>
             מחיקה
+          </Button>
+          <Button kind="quiet" disabled={first || moving} onClick={() => onMove(-1)} aria-label={`הזזת ${c.name} למעלה`} title="למעלה">
+            ↑
+          </Button>
+          <Button kind="quiet" disabled={last || moving} onClick={() => onMove(1)} aria-label={`הזזת ${c.name} למטה`} title="למטה">
+            ↓
           </Button>
         </>
       }
@@ -228,7 +275,7 @@ function AddCategory({ taken, onAdded }: { taken: Set<string>; onAdded: () => Pr
     setProblem(null);
     const shown = name.trim();
     const ok = await run("add", () => port.addCategory({ name, color }), `הקטגוריה «${shown}» נוספה`, (code) => {
-      if (code !== "category_exists" && code !== "name_required" && code !== "bad_value") return false;
+      if (code !== "category_exists" && code !== "name_required" && code !== "bad_value" && code !== "bad_color") return false;
       setProblem(errorMessage(code));
       return true;
     });

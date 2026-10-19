@@ -172,6 +172,32 @@ describe("the grid's tables and functions", () => {
     }
   });
 
+  it("propose takes a room of its own edition only — another edition's room is refused, and stays deletable there", async () => {
+    const realRoom = Number((await db.query("select id from public.rooms where edition_id = $1 and is_default", [ed])).rows[0].id);
+    await db.query("begin");
+    try {
+      await db.query(
+        "insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template",
+        [otherEd],
+      );
+      await db.query("savepoint s");
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(OTHER))]);
+      let refused = "ok";
+      try {
+        await db.query("select public.propose($1, $2, null, 2, 870, 960, $3, 'self')", [otherEd, speaker, realRoom]);
+      } catch (e) {
+        refused = (e as { message: string }).message;
+        await db.query("rollback to savepoint s");
+      }
+      expect(refused).toBe("bad_shape");
+      await db.query("reset role");
+      expect((await db.query("select count(*)::int as n from public.lessons where room_id = $1 and edition_id <> $2", [realRoom, ed])).rows[0].n).toBe(0);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   it("logs every change, with ids and states only", async () => {
     const rows = (await db.query("select entity, kind, actor, detail from public.activity where edition_id = $1 order by id", [ed])).rows;
     expect(rows.map((r) => `${r.entity}:${r.kind}`)).toEqual(["lessons:insert", "approaches:insert", "pitches:insert"]);

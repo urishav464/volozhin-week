@@ -69,16 +69,23 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
   }, [toast]);
 
   const ctx: SettingsContext = useMemo(
-    () => ({ port: port.settings, me, wide, onMeChanged, notify: (kind, text) => setToast({ kind, text, at: Date.now() }) }),
+    () => ({ port: port.settings, me, wide, onMeChanged, notify: (kind, text) => setToast({ kind, text, at: Date.now() }), clear: () => setToast(null) }),
     [port, me, wide, onMeChanged],
   );
+
+  // A tab opened by its address (/settings/categories) is scrolled into view on a narrow row.
+  const slug = current?.slug;
+  useEffect(() => {
+    if (slug) tabRefs.current.get(slug)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [slug]);
 
   if (!tab) return <Navigate to="/settings/team" replace />;
   if (!current) return <Navigate to="/settings" replace />;
 
-  const go = (slug: Slug) => {
-    navigate(`/settings/${slug}`);
-    tabRefs.current.get(slug)?.focus();
+  const go = (to: Slug) => {
+    setToast(null); // the last tab's news is not this tab's
+    navigate(`/settings/${to}`);
+    tabRefs.current.get(to)?.focus();
   };
   // Arrow keys move between tabs (right-to-left: ← is the next one), Home/End to the ends.
   const onKey = (e: KeyboardEvent) => {
@@ -117,7 +124,7 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
             aria-label="אזורי ההגדרות"
             aria-orientation={wide ? "vertical" : "horizontal"}
             onKeyDown={onKey}
-            className="flex gap-1 overflow-x-auto pb-1 lg:sticky lg:top-4 lg:w-44 lg:shrink-0 lg:flex-col lg:overflow-visible lg:pb-0"
+            className="flex gap-0.5 overflow-x-auto pb-1 sm:gap-1 lg:sticky lg:top-4 lg:w-44 lg:shrink-0 lg:flex-col lg:overflow-visible lg:pb-0"
           >
             {tabs.map((t) => {
               const selected = t.slug === current.slug;
@@ -134,7 +141,7 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
                   aria-controls="settings-panel"
                   tabIndex={selected ? 0 : -1}
                   onClick={() => go(t.slug)}
-                  className={`min-h-11 shrink-0 whitespace-nowrap rounded-lg px-4 text-start font-semibold transition-colors ${
+                  className={`min-h-11 shrink-0 whitespace-nowrap rounded-lg px-2 text-start font-semibold transition-colors sm:px-4 ${
                     selected ? "bg-ink text-paper" : "text-ink-soft hover:bg-line/60 hover:text-ink"
                   }`}
                 >
@@ -143,7 +150,8 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
               );
             })}
           </div>
-          <div role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${current.slug}`} className="min-w-0 flex-1 space-y-4">
+          {/* pb-20: on a phone the last control stays clear of a toast */}
+          <div role="tabpanel" id="settings-panel" aria-labelledby={`settings-tab-${current.slug}`} className="min-w-0 flex-1 space-y-4 pb-20 lg:pb-0">
             {body}
           </div>
         </div>
@@ -158,7 +166,7 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
           }`}
         >
           <span>{toast.text}</span>
-          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-me-1 rounded-md px-2 py-0.5 text-lg leading-none hover:bg-paper/10">
+          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-md text-lg leading-none hover:bg-paper/10">
             ×
           </button>
         </div>

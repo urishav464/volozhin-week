@@ -1,7 +1,7 @@
 // Scenarios that walk docs/CONTRACT.md clause by clause. Each runs on the
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
-import type { Step } from "./fixture";
+import { FOREIGN_ROOM, type Step } from "./fixture";
 
 export const SCENARIOS: Record<string, Step[]> = {
   "propose, claim, offer, give back": [
@@ -14,6 +14,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", propose: "אלפא", cell: [4, 1200, 1290] }, // Thursday after 19:00
     { as: "A", propose: "אלפא", cell: [0, 390, 435] }, // Sunday before the opening
     { as: "A", propose: "אלפא", cell: [1, 512, 600] }, // not on the 5-minute grid
+    { as: "A", propose: "אלפא", cell: [1, 600, 690, FOREIGN_ROOM] }, // another edition's room
     { as: "A", propose: "וו", cell: [1, 600, 690] }, // retired
     { as: "L", propose: "גמא", cell: [1, 600, 690] }, // logistics may not
     { as: "A", propose: "הא", cell: [1, 600, 690] }, // unvetted → candidate only
@@ -57,6 +58,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", move: [1, 600], to: [3, 870, 960, "כיתה"] }, // parallel in another room is fine
     { as: "B", propose: "גמא", cell: [4, 510, 600] },
     { as: "A", move: [4, 510], to: [4, 600, 690] }, // anyone may move a draft
+    { as: "A", move: [4, 600], to: [4, 600, 690, FOREIGN_ROOM] }, // another edition's room
   ],
 
   "reshaping": [
