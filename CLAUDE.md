@@ -81,6 +81,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
   availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
   «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
+- `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
+  grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
+  week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
+  the header's badge); `actorIn` there is the one place a screen asks what the member may do.
 - `supabase/seed_gate.sql` / `unseed_gate.sql` — the decision gate's synthetic practice week.
 - `supabase/schema.sql` — the whole database; `tests/sql/` — its tests on PostgreSQL 16 with a
   Supabase-like bootstrap (`tests/sql/bootstrap.sql`).
