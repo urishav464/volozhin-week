@@ -77,6 +77,17 @@ export function emailPassword(email: string): Claims {
   };
 }
 
+/** A password session on an account that ALSO has Google linked — must still be refused. */
+export function linkedPassword(email: string): Claims {
+  return {
+    sub: "00000000-0000-4000-8000-000000000003",
+    role: "authenticated",
+    email,
+    app_metadata: { provider: "email", providers: ["email", "google"] },
+    amr: [{ method: "password", timestamp: 1 }],
+  };
+}
+
 // Run `fn` as `role` with the given JWT claims, inside a transaction that is
 // always rolled back — so a test can try writes without leaving traces. Each
 // statement runs under its own savepoint, so a refused one does not abort the

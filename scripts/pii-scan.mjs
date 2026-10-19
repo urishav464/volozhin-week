@@ -16,8 +16,10 @@ import { join } from "node:path";
 const PATTERNS = [
   {
     name: "Israeli phone",
-    // 05x / 0x landlines / 07x, with or without +972, separated by spaces or dashes.
-    re: /(?<![\d.])(?:\+972[\s-]?|0)(?:5\d|7[2-9]|[2-489])[\s-]?\d{3}[\s-]?\d{4}(?![\d])/g,
+    // 05x / landlines / 07x; 0… or +972 / 972 (wa.me links); groups 3+4, 4+3 or
+    // 3+2+2 split by spaces, dots, dashes or parentheses. Lines are normalised
+    // first (bidi marks dropped, Unicode dashes → '-'), as WhatsApp and Word paste them.
+    re: /(?<![\d.])(?:\+?972[\s.-]?\(?0?\)?[\s.-]?|\(?0)(?:5\d|7[2-9]|[2-489])\)?[\s.-]?(?:\d{3}[\s.-]?\d{4}|\d{4}[\s.-]?\d{3}|\d{3}[\s.-]?\d{2}[\s.-]?\d{2})(?!\d)/g,
   },
   { name: "e-mail", re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g },
   { name: "Supabase secret key", re: /sb_secret_[A-Za-z0-9_-]{8,}/g },
@@ -61,7 +63,7 @@ for (const file of files()) {
   } catch {
     continue;
   }
-  const lines = text.split("\n");
+  const lines = text.split("\n").map((l) => l.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/[\u2010-\u2015\u2212]/g, "-"));
   lines.forEach((line, n) => {
     for (const { name, re } of PATTERNS) {
       for (const m of line.matchAll(re)) {

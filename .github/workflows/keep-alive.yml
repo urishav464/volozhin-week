@@ -2,7 +2,9 @@ name: keep-alive
 
 # Supabase's free tier pauses a project after 7 days without activity. One call
 # a day keeps it awake through the months between one week and the next.
-# Needs two repository secrets (docs/SETUP.he.md, step 6); skips until they exist.
+# Needs two repository secrets (docs/SETUP.he.md, step 6). Fails — and GitHub
+# e-mails the failure — while they are missing, so a misnamed secret or one
+# saved under "Variables" cannot leave the project quietly unpinged.
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -21,8 +23,8 @@ jobs:
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_PUBLISHABLE_KEY" ]; then
-            echo "::notice::SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY not set yet — skipping (docs/SETUP.he.md, step 6)"
-            exit 0
+            echo "::error::SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY are missing or empty — they must be under the Secrets tab, not Variables (docs/SETUP.he.md, step 6)"
+            exit 1
           fi
           curl -fsS -X POST "$SUPABASE_URL/rest/v1/rpc/ping" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \

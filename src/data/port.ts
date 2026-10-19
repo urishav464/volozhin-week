@@ -14,6 +14,12 @@ export interface DataPort {
   signOut(): Promise<void>;
   /** Called on sign-in / sign-out only. Returns an unsubscribe function. */
   onAuthChange(cb: () => void): () => void;
+  /**
+   * Why the last return from Google failed (wrong client secret, sign-ups
+   * disabled, a code that could not be exchanged…), once — the address bar is
+   * cleaned. null when there was no failed return.
+   */
+  authError(): Promise<string | null>;
 
   /** The editions this member can see, newest first. */
   editions(): Promise<Edition[]>;

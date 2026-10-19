@@ -1,17 +1,22 @@
 name: privacy
 
 # No path filter: docs are exactly where a phone number would slip in.
+# Never cancelled half-way: a skipped scan is a commit nobody looked at.
+# Daily (and on demand) the whole history is scanned, not just the last push.
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "41 4 * * *"
   workflow_dispatch:
 
 concurrency:
   group: privacy-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  pull-requests: read # gitleaks lists a PR's commits through the API
 
 jobs:
   scan:
@@ -26,7 +31,7 @@ jobs:
           node-version-file: .node-version
       - name: No phones, private e-mails or keys in tracked files
         run: node scripts/pii-scan.mjs
-      - name: No secrets anywhere in history
+      - name: No secrets, phones or private e-mails anywhere in history (.gitleaks.toml)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

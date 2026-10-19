@@ -1,14 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { expect, test } from "@playwright/test";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { FakeSupabase, signIn } from "./mock";
+import { noSidewaysScroll } from "./helpers";
+import { FakeSupabase, fakeSession, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
 const mockUrl = () => process.env.E2E_MOCK_URL!;
 
-async function noSidewaysScroll(page: Page) {
-  const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
-  expect(scroll).toBeLessThanOrEqual(width);
-}
 
 const member = {
   status: "ok",
@@ -49,12 +47,13 @@ test.describe("mock build", () => {
   test("a member lands home, the request carrying their token", async ({ page }) => {
     const sb = new FakeSupabase({ status: 200, body: member });
     await sb.attach(page);
-    await signIn(page);
+    const session = await signIn(page);
+    sb.token = session.access_token; // anything else is refused, as PostgREST would
     await page.goto(mockUrl());
     await expect(page.getByRole("banner").getByText(/נועה בדיקה/)).toBeVisible();
     await expect(page.getByRole("banner").getByText(/צוות תוכן/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "עוד לא נפתח מחזור" })).toBeVisible();
-    expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/whoami")?.auth).toMatch(/^Bearer /);
+    expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/whoami")?.auth).toBe(`Bearer ${session.access_token}`);
     await noSidewaysScroll(page);
   });
 
@@ -100,5 +99,32 @@ test.describe("mock build", () => {
     await page.getByRole("button", { name: "התנתקות" }).click();
     await expect(page.getByRole("button", { name: "כניסה עם Google" })).toBeVisible();
     expect(sb.count("/auth/v1/logout")).toBe(1);
+  });
+
+  test("the return from Google exchanges the code with the verifier behind the challenge", async ({ page }) => {
+    const sb = new FakeSupabase({ status: 200, body: member });
+    await sb.attach(page);
+    await page.goto(mockUrl());
+    await page.getByRole("button", { name: "כניסה עם Google" }).click();
+    await page.waitForURL("**/auth/v1/authorize**");
+    const challenge = sb.calls.find((c) => c.path === "/auth/v1/authorize")!.query.get("code_challenge")!;
+    sb.pkceSession = fakeSession();
+    sb.token = (sb.pkceSession as { access_token: string }).access_token;
+    await page.goto(`${mockUrl()}/?code=abc123`);
+    await expect(page.getByRole("banner").getByText(/נועה בדיקה/)).toBeVisible();
+    expect(sb.pkceBody?.auth_code).toBe("abc123");
+    const digest = createHash("sha256").update(sb.pkceBody!.code_verifier!).digest("base64url");
+    expect(digest).toBe(challenge);
+    expect(page.url()).not.toContain("code=");
+  });
+
+  test("a failed return from Google says so, and cleans the address bar", async ({ page }) => {
+    const sb = new FakeSupabase();
+    await sb.attach(page);
+    await page.goto(`${mockUrl()}/?error=server_error&error_code=unexpected_failure&error_description=Unable+to+exchange+external+code`);
+    await expect(page.getByRole("alert")).toContainText("הכניסה לא הושלמה");
+    await expect(page.getByRole("alert")).toContainText("Unable to exchange external code");
+    await expect(page.getByRole("button", { name: "כניסה עם Google" })).toBeVisible();
+    expect(page.url()).not.toContain("error");
   });
 });

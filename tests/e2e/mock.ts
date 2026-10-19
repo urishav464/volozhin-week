@@ -24,10 +24,12 @@ export function fakeSession(email = "member@example.org") {
   return { access_token: token, token_type: "bearer", expires_in: 3600, expires_at: now + 3600, refresh_token: "mock-refresh", user };
 }
 
+/** Store a signed-in session in the browser; returns it (its access_token is what requests must carry). */
 export async function signIn(page: Page, email?: string) {
   const key = `sb-${new URL(MOCK_URL).hostname.split(".")[0]}-auth-token`;
-  const session = JSON.stringify(fakeSession(email));
-  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [key, session] as const);
+  const session = fakeSession(email);
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [key, JSON.stringify(session)] as const);
+  return session;
 }
 
 export interface Call {
@@ -43,6 +45,11 @@ export class FakeSupabase {
   readonly rpc = new Map<string, unknown[]>();
   /** Answers for RPCs other than whoami, and for GET /rest/v1/editions. */
   readonly answers = new Map<string, unknown>();
+  /** When set, whoami answers 401 unless the request carries exactly this bearer — like PostgREST. */
+  token: string | null = null;
+  /** What /auth/v1/token?grant_type=pkce answers (and the body it was sent). */
+  pkceSession: unknown = null;
+  pkceBody: { auth_code?: string; code_verifier?: string } | null = null;
   constructor(private whoami: { status: number; body: unknown } = { status: 200, body: {} }) {}
 
   async attach(page: Page) {
@@ -61,7 +68,14 @@ export class FakeSupabase {
       return route.fulfill({ status: 200, contentType: "text/html", body: "<p>mock Google</p>" });
     }
     if (u.pathname === "/rest/v1/rpc/whoami") {
+      if (this.token && req.headers()["authorization"] !== `Bearer ${this.token}`) {
+        return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: "PGRST301", message: "JWT required" }) });
+      }
       return route.fulfill({ status: this.whoami.status, contentType: "application/json", body: JSON.stringify(this.whoami.body) });
+    }
+    if (u.pathname === "/auth/v1/token" && u.searchParams.get("grant_type") === "pkce" && this.pkceSession) {
+      this.pkceBody = req.postDataJSON();
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.pkceSession) });
     }
     if (u.pathname === "/auth/v1/logout") return route.fulfill({ status: 204, body: "" });
     if (u.pathname === "/rest/v1/editions") {

@@ -32,7 +32,7 @@
    - **Publishable key**, בצורה `sb_publishable_…`.
 5. מריצים את הסכמה:
    1. **SQL Editor → New query.**
-   2. ב-GitHub פותחים את `supabase/schema.sql`, לוחצים **Raw**, ומעתיקים את **כל** הטקסט.
+   2. ב-GitHub פותחים את הקובץ `supabase/schema.sql` **בענף `Volozin`**. עד שה-PR הראשון ימוזג, ב-`main` יש רק README. אפשר לבחור את הענף בבורר הענפים שמעל רשימת הקבצים, או להיכנס ישר לכתובת: `https://github.com/urishav464/volozhin-week/blob/Volozin/supabase/schema.sql`. לוחצים **Raw** ומעתיקים את **כל** הטקסט.
    3. מדביקים ולוחצים **Run**. התוצאה הצפויה: `Success. No rows returned`.
    4. לוחצים **Run** פעם נוספת. ההרצה חוזרת על עצמה בלי נזק, וגם הפעם צריך להתקבל Success.
 6. מוסיפים את עצמכם כמדריך/ה. בשאילתה חדשה כותבים, במקום ההערה, את כתובת ה-Gmail שאיתה תיכנסו:
@@ -86,16 +86,19 @@
 
 **משתני סביבה**
 
-4. תחת **Environment variables**, עבור **Production בלבד**:
-   - `VITE_SUPABASE_URL` = ה-Project URL
-   - `VITE_SUPABASE_PUBLISHABLE_KEY` = ה-Publishable key
-   - `NODE_VERSION` = `22` (אפשר גם ל-Preview)
-
-   תצוגות מקדימות של ענפים נבנות בלי שני המשתנים הראשונים, ולכן רצות **במצב הדגמה**, עם נתונים לדוגמה בלבד. זה מכוון: בטוח לשתף קישור של תצוגה מקדימה.
+4. **באשף היצירה לא מוסיפים משתני סביבה.** באשף אין בחירה בין Production ל-Preview, ומשתנה שמוגדר בו עלול לחול גם על התצוגות המקדימות.
+   - גרסת Node נקבעת מהקובץ `.node-version` שבריפו.
+   - את שני משתני ה-Supabase מוסיפים בצעד 6 שבהמשך.
 
 **פריסה ראשונה**
 
 5. לוחצים **Save and Deploy**. כל עוד לא מוזג ה-PR הראשון ל-`main`, ייתכן שהבנייה הראשונה של `main` תיכשל. זה תקין.
+6. **אחרי הפריסה הראשונה** נכנסים ל-**Settings → Variables and Secrets**, בוחרים **Production**, ומוסיפים:
+   - `VITE_SUPABASE_URL` = ה-Project URL
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = ה-Publishable key
+
+   בודקים שברשימה של **Preview** לא מופיע אף אחד מהשניים, ואז מריצים שוב את הפריסה (Retry deployment).
+   - **בלי המשתנים**, תצוגות מקדימות של ענפים רצות **במצב הדגמה**, עם נתונים לדוגמה בלבד, ולכן בטוח לשתף קישור של תצוגה מקדימה.
 
 ## 5. Supabase: כתובות חזרה
 
@@ -111,7 +114,10 @@
 1. בריפו נכנסים ל-**Settings → Secrets and variables → Actions → New repository secret**, ומוסיפים:
    - `SUPABASE_URL` = ה-Project URL
    - `SUPABASE_PUBLISHABLE_KEY` = ה-Publishable key
-2. בודקים: בלשונית **Actions** בוחרים **keep-alive**, לוחצים **Run workflow**, ומוודאים שהריצה מסתיימת בירוק ומדפיסה `"ok"`.
+2. הפעולה היומית רצה רק אחרי שה-PR הראשון ממוזג ל-`main`: GitHub מריץ תזמונים רק מהענף הראשי. אחרי המיזוג בודקים אותה:
+   1. בלשונית **Actions** בוחרים **keep-alive** ולוחצים **Run workflow**.
+   2. מוודאים שהריצה מסתיימת בירוק ומדפיסה `"ok"`.
+   - **אם היא אדומה,** כנראה ששני הסודות חסרים, או שנשמרו בלשונית **Variables** במקום **Secrets**. GitHub ישלח גם מייל על הכישלון.
 
 ## 7. בדיקה
 

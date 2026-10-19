@@ -4,11 +4,14 @@
 // must produce the same result under both.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
-import { SCHEMA, as, dropDatabase, emailPassword, freshDatabase, google, sqlstate, type Regime } from "./db";
+import { SCHEMA, as, dropDatabase, emailPassword, freshDatabase, google, linkedPassword, sqlstate, type Regime } from "./db";
 
 const ADMIN = "Admin.Person@Example.org"; // mixed case on purpose: stored and matched lower-case
 const CONTENT = "content.person@example.org";
 const STRANGER = "stranger@example.org";
+const OTHER_YEAR = "other.year@example.org";
+const EDITION_ADMIN = "edition.admin@example.org";
+const PEER_ADMIN = "peer.admin@example.org";
 
 // What each API role may execute — the complete list. A new browser-callable
 // function means updating this on purpose.
@@ -23,6 +26,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
   const dbName = `vw_schema_${regime}_${process.pid}`;
   let db: pg.Client;
   let edition: number;
+  let otherEdition: number;
 
   beforeAll(async () => {
     db = await freshDatabase(dbName, regime);
@@ -36,6 +40,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       "insert into public.members (email, display_name, role, edition_id) values ($1, 'חניך בדיקה', 'content', $2)",
       [CONTENT, edition],
     );
+    otherEdition = Number((await db.query("insert into public.editions (label) values ('תשפ\"ו') returning id")).rows[0].id);
+    await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, 'שנה אחרת', 'content', $2)", [OTHER_YEAR, otherEdition]);
+    await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, 'מנהל/ת מחזור', 'admin', $2)", [EDITION_ADMIN, edition]);
+    await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, 'מנהל/ת נוסף/ת', 'admin', $2)", [PEER_ADMIN, edition]);
   });
 
   afterAll(async () => {
@@ -125,11 +133,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
         expect(w.schema_version).toBe(2);
-        expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual([
-          ADMIN.toLowerCase(),
-          CONTENT,
-        ]);
-        expect((await q("select label from public.editions")).rows).toHaveLength(1);
+        expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
+          [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
+        );
+        expect((await q("select label from public.editions")).rows).toHaveLength(2);
         await q("insert into public.members (email, role, edition_id) values ('new.one@example.org', 'logistics', $1)", [edition]);
         expect(
           await sqlstate(q("insert into public.members (email, role) values ('Upper@Example.org', 'content')")),
@@ -148,7 +155,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(typeof w.memberships[0].member_id).toBe("number");
         expect((await q("select email from public.members")).rows.map((r) => r.email)).toEqual([CONTENT]);
         const team = await q("select * from public.team($1)", [edition]);
-        expect(team.rows).toHaveLength(2);
+        expect(team.rows).toHaveLength(4); // the global admin, this member, the two edition admins
         expect(Object.keys(team.rows[0]).sort()).toEqual(["display_name", "gender", "id", "role"]);
         expect((await q("select id from public.editions")).rows.map((r) => Number(r.id))).toEqual([edition]);
         expect(
@@ -158,6 +165,59 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect((await q("select role from public.members where email = $1", [CONTENT])).rows[0].role).toBe("content");
         expect(await sqlstate(q("insert into public.editions (label) values ('x')"))).toBe("42501");
       });
+    });
+  });
+
+  describe("a password session on an account that also has Google linked", () => {
+    it("is refused like any non-Google sign-in", async () => {
+      await as(db, "authenticated", linkedPassword(ADMIN.toLowerCase()), async (q) => {
+        expect((await q("select public.whoami() as w")).rows[0].w.status).toBe("wrong_provider");
+        expect((await q("select * from public.members")).rows).toEqual([]);
+      });
+    });
+  });
+
+  describe("editions are walled off from each other", () => {
+    it("shows last year's member nothing of this year", async () => {
+      await as(db, "authenticated", google(OTHER_YEAR), async (q) => {
+        expect((await q("select id from public.editions")).rows.map((r) => Number(r.id))).toEqual([otherEdition]);
+        expect((await q("select email from public.members")).rows.map((r) => r.email)).toEqual([OTHER_YEAR]);
+        expect(await sqlstate(q("select * from public.team($1)", [edition]))).toBe("42501");
+        expect((await q("select public.whoami() as w")).rows[0].w.memberships).toMatchObject([{ edition_id: otherEdition, role: "content" }]);
+      });
+    });
+  });
+
+  describe("an edition's admin", () => {
+    it("manages that edition's team, but cannot mint, demote or delete an admin, or reach another edition", async () => {
+      await as(db, "authenticated", google(EDITION_ADMIN), async (q) => {
+        expect((await q("select email from public.members where edition_id = $1 order by email", [otherEdition])).rows).toEqual([]);
+        expect(await sqlstate(q("insert into public.members (email, role, edition_id) values ('n@example.org', 'logistics', $1)", [edition]))).toBe("ok");
+        expect(await sqlstate(q("insert into public.members (email, role, edition_id) values ('x@example.org', 'admin', $1)", [edition]))).toBe("42501");
+        expect(await sqlstate(q("insert into public.members (email, role) values ('y@example.org', 'content')"))).toBe("42501");
+        expect(await sqlstate(q("insert into public.members (email, role, edition_id) values ('z@example.org', 'content', $1)", [otherEdition]))).toBe("42501");
+        expect(await sqlstate(q("update public.members set role = 'admin' where email = $1", [CONTENT]))).toBe("42501");
+        expect((await q("update public.members set role = 'content' where email = $1 returning id", [PEER_ADMIN])).rows).toEqual([]);
+        expect((await q("delete from public.members where email = $1 returning id", [PEER_ADMIN])).rows).toEqual([]);
+        expect((await q("update public.editions set label = 'x' returning id")).rows).toEqual([]);
+      });
+    });
+  });
+
+  describe("authenticated's table privileges", () => {
+    it("are SELECT everywhere it reads, writes only on editions/members, and never TRUNCATE/REFERENCES/TRIGGER", async () => {
+      const grants = (
+        await db.query(`
+          select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
+            from information_schema.role_table_grants
+           where grantee = 'authenticated' and table_schema = 'public'
+           group by table_name order by table_name`)
+      ).rows;
+      for (const g of grants) {
+        if (g.table_name === "editions" || g.table_name === "members") expect(g.p, g.table_name).toBe("DELETE,INSERT,SELECT,UPDATE");
+        else expect(g.p, g.table_name).toBe("SELECT");
+      }
+      expect(grants.map((g) => g.table_name)).toContain("lessons");
     });
   });
 });

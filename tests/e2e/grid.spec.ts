@@ -2,6 +2,7 @@
 // semantics run on — docs/CONTRACT.md). Desktop drags with a mouse; phone and
 // tablet tap. These are the decision gate's tasks.
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { noSidewaysScroll } from "./helpers";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
 
@@ -17,10 +18,6 @@ async function drag(page: Page, from: Locator, to: Locator) {
   await page.mouse.up();
 }
 
-async function noSidewaysScroll(page: Page) {
-  const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
-  expect(scroll).toBeLessThanOrEqual(width);
-}
 
 const cell = (page: Page, day: number, start: number, end: number) => page.locator(`[data-drop="cell:${day}:${start}:${end}"]`);
 const speaker = (page: Page, id: number) => page.locator(`[data-speaker-id="${id}"]`);

@@ -36,14 +36,33 @@ export class SupabasePort implements DataPort {
   }
 
   async signOut(): Promise<void> {
-    await this.sb.auth.signOut();
+    // This device only: a trainee signing out of a shared midrasha computer
+    // must not be signed out of their phone in the middle of the week.
+    await this.sb.auth.signOut({ scope: "local" });
   }
 
   onAuthChange(cb: () => void): () => void {
-    const { data } = this.sb.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN" || event === "SIGNED_OUT") cb();
+    // auth-js re-emits SIGNED_IN on every return to the tab (and to every open
+    // tab); only a different user, or a sign-out, changes what we show.
+    let user: string | null | undefined;
+    const { data } = this.sb.auth.onAuthStateChange((event, session) => {
+      const next = session?.user.id ?? null;
+      if (event === "SIGNED_OUT" || (event === "SIGNED_IN" && next !== user)) {
+        const first = user === undefined;
+        user = next;
+        if (!first || event === "SIGNED_OUT") cb();
+      } else if (user === undefined) user = next;
     });
     return () => data.subscription.unsubscribe();
+  }
+
+  async authError(): Promise<string | null> {
+    const { error } = await this.sb.auth.initialize(); // the cached result of the URL detection at start-up
+    if (!error) return null;
+    const u = new URL(window.location.href);
+    for (const k of ["error", "error_code", "error_description"]) u.searchParams.delete(k);
+    window.history.replaceState(window.history.state, "", u.pathname + u.search); // also drops #error=…
+    return error.message;
   }
 
   async editions(): Promise<Edition[]> {

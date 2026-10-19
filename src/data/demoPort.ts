@@ -38,6 +38,9 @@ export class DemoPort implements DataPort {
   onAuthChange(): () => void {
     return () => {};
   }
+  async authError(): Promise<string | null> {
+    return null;
+  }
 
   async editions(): Promise<Edition[]> {
     return [structuredClone(this.engine.week.edition)];

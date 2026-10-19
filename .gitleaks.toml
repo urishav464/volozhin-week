@@ -1,0 +1,30 @@
+# gitleaks' default secret rules, plus this project's personal-data rules —
+# the same patterns as scripts/pii-scan.mjs, applied to every commit in history.
+title = "volozhin-week"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "israeli-phone"
+description = "Israeli phone number (personal data lives in the database only)"
+regex = '''(?:^|[^\d.])((?:\+?972[\s.-]?\(?0?\)?[\s.-]?|\(?0)(?:5\d|7[2-9]|[2-489])\)?[\s.-]?(?:\d{3}[\s.-]?\d{4}|\d{4}[\s.-]?\d{3}|\d{3}[\s.-]?\d{2}[\s.-]?\d{2}))(?:[^\d]|$)'''
+secretGroup = 1
+entropy = 0
+[[rules.allowlists]]
+paths = ['''(^|/)package-lock\.json$''']
+
+[[rules]]
+id = "email"
+description = "E-mail address outside the allow-list (personal data lives in the database only)"
+regex = '''([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})'''
+secretGroup = 1
+entropy = 0
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = [
+  '''(?i)@example\.(org|com|net)$''',
+  '''(?i)\.invalid$''',
+  '''(?i)^noreply@anthropic\.com$''',
+  '''(?i)@users\.noreply\.github\.com$''',
+]

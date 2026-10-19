@@ -80,15 +80,17 @@ create unique index if not exists members_email_edition_key
 -- Identity helpers (schema app — never exposed over the API).
 -- -----------------------------------------------------------------------------
 
--- The signed-in address, lower-cased — but only for a Google sign-in. Anything
--- else (an e-mail/password account, an anonymous session, no session) is NULL,
--- so it matches no member and sees nothing.
+-- The signed-in address, lower-cased — but only for an account that signed up
+-- with Google. Anything else (an e-mail/password account — even one that also
+-- has a Google identity linked — an anonymous session, no session) is NULL, so
+-- it matches no member and sees nothing. (`providers` lists every linked
+-- identity and says nothing about how THIS session signed in, so it is not
+-- consulted.)
 create or replace function app.my_email() returns text
   language sql stable security definer set search_path = ''
   as $$
     select case
       when coalesce(auth.jwt() -> 'app_metadata' ->> 'provider', '') = 'google'
-        or coalesce(auth.jwt() -> 'app_metadata' -> 'providers', '[]'::jsonb) ? 'google'
       then nullif(lower(btrim(auth.jwt() ->> 'email')), '')
     end
   $$;
@@ -185,7 +187,9 @@ create policy members_admin_write on public.members
   for all to authenticated
   using (
     (select app.is_global_admin())
-    or (edition_id is not null and app.my_role(edition_id) = 'admin')
+    -- an edition's admin manages that edition's non-admin rows only: it can
+    -- neither create an admin nor demote or delete a fellow admin
+    or (edition_id is not null and role <> 'admin' and app.my_role(edition_id) = 'admin')
   )
   with check (
     (select app.is_global_admin())

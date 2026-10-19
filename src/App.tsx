@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gateFor, gateForError, type Gate } from "./data/gate";
 import { makePort } from "./data";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
@@ -15,16 +15,22 @@ export default function App() {
   const port = useMemo(makePort, []);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const shown = useRef<State>(state);
+  shown.current = state;
 
   const refresh = useCallback(async () => {
     try {
       const w = await port.whoami();
       const email = w.status === "signed_out" ? null : await port.sessionEmail();
+      if (w.status === "signed_out") setAuthError(await port.authError());
       setState({ kind: "gate", gate: gateFor(w, EXPECTED_SCHEMA_VERSION), email });
     } catch (e) {
       const gate = gateForError(e, EXPECTED_SCHEMA_VERSION);
       if (gate) setState({ kind: "gate", gate, email: await port.sessionEmail() });
-      else setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      // A blip on a later check (back to the tab, a flaky network) keeps the
+      // screen people are working in; only a first load shows the error page.
+      else if (shown.current.kind !== "gate") setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
   }, [port]);
 
@@ -60,14 +66,17 @@ export default function App() {
     >
       {state.kind === "loading" && <p className="text-ink-soft text-center mt-10">טוען…</p>}
       {state.kind === "error" && (
-        <Notice title="משהו השתבש בטעינה" actions={[{ label: "לנסות שוב", onClick: () => void refresh() }]}>
+        <Notice
+          title="משהו השתבש בטעינה"
+          actions={[{ label: "לנסות שוב", onClick: () => void refresh() }, ...(demo ? [] : [{ label: "התנתקות", onClick: () => void signOut() }])]}
+        >
           <p>לא הצלחנו לדבר עם השרת. אם זה חוזר, כדאי לספר למדריך/ה.</p>
           <p className="text-xs text-ink-faint" dir="ltr">
             {state.message}
           </p>
         </Notice>
       )}
-      {state.kind === "gate" && <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} onSignIn={signIn} onSignOut={signOut} />}
+      {state.kind === "gate" && <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} />}
     </Shell>
   );
 }
@@ -77,13 +86,14 @@ function GateScreen(props: {
   gate: Gate;
   email: string | null;
   busy: boolean;
+  authError: string | null;
   onSignIn: () => void;
   onSignOut: () => void;
 }) {
   const { gate, email } = props;
   switch (gate.screen) {
     case "signed_out":
-      return <SignIn onSignIn={props.onSignIn} busy={props.busy} />;
+      return <SignIn onSignIn={props.onSignIn} busy={props.busy} error={props.authError} />;
     case "wrong_provider":
       return (
         <Notice title="הכניסה רק עם Google" actions={[{ label: "התנתקות", onClick: props.onSignOut }]}>
