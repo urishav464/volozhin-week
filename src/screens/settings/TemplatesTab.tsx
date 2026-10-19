@@ -5,7 +5,7 @@
 // sheet; the escorts file). The template is checked as it is typed — the
 // variables, the gender forms, the brackets — and previewed on a synthetic
 // lesson (src/domain/message.ts), so what blocks a message shows here first.
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { DUTY_WHENS, STAGE_LIMITS } from "../../data/stageRules";
 import { DUTY_WHEN_LABEL } from "../../domain/escorts";
@@ -115,15 +115,24 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
     [text, paid, speakerGender, senderGender, edition.start_date, edition.settings.lesson_minutes],
   );
 
+  // Where the cursor goes once an inserted variable is on screen. Placed in the
+  // same commit (a layout effect), never a frame later: keys typed in between
+  // would land where the cursor was, and the late jump would split the text.
+  const caretAt = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const at = caretAt.current;
+    if (at == null) return;
+    caretAt.current = null;
+    ref.current?.focus();
+    ref.current?.setSelectionRange(at, at);
+  }, [text]);
+
   const insert = (token: string, caret = token.length) => {
     const el = ref.current;
     const from = el?.selectionStart ?? text.length;
     const to = el?.selectionEnd ?? text.length;
+    caretAt.current = from + caret;
     setText(text.slice(0, from) + token + text.slice(to));
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(from + caret, from + caret);
-    });
   };
 
   const save = async (e: FormEvent) => {

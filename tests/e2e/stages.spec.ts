@@ -39,6 +39,24 @@ async function stage(panel: Locator, name: string): Promise<Locator> {
 }
 
 test.describe("demo build", () => {
+  test("the cheat-sheet inserts a variable and leaves the cursor after it at once — a late frame moves nothing", async ({ page }) => {
+    // CI's headless browser paints late: a cursor placed a frame after the insert
+    // split whatever was typed in between. Every frame here comes 300ms late.
+    await page.addInitScript(() => {
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (cb) => (setTimeout(() => raf(cb), 300), 0);
+    });
+    await page.goto(`${demoUrl()}/settings/templates`);
+    const body = page.getByLabel("הנוסח", { exact: true });
+    await body.fill("נוסח לדוגמה ל{{פנייה}}: [[מוזמן|מוזמנת]] ללמד ביום {{יום}}, {{תאריך}}, {{שעה}} ({{משך}}), ב");
+    await page.getByRole("button", { name: "הוספת {{מקום}} לנוסח" }).click();
+    await body.pressSequentially(". הנושא: {{כותרת}}.");
+    await expect(body).toHaveValue(
+      "נוסח לדוגמה ל{{פנייה}}: [[מוזמן|מוזמנת]] ללמד ביום {{יום}}, {{תאריך}}, {{שעה}} ({{משך}}), ב{{מקום}}. הנושא: {{כותרת}}.",
+    );
+    await expect(body).toBeFocused();
+  });
+
   test("payment: the handler asks, the instructor approves (and rejects) from the queue; the badge counts requests", async ({ page }, info) => {
     await page.goto(demoUrl());
     const badge = nav(page).getByRole("link", { name: /אישורים/ });
