@@ -36,7 +36,7 @@ export class SupabasePort implements DataPort {
   }
 
   async signOut(): Promise<void> {
-    // This device only: a trainee signing out of a shared midrasha computer
+    // This browser only: a trainee signing out of a shared midrasha computer
     // must not be signed out of their phone in the middle of the week.
     await this.sb.auth.signOut({ scope: "local" });
   }
