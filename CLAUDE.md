@@ -77,6 +77,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   roster, rooms, categories, through `port.settings` (`src/data/settings.ts`; SupabaseSettings /
   DemoSettings refuse with the same codes). Settings are direct writes under RLS — column grants
   and guard triggers keep their rules (`schema.sql` «Settings»; `docs/DECISIONS.md`).
+- `src/data/speakers.ts` — the speaker pool (`port.speakers`): search first and create, edit, vet,
+  contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
+  availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
+  «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
 - `supabase/seed_gate.sql` / `unseed_gate.sql` — the decision gate's synthetic practice week.
 - `supabase/schema.sql` — the whole database; `tests/sql/` — its tests on PostgreSQL 16 with a
   Supabase-like bootstrap (`tests/sql/bootstrap.sql`).
