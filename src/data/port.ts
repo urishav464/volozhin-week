@@ -1,5 +1,6 @@
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
+import type { SettingsPort } from "./settings";
 import type { WhoAmI } from "./types";
 
 // Everything the screens need from storage goes through this interface. Two
@@ -29,4 +30,7 @@ export interface DataPort {
   commands(editionId: number): WeekCommands;
   /** Calls `onChange` when anything in the edition changes (another device, another member). */
   subscribe(editionId: number, onChange: () => void): () => void;
+
+  /** The «הגדרות» screens: editions, team, roster, rooms, categories (src/data/settings.ts). */
+  readonly settings: SettingsPort;
 }

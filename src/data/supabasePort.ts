@@ -3,10 +3,12 @@ import type { Edition, Week } from "../domain/types";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
+import { SupabaseSettings } from "./supabaseSettings";
 import { PortError, type WhoAmI } from "./types";
 
 export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
+  readonly settings: SupabaseSettings;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -14,6 +16,7 @@ export class SupabasePort implements DataPort {
     // PKCE: Google sends back a one-time code, never the tokens themselves, so
     // no token lands in the address bar or the browser history.
     this.sb = createClient(url, key, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+    this.settings = new SupabaseSettings(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {

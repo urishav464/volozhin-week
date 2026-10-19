@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 4 $$;
+  as $$ select 5 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1191,6 +1191,187 @@ create or replace function public.start_edition(p_label text, p_start_date date,
   end
   $$;
 
+-- =============================================================================
+-- Settings (v5) — the «הגדרות» screens. A plain setting is a direct write under
+-- RLS (an admin of the edition; a global admin for the cross-year
+-- categories), like members and editions above. A rule one UPDATE cannot keep
+-- is a trigger or a small function:
+--   * members    RLS (above) + members_guard: nobody who has done anything is
+--                deleted (deactivate instead), and no admin locks themselves
+--                out. Everyone sets their own name through set_my_profile().
+--   * roster     RLS only. Names (and gender) of the year's trainees — never a
+--                contact detail. Not in Realtime.
+--   * rooms      RLS + column grants (name, sort): the default room moves only
+--                through set_default_room(); rooms_guard makes the first room
+--                the default and refuses deleting the default or a used room.
+--   * categories RLS (global admin) + categories_guard: a category a lesson
+--                uses is deactivated, never deleted (lessons.category_id would
+--                silently go NULL).
+-- docs/DECISIONS.md has the reasons; src/errors.ts the Hebrew for each code.
+-- =============================================================================
+
+-- ------------------------------------------------------------- members
+
+create index if not exists activity_actor on public.activity (actor);
+
+-- Has this member done anything in the system? Every grid change is logged
+-- with its actor; the columns below name a member directly.
+create or replace function app.member_has_history(p_member bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select exists (select 1 from public.activity where actor = p_member)
+        or exists (select 1 from public.approaches where owner_member_id = p_member)
+        or exists (select 1 from public.pitches where proposed_by = p_member)
+        or exists (select 1 from public.lessons
+                    where updated_by = p_member or approved_by = p_member or confirm_sent_by = p_member)
+        or exists (select 1 from public.speakers where created_by = p_member or vetted_by = p_member)
+  $$;
+
+create or replace function app.members_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me text := app.my_email();
+  begin
+    if tg_op = 'DELETE' then
+      -- A whole edition being deleted (unseed_gate.sql, the SQL Editor) takes its team with it.
+      if old.edition_id is not null and not exists (select 1 from public.editions where id = old.edition_id) then
+        return old;
+      end if;
+      if v_me is not null and old.email = v_me and old.role = 'admin' then perform app.refuse('self_lockout'); end if;
+      if app.member_has_history(old.id) then perform app.refuse('member_has_history'); end if;
+      return old;
+    end if;
+    -- UPDATE: an admin's own admin row keeps its role, address, edition and
+    -- active flag — nobody locks themselves out. (The SQL Editor has no address.)
+    if v_me is not null and old.email = v_me and old.role = 'admin'
+       and (new.role <> 'admin' or not new.active or new.email <> old.email
+            or new.edition_id is distinct from old.edition_id) then
+      perform app.refuse('self_lockout');
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists members_guard on public.members;
+create trigger members_guard before update or delete on public.members
+  for each row execute function app.members_guard();
+
+-- My own name and gender, on every row of mine (an admin's row is otherwise
+-- out of an edition admin's reach, and app.add_admin sets no name).
+create or replace function public.set_my_profile(p_display_name text, p_gender text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if btrim(coalesce(p_display_name, '')) = '' then perform app.refuse('name_required'); end if;
+    if p_gender is not null and p_gender not in ('m', 'f') then perform app.refuse('bad_value'); end if;
+    update public.members set display_name = btrim(p_display_name), gender = p_gender
+     where email = app.my_email();
+  end
+  $$;
+
+-- ------------------------------------------------------------- roster
+
+-- The year's trainees (~61), for escorts and מכריכה לכריכה: names only.
+create table if not exists public.roster (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  full_name  text not null check (btrim(full_name) <> '' and length(full_name) <= 120),
+  name_key   text generated always as (app.name_key(full_name)) stored,
+  gender     text check (gender in ('m', 'f')),
+  created_at timestamptz not null default now(),
+  unique (edition_id, name_key)
+);
+
+alter table public.roster enable row level security;
+drop policy if exists roster_read on public.roster;
+create policy roster_read on public.roster for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists roster_insert on public.roster;
+create policy roster_insert on public.roster for insert to authenticated with check (app.my_role(edition_id) = 'admin');
+drop policy if exists roster_update on public.roster;
+create policy roster_update on public.roster for update to authenticated
+  using (app.my_role(edition_id) = 'admin') with check (app.my_role(edition_id) = 'admin');
+drop policy if exists roster_delete on public.roster;
+create policy roster_delete on public.roster for delete to authenticated using (app.my_role(edition_id) = 'admin');
+
+-- ------------------------------------------------------------- rooms
+
+create or replace function app.rooms_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if tg_op = 'INSERT' then
+      -- The first room is the default: while an edition has rooms, exactly one is.
+      if not new.is_default and not exists (select 1 from public.rooms where edition_id = new.edition_id and is_default) then
+        new.is_default := true;
+      end if;
+      return new;
+    end if;
+    -- DELETE. A whole edition being deleted takes its rooms with it.
+    if not exists (select 1 from public.editions where id = old.edition_id) then return old; end if;
+    if old.is_default then perform app.refuse('room_default'); end if;
+    if exists (select 1 from public.lessons where room_id = old.id) then perform app.refuse('room_in_use'); end if;
+    return old;
+  end
+  $$;
+drop trigger if exists rooms_guard on public.rooms;
+create trigger rooms_guard before insert or delete on public.rooms
+  for each row execute function app.rooms_guard();
+
+drop policy if exists rooms_insert on public.rooms;
+create policy rooms_insert on public.rooms for insert to authenticated with check (app.my_role(edition_id) = 'admin');
+drop policy if exists rooms_update on public.rooms;
+create policy rooms_update on public.rooms for update to authenticated
+  using (app.my_role(edition_id) = 'admin') with check (app.my_role(edition_id) = 'admin');
+drop policy if exists rooms_delete on public.rooms;
+create policy rooms_delete on public.rooms for delete to authenticated using (app.my_role(edition_id) = 'admin');
+
+-- The default room (where a proposed speaker lands) — one per edition, moved
+-- in one transaction: unset the old one, then set the new.
+create or replace function public.set_default_room(p_room bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_ed bigint;
+  begin
+    select edition_id into v_ed from public.rooms where id = p_room;
+    if v_ed is null or app.my_role(v_ed) is distinct from 'admin' then perform app.refuse('forbidden'); end if;
+    perform 1 from public.rooms where edition_id = v_ed for update;   -- two admins at once queue up
+    update public.rooms set is_default = false where edition_id = v_ed and is_default and id <> p_room;
+    update public.rooms set is_default = true where id = p_room and not is_default;
+  end
+  $$;
+
+-- ------------------------------------------------------------- categories
+
+-- Colours come from the screen's palette. NOT VALID: a colour typed earlier in
+-- the SQL Editor does not stop this file from running; new writes are checked.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'categories_color_hex' and conrelid = 'public.categories'::regclass) then
+    alter table public.categories add constraint categories_color_hex check (color ~ '^#[0-9a-fA-F]{6}$') not valid;
+  end if;
+end $$;
+
+create or replace function app.categories_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if exists (select 1 from public.lessons where category_id = old.id) then perform app.refuse('category_in_use'); end if;
+    return old;
+  end
+  $$;
+drop trigger if exists categories_guard on public.categories;
+create trigger categories_guard before delete on public.categories
+  for each row execute function app.categories_guard();
+
+drop policy if exists categories_insert on public.categories;
+create policy categories_insert on public.categories for insert to authenticated with check ((select app.is_global_admin()));
+drop policy if exists categories_update on public.categories;
+create policy categories_update on public.categories for update to authenticated
+  using ((select app.is_global_admin())) with check ((select app.is_global_admin()));
+drop policy if exists categories_delete on public.categories;
+create policy categories_delete on public.categories for delete to authenticated using ((select app.is_global_admin()));
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -1238,6 +1419,18 @@ grant execute on function public.reshape(bigint, integer, integer, text, integer
 grant execute on function public.update_lesson(bigint, integer, jsonb) to authenticated;
 grant execute on function public.start_edition(text, date, integer, text) to authenticated;
 
+-- Settings (v5). Column lists are the whole point for rooms and categories:
+-- `is_default` moves only through set_default_room(), and no id or edition is
+-- ever chosen by a browser. RLS decides whose rows (admins only).
+grant select, delete on public.roster, public.rooms, public.categories to authenticated;
+grant insert (edition_id, full_name, gender), update (full_name, gender) on public.roster to authenticated;
+grant insert (edition_id, name, sort), update (name, sort) on public.rooms to authenticated;
+grant insert (name, color, sort, active), update (name, color, sort, active) on public.categories to authenticated;
+grant execute on function public.set_my_profile(text, text) to authenticated;
+grant execute on function public.set_default_room(bigint) to authenticated;
+-- roster.name_key is computed as the inserting browser: a pure, immutable helper.
+grant execute on function app.name_key(text) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These five
@@ -1245,7 +1438,8 @@ grant execute on function public.start_edition(text, date, integer, text) to aut
 -- reaches only a subscriber whose RLS lets them SELECT the row; a DELETE goes
 -- to every signed-in subscriber of the table, carrying the primary key only —
 -- so a table with personal data (speaker_contacts, members, activity,
--- editions) is never published, and is taken out if someone added it by hand.
+-- editions, roster) is never published, and is taken out if someone added it
+-- by hand.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -1261,7 +1455,7 @@ begin
     raise warning 'supabase_realtime publishes whole schemas, personal-data tables included — recreate it empty (create publication supabase_realtime;) and run this file again';
     return;
   end if;
-  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions'] loop
+  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

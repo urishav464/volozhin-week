@@ -19,9 +19,10 @@ const PEER_ADMIN = "peer.admin@example.org";
 const ANON_FUNCTIONS = ["ping"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "close_lesson", "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape",
-  "schema_version", "set_pitch", "start_edition", "team", "unpropose", "update_lesson", "whoami",
+  "schema_version", "set_default_room", "set_my_profile", "set_pitch", "start_edition", "team",
+  "unpropose", "update_lesson", "whoami",
 ];
-const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_member_id", "my_role"];
+const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_member_id", "my_role", "name_key"];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
   const dbName = `vw_schema_${regime}_${process.pid}`;
@@ -93,7 +94,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     });
 
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
-      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members");
+      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster");
       await db.query(SCHEMA);
       const rows = (
         await db.query(
@@ -153,7 +154,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(4);
+        expect(w.schema_version).toBe(5);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -226,7 +227,24 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
   });
 
   describe("authenticated's table privileges", () => {
-    it("are SELECT everywhere it reads, writes only on editions/members, and never TRUNCATE/REFERENCES/TRIGGER", async () => {
+    // The complete list, on purpose. editions/members: whole-row writes under
+    // RLS. roster/rooms/categories (settings, v5): DELETE on the row, INSERT and
+    // UPDATE only on the columns below — never an id, never rooms.is_default.
+    // Everything else: SELECT only (the grid writes through functions).
+    const TABLE_WRITES: Record<string, string> = {
+      editions: "DELETE,INSERT,SELECT,UPDATE",
+      members: "DELETE,INSERT,SELECT,UPDATE",
+      roster: "DELETE,SELECT",
+      rooms: "DELETE,SELECT",
+      categories: "DELETE,SELECT",
+    };
+    const COLUMN_WRITES = [
+      "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
+      "rooms.edition_id:INSERT", "rooms.name:INSERT,UPDATE", "rooms.sort:INSERT,UPDATE",
+      "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
+    ];
+
+    it("are SELECT everywhere it reads, row writes only on editions/members, column writes on the settings tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
       const grants = (
         await db.query(`
           select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
@@ -234,11 +252,23 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
            where grantee = 'authenticated' and table_schema = 'public'
            group by table_name order by table_name`)
       ).rows;
-      for (const g of grants) {
-        if (g.table_name === "editions" || g.table_name === "members") expect(g.p, g.table_name).toBe("DELETE,INSERT,SELECT,UPDATE");
-        else expect(g.p, g.table_name).toBe("SELECT");
-      }
-      expect(grants.map((g) => g.table_name)).toContain("lessons");
+      for (const g of grants) expect(g.p, g.table_name).toBe(TABLE_WRITES[g.table_name] ?? "SELECT");
+      expect(grants.map((g) => g.table_name)).toEqual(expect.arrayContaining(["lessons", ...Object.keys(TABLE_WRITES)]));
+
+      // Column grants beyond what the table grant already gives (members/editions have whole-row grants).
+      const cols = (
+        await db.query(`
+          select c.relname || '.' || a.attname || ':' ||
+                 concat_ws(',', case when has_column_privilege('authenticated', c.oid, a.attnum, 'INSERT') then 'INSERT' end,
+                                case when has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE') then 'UPDATE' end) as g
+            from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid
+           where n.nspname = 'public' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+             and c.relname not in ('editions', 'members')
+             and (has_column_privilege('authenticated', c.oid, a.attnum, 'INSERT')
+                  or has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE'))
+           order by 1`)
+      ).rows.map((r) => r.g);
+      expect(cols).toEqual(COLUMN_WRITES);
     });
   });
 });
