@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 2 $$;
+  as $$ select 3 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -174,7 +174,9 @@ create policy editions_admin_write on public.editions
 -- editions they administer. Everyone else's names come from public.team(),
 -- which never returns an e-mail address.
 drop policy if exists members_select on public.members;
--- One's own row; admins see all. public/privacy.html promises e-mails reach no one else.
+-- One's own row; a global admin sees every row, an edition's admin that
+-- edition's rows. public/privacy.html says e-mails reach admins only — widen
+-- this, update that page.
 create policy members_select on public.members
   for select to authenticated
   using (
@@ -362,8 +364,9 @@ create table if not exists public.speakers (
 );
 create unique index if not exists speakers_name_key on public.speakers (name_key, coalesce(disambiguator, ''));
 
--- Contact details: their own table, never in Realtime, readable only by the
--- admin and by whoever handles the speaker this year.
+-- Contact details: their own table, never in Realtime, readable only by a
+-- global admin and by whoever handles the speaker in an edition that is not
+-- archived (policy speaker_contacts_read).
 create table if not exists public.speaker_contacts (
   speaker_id     bigint primary key references public.speakers (id) on delete cascade,
   phone          text,
@@ -733,13 +736,21 @@ create policy categories_read on public.categories for select to authenticated u
 drop policy if exists speakers_read on public.speakers;
 create policy speakers_read on public.speakers for select to authenticated using ((select app.is_member()));
 
--- Contacts: the admin, or whoever handles the speaker in an edition they belong to.
+-- Contacts: a global admin, or whoever handles the speaker in an edition they
+-- belong to — and only while that edition is not archived. A speaker has one
+-- contact row across all years, so without the edition check last year's
+-- handler would keep reading this year's phone number. (Archived as
+-- app.require_editor reads it: status 'archived' or an imported 'archive'.)
 -- public/privacy.html tells users exactly this — widen the policy, update that page.
+-- No function or view returns these columns (load_week leaves them out), so
+-- this policy is the only way to them.
 drop policy if exists speaker_contacts_read on public.speaker_contacts;
 create policy speaker_contacts_read on public.speaker_contacts for select to authenticated using (
   (select app.is_global_admin())
   or exists (select 1 from public.approaches a
+               join public.editions e on e.id = a.edition_id
               where a.speaker_id = speaker_contacts.speaker_id
+                and e.status <> 'archived' and e.kind <> 'archive'
                 and a.owner_member_id = app.my_member_id(a.edition_id)
                 and app.my_role(a.edition_id) in ('admin', 'content'))
 );

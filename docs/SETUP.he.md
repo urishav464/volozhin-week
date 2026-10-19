@@ -1,6 +1,6 @@
 # הקמה: מסלול לחיצות (כ-45 דקות, פעם אחת)
 
-המסמך הזה מיועד למי שמנהל את המערכת (המדריך/ה). אין צורך להתקין שום דבר על המחשב: כל ההקמה נעשית בלוחות הבקרה של GitHub, Supabase, Google ו-Cloudflare.
+המסמך הזה מיועד למי שמנהל/ת את המערכת (המדריך/ה). אין צורך להתקין שום דבר על המחשב: כל ההקמה נעשית בלוחות הבקרה של GitHub, Supabase, Google ו-Cloudflare.
 
 השמות של הכפתורים בלוחות הבקרה משתנים מדי פעם. אם משהו לא תואם למה שכתוב כאן, אפשר לצלם את המסך ולשלוח ל-Claude.
 
@@ -49,7 +49,7 @@
    3. מחליפים את `כתובת-ה-Gmail-שלך` בכתובת ה-Gmail שאיתה תיכנסו לאתר. הגרשיים הבודדים `' '` נשארים משני צדי הכתובת. בלעדיהם מופיעה השגיאה `column "…" does not exist`. את הגרש מקלידים במקלדת **אנגלית**: גרש עברי (׳) או גרש מעוגל (’) לא יעבדו.
    4. לוחצים **Run**. התוצאה הצפויה: טבלה עם שורה אחת, עמודה בשם `add_admin`, ותא ריק. זה תקין.
    5. כדי לוודא, מריצים: `select email, role from public.members;`. הכתובת צריכה להופיע עם `admin`.
-   - **מומלץ אדמין נוסף** (למשל איש צוות שנה ב'), עם אותה פקודה וכתובת אחרת.
+   - **מומלץ אדמין נוסף** (למשל איש/אשת צוות של שנה ב'), עם אותה פקודה וכתובת אחרת. אדמין רואה את כתובות המייל של הצוות ואת פרטי הקשר של המרצים, כמו שכתוב בדף מדיניות הפרטיות.
    - הכתובות נשמרות רק במסד הנתונים, לא ב-GitHub.
 
 7. **אופציונלי, לשער ההחלטה:** מריצים גם את `supabase/seed_gate.sql`, באותה דרך של `schema.sql` (Raw, העתקה, Run). זה יוצר מחזור «הדגמה» עם 60 מרצים סינתטיים, ומאפשר לנסות את הרשת על השרת האמיתי.
@@ -60,16 +60,16 @@
 
 **פרויקט ומסך הסכמה**
 1. נכנסים ל-[console.cloud.google.com](https://console.cloud.google.com). בבורר הפרויקטים לוחצים **New project**, נותנים את השם `volozhin-week`, לוחצים Create ובוחרים בפרויקט.
-2. **APIs & Services → OAuth consent screen**, שנקרא לפעמים Google Auth Platform. לוחצים **Get started**:
-   - **App name:** שבוע וולוז'ין
-   - **User support email:** הכתובת שלך
-   - **Audience:** External
-   - **Contact email:** הכתובת שלך
-   - לוחצים Create.
-3. **Audience:** בינתיים משאירים את הסטטוס **Testing**.
-   - ב-**Test users → Add users** מוסיפים את כתובת ה-Gmail שלך. כך אפשר לבדוק את הכניסה כבר עכשיו.
-   - בכניסה הראשונה Google יציג «Google hasn't verified this app». לוחצים Continue. זה תקין במצב בדיקה.
-   - את **Publish app** עושים רק בשלב 5.3. לפרסום Google דורש כתובת של דף בית ושל מדיניות פרטיות, ואת כתובת האתר מקבלים רק בשלב 4.
+2. **APIs & Services → OAuth consent screen**, שנקרא לפעמים Google Auth Platform. לוחצים **Get started**. נפתח אשף בן ארבעה חלקים, ובסוף כל חלק לוחצים **Next**:
+   1. **App Information:** ב-**App name** כותבים שבוע וולוז'ין, וב-**User support email** בוחרים מהרשימה את הכתובת שלך.
+   2. **Audience:** בוחרים **External**. בחשבון Gmail רגיל האפשרות Internal אפורה, עם ההודעה «Because you're not a Google Workspace user…». זה תקין.
+   3. **Contact Information:** מקלידים את הכתובת שלך ולוחצים Enter.
+   4. **Finish:** מסמנים את תיבת ההסכמה ל-**Google API Services: User Data Policy** ולוחצים **Continue**. אם מופיע גם **Create**, לוחצים עליו.
+3. **עמוד Audience (בתפריט שבצד).** בסוף האשף נפתח עמוד סקירה, ובתפריט שבצד יש עמוד בשם **Audience**. הוא לא החלק Audience שבאשף. **בעמוד הזה לא משנים כלום.** אפשר גם לא להיכנס אליו, ולהמשיך ישר ל«לקוח OAuth».
+   - **Publishing status** נשאר **Testing**. אין כאן מה לבחור.
+   - הכפתור **Publish app** עשוי להיות אפור. במעבר עכבר הוא עשוי להציג הודעה שדורשת כתובת של דף בית ושל מדיניות פרטיות. זה צפוי, כי עוד אין לנו אתר. לא לוחצים עליו עכשיו (ראו שלב 5.3).
+   - **User type** נשאר **External**. אין צורך לשנות אותו.
+   - **לא צריך להוסיף Test users.** האתר מבקש מ-Google רק שם, כתובת מייל ותמונת פרופיל. לאפליקציה כזו Google מאפשר לכל חשבון Google להיכנס גם במצב Testing: בלי רשימת משתמשי בדיקה, בלי מגבלת 100 ובלי תפוגה אחרי 7 ימים. מי רואה מה באתר נקבע רק לפי רשימת הצוות שבמסד הנתונים (שלב 2.6).
 
 **לקוח OAuth**
 
@@ -92,7 +92,7 @@
    - אם מוצעים רק Workers, מחפשים את הקישור "Looking to deploy Pages?".
 2. **Connect GitHub.** מאשרים גישה **רק** לריפו `volozhin-week`, בוחרים אותו, ולוחצים Begin setup.
 3. הגדרות:
-   - **Project name:** `volozhin-week`. זה יהיה גם שם הכתובת, `volozhin-week.pages.dev`.
+   - **Project name:** `volozhin-week`. זה יהיה גם שם הכתובת, `volozhin-week.pages.dev`. אם השם תפוס, Cloudflare מוסיף לו סיומת (למשל `volozhin-week-abc.pages.dev`). במקרה כזה משתמשים בכתובת שקיבלתם בכל מקום במסמך שכתוב `volozhin-week.pages.dev`: בשלב 3.4, בשלב 5 ובשלב 7.
    - **Production branch:** `main`
    - **Build command:** `npm run build`
    - **Build output directory:** `dist`
@@ -101,7 +101,7 @@
 
 4. **באשף היצירה לא מוסיפים משתני סביבה.** באשף אין בחירה בין Production ל-Preview, ומשתנה שמוגדר בו עלול לחול גם על התצוגות המקדימות.
    - גרסת Node נקבעת מהקובץ `.node-version` שבריפו.
-   - את שני משתני ה-Supabase מוסיפים בצעד 6 שבהמשך.
+   - את שני משתני ה-Supabase מוסיפים בשלב 4.6 שבהמשך.
 
 **פריסה ראשונה**
 
@@ -119,16 +119,16 @@
 1. ב-**Authentication → URL Configuration**:
    - **Site URL:** `https://volozhin-week.pages.dev`
    - **Redirect URLs:** מוסיפים `https://volozhin-week.pages.dev/**`
-2. חוזרים ללקוח של Google משלב 3, ומוודאים ש-`https://volozhin-week.pages.dev` מופיע ב-Authorized JavaScript origins.
-3. **פרסום האפליקציה ב-Google.** אם Cloudflare נתן כתובת אחרת (למשל כי השם היה תפוס), משתמשים בה בכל המקומות שלמטה.
+2. חוזרים ללקוח של Google משלב 3.4 (**Clients** → `volozhin-week web`). אם `https://volozhin-week.pages.dev` עוד לא מופיע ב-**Authorized JavaScript origins**, מוסיפים אותו ולוחצים Save.
+3. **פרסום האפליקציה ב-Google: רשות, אפשר לדלג.** גם במצב Testing הכניסה עובדת לכל חבר/ת צוות (ראו שלב 3.3). אם רוצים לפרסם בכל זאת, עושים זאת רק **אחרי שה-PR הראשון מוזג ל-`main`** ו-Cloudflare סיים לפרוס אותו. רק אז האתר ודף מדיניות הפרטיות קיימים. לפני שממשיכים, פותחים בדפדפן את `https://volozhin-week.pages.dev/privacy.html` ומוודאים שמופיע «מדיניות פרטיות».
    1. ב-Google Cloud, **Branding**:
       - **Application home page:** `https://volozhin-week.pages.dev`
       - **Application privacy policy link:** `https://volozhin-week.pages.dev/privacy.html`. הדף הזה הוא חלק מהאתר.
-      - **Authorized domains:** `volozhin-week.pages.dev`
-      - **לא מעלים לוגו.** לוגו מחייב אימות של Google, שלוקח שבועות.
+      - **Authorized domains:** לוחצים **Add domain** ומוסיפים שני דומיינים: `volozhin-week.pages.dev`, ואת הדומיין של Supabase מה-Callback URL (שלב 3.4), בצורה `xxxx.supabase.co`, בלי `https://` ובלי הנתיב. `pages.dev` או `supabase.co` לבד יידחו. אין צורך לאמת בעלות ב-Search Console.
+      - **לא מעלים לוגו.** לוגו ושם האפליקציה מוצגים במסך הכניסה רק אחרי «אימות מותג» של Google. האימות לוקח כמה ימי עבודה, ודורש להוכיח בעלות על כל הדומיינים, כולל זה של Supabase. בלי אימות, Google מציג במסך הכניסה את `xxxx.supabase.co`, וזה תקין.
       - לוחצים Save.
-   2. **Audience → Publish app → Confirm.** הסטטוס הופך ל-**In production**. מעכשיו כל חבר צוות שברשימה יכול להיכנס, בלי להירשם כמשתמש בדיקה. אנחנו מבקשים רק שם וכתובת, ולכן לא נדרש אימות.
-   - **אם Google לא מקבל את הדומיין,** אפשר להישאר ב-Testing ולהוסיף כל חבר צוות ב-Test users (עד 100). הכניסה תעבוד, רק עם המסך «hasn't verified» בפעם הראשונה.
+   2. **Audience → Publish app → Confirm.** הסטטוס הופך ל-**In production**. מי רואה מה באתר עדיין נקבע רק לפי רשימת הצוות שבמסד הנתונים. האתר מבקש מ-Google רק שם, כתובת מייל ותמונת פרופיל, ולכן לא נדרש אימות.
+   - **אם Google לא מקבל את הדומיין, או שהכפתור נשאר אפור,** פשוט נשארים ב-Testing. אין צורך להוסיף Test users: לאפליקציה שמבקשת רק שם, מייל ותמונה, Google מאפשר כניסה לכל חשבון גם במצב בדיקה, בלי מגבלת 100.
 
 ## 6. GitHub: שמירה על הפרויקט ער
 
@@ -144,8 +144,10 @@
 
 ## 7. בדיקה
 
-1. אחרי שה-PR הראשון מוזג ל-`main`, פותחים את `https://volozhin-week.pages.dev`, לוחצים **כניסה עם Google** ונכנסים עם הכתובת שהוספתם בשלב 2. צריך להופיע "שלום".
-2. מנסים מחשבון Google אחר, שלא ברשימה. צריך להופיע «הכתובת עדיין לא ברשימת הצוות».
+1. אחרי שה-PR הראשון מוזג ל-`main`, פותחים את `https://volozhin-week.pages.dev`, לוחצים **כניסה עם Google** ונכנסים עם הכתובת שהוספתם בשלב 2.6. בראש המסך צריכה להופיע כתובת ה-Gmail שלכם, ולידה «מדריך/ה». מתחת צריך להופיע «עוד לא נפתח מחזור», או מחזור «הדגמה» אם הרצתם את `seed_gate.sql` בשלב 2.7.
+   - במסך של Google תופיע הכתובת `xxxx.supabase.co`, ולא השם «שבוע וולוז'ין». זה תקין: זו הכתובת של Supabase, שדרכה נעשית הכניסה.
+   - אם Google מציג בדרך הודעה שהאפליקציה בבדיקה, או «Google hasn't verified this app», לוחצים Continue. זה תקין.
+2. מנסים מחשבון Google אחר, שלא ברשימת הצוות. צריך להופיע «הכתובת עדיין לא ברשימת הצוות». אם במקום זה Google עצמו עוצר עם «Access blocked» או «Error 403: access_denied», מוסיפים את החשבון ב-**Audience → Test users**, או מפרסמים את האפליקציה (שלב 5.3).
 3. ב-Supabase פותחים **Advisors → Security Advisor**. לא אמורות להופיע שגיאות.
 
 ---

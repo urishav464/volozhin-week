@@ -130,6 +130,27 @@ describe("the grid's tables and functions", () => {
     expect(await phone(B)).toEqual([]);
   });
 
+  it("takes contact details away from last year's handler once a new edition archives theirs — the admin keeps them", async () => {
+    // One transaction, rolled back: the archive must not leak into the tests below.
+    await as(db, "authenticated", google(ADMIN), async (q) => {
+      const phoneAs = async (email: string) => {
+        await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(email))]);
+        return (await q("select phone from public.speaker_contacts")).rows.map((r) => r.phone);
+      };
+      await q("select public.start_edition('תשפ\"ח', '2028-02-13', 510)");
+      expect((await q("select status from public.editions where id = $1", [ed])).rows[0].status).toBe("archived");
+      // A is still an active member of the archived edition, and still owns the approach there.
+      const owned = await q(
+        `select count(*)::int as n from public.approaches a join public.members m on m.id = a.owner_member_id
+          where a.edition_id = $1 and a.speaker_id = $2 and m.email = $3 and m.active`,
+        [ed, speaker, A],
+      );
+      expect(owned.rows[0].n).toBe(1);
+      expect(await phoneAs(A)).toEqual([]);
+      expect(await phoneAs(ADMIN)).toEqual(["synthetic-phone"]);
+    });
+  });
+
   it("logs every change, with ids and states only", async () => {
     const rows = (await db.query("select entity, kind, actor, detail from public.activity where edition_id = $1 order by id", [ed])).rows;
     expect(rows.map((r) => `${r.entity}:${r.kind}`)).toEqual(["lessons:insert", "approaches:insert", "pitches:insert"]);
