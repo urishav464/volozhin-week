@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Edition, Week } from "../domain/types";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
 import type { DataPort } from "./port";
+import { REALTIME_TABLES } from "./realtime";
 import { PortError, type WhoAmI } from "./types";
 
 export class SupabasePort implements DataPort {
@@ -109,7 +110,7 @@ export class SupabasePort implements DataPort {
       timer = setTimeout(onChange, 250);
     };
     const channel = this.sb.channel(`edition-${editionId}`);
-    for (const table of ["lessons", "lesson_speakers", "pitches", "approaches", "speakers"]) {
+    for (const table of REALTIME_TABLES) {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, bounce);
     }
     channel.subscribe();

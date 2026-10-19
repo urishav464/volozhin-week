@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 3 $$;
+  as $$ select 4 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1237,5 +1237,31 @@ grant execute on function public.move_lesson(bigint, integer, integer, integer, 
 grant execute on function public.reshape(bigint, integer, integer, text, integer, text, integer[]) to authenticated;
 grant execute on function public.update_lesson(bigint, integer, jsonb) to authenticated;
 grant execute on function public.start_edition(text, date, integer, text) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- Realtime. Supabase sends a browser postgres_changes only for tables in the
+-- supabase_realtime publication, and only rows that browser's RLS lets it
+-- SELECT. These five are what the grid listens to (src/data/realtime.ts) —
+-- never speaker_contacts, members or activity. Adding is idempotent; a
+-- publication FOR ALL TABLES (some older projects) already carries them.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  t text;
+begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    raise notice 'no supabase_realtime publication — live updates stay off until it exists';
+    return;
+  end if;
+  if (select puballtables from pg_publication where pubname = 'supabase_realtime') then
+    return;
+  end if;
+  foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers'] loop
+    if not exists (select 1 from pg_publication_tables
+                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
 
 commit;
