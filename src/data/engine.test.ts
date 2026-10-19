@@ -1,6 +1,6 @@
 // docs/CONTRACT.md, clause by clause, against the in-memory engine.
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Week } from "../domain/types";
+import { LESSON_STAGE_DEFAULTS, type Week } from "../domain/types";
 import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek } from "../testing/week";
 import { CommandError } from "./commands";
 import { type Actor, Engine } from "./engine";
@@ -347,14 +347,54 @@ describe("from placement to arrival (CONTRACT.md, milestone 3)", () => {
     }
   });
 
-  it("closing again after a reopen asks to tell the speaker; a draft moves without a flag", () => {
+  it("a reopen starts the stages over — they were the speaker's: closing again is a first message, not a reconfirm", () => {
     const { e, id, l } = closedByMe();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    e.setPayment(id, l().version, 700, "round_trip");
+    e.setTransport(id, { pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: false });
+    e.setEscort(id, l().version, { roster_id: t.id, self_intro: true, escort_note: "הערה לדוגמה" });
+    e.setSources(id, l().version, { sources_kind: "presentation", print_when: "none", sources_note: null, presentation_url: "https://example.org/deck", in_reader: false });
+    new Engine(e.week, GLOBAL, undefined, e.shared).decidePayments([{ lesson_id: id, version: l().version }], "approved");
     e.markConfirmSent(id, l().version);
-    e.reopenLesson(id);
+    expect(code(() => e.reopenLesson(id))).toBe("approved_locked");
+    const admin = new Engine(e.week, ADMIN, undefined, e.shared);
+    admin.reopenLesson(id);
+    expect(l()).toMatchObject({ state: "draft", ...LESSON_STAGE_DEFAULTS });
+    expect(e.shared.transport).toEqual({});
     e.moveLesson(id, { day: 3, start_min: 870, end_min: 960, room_id: 1 });
     expect(l()).toMatchObject({ state: "draft", needs_reconfirm: false });
-    e.closeLesson(e.week.pitches.find((p) => p.lesson_id === id)!.id);
-    expect(l()).toMatchObject({ state: "closed", needs_reconfirm: true });
+    // another member places another speaker: nothing of the first one's reaches them
+    const other = new Engine(e.week, OTHER, undefined, e.shared);
+    const s2 = addSpeaker(w, "m");
+    const p2 = other.propose(s2.id, { lesson_id: id });
+    other.closeLesson(p2.pitch_id);
+    expect(l()).toMatchObject({ state: "closed", ...LESSON_STAGE_DEFAULTS });
+    expect(other.transportOf(id)).toEqual({ pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
+    expect(code(() => new Engine(e.week, LOGISTICS, undefined, e.shared).setPaid(id, true))).toBe("payment_not_approved");
+  });
+
+  it("money paid is never erased: no reopen, no new amount, until «שולם» is undone", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, 500, "none");
+    const g = new Engine(e.week, GLOBAL, undefined, e.shared);
+    g.decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    new Engine(e.week, LOGISTICS, undefined, e.shared).setPaid(id, true);
+    expect(code(() => e.setPayment(id, l().version, 800, "none"))).toBe("paid_locked");
+    expect(code(() => e.setPayment(id, l().version, null, "none"))).toBe("paid_locked");
+    e.setPayment(id, l().version, 500, "one_way"); // the transport may change: pending again, still paid
+    expect(l()).toMatchObject({ pay_amount: 500, approval: "pending", paid_at: expect.any(String) });
+    expect(code(() => new Engine(e.week, ADMIN, undefined, e.shared).reopenLesson(id))).toBe("paid_locked");
+    g.decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    new Engine(e.week, ADMIN, undefined, e.shared).setPaid(id, false);
+    e.setPayment(id, l().version, 800, "one_way");
+    expect(l()).toMatchObject({ pay_amount: 800, approval: "pending", paid_at: null });
+  });
+
+  it("a request on a lesson that is not closed is no one's to decide", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, 300, "none");
+    Object.assign(l(), { state: "draft" }); // as only a hand edit could leave it
+    expect(code(() => new Engine(e.week, GLOBAL).decidePayments([{ lesson_id: id, version: l().version }], "approved"))).toBe("stale");
   });
 
   it("a batch decision is all or nothing", () => {

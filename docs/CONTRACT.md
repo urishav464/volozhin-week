@@ -92,8 +92,17 @@ Owner or admin. The pitch must be live and its lesson a draft (`cell_closed` oth
 ### `reopen_lesson(lesson)`
 
 Owner-of-the-lead-speaker's-approach or admin. Closed → draft. If `approval = 'approved'` and the
-actor is not admin → `approved_locked`. Deletes its `lesson_speakers`; its `accepted` pitch →
-`approached`. Does not change times, title, category or stage fields.
+actor is not admin → `approved_locked`; if `paid_at` is set → `paid_locked`, for everyone (money
+that went out is not erased with the speaker: «שולם» is undone first). Deletes its
+`lesson_speakers`; its `accepted` pitch → `approached`. Does not change times, title, category,
+audience or teaching time. **Its stages start over** — they belonged to the speaker who leaves
+(«From placement to arrival»): the lesson's `transport_details` row is deleted, and every stage
+column goes back to its default (`pay_amount` null, `transport` none, `approval` none,
+`approval_note approved_by approved_at confirm_sent_at confirm_sent_by` null, `needs_reconfirm`
+false, `escort_roster_id` null, `self_intro` false, `escort_note` null, `sources_kind` pending,
+`print_when` none, `sources_note presentation_url` null, `in_reader` false). So whoever closes the
+lesson next — another member, another speaker — never inherits the last speaker's pickup address,
+approved amount or «נשלחה».
 
 ### `move_lesson(lesson, day, start_min, end_min, room_id)`
 
@@ -136,7 +145,7 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
 Exactly the codes above and those of «The speaker pool» below, each with a Hebrew message in
 `src/errors.ts`:
 `not_member forbidden archived speaker_retired approach_owned not_vetted gender_unknown room_taken
-speaker_busy cell_closed merge_blocked bad_shape outside_grid approved_locked stale`.
+speaker_busy cell_closed merge_blocked bad_shape outside_grid approved_locked paid_locked stale`.
 SQL raises them as `raise exception using message = '<code>', errcode = 'P0001'` (constraints
 are caught and re-raised under their code), so PostgREST returns the code as the error message.
 
@@ -348,11 +357,18 @@ Every successful lesson write increments `version` and sets `updated_by`.
 
 A **closed** lesson whose `confirm_sent_at` is set gets `needs_reconfirm = true` when a command
 changes what the message says: `day start_min end_min room_id title teach_min pay_amount`, or
-when it becomes closed again (closed after a reopen). A write that sets a **new** `confirm_sent_at`
-(the message re-sent) is the one exception. In SQL this is one trigger
-(`app.lessons_reconfirm`, so it holds for any write path — the SQL Editor too); in the engine,
-one check after every command (`Engine.reconfirm`). Drafts are never flagged. Only
-`mark_confirm_sent` clears the flag.
+when it becomes closed again with its message still marked (`reopen_lesson` clears the mark, so
+only a hand edit gets there: a lesson closed again after a reopen has a first message to send,
+not a reconfirm). A write that sets a **new** `confirm_sent_at` (the message re-sent) is the one
+exception. In SQL this is one trigger (`app.lessons_reconfirm`, so it holds for any write path —
+the SQL Editor too); in the engine, one check after every command (`Engine.reconfirm`). Drafts are
+never flagged. Only `mark_confirm_sent` clears the flag.
+
+`{{תאריך}}` and `{{יום}}` come from the edition's opening Sunday, so moving `editions.start_date`
+from one date to another (or back to TBD) flags every closed lesson of the edition whose message
+was sent, with `version + 1` (`app.editions_reconfirm`, a trigger on `editions` — the «מחזור» tab
+writes the row directly; `DemoSettings.updateEdition` in the demo). Setting a date that was TBD
+flags nothing: no message carried one.
 
 ## Text and values (what both sides accept)
 
@@ -374,18 +390,22 @@ one check after every command (`Engine.reconfirm`). Drafts are never flagged. On
 
 Editor (`app.require_editor`: logistics `forbidden`, an archive `archived` for non-admins);
 handler or admin; `version` (`stale`); amount and transport (above). The same amount and transport
-as stored, and the approval not `rejected` → no-op. Otherwise: `pay_amount`, `transport`;
+as stored, and the approval not `rejected` → no-op. A lesson marked paid (`paid_at` set) keeps its
+amount: a different one (null included) → `paid_locked` — «שולם» is undone first (`setPaid`, by
+logistics or an admin), so a new amount is never shown as paid; the transport may still change.
+Otherwise: `pay_amount`, `transport`;
 `approval` := `none` when nothing is asked (amount null and transport `none`), else `pending`;
 `approval_note`, `approved_by`, `approved_at` := null. So changing an approved request sends it
 back to the instructor, and asking a rejected one again re-opens it. Transport `none` deletes the
-lesson's transport details.
+lesson's transport details (and so does `reopen_lesson`: they were the speaker's).
 
 ### `decidePayments(items[{lesson, version}], decision, note)` — `decide_payments` → `void`
 
 A global admin (`forbidden`); decision (`bad_value`); `p_lessons` and `p_versions` of one length
 (`bad_value`). Each item in ascending (lesson, version) order, all or nothing: the lesson missing,
-at another version, or not `pending` → `stale` (the queue on screen is out of date; an amount
-changed since is never approved unseen). Sets `approval`, `approval_note`, `approved_by` (the
+at another version, not `pending`, or not `closed` → `stale` (the queue on screen is out of date;
+an amount changed since is never approved unseen; a draft's request is no one's — `reopen_lesson`
+clears it, so only a hand edit leaves one). Sets `approval`, `approval_note`, `approved_by` (the
 global admin's row), `approved_at`.
 
 ### `markConfirmSent(lesson, version)` — `mark_confirm_sent` → `void`
@@ -419,7 +439,8 @@ pickup_time, driver_name, driver_phone, arranged)`, never in `load_week`, never 
 lesson's **handler** (content or admin there) — and that edition's **logistics** members once the
 lesson's transport is not `none` and `approval = 'approved'`. Nobody else: not another content
 member, not the edition's admin who is not the handler, not a practice or demo week's team, not
-last year's.
+last year's. Because the handler is whoever handles the lesson's *current* lead speaker, the row
+never outlives that speaker: `reopen_lesson` deletes it with the other stages.
 - `transport(lesson)` — `get_transport_details(p_lesson)`, `SECURITY INVOKER` (read through the
   policy `transport_details_read`, whose predicate is the same function): null when hidden; no row
   yet → four nulls and `arranged: false`.
@@ -439,8 +460,8 @@ from the live real edition (else the newest real one) to the new one.
 ## Errors (milestone 3)
 
 `not_closed not_handler bad_amount approval_pending approval_rejected bad_escort bad_url
-no_transport transport_hidden payment_not_approved bad_phone bad_value` — plus `not_member
-forbidden archived stale`.
+no_transport transport_hidden payment_not_approved paid_locked bad_phone bad_value` — plus
+`not_member forbidden archived stale`. (`paid_locked` is also `reopen_lesson`'s.)
 
 ## RPC signatures (milestone 3)
 

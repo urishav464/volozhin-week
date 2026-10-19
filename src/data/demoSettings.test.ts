@@ -155,4 +155,22 @@ describe("demo settings", () => {
     await s.updateEdition(second, { start_date: null, first_day_from: null });
     expect((await port.editions())[0]).toMatchObject({ start_date: null, first_day_from: null });
   });
+
+  it("moving the week's date after messages went out asks to tell those speakers (app.editions_reconfirm); setting it the first time does not", async () => {
+    const port = new DemoPort();
+    const s = port.settings;
+    const sent = (w: Awaited<ReturnType<typeof port.loadWeek>>) => w.lessons.filter((l) => l.state === "closed" && l.confirm_sent_at != null);
+    const before = sent(await port.loadWeek(1));
+    expect(before.length).toBeGreaterThan(1);
+    const quiet = before.filter((l) => !l.needs_reconfirm);
+    expect(quiet.length).toBeGreaterThan(0);
+    await s.updateEdition(1, { start_date: "2027-02-14", first_day_from: 510 }); // TBD → a date: no message had one
+    expect(sent(await port.loadWeek(1)).filter((l) => l.needs_reconfirm).length).toBe(before.length - quiet.length);
+    await s.updateEdition(1, { start_date: "2027-02-21", first_day_from: 510 });
+    const after = sent(await port.loadWeek(1));
+    expect(after.every((l) => l.needs_reconfirm)).toBe(true);
+    for (const l of quiet) expect(after.find((x) => x.id === l.id)?.version).toBe(l.version + 1);
+    // a draft or an unsent lesson is not flagged
+    expect((await port.loadWeek(1)).lessons.filter((l) => l.needs_reconfirm && l.confirm_sent_at == null)).toEqual([]);
+  });
 });

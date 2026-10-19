@@ -94,7 +94,14 @@ export class DemoSettings implements SettingsPort {
     const p = cleanEditionPatch(patch);
     const w = this.s.engines.get(id)?.week;
     if (!w || !this.isGlobalAdmin()) fail("forbidden");
+    const before = w!.edition.start_date;
     Object.assign(w!.edition, p);
+    // app.editions_reconfirm: the opening date moved after messages went out — every sent one has the old date
+    if (before != null && w!.edition.start_date !== before) {
+      for (const l of w!.lessons) {
+        if (l.state === "closed" && l.confirm_sent_at != null && !l.needs_reconfirm) Object.assign(l, { needs_reconfirm: true, version: l.version + 1 });
+      }
+    }
     this.done(null);
   }
 

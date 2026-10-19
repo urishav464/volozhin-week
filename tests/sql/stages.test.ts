@@ -256,3 +256,137 @@ describe("from placement to arrival", () => {
     });
   });
 });
+
+// The milestone-3 review: the stages are the speaker's. A reopen — by the
+// handler while a request only waits, or by an admin after it was approved —
+// must leave the next speaker's handler nothing of the last one's: no pickup
+// address, no approved amount, no «נשלחה». Money paid is never erased.
+describe("a reopen starts the stages over", () => {
+  const dbName = `vw_reopen_${process.pid}`;
+  let db: pg.Client;
+  let ed: number;
+  const sp: number[] = [];
+
+  async function commitAs(email: string, sql: string, params: unknown[] = []): Promise<unknown> {
+    await db.query("begin");
+    try {
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(email))]);
+      const r = await db.query(sql, params);
+      await db.query("commit");
+      return r.rows[0] ? Object.values(r.rows[0])[0] : undefined;
+    } catch (e) {
+      await db.query("rollback");
+      throw e;
+    }
+  }
+  const version = async (id: number) => Number((await db.query("select version from public.lessons where id = $1", [id])).rows[0].version);
+  const readT = (email: string, lesson: number) =>
+    as(db, "authenticated", google(email), async (q) => (await q("select public.get_transport_details($1) as t", [lesson])).rows[0].t);
+  const rows = async (lesson: number) => Number((await db.query("select count(*)::int as n from public.transport_details where lesson_id = $1", [lesson])).rows[0].n);
+  const stageRow = async (lesson: number) =>
+    (await db.query(`select state, pay_amount, transport, approval, approval_note, approved_by, approved_at, paid_at, confirm_sent_at, confirm_sent_by,
+                            needs_reconfirm, escort_roster_id, self_intro, escort_note, sources_kind, print_when, sources_note, presentation_url, in_reader
+                       from public.lessons where id = $1`, [lesson])).rows[0];
+  const FRESH = {
+    pay_amount: null, transport: "none", approval: "none", approval_note: null, approved_by: null, approved_at: null, paid_at: null,
+    confirm_sent_at: null, confirm_sent_by: null, needs_reconfirm: false, escort_roster_id: null, self_intro: false, escort_note: null,
+    sources_kind: "pending", print_when: "none", sources_note: null, presentation_url: null, in_reader: false,
+  };
+  /** A places speaker `s` at day `day`, asks `amount` + transport, records a pickup; returns the lesson. */
+  async function placed(s: number, day: number, amount: number | null): Promise<number> {
+    const p = Number(await commitAs(A, "select (public.propose($1, $2, null, $3, 510, 600, null) ->> 'pitch_id')::bigint", [ed, s, day]));
+    await commitAs(A, "select public.close_lesson($1)", [p]);
+    const lesson = Number((await db.query("select lesson_id from public.pitches where id = $1", [p])).rows[0].lesson_id);
+    await commitAs(A, "select public.set_payment($1, $2, $3, 'round_trip')", [lesson, await version(lesson), amount]);
+    await commitAs(A, "select public.set_transport_details($1, $2, '07:15', null, null, false)", [lesson, ADDRESS]);
+    return lesson;
+  }
+  /** B places speaker `s` on the reopened draft and closes it. */
+  async function closedByB(lesson: number, s: number) {
+    const p = Number(await commitAs(B, "select (public.propose($1, $2, $3, null, null, null, null) ->> 'pitch_id')::bigint", [ed, s, lesson]));
+    expect(await refusal(commitAs(B, "select public.close_lesson($1)", [p]))).toBe("ok");
+  }
+
+  beforeAll(async () => {
+    db = await freshDatabase(dbName, "new");
+    await db.query(SCHEMA);
+    await db.query("select app.add_admin($1)", [ADMIN]);
+    ed = Number(await commitAs(ADMIN, "select public.start_edition('תשפ\"ז', '2027-02-14', 510)"));
+    for (const [email, role] of [[ED_ADMIN, "admin"], [A, "content"], [B, "content"], [L, "logistics"]] as const) {
+      await db.query("insert into public.members (email, display_name, role, edition_id, gender) values ($1, $1, $2, $3, 'f')", [email, role, ed]);
+    }
+    for (const n of ["מרצה לדוגמה א", "מרצה לדוגמה ב", "מרצה לדוגמה ג", "מרצה לדוגמה ד", "מרצה לדוגמה ה"]) {
+      sp.push(Number((await db.query("insert into public.speakers (name, gender, vetted) values ($1, 'f', 'approved') returning id", [n])).rows[0].id));
+    }
+  });
+
+  afterAll(async () => {
+    if (db) await dropDatabase(db, dbName);
+  });
+
+  it("the handler reopens a pending request: another member's next speaker never reads the last one's pickup", async () => {
+    const lesson = await placed(sp[0], 1, 700);
+    const trainee = Number((await db.query("insert into public.roster (edition_id, full_name) values ($1, 'חניך/ה לדוגמה') returning id", [ed])).rows[0].id);
+    await commitAs(A, "select public.set_escort($1, $2, $3, true, 'הערה לדוגמה')", [lesson, await version(lesson), trainee]);
+    await commitAs(A, "select public.set_sources($1, $2, 'presentation', 'none', null, 'https://example.org/deck', false)", [lesson, await version(lesson)]);
+    expect(await readT(B, lesson)).toBeNull();
+    expect(await refusal(commitAs(A, "select public.reopen_lesson($1)", [lesson]))).toBe("ok");
+    expect(await rows(lesson)).toBe(0);
+    expect(await stageRow(lesson)).toEqual({ state: "draft", ...FRESH });
+    await closedByB(lesson, sp[1]);
+    expect(await stageRow(lesson)).toEqual({ state: "closed", ...FRESH });
+    expect((await readT(B, lesson))?.pickup_address).toBeNull();
+    expect(await readT(L, lesson)).toBeNull();
+    expect(await readT(A, lesson)).toBeNull();
+  });
+
+  it("an admin reopens an approved, sent request: nothing approved, sent or payable passes to the next speaker", async () => {
+    const lesson = await placed(sp[2], 2, 900);
+    await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson, await version(lesson)]);
+    await commitAs(A, "select public.mark_confirm_sent($1, $2)", [lesson, await version(lesson)]);
+    expect(await refusal(commitAs(A, "select public.reopen_lesson($1)", [lesson]))).toBe("approved_locked");
+    expect(await refusal(commitAs(ED_ADMIN, "select public.reopen_lesson($1)", [lesson]))).toBe("ok");
+    await closedByB(lesson, sp[3]);
+    expect(await stageRow(lesson)).toEqual({ state: "closed", ...FRESH });
+    expect(await rows(lesson)).toBe(0);
+    expect(await refusal(commitAs(L, "select public.set_paid($1, true)", [lesson]))).toBe("payment_not_approved");
+    expect(await readT(L, lesson)).toBeNull();
+  });
+
+  it("money paid stays: no reopen and no new amount until «שולם» is undone; a draft's request is no one's to decide", async () => {
+    const lesson = await placed(sp[4], 3, 500);
+    await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson, await version(lesson)]);
+    await commitAs(L, "select public.set_paid($1, true)", [lesson]);
+    expect(await refusal(commitAs(A, "select public.set_payment($1, $2, 800, 'round_trip')", [lesson, await version(lesson)]))).toBe("paid_locked");
+    expect(await refusal(commitAs(A, "select public.set_payment($1, $2, null, 'round_trip')", [lesson, await version(lesson)]))).toBe("paid_locked");
+    expect(await refusal(commitAs(ADMIN, "select public.reopen_lesson($1)", [lesson]))).toBe("paid_locked");
+    expect(await refusal(commitAs(L, "select public.set_paid($1, false)", [lesson]))).toBe("ok");
+    expect(await refusal(commitAs(A, "select public.set_payment($1, $2, 800, 'round_trip')", [lesson, await version(lesson)]))).toBe("ok");
+    // a pending request left on a draft (only a hand edit gets there): stale, never approved
+    await db.query("update public.lessons set state = 'draft' where id = $1", [lesson]);
+    expect(await refusal(commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson, await version(lesson)]))).toBe("stale");
+  });
+
+  it("moving the week's opening date flags every lesson whose message went out (editions_reconfirm); setting a TBD date flags none", async () => {
+    const p = Number(await commitAs(A, "select (public.propose($1, $2, null, 4, 510, 600, null) ->> 'pitch_id')::bigint", [ed, sp[0]]));
+    await commitAs(A, "select public.close_lesson($1)", [p]);
+    const lesson = Number((await db.query("select lesson_id from public.pitches where id = $1", [p])).rows[0].lesson_id);
+    await commitAs(A, "select public.mark_confirm_sent($1, $2)", [lesson, await version(lesson)]);
+    const flagged = async () => (await db.query("select id from public.lessons where edition_id = $1 and needs_reconfirm order by id", [ed])).rows.map((r) => Number(r.id));
+    expect(await flagged()).toEqual([]);
+    const before = await version(lesson);
+    // the «מחזור» tab writes editions directly, under the global admin's RLS
+    await commitAs(ADMIN, "update public.editions set first_day_from = 600 where id = $1", [ed]);
+    expect(await flagged()).toEqual([]);
+    await commitAs(ADMIN, "update public.editions set start_date = '2027-02-21' where id = $1", [ed]);
+    expect(await flagged()).toEqual([lesson]);
+    expect(await version(lesson)).toBe(before + 1);
+    await commitAs(A, "select public.mark_confirm_sent($1, $2)", [lesson, await version(lesson)]);
+    await db.query("update public.editions set start_date = null where id = $1", [ed]);
+    expect(await flagged()).toEqual([lesson]); // a date taken away changes the message too
+    await commitAs(A, "select public.mark_confirm_sent($1, $2)", [lesson, await version(lesson)]);
+    await db.query("update public.editions set start_date = '2027-02-14' where id = $1", [ed]);
+    expect(await flagged()).toEqual([]); // TBD → a date: no message had one
+  });
+});

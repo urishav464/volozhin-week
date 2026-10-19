@@ -164,6 +164,30 @@ describe("composeConfirmation", () => {
     expect(c.text).toBe("נוסח לדוגמה «TBD: שם» ראשון"); // spaces inside the braces are fine
   });
 
+  it("an unknown variable blocks in a branch the lesson does not take, too — the preview's defaults never hide a typo", () => {
+    const female = { speaker: { title: null, name: "מרצה לדוגמה", gender: "f" as const } };
+    for (const [template, over, lesson] of [
+      ["[[{{פניהה}} מוזמן|מוזמנת]]", female, {}], // the masculine form, for a woman
+      ["[[מוזמן|{{פניהה}} מוזמנת]]", { speaker: { title: null, name: "x", gender: "m" as const } }, {}], // the feminine form, for a man
+      ["[[תשלום:{{סכוםם}} ש״ח|בהתנדבות]]", female, { pay_amount: null, approval: "none" as const }], // the paid wording, for a volunteer
+      ["[[תשלום:{{תשלום}} ש״ח|{{התנדבות}}]]", female, {}], // the volunteer wording, for a paid lesson
+      ["[[תשלום:[[{{פניהה}}|א]]|ב]]", female, { pay_amount: null, approval: "none" as const }], // nested, two branches deep
+    ] as const) {
+      const c = composeConfirmation(input(over, lesson));
+      expect(c.ok, template).toBe(true); // the default template is fine …
+      const t = composeConfirmation(input({ ...over, template }, lesson));
+      expect(t.ok, template).toBe(false); // … this one names a variable there is not
+      expect(t.problems.map((p) => p.code), template).toEqual(["unknown_variable"]);
+    }
+    expect(composeConfirmation(input({ template: "[[{{שם}}|{{שם}}]] {{שם}}" })).problems).toHaveLength(1); // named once
+  });
+
+  it("with no template, the lesson's own blockers are listed too — pasting the wording never reveals a second one", () => {
+    expect(codes(input({ template: "" }, { approval: "pending" }))).toEqual(["template_empty", "approval_pending"]);
+    expect(codes(input({ template: null, speaker: null }, { approval: "rejected" }))).toEqual(["template_empty", "no_speaker", "approval_rejected"]);
+    expect(composeConfirmation(input({ template: "" }, { state: "draft" })).text).toBe("");
+  });
+
   it("a broken bracket blocks, saying where", () => {
     for (const template of ["{{פנייה", "[[מוזמן|מוזמנת", "[[א|ב|ג]]", "[[לבד]]", "א]]ב", "א}}ב", "{{אני:כתב}}", "{{פנייה [[א|ב]] }}", "[[תשלום:רק אחת]]"]) {
       const c = composeConfirmation(input({ template }));

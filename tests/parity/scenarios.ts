@@ -367,9 +367,9 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", pay: [1, 510, "כיתה"], amount: 200, transport: "none" },
     { as: "admin", decide: [[1, 510, "כיתה"]], decision: "approved" },
     { as: "A", sent: [1, 510, "כיתה"] },
-    { as: "admin", reopen: [1, 510, "כיתה"] }, // a draft again: no flag
+    { as: "admin", reopen: [1, 510, "כיתה"] }, // a draft again: its stages start over, the message mark too
     { as: "A", move: [1, 510, "כיתה"], to: [3, 870, 960] }, // a draft moves: no flag
-    { as: "A", close: "אלפא", at: [3, 870] }, // closed again after its message → flag
+    { as: "A", close: "אלפא", at: [3, 870] }, // closed again: a first message to send, not a reconfirm
     { as: "A", sent: [3, 870] },
     { as: "A", reshape: [3, 870], op: { op: "merge_next" } }, // a closed lesson grows → flag
     { as: "E", sent: [3, 870] }, // an admin may send for the handler
@@ -406,6 +406,39 @@ export const SCENARIOS: Record<string, Step[]> = {
     { archive: true },
     { as: "A", escort: [1, 510], trainee: null, selfIntro: false },
     { as: "admin", sources: [1, 510], kind: "other", print: "none", inReader: true },
+  ],
+
+  "a reopen starts the stages over: the next speaker's handler inherits nothing; money paid stays": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: 700, transport: "round_trip" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15" },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: true, note: "הערה לדוגמה" },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://example.org/deck", inReader: false },
+    { as: "B", readTransport: [1, 510] },
+    { as: "A", reopen: [1, 510] }, // pending, not approved: the handler may — and every stage starts over
+    { as: "admin", decide: [[1, 510]], decision: "approved" }, // nothing waits any more
+    { as: "B", propose: "גמא", at: [1, 510] },
+    { as: "B", close: "גמא", at: [1, 510] },
+    { as: "B", readTransport: [1, 510] }, // the new handler: not the last speaker's pickup
+    { as: "L", readTransport: [1, 510] },
+    { as: "B", sent: [1, 510] }, // nothing asked for this speaker: a first message
+    { as: "L", paid: [1, 510], value: true }, // nothing approved for this speaker
+    { as: "B", pay: [1, 510], amount: 900, transport: "one_way" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", paid: [1, 510], value: true },
+    { as: "B", pay: [1, 510], amount: 1000, transport: "one_way" }, // paid: the amount stays what was paid
+    { as: "B", pay: [1, 510], amount: null, transport: "one_way" },
+    { as: "B", pay: [1, 510], amount: 900, transport: "round_trip" }, // the transport may change: pending again, still paid
+    { as: "B", reopen: [1, 510] }, // paid
+    { as: "admin", reopen: [1, 510] }, // not even the instructor, while it is paid
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "E", paid: [1, 510], value: false }, // «שולם» undone first …
+    { as: "B", pay: [1, 510], amount: 1000, transport: "round_trip" }, // … then a new amount, back to the instructor
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "B", reopen: [1, 510] }, // approved: the instructor's to reopen
+    { as: "E", reopen: [1, 510] },
+    { as: "admin", decide: [[1, 510]], decision: "rejected" }, // a draft's request is no one's
   ],
 
   "transport details: the handler, logistics once approved, the instructor; paid": [

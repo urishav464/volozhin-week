@@ -5,10 +5,10 @@
 // year's tracking sheet (editions.settings.confirm_template). Nothing here
 // writes a sentence of its own: it only fills the template in. Anything left
 // unresolved blocks sending, with a Hebrew list of what is missing — an empty
-// template, a TBD (no title, no date), an unknown variable or a broken bracket,
-// a gender it cannot tell, an amount the template has no wording for, or a
-// payment/transport still waiting for the instructor (DESIGN: «אין שליחת הודעת
-// סיכום כשאישור תשלום או הסעה ממתין»).
+// template, a TBD (no title, no date), an unknown variable (in any branch, taken
+// or not) or a broken bracket, a gender it cannot tell, an amount the template
+// has no wording for, or a payment/transport still waiting for the instructor
+// (DESIGN: «אין שליחת הודעת סיכום כשאישור תשלום או הסעה ממתין»).
 //
 // The template's language (docs/DECISIONS.md, אבן דרך 3):
 //   {{פנייה}}   title + name («ד״ר פלונית אלמונית»)
@@ -268,6 +268,18 @@ const PROBLEM_TEXT: Record<Exclude<ProblemCode, "syntax" | "unknown_variable">, 
 
 const tbd = (label: string) => `«TBD: ${label}»`;
 
+const unknownText = (name: string) => `משתנה לא מוכר בנוסח: {{${name}}}. המשתנים שאפשר: ${MESSAGE_VARIABLES.map((v) => `{{${v}}}`).join(" ")}.`;
+
+/** Every {{variable}} the template names, in every branch (taken or not), in order, once each. */
+function templateVariables(list: Node[], out: string[] = []): string[] {
+  for (const n of list) {
+    if (n.t === "var" && !out.includes(n.name)) out.push(n.name);
+    else if (n.t === "gender") templateVariables([...n.m, ...n.f], out);
+    else if (n.t === "pay") templateVariables([...n.paid, ...n.free], out);
+  }
+  return out;
+}
+
 /** The summary message for one closed lesson. `ok` only when nothing is missing. */
 export function composeConfirmation(input: MessageInput): Composed {
   const problems: Problem[] = [];
@@ -276,17 +288,19 @@ export function composeConfirmation(input: MessageInput): Composed {
   };
   const { lesson: l, speaker, sender } = input;
   const template = (input.template ?? "").replace(/\r\n?/g, "\n");
-  if (template.trim() === "") {
-    add("template_empty");
-    return { ok: false, text: "", problems };
-  }
+  const empty = template.trim() === "";
+  if (empty) add("template_empty");
+  // the lesson's own blockers too, so pasting the wording never reveals a second one
   if (l.state !== "closed") add("not_closed");
   else if (!speaker) add("no_speaker");
   if (l.approval === "pending") add("approval_pending");
   if (l.approval === "rejected") add("approval_rejected");
+  if (empty) return { ok: false, text: "", problems };
 
   const { nodes, errors } = parseTemplate(template);
   for (const e of errors) add("syntax", `בנוסח יש סוגריים שלא נסגרו כמו שצריך: ${e}`);
+  // every variable in every branch — a typo in the masculine form or the volunteer wording blocks now, not on the day it is taken
+  for (const name of templateVariables(nodes)) if (!(MESSAGE_VARIABLES as readonly string[]).includes(name)) add("unknown_variable", unknownText(name));
 
   const teach = teachMinutes(l, input.lessonMinutes);
   const value = (name: string): string => {
@@ -320,7 +334,7 @@ export function composeConfirmation(input: MessageInput): Composed {
         add("no_amount");
         return tbd("תשלום");
       default:
-        add("unknown_variable", `משתנה לא מוכר בנוסח: {{${name}}}. המשתנים שאפשר: ${MESSAGE_VARIABLES.map((v) => `{{${v}}}`).join(" ")}.`);
+        add("unknown_variable", unknownText(name));
         return tbd(name);
     }
   };

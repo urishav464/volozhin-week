@@ -175,10 +175,12 @@ export class Engine {
       const a = lead ? this.week.approaches.find((x) => x.speaker_id === lead.speaker_id) : undefined;
       if (!this.isAdmin() && !(a && a.owner_member_id === this.actor.memberId)) fail("forbidden");
       if (l.approval === "approved" && !this.isAdmin()) fail("approved_locked");
+      if (l.paid_at != null) fail("paid_locked"); // money that went out is not erased with the speaker
       this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== l.id);
       for (const p of this.week.pitches) if (p.lesson_id === l.id && p.state === "accepted") p.state = "approached";
-      l.state = "draft";
-      l.version++;
+      // The stages were the speaker's: whoever closes the lesson next starts them over (CONTRACT reopen_lesson).
+      delete this.shared.transport[this.transportKey(l.id)];
+      Object.assign(l, LESSON_STAGE_DEFAULTS, { state: "draft", version: l.version + 1, updated_by: this.actor.memberId });
     });
   }
 
@@ -543,6 +545,7 @@ export class Engine {
       if (l.version !== version) fail("stale");
       const pay = cleanAmount(amount);
       const tr = pickTransport(transport);
+      if (l.paid_at != null && pay !== l.pay_amount) fail("paid_locked"); // a paid amount stays what was paid
       // the same request again: nothing — unless it was rejected (then it is asked again)
       if (pay === l.pay_amount && tr === l.transport && l.approval !== "rejected") return;
       Object.assign(l, {
@@ -562,7 +565,7 @@ export class Engine {
       const now = this.now();
       for (const it of [...items].sort((a, b) => a.lesson_id - b.lesson_id || a.version - b.version)) {
         const l = this.week.lessons.find((x) => x.id === it.lesson_id);
-        if (!l || l.version !== it.version || l.approval !== "pending") fail("stale");
+        if (!l || l.version !== it.version || l.approval !== "pending" || l.state !== "closed") fail("stale");
         Object.assign(l!, {
           approval: decision, approval_note: n, approved_by: this.actor.memberId, approved_at: now, version: l!.version + 1, updated_by: this.actor.memberId,
         });
@@ -706,8 +709,9 @@ export class Engine {
 
   /**
    * app.lessons_reconfirm, for every command at once: a closed lesson that already had its message sent and
-   * whose confirmed details changed (moved, retitled, a new teaching time or amount, or closed again after a
-   * reopen) needs the speaker told again. A new confirm_sent_at (the message re-sent) is the one exception.
+   * whose confirmed details changed (moved, retitled, a new teaching time or amount, or closed again with its
+   * message still marked — reopenLesson clears it) needs the speaker told again. A new confirm_sent_at (the
+   * message re-sent) is the one exception.
    */
   private reconfirm(before: Lesson[]) {
     const old = new Map(before.map((l) => [l.id, l]));

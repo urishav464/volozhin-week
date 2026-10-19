@@ -157,15 +157,20 @@ export function warningsFor(week: Week): Warning[] {
 
   // An escort with two lessons too close together — or at the same time. On
   // the week's clock (day × 1440 + minute), so 05:00 → 06:30 the next morning counts too.
+  // Every pair, through escortClashes — the picker's rule — so a long lesson
+  // overlapping a later one that is not its neighbour is caught too.
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
+  const clock = (l: Lesson) => l.day * 1440 + l.start_min;
   const byEscort = new Map<number, typeof live>();
   for (const l of live) if (l.escort_roster_id != null) byEscort.set(l.escort_roster_id, [...(byEscort.get(l.escort_roster_id) ?? []), l]);
   for (const [rid, ls] of byEscort) {
-    const sorted = [...ls].sort((a, b) => a.day * 1440 + a.start_min - (b.day * 1440 + b.start_min) || a.id - b.id);
-    for (let i = 1; i < sorted.length; i++) {
-      const [a, b] = [sorted[i - 1], sorted[i]];
-      const gap = weekGap(a, b);
-      if (gap >= ESCORT_MIN_GAP) continue;
+    const sorted = [...ls].sort((a, b) => clock(a) - clock(b) || a.id - b.id);
+    const pairs = sorted.flatMap((x) =>
+      escortClashes({ lessons: live }, x, rid)
+        .filter(({ lesson: y }) => clock(x) < clock(y) || (clock(x) === clock(y) && x.id < y.id)) // each pair once, earlier first
+        .map(({ lesson: y, gap }) => ({ a: x, b: y, gap })),
+    );
+    for (const { a, b, gap } of pairs) {
       const who = `«${rosterName.get(rid) ?? "מלווה"}»`;
       const when = `${DAY_NAMES[b.day]} ${fmtRange(b.start_min, b.end_min)}`;
       const message =

@@ -996,9 +996,23 @@ create or replace function public.reopen_lesson(p_lesson bigint) returns void
      where x.lesson_id = v_l.id and x.role = 'lead';
     if not v_admin and v_owner is distinct from v_me then perform app.refuse('forbidden'); end if;
     if v_l.approval = 'approved' and not v_admin then perform app.refuse('approved_locked'); end if;
+    -- money that went out is not erased with the speaker: «שולם» is undone first (v7)
+    if v_l.paid_at is not null then perform app.refuse('paid_locked'); end if;
     delete from public.lesson_speakers where lesson_id = v_l.id;
     update public.pitches set state = 'approached' where lesson_id = v_l.id and state = 'accepted';
-    update public.lessons set state = 'draft', version = version + 1, updated_by = v_me where id = v_l.id;
+    -- The stages belonged to the speaker who leaves (v7): the amount and transport
+    -- asked and the instructor's word on them, the pickup and driver, the message
+    -- sent, the escort, the sources. Whoever closes the lesson next starts them over,
+    -- and the next handler never reads the last speaker's pickup address.
+    delete from public.transport_details where lesson_id = v_l.id;
+    update public.lessons
+       set state = 'draft',
+           pay_amount = null, transport = 'none', approval = 'none', approval_note = null, approved_by = null, approved_at = null,
+           confirm_sent_at = null, confirm_sent_by = null, needs_reconfirm = false,
+           escort_roster_id = null, self_intro = false, escort_note = null,
+           sources_kind = 'pending', print_when = 'none', sources_note = null, presentation_url = null, in_reader = false,
+           version = version + 1, updated_by = v_me
+     where id = v_l.id;
   end
   $$;
 
@@ -2068,6 +2082,8 @@ create or replace function public.set_availability(
 --                         instructor's own wording, kept in editions.settings
 --   lessons_reconfirm     (trigger) a closed lesson whose confirmed details
 --                         change after the message was sent → needs_reconfirm
+--   editions_reconfirm    (trigger) the week's opening date moved → the same
+-- reopen_lesson (above, phase 1) starts every stage over: they are the speaker's.
 -- =============================================================================
 
 -- ------------------------------------------------------------- lessons
@@ -2097,7 +2113,8 @@ create index if not exists lessons_escort on public.lessons (escort_roster_id);
 
 -- needs_reconfirm, in one place: a CLOSED lesson that already had its message
 -- sent, and whose confirmed details change — moved (day, time, room), retitled,
--- a new teaching time or amount, or closed again after a reopen — is flagged
+-- a new teaching time or amount, or closed again with its message still marked
+-- (reopen_lesson clears it, so only a hand edit gets there) — is flagged
 -- «לעדכן את המרצה». Marking a new message sent (a new confirm_sent_at) is the
 -- one update that does not flag; mark_confirm_sent clears the flag.
 create or replace function app.lessons_reconfirm() returns trigger
@@ -2117,6 +2134,27 @@ create or replace function app.lessons_reconfirm() returns trigger
 drop trigger if exists lessons_reconfirm on public.lessons;
 create trigger lessons_reconfirm before update of day, start_min, end_min, room_id, title, teach_min, pay_amount, state on public.lessons
   for each row execute function app.lessons_reconfirm();
+
+-- {{תאריך}} and {{יום}} come from the week's opening Sunday: moving it after
+-- messages went out changes the date in every one of them, so each closed lesson
+-- whose message was sent is flagged too. (A date that was TBD put no date in any
+-- message: setting it the first time flags nothing.) Any write path — the «מחזור»
+-- tab, the SQL Editor.
+create or replace function app.editions_reconfirm() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if old.start_date is not null and new.start_date is distinct from old.start_date then
+      update public.lessons
+         set needs_reconfirm = true, version = version + 1
+       where edition_id = new.id and state = 'closed' and confirm_sent_at is not null and not needs_reconfirm;
+    end if;
+    return null;
+  end
+  $$;
+drop trigger if exists editions_reconfirm on public.editions;
+create trigger editions_reconfirm after update of start_date on public.editions
+  for each row execute function app.editions_reconfirm();
 
 -- ------------------------------------------------------------- transport details
 
@@ -2333,6 +2371,8 @@ create or replace function public.set_payment(p_lesson bigint, p_version integer
     end if;
     if p_transport is null or p_transport not in ('none', 'one_way', 'round_trip') then perform app.refuse('bad_value'); end if;
     v_amount := p_pay_amount::integer;
+    -- a paid amount stays what was paid: «שולם» is undone first (logistics or an admin)
+    if v_l.paid_at is not null and v_amount is distinct from v_l.pay_amount then perform app.refuse('paid_locked'); end if;
     -- the same request again: nothing — unless it was rejected (then it is asked again)
     if v_amount is not distinct from v_l.pay_amount and p_transport = v_l.transport and v_l.approval <> 'rejected' then return; end if;
     update public.lessons
@@ -2366,7 +2406,8 @@ create or replace function public.decide_payments(p_lessons bigint[], p_versions
     v_note := app.clean_line(p_note, 300);
     for x in select u.l, u.v from unnest(coalesce(p_lessons, '{}'), coalesce(p_versions, '{}')) as u(l, v) order by u.l, u.v loop
       select * into v_l from public.lessons where id = x.l for update;
-      if v_l.id is null or v_l.version is distinct from x.v or v_l.approval <> 'pending' then perform app.refuse('stale'); end if;
+      -- a request belongs to a closed lesson's speaker: a draft's is no one's to approve
+      if v_l.id is null or v_l.version is distinct from x.v or v_l.approval <> 'pending' or v_l.state <> 'closed' then perform app.refuse('stale'); end if;
       update public.lessons
          set approval = p_decision, approval_note = v_note, approved_by = app.my_member_id(null), approved_at = now(),
              version = version + 1, updated_by = app.my_member_id(v_l.edition_id)

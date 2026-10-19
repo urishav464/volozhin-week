@@ -122,6 +122,17 @@ describe("warningsFor", () => {
     expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים עם 20 דקות ביניהם (רביעי 11:50–13:00; הצעה: לפחות 30)");
   });
 
+  it("compares every pair of an escort's lessons, not only neighbours — the picker's rule exactly", () => {
+    const w = emptyWeek();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    const long = addLesson(w, 1, 510, 720, { state: "closed", escort_roster_id: t.id }); // 08:30–12:00
+    const short = addLesson(w, 1, 540, 570, { state: "closed", escort_roster_id: t.id, room_id: 2 }); // 09:00–09:30, inside it
+    const late = addLesson(w, 1, 710, 750, { state: "closed", escort_roster_id: t.id, room_id: 3 }); // 11:50–12:30: overlaps the long one only
+    const pairs = warningsFor(w).filter((x) => x.kind === "escort_gap").map((g) => g.lessonIds);
+    expect(pairs).toEqual([[long.id, short.id], [long.id, late.id]]);
+    expect(escortClashes(w, late, t.id).map((x) => x.lesson.id)).toEqual([long.id]);
+  });
+
   it("the escort picker sees the same rule before saving: the escort's lessons closer than 30 minutes, on the week's clock", () => {
     const w = emptyWeek();
     const t = addTrainee(w);
