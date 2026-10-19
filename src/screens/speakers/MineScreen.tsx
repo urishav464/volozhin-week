@@ -13,7 +13,7 @@ import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { MINE_GROUPS, type MineRow, mySpeakers, nextStep } from "../../domain/mine";
 import { byGender, displayName } from "../../domain/names";
-import { APPROVAL_LABEL, requestText, type StageKey } from "../../domain/stages";
+import { requestText, type StageKey } from "../../domain/stages";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { statusLabel } from "../../lib/labels";
@@ -202,7 +202,7 @@ function MineItem({
           group === "payment"
             ? l.approval === "rejected"
               ? `המדריך/ה לא אישר/ה: ${requestText(l) ?? ""}${l.approval_note ? ` («${l.approval_note}»)` : ""}`
-              : `${APPROVAL_LABEL.pending}: ${requestText(l) ?? ""}`
+              : (requestText(l) ?? "") // the chip beside it says «ממתין לאישור»
             : group === "reconfirm"
               ? "השיעור השתנה אחרי שההודעה נשלחה"
               : group === "send"

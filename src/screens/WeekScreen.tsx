@@ -21,8 +21,8 @@ import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
 import { Pool } from "../grid/Pool";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
-import type { StageKey } from "../domain/stages";
-import { STAGE_DOT } from "../grid/bits";
+import { reopenLoses, type StageKey } from "../domain/stages";
+import { STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
 import { CreateSpeaker } from "./speakers/CreateSpeaker";
 import { LessonStages } from "./stages/LessonStages";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
@@ -187,7 +187,15 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       }
       const l = model.week.lessons.find((x) => x.id === item.id);
       if (!l) return;
-      if (target.kind === "pool") return void run(() => cmds.reopenLesson(l.id), "השיעור חזר לטיוטה");
+      if (target.kind === "pool") {
+        // a reopen erases the speaker's stages: when any holds something, it is done from the panel, after it says what goes
+        if (l.state === "closed" && (l.paid_at != null || reopenLoses(l).length > 0)) {
+          setPanel({ kind: "lesson", id: l.id });
+          setToast({ kind: "error", text: "לשיעור כבר יש שלבים, ופתיחה מחדש מוחקת אותם. פותחים מחדש מלוח השיעור, אחרי אישור." });
+          return;
+        }
+        return void run(() => cmds.reopenLesson(l.id), "השיעור חזר לטיוטה");
+      }
       if (target.kind === "cell") {
         const len = l.end_min - l.start_min;
         void run(() => cmds.moveLesson(l.id, { day: target.day as Day, start_min: target.start, end_min: target.start + len, room_id: l.room_id }), "השיעור הוזז");
@@ -207,6 +215,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     else {
       if (l && !wide) setDay(l.day);
       setPanel({ kind: "lesson", id });
+      // the docked panel narrows the grid: keep the card that was opened in view
+      if (wide) requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
     }
   };
   const startPlacing = (speakerId: number) => {
@@ -296,10 +306,13 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           {label}
         </li>
       ))}
-      <li className="inline-flex items-center gap-1">
-        <span aria-hidden className={`size-2 rounded-full border ${STAGE_DOT.done}`} />
-        הנקודות: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה
-      </li>
+      <li>הנקודות, לפי הסדר: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה</li>
+      {(["done", "waiting", "problem", "open", "na"] as const).map((st) => (
+        <li key={st} className="inline-flex items-center gap-1">
+          <span aria-hidden className={`size-2.5 rounded-full border-2 ${STAGE_DOT[st]}`} />
+          {STAGE_STATE_LABEL[st]}
+        </li>
+      ))}
       <li className="inline-flex items-center gap-1">
         <span aria-hidden className="size-2.5 rounded-full bg-bad" />
         לעדכן את המרצה
@@ -329,7 +342,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
             <GridDesktop model={model} lens={lens} showNight={showNight} placing={placing} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} />
           </div>
-          {(roomy || poolOpen) && (
+          {/* an open panel takes the pool's column, so the grid keeps its width */}
+          {(roomy || poolOpen) && !panel && (
             <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper p-3 pt-16 shadow-2xl"} aria-label="מאגר">
               <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} dropTarget={!!drag && drag.item.kind !== "speaker"} />
             </aside>

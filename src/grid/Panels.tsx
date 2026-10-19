@@ -7,7 +7,8 @@ import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
-import { stagesOf } from "../domain/stages";
+import { reopenLoses, stagesOf } from "../domain/stages";
+import { Button, Confirm, INPUT } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
 import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
 
@@ -47,6 +48,19 @@ export function Sheet({
   // another device) re-renders the parent and must not pull focus out of a field.
   const close = useRef(onClose);
   close.current = onBack ?? onClose;
+  // On a wide screen the panel takes a column of its own: the page reflows beside it (index.css,
+  // html[data-sheet]) instead of running under it, so nothing behind looks cut off or half-clickable.
+  // No backdrop: the week is worked in, and the next card switches the panel in one click.
+  useEffect(() => {
+    if (!wide) return;
+    const root = document.documentElement;
+    root.dataset.sheet = String(Number(root.dataset.sheet ?? 0) + 1);
+    return () => {
+      const n = Number(root.dataset.sheet ?? 1) - 1;
+      if (n > 0) root.dataset.sheet = String(n);
+      else delete root.dataset.sheet;
+    };
+  }, [wide]);
   useEffect(() => {
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus(); // a field with autoFocus keeps it
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
@@ -61,7 +75,7 @@ export function Sheet({
       aria-label={title}
       className={
         wide
-          ? "fixed inset-y-0 end-0 z-40 flex w-[24rem] max-w-full flex-col border-s border-line bg-paper shadow-2xl outline-none"
+          ? "fixed inset-y-0 end-0 z-40 flex w-[24rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
           : "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
       }
     >
@@ -92,14 +106,12 @@ export function Sheet({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section aria-label={title}>
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
+      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{title}</h3>
       {children}
     </section>
   );
 }
 
-const btn = "rounded-lg border border-line bg-card px-3 py-1.5 text-sm font-semibold hover:bg-line/40 disabled:opacity-50";
-const btnPrimary = "rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-paper hover:bg-ink/90 disabled:opacity-50";
 
 /** The lesson row a lesson starts in (its shape menu acts on that row). */
 export function rowOf(model: GridModel, l: Pick<Lesson, "day" | "start_min">): GridRow | undefined {
@@ -159,14 +171,14 @@ export function LessonPanel(props: LessonPanelProps) {
             (adding ? (
               <div className="mt-2 rounded-lg border border-line bg-card p-2">
                 <SpeakerChooser model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={(id, mode) => actions.propose(id, { lesson_id: l.id }, mode)} />
-                <button type="button" className={`${btn} mt-2`} onClick={() => setAdding(false)}>
+                <Button className="mt-2" onClick={() => setAdding(false)}>
                   סגירת הרשימה
-                </button>
+                </Button>
               </div>
             ) : (
-              <button type="button" className={`${btn} mt-2`} onClick={() => setAdding(true)}>
+              <Button className="mt-2" onClick={() => setAdding(true)}>
                 + הצעת מרצה
-              </button>
+              </Button>
             ))}
         </Section>
       )}
@@ -221,29 +233,29 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
             {canEdit && (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {mine && live && (
-                  <button type="button" className={btnPrimary} onClick={() => actions.close(p.id)}>
+                  <Button kind="primary" onClick={() => actions.close(p.id)}>
                     סגרנו
-                  </button>
+                  </Button>
                 )}
                 {mine && p.state === "candidate" && s?.vetted === "approved" && (
-                  <button type="button" className={btn} onClick={() => actions.setPitch(p.id, "approached")}>
+                  <Button onClick={() => actions.setPitch(p.id, "approached")}>
                     פנינו
-                  </button>
+                  </Button>
                 )}
                 {mine && live && (
-                  <button type="button" className={btn} onClick={() => actions.setPitch(p.id, "declined")}>
+                  <Button onClick={() => actions.setPitch(p.id, "declined")}>
                     {byGender(s?.gender, "סירב", "סירבה")}
-                  </button>
+                  </Button>
                 )}
                 {mine && p.state === "declined" && (
-                  <button type="button" className={btn} onClick={() => actions.setPitch(p.id, "approached")}>
+                  <Button onClick={() => actions.setPitch(p.id, "approached")}>
                     החזרה לתהליך
-                  </button>
+                  </Button>
                 )}
                 {live && (mine || p.proposed_by === me) && (
-                  <button type="button" className={btn} onClick={() => actions.unpropose(p.id)}>
+                  <Button onClick={() => actions.unpropose(p.id)}>
                     הסרה מהמשבצת
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
@@ -298,11 +310,11 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
         <div className="space-y-2">
           <label className="block text-sm">
             כותרת
-            <input value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className="mt-0.5 w-full rounded-lg border border-line bg-card px-2 py-1.5" />
+            <input value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-0.5`} />
           </label>
           <label className="block text-sm">
             קטגוריה
-            <select value={category} disabled={!canEdit} onChange={(e) => setCategory(Number(e.target.value))} className="mt-0.5 w-full rounded-lg border border-line bg-card px-2 py-1.5">
+            <select value={category} disabled={!canEdit} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-0.5`}>
               <option value={0}>— לא נבחרה —</option>
               {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
                 <option key={c.id} value={c.id}>
@@ -314,7 +326,7 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
           <div className="flex gap-2">
             <label className="block min-w-0 flex-1 text-sm">
               קהל מיוחד
-              <input value={audience} disabled={!canEdit} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className="mt-0.5 w-full rounded-lg border border-line bg-card px-2 py-1.5" />
+              <input value={audience} disabled={!canEdit} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-0.5`} />
             </label>
             <label className="block w-28 text-sm">
               דקות הוראה
@@ -327,14 +339,14 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
                 placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
                 disabled={!canEdit}
                 onChange={(e) => setTeach(Number(e.target.value))}
-                className="mt-0.5 w-full rounded-lg border border-line bg-card px-2 py-1.5 tabular-nums"
+                className={`${INPUT} mt-0.5 tabular-nums`}
               />
             </label>
           </div>
           {canEdit && (
-            <button type="button" className={btnPrimary} disabled={!dirty} onClick={save}>
+            <Button kind="primary" disabled={!dirty} onClick={save}>
               שמירה
-            </button>
+            </Button>
           )}
         </div>
       </Section>
@@ -355,12 +367,47 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
         </Section>
       )}
 
-      {canEdit && mine && (
-        <button type="button" className={btn} onClick={() => actions.reopen(l.id)}>
-          פתיחה מחדש (חזרה לטיוטה)
-        </button>
-      )}
+      {canEdit && mine && <Reopen lesson={l} speakerGender={lead?.gender ?? null} isAdmin={isAdmin} onReopen={() => actions.reopen(l.id)} />}
     </>
+  );
+}
+
+/**
+ * «פתיחה מחדש»: the lesson goes back to a draft, and its stages — the speaker's — start over
+ * (CONTRACT reopen_lesson). When any stage holds something, it says what goes before doing it.
+ * Paid money is never erased (paid_locked); an approved request is the instructor's to reopen.
+ */
+function Reopen({ lesson: l, speakerGender, isAdmin, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; onReopen: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const loses = reopenLoses(l);
+  if (l.paid_at) {
+    return <p className="text-sm text-ink-soft">התשלום סומן כשולם, ולכן אי אפשר לפתוח את השיעור מחדש. קודם מבטלים את הסימון «שולם», בשלב התשלום.</p>;
+  }
+  if (l.approval === "approved" && !isAdmin) {
+    return <p className="text-sm text-ink-soft">הבקשה לתשלום או להסעה אושרה, ולכן רק המדריך/ה יכול/ה לפתוח את השיעור מחדש.</p>;
+  }
+  if (asking) {
+    return (
+      <Confirm
+        text={
+          <>
+            פתיחה מחדש מחזירה את השיעור לטיוטה, ומוחקת את מה שנאסף {byGender(speakerGender, "למרצה הזה", "למרצה הזו", "למרצה הזה/הזו")}: {loses.join(" · ")}.
+            אם סוגרים שוב, השלבים מתחילים מההתחלה.
+          </>
+        }
+        confirm="פתיחה מחדש ומחיקה"
+        onConfirm={() => {
+          setAsking(false);
+          onReopen();
+        }}
+        onCancel={() => setAsking(false)}
+      />
+    );
+  }
+  return (
+    <Button onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
+      פתיחה מחדש (חזרה לטיוטה)
+    </Button>
   );
 }
 
@@ -420,7 +467,7 @@ export function SpeakerChooser({ model, me, day, start, end, need, onPick }: { m
 
   return (
     <div className="space-y-1.5">
-      <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש מרצה" aria-label="חיפוש מרצה למשבצת" className="w-full rounded-lg border border-line bg-card px-3 py-1.5 text-sm" />
+      <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש מרצה" aria-label="חיפוש מרצה למשבצת" className={INPUT} />
       <ul className="max-h-72 space-y-1 overflow-y-auto">
         {ranked.map(({ s, section, fit }) => (
           <ChooserRow key={s.id} model={model} speaker={s} section={section} fit={fit} need={need ?? null} onPick={onPick} />
@@ -447,9 +494,9 @@ function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: 
           {s.vetted !== "approved" && " · ממתין לאישור"}
         </span>
       </span>
-      <button type="button" className={btn} onClick={() => onPick(s.id, others ? "offer" : "self")}>
+      <Button onClick={() => onPick(s.id, others ? "offer" : "self")}>
         {others ? "הצע ל" + (owner ?? "אחראי/ת") : "הצע"}
-      </button>
+      </Button>
     </li>
   );
 }
@@ -466,13 +513,13 @@ export function ShapeMenu({ day: _day, row, closed, onReshape }: { day: Day; row
         <p className="mb-1 font-semibold">פיצול למקבילים</p>
         <p className="mb-1 text-xs text-ink-soft">שיעורים מקבילים מפצלים את הקבוצה — כדאי רק כשיש סיבה.</p>
         <div className="flex flex-wrap gap-1.5">
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="הסיבה" aria-label="סיבה לפיצול" className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1" />
-          <button type="button" className={btn} disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 2, reason })}>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="הסיבה" aria-label="סיבה לפיצול" className={`${INPUT} min-w-0 flex-1 basis-32`} />
+          <Button disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 2, reason })}>
             ל-2
-          </button>
-          <button type="button" className={btn} disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 3, reason })}>
+          </Button>
+          <Button disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 3, reason })}>
             ל-3
-          </button>
+          </Button>
         </div>
       </div>
       {!closed && (
@@ -480,21 +527,21 @@ export function ShapeMenu({ day: _day, row, closed, onReshape }: { day: Day; row
           <p className="mb-1 font-semibold">פיצול בזמן</p>
           <div className="flex flex-wrap gap-1.5">
             {splits.map((parts) => (
-              <button key={parts.join("+")} type="button" className={btn} onClick={() => onReshape({ op: "split_time", parts })}>
+              <Button key={parts.join("+")} onClick={() => onReshape({ op: "split_time", parts })}>
                 <bdi>{parts.join("+")}</bdi> דק׳
-              </button>
+              </Button>
             ))}
           </div>
         </div>
       )}
       <div className="flex flex-wrap gap-1.5">
-        <button type="button" className={btn} onClick={() => onReshape({ op: "merge_next" })}>
+        <Button onClick={() => onReshape({ op: "merge_next" })}>
           איחוד עם המשבצת הבאה
-        </button>
+        </Button>
         {!closed && (
-          <button type="button" className={btn} onClick={() => onReshape({ op: "reset" })}>
+          <Button onClick={() => onReshape({ op: "reset" })}>
             החזרה למבנה הבסיס
-          </button>
+          </Button>
         )}
       </div>
     </div>

@@ -7,6 +7,7 @@ import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from
 import type { EscortedLesson, RosterEntry } from "../../data/settings";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import { nameKey } from "../../domain/nameKey";
+import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { type PasteStatus, parseRosterPaste, pasteColumns, previewPaste } from "../../settings/roster";
@@ -292,10 +293,11 @@ function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: nu
               <>
                 למחוק את <b>{r.full_name}</b> מרשימת החניכים?
                 {escorted == null ? (
-                  <span className="mt-1 block text-ink-soft">בודקים אילו שיעורים הוא/היא מלווה…</span>
+                  <span className="mt-1 block text-ink-soft">בודקים אילו שיעורים {byGender(r.gender, "הוא מלווה", "היא מלווה", "הוא/היא מלווה")}…</span>
                 ) : escorted.length > 0 ? (
                   <span className="mt-1 block">
-                    {escorted.length === 1 ? "הוא/היא מלווה שיעור אחד, שיישאר בלי מלווה:" : `הוא/היא מלווה ${escorted.length} שיעורים, שיישארו בלי מלווה:`}
+                    {byGender(r.gender, "הוא מלווה", "היא מלווה", "הוא/היא מלווה")}{" "}
+                    {escorted.length === 1 ? "שיעור אחד, שיישאר בלי מלווה:" : `${escorted.length} שיעורים, שיישארו בלי מלווה:`}
                     <span role="list" aria-label="השיעורים שיישארו בלי מלווה" className="mt-1 block space-y-0.5">
                       {escorted.map((l) => (
                         <span role="listitem" key={l.id} className="block">

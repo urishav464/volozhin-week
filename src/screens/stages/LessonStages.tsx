@@ -15,7 +15,8 @@ import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data
 import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro } from "../../domain/escorts";
 import { PRINT_WHEN_LABEL, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
-import type { PrintWhen, SourcesKind, SpeakerContacts, Week } from "../../domain/types";
+import { byGender } from "../../domain/names";
+import type { Gender, PrintWhen, SourcesKind, SpeakerContacts, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ReconfirmDot } from "../../grid/bits";
 import { escortClashes, ESCORT_MIN_GAP } from "../../rules/warnings";
@@ -23,7 +24,7 @@ import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
 import { MessageComposer } from "./MessageComposer";
-import { type Act, Choice, Problem, type StageCtx, StageSection } from "./parts";
+import { type Act, Choice, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 
 export interface LessonStagesProps {
@@ -79,7 +80,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
       case "msg":
         return <MessageStage {...ctx} port={port} speakerId={speaker?.id ?? null} notify={notify} />;
       case "escort":
-        return <EscortStage key={l.version} {...ctx} />;
+        return <EscortStage key={l.version} {...ctx} speakerGender={speaker?.gender ?? null} />;
       case "sources":
         return <SourcesStage key={l.version} {...ctx} onReader={() => show("reader")} />;
       case "reader":
@@ -156,7 +157,7 @@ function gapText(gap: number): string {
 }
 
 /** The escort from the edition's roster (with each trainee's load), self-introduction, a note, and the duty notes they will read. */
-function EscortStage({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {
+function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }: StageCtx & { speakerGender: Gender | null }) {
   const id = useId();
   const load = useMemo(() => escortLoad(week), [week]);
   const roster = useMemo(() => [...week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id), [week.roster]);
@@ -247,7 +248,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {
       <div>
         <label className="flex min-h-11 cursor-pointer items-center gap-2">
           <input type="checkbox" checked={selfIntro} onChange={(e) => setSelfIntro(e.target.checked)} className="size-5 accent-ink" />
-          הצגה עצמית: המרצה מציג/ה את עצמו/ה
+          הצגה עצמית: {byGender(speakerGender, "המרצה מציג את עצמו", "המרצה מציגה את עצמה", "המרצה מציג/ה את עצמו/ה")}
         </label>
         {suggested && selfIntro && !l.self_intro && (
           <p className="text-xs text-ink-soft">
@@ -358,12 +359,12 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
         </label>
         {!printable && <p className="text-xs text-ink-soft">אין כאן מה להדפיס (טרם התקבלו, בלי מקורות, או מצגת בלבד).</p>}
       </div>
-      <p className="text-xs text-ink-soft">
-        העלאת הקבצים עצמם והמקראה: בהמשך (אבן דרך 5).{" "}
-        <button type="button" onClick={onReader} className="underline underline-offset-2">
+      <div className="space-y-1">
+        <p className="text-xs text-ink-soft">העלאת הקבצים והמקראה יגיעו בהמשך.</p>
+        <button type="button" onClick={onReader} className={LINK_BUTTON}>
           על המקראה
         </button>
-      </p>
+      </div>
       {problem && <Problem>{problem.text}</Problem>}
       <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "sources"} busyLabel="שומר…">
         שמירה
@@ -385,7 +386,7 @@ function ReaderStage({ lesson: l, actor, onSources }: StageCtx & { onSources: ()
               ? "המקורות עוד לא התקבלו."
               : "המקורות התקבלו, ועוד לא סומן שהם נכנסים למקראה."}
       </p>
-      <p className="text-xs text-ink-soft">בונים את המקראה (PDF ושלד Word, עם רשימה של מה התקבל ומה חסר) באבן דרך 5. כאן יופיעו הקבצים שהועלו.</p>
+      <p className="text-xs text-ink-soft">כאן יופיעו הקבצים שהועלו, ובהמשך גם המקראה (PDF ושלד Word).</p>
       {actor.canEdit && <Button onClick={onSources}>לסימון במקורות</Button>}
     </div>
   );

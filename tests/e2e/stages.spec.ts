@@ -49,14 +49,22 @@ test.describe("demo build", () => {
     await expect(pay).toHaveAttribute("data-state", "na");
     const form = pay.getByRole("form", { name: "בקשת תשלום והסעה" });
     await form.getByRole("radio", { name: "תשלום", exact: true }).check();
-    await form.getByRole("button", { name: "שליחה לאישור המדריך/ה" }).click();
+    // the demo's user is the instructor: the request is saved, not «sent to the instructor» — she decides it above
+    await form.getByRole("button", { name: "שמירת הבקשה" }).click();
     await expect(form.getByRole("alert")).toContainText("צריך לכתוב את הסכום"); // never a default amount
     await form.getByLabel("סכום בשקלים").fill("150");
     await form.getByRole("radio", { name: "הלוך ושוב" }).check();
-    await form.getByRole("button", { name: "שליחה לאישור המדריך/ה" }).click();
-    await expect(toast(page, "הבקשה נשלחה לאישור המדריך/ה")).toBeVisible();
+    await form.getByRole("button", { name: "שמירת הבקשה" }).click();
+    await expect(toast(page, "הבקשה ממתינה לאישור שלך")).toBeVisible();
     await expect(pay).toHaveAttribute("data-state", "waiting");
     await expect(pay).toContainText("150 ₪");
+    // one primary action: the decision; the saved request waits behind «שינוי הבקשה»
+    await expect(pay.getByRole("group", { name: "החלטת המדריך/ה" })).toBeVisible();
+    await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
+    await pay.getByRole("button", { name: "שינוי הבקשה" }).click();
+    await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByLabel("סכום בשקלים")).toHaveValue("150");
+    await pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByRole("button", { name: "ביטול" }).click();
+    await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
     await expect(badge).toHaveAccessibleName("אישורים, 7 ממתינים");
     await noSidewaysScroll(page);
 
@@ -214,6 +222,13 @@ test.describe("demo build", () => {
     for (const k of ["escort", "sources", "reader"]) await expect(card(page, "מרצה 19").locator(`[data-stage="${k}"]`)).toHaveAttribute("data-state", "done");
     await noSidewaysScroll(page);
 
+    // «פתיחה מחדש» says first what goes with the speaker: the stages start over
+    await panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" }).click();
+    const ask = panel.getByRole("group", { name: "אישור" });
+    await expect(ask).toContainText("בקשת ההסעה ופרטיה · המלווה · המקורות");
+    await ask.getByRole("button", { name: "ביטול" }).click();
+    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toBeVisible();
+
     // «הגדרות ← חניכים»: deleting that escort lists the lessons they would leave
     await nav(page).getByRole("link", { name: "הגדרות" }).click();
     await page.getByRole("tab", { name: "חניכים" }).click();
@@ -233,7 +248,9 @@ test.describe("demo build", () => {
   test("«המרצים שלי»: a closed lesson sits under its next step, and its button opens the lesson there", async ({ page }) => {
     await page.goto(`${demoUrl()}/mine`);
     const group = (name: string) => page.getByRole("region", { name, exact: true });
-    await expect(group("תשלום/הסעה")).toContainText("ממתין לאישור המדריך/ה: 200 ₪ · הלוך ושוב");
+    await expect(group("תשלום/הסעה")).toContainText("200 ₪ · הלוך ושוב");
+    await expect(group("תשלום/הסעה")).toContainText("ממתין לאישור"); // once, as the chip
+    await expect(group("תשלום/הסעה")).not.toContainText("ממתין לאישור המדריך/ה:");
     await expect(group("לעדכן את המרצה")).toContainText("מרצה 08");
     await expect(group("לשלוח סיכום")).toContainText("מרצה 12");
     await expect(group("חסר מלווה")).toContainText("מרצה 24");
@@ -283,7 +300,7 @@ test.describe("mock build", () => {
     await pay.getByRole("radio", { name: "תשלום", exact: true }).check();
     await pay.getByLabel("סכום בשקלים").fill("1,500");
     await pay.getByRole("radio", { name: "הלוך", exact: true }).check();
-    await pay.getByRole("button", { name: "שליחה לאישור המדריך/ה" }).click();
+    await pay.getByRole("button", { name: "שמירת הבקשה" }).click();
     await expect.poll(() => sb.rpc.get("set_payment")).toEqual([{ p_lesson: lessonOf(0, 870), p_version: 1, p_pay_amount: 1500, p_transport: "one_way" }]);
 
     const escort = await stage(panel, "מלווה");

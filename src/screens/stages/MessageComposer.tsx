@@ -47,6 +47,14 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
     lessonMinutes: week.edition.settings.lesson_minutes,
   });
   const emptyTemplate = c.problems.some((p) => p.code === "template_empty");
+  const noSenderGender = c.problems.some((p) => p.code === "sender_gender");
+  // The sender's gender is fixed by whoever may: an admin, in «הפרטים שלי»; anyone else asks the instructor (set_my_profile is an admin's).
+  const problemText = (p: (typeof c.problems)[number]) =>
+    p.code !== "sender_gender"
+      ? p.message
+      : actor.isAdmin
+        ? "חסר המגדר שלך ברשימת הצוות, והנוסח משתנה לפי מגדר השולח/ת ({{אני:…|…}})."
+        : "המגדר שלך לא רשום ברשימת הצוות, והנוסח משתנה לפי מגדר השולח/ת. המדריך/ה מוסיף/ה אותו בהגדרות ← צוות (עריכה ליד השם שלך).";
 
   const copy = async () => {
     try {
@@ -92,13 +100,22 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
           <p className="font-semibold">עוד אי אפשר לשלוח:</p>
           <ul aria-label="מה חסר כדי לשלוח" className="list-disc space-y-0.5 ps-5">
             {c.problems.map((p, i) => (
-              <li key={i}>{p.message}</li>
+              <li key={i}>{problemText(p)}</li>
             ))}
           </ul>
-          {emptyTemplate && actor.isAdmin && (
-            <Link to="/settings/templates" className="mt-2 inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
-              לנוסח, בהגדרות ‹
-            </Link>
+          {actor.isAdmin && (emptyTemplate || noSenderGender) && (
+            <div className="mt-2 flex flex-wrap gap-x-4">
+              {emptyTemplate && (
+                <Link to="/settings/templates" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+                  לנוסח, בהגדרות ‹
+                </Link>
+              )}
+              {noSenderGender && (
+                <Link to="/settings/team" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+                  למגדר שלי, בהגדרות ‹
+                </Link>
+              )}
+            </div>
           )}
         </div>
       )}

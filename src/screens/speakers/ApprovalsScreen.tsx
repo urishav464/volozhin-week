@@ -322,7 +322,7 @@ function PaymentItem({
   const { lesson: l, speaker } = row;
   const name = speaker ? displayName(speaker) : "שיעור";
   const handler = row.handler != null ? week.team.find((t) => t.id === row.handler)?.display_name : undefined;
-  const facts = [requestText(l), l.title ?? "כותרת: TBD", handler ? `ביקש/ה: ${handler}` : null].filter(Boolean);
+  const facts = [requestText(l), l.title ?? "כותרת: TBD", handler ? `בטיפול: ${handler}` : null].filter(Boolean);
   return (
     <li data-lesson-id={l.id} className="py-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

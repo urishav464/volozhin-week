@@ -24,16 +24,19 @@ export function Chip({ children, tone = "plain", title }: { children: ReactNode;
   );
 }
 
-/** A stage's dot, by its state: filled green when done, amber while it waits, red for a problem, hollow while open, grey when not needed. */
+/** A stage's dot, by its state: filled green when done, amber while it waits, red for a problem, hollow while open, dashed when not needed. */
 export const STAGE_DOT: Record<StageState, string> = {
   done: "bg-ok border-ok",
   open: "bg-transparent border-ink-faint",
   waiting: "bg-warn border-warn",
   problem: "bg-bad border-bad",
-  na: "bg-line border-line",
+  na: "bg-transparent border-ink-faint border-dashed", // quiet, but visible: dashed, not a hollow «open»
 };
 
 /** The card's five dots: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה (src/domain/stages.ts). */
+/** What each dot state means — the progress lens's legend, and its words for a screen reader. */
+export const STAGE_STATE_LABEL: Record<StageState, string> = { done: "מוכן", waiting: "מחכה", problem: "לטפל", open: "פתוח", na: "לא נדרש" };
+
 export function StageDots({ lesson }: { lesson: Lesson }) {
   const stages = stagesOf(lesson);
   return (

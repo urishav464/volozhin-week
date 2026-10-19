@@ -100,6 +100,23 @@ export function stagesOf(l: StageFields): Stage[] {
   return [pay, msg, escort, sources, reader];
 }
 
+/**
+ * What reopen_lesson erases with the speaker (CONTRACT: the stages were theirs, and start over), as the
+ * reopen confirmation lists it — empty when no stage holds anything yet. Transport details count whenever a
+ * transport was asked: they live apart (transport_details) and go with it.
+ */
+export function reopenLoses(
+  l: Pick<Lesson, "pay_amount" | "transport" | "confirm_sent_at" | "escort_roster_id" | "self_intro" | "escort_note" | "sources_kind" | "print_when" | "sources_note" | "presentation_url" | "in_reader">,
+): string[] {
+  const out: string[] = [];
+  if (l.transport !== "none") out.push(l.pay_amount != null ? "בקשת התשלום וההסעה, ופרטי ההסעה" : "בקשת ההסעה ופרטיה");
+  else if (l.pay_amount != null) out.push("בקשת התשלום");
+  if (l.confirm_sent_at) out.push("הסימון שהודעת הסיכום נשלחה");
+  if (l.escort_roster_id != null || l.self_intro || l.escort_note) out.push("המלווה");
+  if (l.sources_kind !== "pending" || l.print_when !== "none" || l.sources_note || l.presentation_url || l.in_reader) out.push("המקורות");
+  return out;
+}
+
 /** What the handler does next with a closed lesson — «המרצים שלי» groups by it (null: everything is in place). */
 export type LessonStep = "payment" | "reconfirm" | "send" | "escort" | "sources";
 

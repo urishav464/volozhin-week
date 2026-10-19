@@ -18,6 +18,10 @@ export function PaymentStage(ctx: StageCtx) {
   const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
   const mayMarkPaid = (actor.role === "logistics" || actor.isAdmin) && (actor.isAdmin || !archivedEdition(week));
   const asked = requestText(l);
+  // A request already made sits behind «שינוי הבקשה», so the section's one primary action is the decision
+  // (or «בקשה מחדש» after a rejection). Open at the version it was opened on: a save closes it again.
+  const [changingAt, setChangingAt] = useState<number | null>(null);
+  const formOpen = asked == null || l.approval === "rejected" || changingAt === l.version;
   const decider = l.approval === "approved" || l.approval === "rejected" ? memberName(week, l.approved_by) : null;
   const tone = l.approval === "approved" ? "ok" : l.approval === "rejected" ? "bad" : l.approval === "pending" ? "warn" : "plain";
   return (
@@ -64,7 +68,19 @@ export function PaymentStage(ctx: StageCtx) {
       )}
 
       {mine ? (
-        <RequestForm key={l.version} lesson={l} busy={busy} act={act} setPayment={cmds.setPayment} />
+        formOpen ? (
+          <RequestForm
+            key={l.version}
+            lesson={l}
+            busy={busy}
+            act={act}
+            setPayment={cmds.setPayment}
+            decider={actor.global}
+            onCancel={asked != null && l.approval !== "rejected" ? () => setChangingAt(null) : undefined}
+          />
+        ) : (
+          <Button onClick={() => setChangingAt(l.version)}>שינוי הבקשה</Button>
+        )
       ) : (
         actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או המדריך/ה.</p>
       )}
@@ -100,26 +116,46 @@ function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string
 
 type AmountValue = number | null | "empty" | "bad";
 
-/** The handler's request: no payment (a volunteer) or an amount typed in whole shekels, and the transport. */
-function RequestForm({ lesson: l, busy, act, setPayment }: { lesson: Lesson; busy: string | null; act: Act; setPayment: StageCtx["cmds"]["setPayment"] }) {
+/**
+ * The handler's request: no payment (a volunteer) or an amount typed in whole shekels, and the transport.
+ * `decider`: a global admin, who decides it herself above — so it is saved, not «sent to the instructor».
+ * A paid amount stays what was paid (paid_locked) until «שולם» is undone; the transport may still change.
+ */
+function RequestForm({
+  lesson: l,
+  busy,
+  act,
+  setPayment,
+  decider,
+  onCancel,
+}: {
+  lesson: Lesson;
+  busy: string | null;
+  act: Act;
+  setPayment: StageCtx["cmds"]["setPayment"];
+  decider: boolean;
+  onCancel?: () => void;
+}) {
   const id = useId();
-  const [paid, setPaid] = useState<"none" | "paid">(l.pay_amount != null ? "paid" : "none");
+  const [kind, setKind] = useState<"none" | "paid">(l.pay_amount != null ? "paid" : "none");
   const [amount, setAmount] = useState(l.pay_amount != null ? String(l.pay_amount) : "");
   const [transport, setTransport] = useState<Transport>(l.transport);
   const [problem, setProblem] = useState<string | null>(null);
   const raw = amount.replace(/[\s,₪]/g, "");
-  const value: AmountValue = paid === "none" ? null : raw === "" ? "empty" : /^\d+$/.test(raw) ? Number(raw) : "bad";
+  const value: AmountValue = kind === "none" ? null : raw === "" ? "empty" : /^\d+$/.test(raw) ? Number(raw) : "bad";
   const same = value === l.pay_amount && transport === l.transport;
   const asks = value !== null || transport !== "none";
-  const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : "שליחה לאישור המדריך/ה";
+  const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : decider ? "שמירת הבקשה" : "שליחה לאישור המדריך/ה";
+  const sentText = decider ? "נשמר. הבקשה ממתינה לאישור שלך: «אישור הבקשה» למעלה" : "הבקשה נשלחה לאישור המדריך/ה";
+  const paid = l.paid_at != null;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
     if (value === "empty") return setProblem("צריך לכתוב את הסכום שסוכם, או לבחור «בלי תשלום (התנדבות)».");
     if (value === "bad") return setProblem(errorMessage("bad_amount"));
-    await act("pay", () => setPayment(l.id, l.version, value, transport), asks ? "הבקשה נשלחה לאישור המדריך/ה" : "נשמר: בלי תשלום ובלי הסעה", (code) => {
-      if (code !== "bad_amount" && code !== "bad_value") return false;
+    await act("pay", () => setPayment(l.id, l.version, value, transport), asks ? sentText : "נשמר: בלי תשלום ובלי הסעה", (code) => {
+      if (code !== "bad_amount" && code !== "bad_value" && code !== "paid_locked") return false;
       setProblem(errorMessage(code));
       return true;
     });
@@ -130,14 +166,15 @@ function RequestForm({ lesson: l, busy, act, setPayment }: { lesson: Lesson; bus
       <Choice
         name={`${id}-paid`}
         legend="תשלום"
-        value={paid}
+        disabled={paid}
+        value={kind}
         options={[
           ["none", "בלי תשלום (התנדבות)"],
           ["paid", "תשלום"],
         ]}
-        onChange={setPaid}
+        onChange={setKind}
       />
-      {paid === "paid" && (
+      {kind === "paid" && (
         <Field id={`${id}-amount`} label="סכום בשקלים" hint="מספר שלם: מה שסוכם עם המרצה. המערכת לא ממלאת סכום.">
           <div className="flex max-w-xs items-center gap-2">
             <input
@@ -147,6 +184,7 @@ function RequestForm({ lesson: l, busy, act, setPayment }: { lesson: Lesson; bus
               autoComplete="off"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
+              disabled={paid}
               aria-invalid={problem ? true : undefined}
               aria-describedby={`${id}-amount-hint`}
               className={INPUT}
@@ -157,13 +195,17 @@ function RequestForm({ lesson: l, busy, act, setPayment }: { lesson: Lesson; bus
           </div>
         </Field>
       )}
+      {paid && <p className="text-xs text-ink-soft">הסכום כבר סומן כשולם, ולכן הוא נשאר כמו ששולם. כדי לשנות אותו, קודם מבטלים את הסימון «שולם» (הצוות הלוגיסטי או אדמין).</p>}
       <Choice name={`${id}-transport`} legend="הסעה" value={transport} options={TRANSPORTS.map((t) => [t, TRANSPORT_LABEL[t]] as const)} onChange={setTransport} />
       {problem && <Problem>{problem}</Problem>}
       {l.approval === "approved" && !same && <p className="text-xs text-ink-soft">שינוי בבקשה שאושרה מחזיר אותה לאישור המדריך/ה.</p>}
       {transport === "none" && l.transport !== "none" && <p className="text-xs text-ink-soft">בלי הסעה: פרטי ההסעה של השיעור יימחקו.</p>}
-      <Button kind="primary" type="submit" disabled={same && l.approval !== "rejected"} busy={busy === "pay"} busyLabel="שולח…">
-        {label}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button kind="primary" type="submit" disabled={same && l.approval !== "rejected"} busy={busy === "pay"} busyLabel="שולח…">
+          {label}
+        </Button>
+        {onCancel && <Button onClick={onCancel}>ביטול</Button>}
+      </div>
     </form>
   );
 }
@@ -196,12 +238,12 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
     <div role="group" aria-label="פרטי ההסעה" className="space-y-2 rounded-lg border border-line bg-paper p-3">
       <p className="text-sm font-semibold">פרטי ההסעה</p>
       {failed && d === undefined ? (
-        <p role="alert" className="text-sm text-bad">
-          לא הצלחנו לטעון.{" "}
-          <button type="button" className="underline" onClick={() => void load()}>
+        <div role="alert" className="space-y-1">
+          <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
+          <button type="button" className={LINK_BUTTON} onClick={() => void load()}>
             לנסות שוב
           </button>
-        </p>
+        </div>
       ) : d === undefined ? (
         <p className="text-sm text-ink-soft">טוען…</p>
       ) : d === null ? (

@@ -1,7 +1,7 @@
 // The five stages of a closed lesson and its one next step, rule by rule —
 // the card's dots, the lesson panel and «המרצים שלי» all read these.
 import { describe, expect, it } from "vitest";
-import { nextLessonStep, requestText, shekels, STEP_STAGE, stagesOf } from "./stages";
+import { nextLessonStep, reopenLoses, requestText, shekels, STEP_STAGE, stagesOf } from "./stages";
 import { LESSON_STAGE_DEFAULTS, type Lesson } from "./types";
 
 type Fields = Parameters<typeof stagesOf>[0];
@@ -70,5 +70,21 @@ describe("what was asked, in words", () => {
     expect(requestText({ pay_amount: null, transport: "one_way" })).toBe("בלי תשלום · הלוך");
     expect(requestText({ pay_amount: 200, transport: "none" })).toBe("200 ₪ · בלי הסעה");
     expect(requestText({ pay_amount: null, transport: "none" })).toBeNull();
+  });
+});
+
+describe("what a reopen erases (CONTRACT reopen_lesson: the stages were the speaker's)", () => {
+  const all = (over: Partial<Lesson>) => reopenLoses({ ...LESSON_STAGE_DEFAULTS, ...over });
+  it("nothing when no stage holds anything — the reopen needs no confirmation", () => {
+    expect(all({})).toEqual([]);
+  });
+  it("names each stage that holds something, transport details with a transport asked", () => {
+    expect(all({ pay_amount: 300 })).toEqual(["בקשת התשלום"]);
+    expect(all({ transport: "one_way" })).toEqual(["בקשת ההסעה ופרטיה"]);
+    expect(all({ pay_amount: 300, transport: "round_trip", confirm_sent_at: "2026-11-01T10:00:00Z", self_intro: true, presentation_url: "https://example.org/x" })).toEqual([
+      "בקשת התשלום וההסעה, ופרטי ההסעה", "הסימון שהודעת הסיכום נשלחה", "המלווה", "המקורות",
+    ]);
+    expect(all({ escort_note: "הערה לדוגמה" })).toEqual(["המלווה"]);
+    expect(all({ print_when: "before" })).toEqual(["המקורות"]);
   });
 });

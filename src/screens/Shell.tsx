@@ -26,7 +26,7 @@ const HEADER_BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-md bor
 
 export function Shell({ demo, user, onSignOut, nav, full = false, children }: Props) {
   return (
-    <div className="min-h-dvh flex flex-col">
+    <div className="app-shell min-h-dvh flex flex-col">
       {demo && (
         <div role="status" className="bg-accent-soft text-ink text-sm text-center px-4 py-2">
           מצב הדגמה — נתונים לדוגמה בלבד, שום דבר לא נשמר

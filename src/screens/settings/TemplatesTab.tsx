@@ -5,7 +5,8 @@
 // sheet; the escorts file). The template is checked as it is typed — the
 // variables, the gender forms, the brackets — and previewed on a synthetic
 // lesson (src/domain/message.ts), so what blocks a message shows here first.
-import { type FormEvent, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
 import { DUTY_WHENS, STAGE_LIMITS } from "../../data/stageRules";
 import { DUTY_WHEN_LABEL } from "../../domain/escorts";
 import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable } from "../../domain/message";
@@ -69,8 +70,11 @@ const FORMS: { insert: string; caret: number; label: string; help: string }[] = 
 /** A preview amount for the synthetic lesson — shown as such, never stored. */
 const SAMPLE_AMOUNT = 500;
 
+/** «{{אני:…}}», spaces forgiven as the parser forgives them. */
+const SENDER_FORM = /\{\{\s*אני\s*:/;
+
 function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => Promise<void> }) {
-  const { port } = useSettings();
+  const { port, me } = useSettings();
   const { busy, run } = useAction();
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -82,6 +86,19 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
   const [senderGender, setSenderGender] = useState<Gender>("f");
   const [paid, setPaid] = useState<"paid" | "free">("paid");
   const dirty = text !== saved;
+  // My own gender on the team list (undefined until read): a template with {{אני:…}} blocks every message I send without it.
+  const [myGender, setMyGender] = useState<Gender | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    const mine = new Set(me.memberships.map((m) => m.member_id));
+    port.team(edition.id).then(
+      (team) => live && setMyGender(team.find((t) => mine.has(t.id))?.gender ?? null),
+      () => live && setMyGender(undefined),
+    );
+    return () => {
+      live = false;
+    };
+  }, [port, me.memberships, edition.id]);
 
   // The preview: a synthetic lesson on Monday 20:00, this edition's date (or TBD), and the genders chosen above.
   const preview = useMemo(
@@ -212,6 +229,14 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
             <Choice name={`${id}-me`} legend="השולח/ת" value={senderGender} options={[["f", "נקבה"], ["m", "זכר"]]} onChange={setSenderGender} />
             <Choice name={`${id}-pay`} legend="תשלום" value={paid} options={[["paid", "עם סכום"], ["free", "בהתנדבות"]]} onChange={setPaid} />
           </div>
+          {myGender === null && SENDER_FORM.test(text) && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              הנוסח משתנה לפי מגדר השולח/ת, והמגדר שלך לא רשום ברשימת הצוות: הודעות שתשלח/י ייחסמו עד שיירשם.{" "}
+              <Link to="/settings/team" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+                למגדר שלי ‹
+              </Link>
+            </p>
+          )}
           {preview.problems.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
               <p className="font-semibold">בשיעור כזה ההודעה הייתה חסומה:</p>
@@ -240,6 +265,9 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
   const [when, setWhen] = useState<DutyWhen>("always");
   const [text, setText] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  /** The phrase whose «מחיקה» waits for a yes (by its row key, so a shifted list never asks about another) — a pasted phrase is not typed again lightly. */
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const rowKey = (i: number, p: DutyPhrase) => `${i}:${p.when}:${p.text}`;
   const full = list.length >= STAGE_LIMITS.duty_count;
 
   const save = async (key: string, next: DutyPhrase[], ok: string) => {
@@ -283,8 +311,19 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
           <Rows label="הניסוחים" head={["מתי", "ניסוח"]}>
             {list.map((p, i) => (
               <Row
-                key={`${i}:${p.when}:${p.text}`}
+                key={rowKey(i, p)}
                 cells={[DUTY_WHEN_LABEL[p.when], p.text]}
+                editing={
+                  deleting === rowKey(i, p) ? (
+                    <Confirm
+                      text={<>למחוק את הניסוח? «{p.text}»</>}
+                      confirm="מחיקה"
+                      busy={busy === `phrase-del:${i}`}
+                      onConfirm={() => void save(`phrase-del:${i}`, list.filter((_, j) => j !== i), "הניסוח נמחק").then((done) => done && setDeleting(null))}
+                      onCancel={() => setDeleting(null)}
+                    />
+                  ) : undefined
+                }
                 actions={
                   <>
                     <Button kind="quiet" disabled={i === 0 || !!busy} onClick={() => move(i, -1)} aria-label={`העברה למעלה: ${p.text}`}>
@@ -293,12 +332,7 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
                     <Button kind="quiet" disabled={i === list.length - 1 || !!busy} onClick={() => move(i, 1)} aria-label={`העברה למטה: ${p.text}`}>
                       ↓
                     </Button>
-                    <Button
-                      kind="danger"
-                      busy={busy === `phrase-del:${i}`}
-                      onClick={() => void save(`phrase-del:${i}`, list.filter((_, j) => j !== i), "הניסוח נמחק")}
-                      aria-label={`מחיקת הניסוח: ${p.text}`}
-                    >
+                    <Button kind="danger" disabled={!!busy} onClick={() => setDeleting(rowKey(i, p))} aria-label={`מחיקת הניסוח: ${p.text}`}>
                       מחיקה
                     </Button>
                   </>

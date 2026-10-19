@@ -133,7 +133,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   );
 }
 
-/** The progress lens, last year's colours (DESIGN «עדשות»): sources received, a presentation, still waiting, none needed — and a cell not closed yet. */
+/** The progress lens, last year's colours (DESIGN «עדשות»): sources received, a presentation, still waiting — and a cell not closed yet; «none needed» has a colour of its own. */
 export type ProgressTone = "received" | "presentation" | "pending" | "none" | "draft";
 
 export function progressOf(kind: Lesson["sources_kind"]): Exclude<ProgressTone, "draft"> {
@@ -147,7 +147,7 @@ export const PROGRESS_TONE: Record<ProgressTone, string> = {
   received: "bg-cyan-100",
   presentation: "bg-orange-100",
   pending: "bg-card",
-  none: "bg-stone-100",
+  none: "bg-violet-100", // a colour of its own: «nothing to receive» never reads as «still missing» (white)
   draft: "bg-line/70",
 };
 
@@ -156,6 +156,6 @@ export const PROGRESS_LEGEND: [ProgressTone, string][] = [
   ["received", "תכלת: מקורות התקבלו"],
   ["presentation", "כתום: מצגת"],
   ["pending", "לבן: מקורות טרם התקבלו"],
-  ["none", "בלי מקורות"],
+  ["none", "סגול: בלי מקורות (אין מה לקבל)"],
   ["draft", "אפור: טרם נסגר"],
 ];
