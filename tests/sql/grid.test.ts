@@ -151,6 +151,27 @@ describe("the grid's tables and functions", () => {
     });
   });
 
+  it("gives no contact details through a practice edition — claiming a real speaker there reads nothing", async () => {
+    // One transaction, rolled back. The practice edition gets the template's grid, as a sandbox would.
+    // A handles this speaker in the real edition; OTHER is content in the practice edition only.
+    const memberOther = Number((await db.query("select id from public.members where email = $1", [OTHER])).rows[0].id);
+    await db.query("begin");
+    try {
+      await db.query(
+        "insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template",
+        [otherEd],
+      );
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(OTHER))]);
+      await db.query("select public.propose($1, $2, null, 1, 510, 600, null, 'self')", [otherEd, speaker]);
+      const owner = await db.query("select owner_member_id from public.approaches where edition_id = $1 and speaker_id = $2", [otherEd, speaker]);
+      expect(owner.rows.map((r) => Number(r.owner_member_id))).toEqual([memberOther]);
+      expect((await db.query("select phone from public.speaker_contacts")).rows).toEqual([]);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   it("logs every change, with ids and states only", async () => {
     const rows = (await db.query("select entity, kind, actor, detail from public.activity where edition_id = $1 order by id", [ed])).rows;
     expect(rows.map((r) => `${r.entity}:${r.kind}`)).toEqual(["lessons:insert", "approaches:insert", "pitches:insert"]);

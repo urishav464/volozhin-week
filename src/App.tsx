@@ -116,7 +116,7 @@ function GateScreen(props: {
             גרסת מסד הנתונים היא {gate.have} והמערכת צריכה גרסה {gate.want}.
           </p>
           <p>
-            מי שמנהל את Supabase צריך להריץ שוב את הקובץ <bdi dir="ltr">supabase/schema.sql</bdi> ב-SQL Editor. ההרצה
+            מי שמנהל/ת את Supabase צריך/ה להריץ שוב את הקובץ <bdi dir="ltr">supabase/schema.sql</bdi> ב-SQL Editor. ההרצה
             בטוחה וחוזרת על עצמה בלי נזק.
           </p>
         </Notice>

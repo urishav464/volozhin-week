@@ -365,8 +365,8 @@ create table if not exists public.speakers (
 create unique index if not exists speakers_name_key on public.speakers (name_key, coalesce(disambiguator, ''));
 
 -- Contact details: their own table, never in Realtime, readable only by a
--- global admin and by whoever handles the speaker in an edition that is not
--- archived (policy speaker_contacts_read).
+-- global admin and by whoever handles the speaker in the current real edition
+-- (policy speaker_contacts_read).
 create table if not exists public.speaker_contacts (
   speaker_id     bigint primary key references public.speakers (id) on delete cascade,
   phone          text,
@@ -736,11 +736,13 @@ create policy categories_read on public.categories for select to authenticated u
 drop policy if exists speakers_read on public.speakers;
 create policy speakers_read on public.speakers for select to authenticated using ((select app.is_member()));
 
--- Contacts: a global admin, or whoever handles the speaker in an edition they
--- belong to — and only while that edition is not archived. A speaker has one
+-- Contacts: a global admin, or whoever handles the speaker in a REAL edition
+-- they belong to — and only while it is not archived. A speaker has one
 -- contact row across all years, so without the edition check last year's
--- handler would keep reading this year's phone number. (Archived as
--- app.require_editor reads it: status 'archived' or an imported 'archive'.)
+-- handler would keep reading this year's phone number. Practice and demo
+-- editions never get archived (start_edition archives kind 'real' only) and a
+-- sandbox member may claim any pool speaker there, so they give no access;
+-- an imported 'archive' edition is not real either.
 -- public/privacy.html tells users exactly this — widen the policy, update that page.
 -- No function or view returns these columns (load_week leaves them out), so
 -- this policy is the only way to them.
@@ -750,7 +752,7 @@ create policy speaker_contacts_read on public.speaker_contacts for select to aut
   or exists (select 1 from public.approaches a
                join public.editions e on e.id = a.edition_id
               where a.speaker_id = speaker_contacts.speaker_id
-                and e.status <> 'archived' and e.kind <> 'archive'
+                and e.kind = 'real' and e.status <> 'archived'
                 and a.owner_member_id = app.my_member_id(a.edition_id)
                 and app.my_role(a.edition_id) in ('admin', 'content'))
 );
