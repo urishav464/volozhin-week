@@ -21,7 +21,7 @@ describe("the demo's speaker pool", () => {
     const port = new DemoPort();
     const week = await port.loadWeek(1);
     const g = mySpeakers(week, 1);
-    for (const group of ["offered", "to_approach", "awaiting", "to_schedule", "closed"] as const) expect(g.get(group)!.length, group).toBeGreaterThan(0);
+    for (const group of ["offered", "to_approach", "awaiting", "to_schedule", "payment", "reconfirm", "send", "escort", "sources", "closed"] as const) expect(g.get(group)!.length, group).toBeGreaterThan(0);
     expect(pendingSpeakers(week).length).toBe(5);
     expect(JSON.stringify(week)).not.toMatch(/טלפון לדוגמה|example\.org/); // contacts never travel with a week
   });

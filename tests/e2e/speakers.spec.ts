@@ -156,7 +156,8 @@ test.describe("demo build", () => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: /אישורים/ }).click();
     await expect(page).toHaveURL(/\/approvals$/);
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 5 ממתינים");
+    // five speakers, and the demo's payment request (tests/e2e/stages.spec.ts)
+    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 6 ממתינים");
     const list = page.getByRole("list", { name: "ממתינים לאישור" });
     await expect(list.getByRole("listitem")).toHaveCount(5);
     await noSidewaysScroll(page);
@@ -164,13 +165,13 @@ test.describe("demo build", () => {
     await list.getByRole("button", { name: "אישור מרצה 56" }).click();
     await expect(toast(page, "מרצה 56 אושרה")).toBeVisible();
     await expect(list.getByRole("listitem")).toHaveCount(4);
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 4 ממתינים");
+    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 5 ממתינים");
 
     await page.getByLabel("סימון הכול").check();
     await page.getByRole("button", { name: "אישור 4 מסומנים" }).click();
     await expect(toast(page, "4 מרצים אושרו")).toBeVisible();
     await expect(page.getByText("אין מרצים שממתינים לאישור.")).toBeVisible();
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים");
+    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 1 ממתין");
     await noSidewaysScroll(page);
   });
 

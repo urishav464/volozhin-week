@@ -3,7 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router";
 import { gateFor, gateForError, handlesSpeakers, isSettingsAdmin, type Gate } from "./data/gate";
 import { makePort } from "./data";
 import type { Me } from "./data/types";
-import { pendingSpeakers } from "./domain/mine";
+import { waitingForApproval } from "./domain/mine";
 import type { Week } from "./domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
@@ -105,11 +105,17 @@ export default function App() {
   );
 }
 
-/** The header's sections: what this member may open. The approvals queue is a global admin's (only they vet speakers). */
+/**
+ * The header's sections: what this member may open. The approvals queue is a global admin's (only they vet
+ * speakers and decide payment and transport); its badge counts both.
+ */
 function navFor(me: Me, week: Week | null): NavItem[] {
   const items: NavItem[] = [{ to: "/", label: "השבוע" }];
   if (handlesSpeakers(me)) items.push({ to: "/mine", label: "המרצים שלי" });
-  if (me.global_admin) items.push({ to: "/approvals", label: "אישורים", badge: week ? pendingSpeakers(week).length : 0, badgeLabel: "ממתינים" });
+  if (me.global_admin) {
+    const waiting = week ? waitingForApproval(week) : 0;
+    items.push({ to: "/approvals", label: "אישורים", badge: waiting, badgeLabel: waiting === 1 ? "ממתין" : "ממתינים" });
+  }
   if (isSettingsAdmin(me)) items.push({ to: "/settings", label: "הגדרות" });
   return items;
 }

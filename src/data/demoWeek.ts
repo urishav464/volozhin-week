@@ -7,8 +7,9 @@
 // Milestone 3 adds a lesson in every stage: payment asked, approved (and paid),
 // rejected; a volunteer; a message sent, and one sent and then moved; escorts
 // from a synthetic roster (two lessons close together for one of them); every
-// kind of sources; transport details made of placeholder words. No message
-// template and no duty phrases: those are the instructor's wording, never ours.
+// kind of sources; transport details made of placeholder words — and, for the
+// demo user, a closed lesson in every «המרצים שלי» group. No message template
+// and no duty phrases: those are the instructor's wording, never ours.
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
 import {
@@ -133,19 +134,19 @@ export function demoWeek(): Week {
   // Tuesday: a parallel pair at 16:00 in two rooms; back-to-back same category in the morning.
   closed(2, 510, 600, 21, { category_id: 1, sources_kind: "other", sources_note: "ספר שהמרצה מביא/ה (נתון לדוגמה)" });
   closed(2, 600, 690, 31, { category_id: 1 });
-  closed(2, 960, 1050, 16, { room_id: 1, escort_roster_id: 3, sources_kind: "sheet_presentation" });
+  closed(2, 960, 1050, 16, { room_id: 1, escort_roster_id: 3, sources_kind: "sheet_presentation", ...sent(1) }); // the demo user's: all in place
   closed(2, 960, 1050, 17, { room_id: 2, parallel_reason: "דוגמה לשיעורים מקבילים" });
   drafted(2, 1200, 1290, [56], "candidate"); // not yet vetted → candidate only
 
   // Wednesday: a declined approach still pitched, and an empty evening.
   closed(3, 600, 690, 19, { transport: "one_way", ...approved });
-  closed(3, 690, 780, 20, { escort_roster_id: 4, escort_note: "נתון לדוגמה: להגיע רבע שעה לפני" });
+  closed(3, 690, 780, 20, { escort_roster_id: 4, escort_note: "נתון לדוגמה: להגיע רבע שעה לפני", ...sent(1) }); // sources still to come
   const declined = approachOf(23, "declined");
   pitches.push({ id: ++pitchId, lesson_id: lesson(3, 870, 960).id, approach_id: declined.id, state: "approached", proposed_by: 2, at: "2026-11-03T10:00:00Z" });
 
   // Thursday: a shaped-but-empty cell (a draft with no pitch), and the parents' lesson.
   lesson(4, 690, 780);
-  closed(4, 1050, 1140, 24, { audience: "שיעור להורים" });
+  closed(4, 1050, 1140, 24, { audience: "שיעור להורים", ...sent(1) }); // no escort yet
 
   // Memorial slots: placeholders only — names of the fallen are entered by the instructor, never seeded.
   for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 780, 795, { kind: "memorial", title: "זמן זיכרון" });

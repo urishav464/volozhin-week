@@ -1,5 +1,6 @@
 // Small shared pieces of the grid's look.
 import type { ReactNode } from "react";
+import { type StageState, stagesOf } from "../domain/stages";
 import type { Gender, Lesson } from "../domain/types";
 
 export function GenderDot({ gender, className = "" }: { gender: Gender | null; className?: string }) {
@@ -23,47 +24,8 @@ export function Chip({ children, tone = "plain", title }: { children: ReactNode;
   );
 }
 
-export type StageState = "done" | "open" | "waiting" | "problem" | "na";
-
-export interface Stage {
-  key: string;
-  label: string;
-  state: StageState;
-  note: string;
-}
-
-/** The five steps after a lesson closes: payment/transport · message · escort · sources · reader. */
-export function stagesOf(l: Lesson): Stage[] {
-  const pay: Stage = (() => {
-    const needed = l.pay_amount != null || l.transport !== "none";
-    if (!needed) return { key: "pay", label: "תשלום/הסעה", state: "na", note: "לא נדרש" };
-    if (l.approval === "approved") return { key: "pay", label: "תשלום/הסעה", state: "done", note: "אושר" };
-    if (l.approval === "rejected") return { key: "pay", label: "תשלום/הסעה", state: "problem", note: "נדחה" };
-    return { key: "pay", label: "תשלום/הסעה", state: "waiting", note: "ממתין למדריך/ה" };
-  })();
-  const msg: Stage = l.needs_reconfirm
-    ? { key: "msg", label: "הודעת סיכום", state: "problem", note: "השיעור הוזז — לעדכן את המרצה" }
-    : l.confirm_sent_at
-      ? { key: "msg", label: "הודעת סיכום", state: "done", note: "נשלחה" }
-      : { key: "msg", label: "הודעת סיכום", state: pay.state === "waiting" ? "waiting" : "open", note: "טרם נשלחה" };
-  const escort: Stage =
-    l.escort_roster_id != null || l.self_intro
-      ? { key: "escort", label: "מלווה", state: "done", note: l.self_intro ? "הצגה עצמית" : "שובץ/ה" }
-      : { key: "escort", label: "מלווה", state: "open", note: "חסר/ה" };
-  const sources: Stage =
-    l.sources_kind === "pending"
-      ? { key: "sources", label: "מקורות", state: "open", note: "טרם התקבלו" }
-      : { key: "sources", label: "מקורות", state: "done", note: l.sources_kind === "none" ? "ללא מקורות" : "התקבלו" };
-  const reader: Stage =
-    l.sources_kind === "none" || l.sources_kind === "presentation"
-      ? { key: "reader", label: "מקראה", state: "na", note: "לא נכנס למקראה" }
-      : l.in_reader
-        ? { key: "reader", label: "מקראה", state: "done", note: "במקראה" }
-        : { key: "reader", label: "מקראה", state: "open", note: "טרם נכנס" };
-  return [pay, msg, escort, sources, reader];
-}
-
-const DOT: Record<StageState, string> = {
+/** A stage's dot, by its state: filled green when done, amber while it waits, red for a problem, hollow while open, grey when not needed. */
+export const STAGE_DOT: Record<StageState, string> = {
   done: "bg-ok border-ok",
   open: "bg-transparent border-ink-faint",
   waiting: "bg-warn border-warn",
@@ -71,15 +33,21 @@ const DOT: Record<StageState, string> = {
   na: "bg-line border-line",
 };
 
+/** The card's five dots: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה (src/domain/stages.ts). */
 export function StageDots({ lesson }: { lesson: Lesson }) {
   const stages = stagesOf(lesson);
   return (
-    <span className="inline-flex gap-1" aria-label={stages.map((s) => `${s.label}: ${s.note}`).join(", ")}>
+    <span role="img" className="inline-flex shrink-0 gap-1" aria-label={stages.map((s) => `${s.label}: ${s.note}`).join(", ")}>
       {stages.map((s) => (
-        <span key={s.key} title={`${s.label}: ${s.note}`} className={`size-2 rounded-full border ${DOT[s.state]}`} />
+        <span key={s.key} data-stage={s.key} data-state={s.state} title={`${s.label}: ${s.note}`} className={`size-2 rounded-full border ${STAGE_DOT[s.state]}`} />
       ))}
     </span>
   );
+}
+
+/** «לעדכן את המרצה»: the lesson changed after its summary message went out (lessons.needs_reconfirm). */
+export function ReconfirmDot({ className = "" }: { className?: string }) {
+  return <span role="img" data-reconfirm aria-label="לעדכן את המרצה" title="לעדכן את המרצה: השיעור השתנה אחרי שההודעה נשלחה" className={`inline-block size-2.5 shrink-0 rounded-full bg-bad ring-2 ring-bad/25 ${className}`} />;
 }
 
 export function Initials({ name }: { name: string }) {

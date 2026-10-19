@@ -14,19 +14,23 @@ import type { GridRow } from "../domain/types";
 import { errorMessage } from "../errors";
 import { DayView } from "../grid/DayView";
 import { GridDesktop } from "../grid/GridDesktop";
-import type { Lens } from "../grid/LessonCard";
+import { type Lens, PROGRESS_LEGEND, PROGRESS_TONE } from "../grid/LessonCard";
 import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
 import { buildModel } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
 import { Pool } from "../grid/Pool";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
+import type { StageKey } from "../domain/stages";
+import { STAGE_DOT } from "../grid/bits";
 import { CreateSpeaker } from "./speakers/CreateSpeaker";
+import { LessonStages } from "./stages/LessonStages";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
 import { actorIn, useWeekStore } from "./weekStore";
 
 type Panel =
-  | { kind: "lesson"; id: number }
+  /** `stage`: the section to open (from «המרצים שלי» or the approvals queue). */
+  | { kind: "lesson"; id: number; stage?: StageKey }
   | { kind: "cell"; day: Day; row: GridRow }
   | { kind: "warnings" }
   /** `back`: the panel it was opened from (a lesson, a cell, «מרצה חדש/ה»), which «חזרה» returns to. */
@@ -36,8 +40,8 @@ type Panel =
 
 const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות" };
 
-/** What «המרצים שלי» hands the week: a speaker to place, or a lesson to open. */
-export type WeekVisit = { place?: number; lesson?: number } | null;
+/** What «המרצים שלי» (and the approvals queue) hand the week: a speaker to place, or a lesson to open — at one of its stages. */
+export type WeekVisit = { place?: number; lesson?: number; stage?: StageKey } | null;
 type Toast = { kind: "ok" | "error"; text: string; undo?: () => Promise<void> } | null;
 type Offer = { speakerId: number; target: CellTarget; owner: string } | null;
 
@@ -94,7 +98,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       const l = model.week.lessons.find((x) => x.id === visit.lesson);
       if (l) {
         setDay(l.day);
-        setPanel({ kind: "lesson", id: l.id });
+        setPanel({ kind: "lesson", id: l.id, stage: visit.stage });
         requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${l.id}"]`)?.scrollIntoView({ block: "center", inline: "center" }));
       }
     }
@@ -283,6 +287,26 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     </div>
   );
 
+  // The progress lens: last year's colours on the cards, and what the five dots are.
+  const legend = lens === "progress" && (
+    <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      {PROGRESS_LEGEND.map(([tone, label]) => (
+        <li key={tone} className="inline-flex items-center gap-1">
+          <span aria-hidden className={`size-3 rounded border border-line ${PROGRESS_TONE[tone]}`} />
+          {label}
+        </li>
+      ))}
+      <li className="inline-flex items-center gap-1">
+        <span aria-hidden className={`size-2 rounded-full border ${STAGE_DOT.done}`} />
+        הנקודות: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה
+      </li>
+      <li className="inline-flex items-center gap-1">
+        <span aria-hidden className="size-2.5 rounded-full bg-bad" />
+        לעדכן את המרצה
+      </li>
+    </ul>
+  );
+
   const placingBanner = placing && (
     <div role="status" className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-paper">
       <span>
@@ -297,10 +321,11 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="flex flex-col gap-2">
       {toolbar}
+      {legend}
       {placingBanner}
 
       {wide ? (
-        <div className="flex gap-3" style={{ height: "calc(100dvh - 9.5rem)" }}>
+        <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 11rem)" : "calc(100dvh - 9.5rem)" }}>
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
             <GridDesktop model={model} lens={lens} showNight={showNight} placing={placing} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} />
           </div>
@@ -339,7 +364,31 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         </>
       )}
 
-      {openLesson && <LessonPanel model={model} lesson={openLesson} me={memberId} isAdmin={isAdmin} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}
+      {openLesson && (
+        <LessonPanel
+          model={model}
+          lesson={openLesson}
+          me={memberId}
+          isAdmin={isAdmin}
+          canEdit={canEdit}
+          actions={actions}
+          onClose={() => setPanel(null)}
+          wide={wide}
+          stages={(l) => (
+            <LessonStages
+              key={`${l.id}:${panel?.kind === "lesson" ? (panel.stage ?? "") : ""}`}
+              port={port}
+              week={model.week}
+              lessonId={l.id}
+              actor={actor}
+              focus={panel?.kind === "lesson" ? panel.stage : null}
+              notify={(kind, text) => setToast({ kind, text })}
+              clear={() => setToast(null)}
+              reload={reload}
+            />
+          )}
+        />
+      )}
       {panel?.kind === "cell" && <CellPanel model={model} me={memberId} day={panel.day} row={panel.row} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}
       {panel?.kind === "speaker" && (
         <SpeakerSheet

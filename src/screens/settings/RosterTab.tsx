@@ -1,8 +1,11 @@
-// «חניכים» — the year's ~61 trainees, by name only (escorts and מכריכה לכריכה
-// will pick from it). They arrive by pasting a column; the preview says what
+// «חניכים» — the year's ~61 trainees, by name only (escorts pick from it, and
+// מכריכה לכריכה will). They arrive by pasting a column; the preview says what
 // is new before anything is saved. No contact detail is ever kept here.
+// Deleting a trainee who escorts lessons leaves those lessons without an
+// escort (the foreign key sets it null), so the confirmation lists them first.
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
-import type { RosterEntry } from "../../data/settings";
+import type { EscortedLesson, RosterEntry } from "../../data/settings";
+import { DAY_NAMES, fmtRange } from "../../domain/time";
 import { nameKey } from "../../domain/nameKey";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
@@ -75,7 +78,7 @@ export function RosterTab({ editions, editionId, setEditionId }: Props) {
                 )}
                 <Rows label="רשימת החניכים" head={["שם", "מגדר"]}>
                   {shown.map((r) => (
-                    <RosterItem key={r.id} r={r} onChanged={load} />
+                    <RosterItem key={r.id} r={r} editionId={editionId} onChanged={load} />
                   ))}
                 </Rows>
                 {shown.length === 0 && <p className="mt-2 text-sm text-ink-soft">אין שם שמתאים לחיפוש.</p>}
@@ -199,10 +202,24 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
   );
 }
 
-function RosterItem({ r, onChanged }: { r: RosterEntry; onChanged: () => Promise<void> }) {
+function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: number; onChanged: () => Promise<void> }) {
   const { port, wide } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
+  /** The lessons this trainee escorts — read when the delete is asked for, shown before it is confirmed. */
+  const [escorted, setEscorted] = useState<EscortedLesson[] | null>(null);
+  useEffect(() => {
+    if (mode !== "delete") return;
+    let live = true;
+    setEscorted(null);
+    port.rosterEscorts(editionId, r.id).then(
+      (list) => live && setEscorted(list),
+      () => live && setEscorted([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [mode, port, editionId, r.id]);
   const [name, setName] = useState(r.full_name);
   const [gender, setGender] = useState<Gender | null>(r.gender);
   const [problem, setProblem] = useState<string | null>(null);
@@ -274,10 +291,25 @@ function RosterItem({ r, onChanged }: { r: RosterEntry; onChanged: () => Promise
             text={
               <>
                 למחוק את <b>{r.full_name}</b> מרשימת החניכים?
+                {escorted == null ? (
+                  <span className="mt-1 block text-ink-soft">בודקים אילו שיעורים הוא/היא מלווה…</span>
+                ) : escorted.length > 0 ? (
+                  <span className="mt-1 block">
+                    {escorted.length === 1 ? "הוא/היא מלווה שיעור אחד, שיישאר בלי מלווה:" : `הוא/היא מלווה ${escorted.length} שיעורים, שיישארו בלי מלווה:`}
+                    <span role="list" aria-label="השיעורים שיישארו בלי מלווה" className="mt-1 block space-y-0.5">
+                      {escorted.map((l) => (
+                        <span role="listitem" key={l.id} className="block">
+                          · {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
+                          {l.title ? ` · ${l.title}` : ""}
+                        </span>
+                      ))}
+                    </span>
+                  </span>
+                ) : null}
               </>
             }
             confirm="מחיקה"
-            busy={busy === "delete"}
+            busy={busy === "delete" || escorted == null}
             onConfirm={() => void remove()}
             onCancel={() => setMode("view")}
           />

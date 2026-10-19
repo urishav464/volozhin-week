@@ -1,5 +1,6 @@
 // «הגדרות» — admins run the year from here instead of the SQL Editor: the
-// edition, the team, the trainees' roster, the rooms, the categories. One tab
+// edition, the team, the trainees' roster, the rooms, the templates (the
+// summary message and the escorts' phrases), the categories. One tab
 // per path (/settings/<tab>); tabs on the side on a wide screen, a scrolling
 // row on a phone. Everything goes through port.settings (src/data/settings.ts).
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,12 +16,14 @@ import { Ctx, type SettingsContext } from "./kit";
 import { RoomsTab } from "./RoomsTab";
 import { RosterTab } from "./RosterTab";
 import { TeamTab } from "./TeamTab";
+import { TemplatesTab } from "./TemplatesTab";
 
 const TABS = [
   { slug: "edition", label: "מחזור", globalOnly: false },
   { slug: "team", label: "צוות", globalOnly: false },
   { slug: "roster", label: "חניכים", globalOnly: false },
   { slug: "rooms", label: "חדרים", globalOnly: false },
+  { slug: "templates", label: "תבניות", globalOnly: false },
   { slug: "categories", label: "קטגוריות", globalOnly: true },
 ] as const;
 type Slug = (typeof TABS)[number]["slug"];
@@ -129,6 +132,8 @@ export function SettingsScreen({
         return <RosterTab {...picked} />;
       case "rooms":
         return <RoomsTab {...picked} />;
+      case "templates":
+        return <TemplatesTab {...picked} reload={loadEditions} />;
       case "categories":
         return <CategoriesTab />;
     }

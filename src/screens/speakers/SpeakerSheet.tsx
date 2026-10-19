@@ -2,7 +2,9 @@
 // edition and where that stands, their contacts (only for the people the
 // contacts policy names — a global admin, or the handler in the current real
 // edition), the availability chips, the admin's vetting, what they taught in
-// past editions, and the timeline. Opened from the pool, from a lesson, from
+// past editions, and the timeline; each closed lesson with its five stage dots
+// and the summary message (the same composer as the lesson panel, with the
+// contacts this sheet already holds). Opened from the pool, from a lesson, from
 // «המרצים שלי» and from the approvals queue; the same grid sheet (Panels.tsx)
 // at the side on a wide screen, from the bottom on a phone.
 //
@@ -19,11 +21,12 @@ import { byGender, displayName } from "../../domain/names";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import type { Approach, ApproachStatus, Lesson, Speaker, SpeakerContacts, TeamMember, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Chip } from "../../grid/bits";
+import { Chip, ReconfirmDot, StageDots } from "../../grid/bits";
 import { Sheet } from "../../grid/Panels";
 import { CONTACT_PREF_LABEL, statusLabel, vettingLabel } from "../../lib/labels";
 import { Button, Field, GENDER_LABEL, INPUT, useRunner } from "../settings/kit";
 import { type Actor, actorIn } from "../weekStore";
+import { MessageComposer } from "../stages/MessageComposer";
 import { AvailabilityGrid, formOf, type Notify, patchOf, type ProfileForm, ProfileFields, Section } from "./parts";
 
 export interface SpeakerSheetProps {
@@ -201,7 +204,19 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
             שבץ בשבוע
           </Button>
         )}
-        {closedHere.length > 0 && <ClosedLessons lessons={closedHere} onLesson={onLesson} />}
+        {closedHere.length > 0 && (
+          <ClosedLessons
+            week={week}
+            s={s}
+            lessons={closedHere}
+            actor={actor}
+            contacts={contacts}
+            busy={busy}
+            notify={notify}
+            onSent={(l) => void act(`sent:${l.id}`, () => port.commands(edition.id).markConfirmSent(l.id, l.version), "סומן שההודעה נשלחה")}
+            onLesson={onLesson}
+          />
+        )}
         {mayManage && a && <HandOver key={`${a.id}:${a.owner_member_id}`} team={week.team} a={a} actor={actor} busy={busy} onGo={(to, note) => act("handover", () => port.speakers.handOver(edition.id, a.id, to, note), handOverText(s, to, actor, nameOf))} />}
       </Section>
 
@@ -462,17 +477,69 @@ function StatusControls({
   );
 }
 
-function ClosedLessons({ lessons, onLesson }: { lessons: Lesson[]; onLesson?: (id: number) => void }) {
+/** The speaker's closed lessons this edition: the stage dots, «לשיעור», and — where they lead it — the summary message. */
+function ClosedLessons({
+  week,
+  s,
+  lessons,
+  actor,
+  contacts,
+  busy,
+  notify,
+  onSent,
+  onLesson,
+}: {
+  week: Week;
+  s: Speaker;
+  lessons: Lesson[];
+  actor: Actor;
+  contacts: SpeakerContacts | null | undefined;
+  busy: string | null;
+  notify: Notify;
+  onSent: (l: Lesson) => void;
+  onLesson?: (id: number) => void;
+}) {
+  const [open, setOpen] = useState<number | null>(null);
   return (
     <ul aria-label="שיעורים סגורים במחזור" className="space-y-1.5">
-      {lessons.map((l) => (
-        <li key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-sm">
-          <span className="min-w-0 flex-1">
-            נסגר: {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {l.title ?? "כותרת: TBD"}
-          </span>
-          {onLesson && <Button onClick={() => onLesson(l.id)}>לשיעור</Button>}
-        </li>
-      ))}
+      {lessons.map((l) => {
+        const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id === s.id;
+        const handler = week.approaches.find((x) => x.speaker_id === s.id)?.owner_member_id ?? null;
+        const mine = lead && actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
+        return (
+          <li key={l.id} className="space-y-2 rounded-lg border border-line bg-card px-3 py-1.5 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 flex-1">
+                נסגר: {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {l.title ?? "כותרת: TBD"}
+              </span>
+              <StageDots lesson={l} />
+              {l.needs_reconfirm && <ReconfirmDot />}
+              {onLesson && <Button onClick={() => onLesson(l.id)}>לשיעור</Button>}
+            </div>
+            {lead && (
+              <Button kind="quiet" aria-expanded={open === l.id} onClick={() => setOpen((cur) => (cur === l.id ? null : l.id))}>
+                הודעת סיכום {open === l.id ? "▴" : "▾"}
+              </Button>
+            )}
+            {lead && open === l.id && (
+              <div className="border-t border-line pb-1 pt-2">
+                <MessageComposer
+                  week={week}
+                  lesson={l}
+                  speaker={s}
+                  actor={actor}
+                  handler={handler}
+                  mine={mine}
+                  contacts={mine ? contacts : null}
+                  busy={busy === `sent:${l.id}`}
+                  notify={notify}
+                  onSent={() => onSent(l)}
+                />
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

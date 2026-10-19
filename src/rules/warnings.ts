@@ -4,7 +4,7 @@
 // «מכוון» and stay quiet.
 import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
-import type { Week } from "../domain/types";
+import type { Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { categoryLoad } from "./balance";
 
@@ -35,6 +35,26 @@ export const DEFAULT_MAX_CATEGORY_PER_DAY = 3;
 export const BACK_TO_BACK_GAP = 30;
 /** «הצעה» — an escort needs at least this many minutes between two lessons (DESIGN, כללים רכים). */
 export const ESCORT_MIN_GAP = 30;
+
+type Timed = Pick<Lesson, "day" | "start_min" | "end_min">;
+
+/** Minutes between two lessons on the week's clock (day × 1440 + minute): 0 back to back, negative when they overlap. */
+export function weekGap(a: Timed, b: Timed): number {
+  const [x, y] = a.day * 1440 + a.start_min <= b.day * 1440 + b.start_min ? [a, b] : [b, a];
+  return y.day * 1440 + y.start_min - (x.day * 1440 + x.end_min);
+}
+
+/**
+ * The escort's other lessons less than ESCORT_MIN_GAP («הצעה») from this one, or at the same time —
+ * what the escort picker says before anything is saved (the same rule as the `escort_gap` warning).
+ */
+export function escortClashes(week: Pick<Week, "lessons">, lesson: Timed & { id: number }, rosterId: number): { lesson: Lesson; gap: number }[] {
+  return week.lessons
+    .filter((l) => l.id !== lesson.id && l.state !== "cancelled" && l.escort_roster_id === rosterId)
+    .map((l) => ({ lesson: l, gap: weekGap(lesson, l) }))
+    .filter((x) => x.gap < ESCORT_MIN_GAP)
+    .sort((a, b) => a.lesson.day - b.lesson.day || a.lesson.start_min - b.lesson.start_min || a.lesson.id - b.lesson.id);
+}
 
 export function warningsFor(week: Week): Warning[] {
   const out: Warning[] = [];
@@ -144,7 +164,7 @@ export function warningsFor(week: Week): Warning[] {
     const sorted = [...ls].sort((a, b) => a.day * 1440 + a.start_min - (b.day * 1440 + b.start_min) || a.id - b.id);
     for (let i = 1; i < sorted.length; i++) {
       const [a, b] = [sorted[i - 1], sorted[i]];
-      const gap = b.day * 1440 + b.start_min - (a.day * 1440 + a.end_min);
+      const gap = weekGap(a, b);
       if (gap >= ESCORT_MIN_GAP) continue;
       const who = `«${rosterName.get(rid) ?? "מלווה"}»`;
       const when = `${DAY_NAMES[b.day]} ${fmtRange(b.start_min, b.end_min)}`;

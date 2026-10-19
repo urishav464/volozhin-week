@@ -1,11 +1,14 @@
 // The side panel (a bottom sheet on a phone): what a lesson or an empty cell
-// offers — candidates and closing, the lesson's details, and reshaping the cell.
+// offers — candidates and closing, the lesson's details, its stages after it
+// closed (payment, the message, the escort, sources: src/screens/stages/,
+// handed in by the week as `stages`), and reshaping the cell.
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
-import { Chip, GenderDot, stagesOf } from "./bits";
+import { stagesOf } from "../domain/stages";
+import { Chip, GenderDot, STAGE_DOT } from "./bits";
 import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
 
 export interface PanelActions {
@@ -88,7 +91,7 @@ export function Sheet({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section>
+    <section aria-label={title}>
       <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
       {children}
     </section>
@@ -105,7 +108,20 @@ export function rowOf(model: GridModel, l: Pick<Lesson, "day" | "start_min">): G
 
 // ------------------------------------------------------------------ lesson
 
-export function LessonPanel(props: { model: GridModel; lesson: Lesson; me: number; isAdmin: boolean; canEdit: boolean; actions: PanelActions; onClose: () => void; wide: boolean }) {
+export interface LessonPanelProps {
+  model: GridModel;
+  lesson: Lesson;
+  me: number;
+  isAdmin: boolean;
+  canEdit: boolean;
+  actions: PanelActions;
+  onClose: () => void;
+  wide: boolean;
+  /** A closed lesson's stages (src/screens/stages/LessonStages.tsx); without it, a read-only summary. */
+  stages?: (l: Lesson) => ReactNode;
+}
+
+export function LessonPanel(props: LessonPanelProps) {
   const { model, lesson: l, actions, canEdit } = props;
   const [adding, setAdding] = useState(false);
   const room = model.week.rooms.find((r) => r.id === l.room_id);
@@ -238,7 +254,7 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
   );
 }
 
-function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions }: { model: GridModel; lesson: Lesson; me: number; isAdmin: boolean; canEdit: boolean; actions: PanelActions }) {
+function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages }: LessonPanelProps) {
   const lead = model.leadOf.get(l.id);
   const [title, setTitle] = useState(l.title ?? "");
   const [category, setCategory] = useState(l.category_id ?? 0);
@@ -323,18 +339,21 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions }: { mo
         </div>
       </Section>
 
-      <Section title="שלבים">
-        <ul className="space-y-1 text-sm">
-          {stagesOf(l).map((s) => (
-            <li key={s.key} className="flex items-center gap-2">
-              <span className={`size-2.5 rounded-full border ${s.state === "done" ? "border-ok bg-ok" : s.state === "waiting" ? "border-warn bg-warn" : s.state === "problem" ? "border-bad bg-bad" : s.state === "na" ? "border-line bg-line" : "border-ink-faint"}`} />
-              <span className="font-semibold">{s.label}</span>
-              <span className="text-ink-soft">{s.note}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-1 text-xs text-ink-faint">תשלום, הודעה, מלווה ומקורות ינוהלו כאן בשלב הבא.</p>
-      </Section>
+      {stages ? (
+        stages(l)
+      ) : (
+        <Section title="שלבים">
+          <ul className="space-y-1 text-sm">
+            {stagesOf(l).map((s) => (
+              <li key={s.key} className="flex items-center gap-2">
+                <span className={`size-2.5 rounded-full border ${STAGE_DOT[s.state]}`} />
+                <span className="font-semibold">{s.label}</span>
+                <span className="text-ink-soft">{s.note}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {canEdit && mine && (
         <button type="button" className={btn} onClick={() => actions.reopen(l.id)}>

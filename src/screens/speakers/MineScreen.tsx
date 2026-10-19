@@ -1,20 +1,24 @@
 // «המרצים שלי» (/mine) — phone first: the speakers I handle in the chosen
 // edition, grouped by the next step (src/domain/mine.ts), with one primary
-// button per row for that step. A hand-over offered to me comes first. The
-// whole row opens the speaker sheet (its buttons aside); «שבץ» and «לשיעור» go
-// to the week. After a one-tap step the row moves to another group, and the
-// focus follows it there.
+// button per row for that step. A hand-over offered to me comes first. Once a
+// speaker teaches, each closed lesson is a row of its own, in its next stage's
+// group (תשלום/הסעה · לעדכן את המרצה · לשלוח סיכום · חסר מלווה · חסרים
+// מקורות), with the lesson's five dots. The whole row opens the speaker sheet
+// (its buttons aside); «שבץ» and the lesson's step go to the week, the lesson
+// panel open at that stage. After a one-tap step the row moves to another
+// group, and the focus follows it there.
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { MINE_GROUPS, type MineRow, mySpeakers, nextStep } from "../../domain/mine";
 import { byGender, displayName } from "../../domain/names";
+import { APPROVAL_LABEL, requestText, type StageKey } from "../../domain/stages";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { statusLabel } from "../../lib/labels";
 import { useMedia } from "../../lib/useMedia";
-import { Chip } from "../../grid/bits";
+import { Chip, ReconfirmDot, StageDots } from "../../grid/bits";
 import { Button, Panel, useRunner } from "../settings/kit";
 import { actorIn, useWeekStore } from "../weekStore";
 import { CreateSpeaker } from "./CreateSpeaker";
@@ -51,7 +55,7 @@ export function MineScreen({ port, me }: { port: DataPort; me: Me }) {
       (row ?? document.getElementById("mine-title"))?.focus();
     });
   };
-  const toWeek = (state: { place?: number; lesson?: number }) => navigate("/", { state });
+  const toWeek = (state: { place?: number; lesson?: number; stage?: StageKey }) => navigate("/", { state });
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 pb-20">
@@ -87,7 +91,7 @@ export function MineScreen({ port, me }: { port: DataPort; me: Me }) {
               <ul className="space-y-2">
                 {rows.map((r) => (
                   <MineItem
-                    key={r.approach.id}
+                    key={`${r.approach.id}:${r.lesson?.id ?? ""}`}
                     row={r}
                     week={week}
                     names={names}
@@ -166,9 +170,9 @@ function MineItem({
   onOpen: () => void;
   act: (key: string, fn: () => Promise<unknown>, ok: string, speakerId?: number) => Promise<void>;
   port: DataPort;
-  toWeek: (state: { place?: number; lesson?: number }) => void;
+  toWeek: (state: { place?: number; lesson?: number; stage?: StageKey }) => void;
 }) {
-  const { speaker: s, approach: a, group, closed, live } = row;
+  const { speaker: s, approach: a, group, closed, live, lesson } = row;
   const ed = week.edition.id;
   const vetted = s.vetted === "approved";
   const step = nextStep(group);
@@ -186,14 +190,42 @@ function MineItem({
         return `${statusLabel(a.status, s.gender)}${live.length ? ` · ${byGender(s.gender, "מוצע", "מוצעת")} ${cells(live.length)}` : ""}${waiting}`;
       case "to_schedule":
         return `${statusLabel("positive", s.gender)} · ${live.length ? `${byGender(s.gender, "מוצע", "מוצעת")} ${cells(live.length)}` : "עוד לא נבחרה שעה"}${waiting}`;
-      case "closed":
-        return closed.map((l, i) => (
-          <span key={l.id}>
-            {i > 0 && " | "}
-            {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
-            {l.title && ` · ${l.title}`}
-          </span>
-        ));
+      case "payment":
+      case "reconfirm":
+      case "send":
+      case "escort":
+      case "sources":
+      case "closed": {
+        const l = lesson ?? closed[0];
+        if (!l) return null;
+        const detail =
+          group === "payment"
+            ? l.approval === "rejected"
+              ? `המדריך/ה לא אישר/ה: ${requestText(l) ?? ""}${l.approval_note ? ` («${l.approval_note}»)` : ""}`
+              : `${APPROVAL_LABEL.pending}: ${requestText(l) ?? ""}`
+            : group === "reconfirm"
+              ? "השיעור השתנה אחרי שההודעה נשלחה"
+              : group === "send"
+                ? "ההודעה עוד לא נשלחה"
+                : group === "escort"
+                  ? "אין מלווה"
+                  : group === "sources"
+                    ? "המקורות עוד לא התקבלו"
+                    : null;
+        return (
+          <>
+            <span className="flex flex-wrap items-center gap-x-1.5">
+              <span>
+                {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
+                {l.title ? ` · ${l.title}` : " · כותרת: TBD"}
+              </span>
+              <StageDots lesson={l} />
+              {l.needs_reconfirm && <ReconfirmDot />}
+            </span>
+            {detail && <span className="block">{detail}</span>}
+          </>
+        );
+      }
       case "declined":
         return statusLabel("declined", s.gender);
     }
@@ -251,8 +283,60 @@ function MineItem({
             שבץ
           </Button>
         );
+      case "payment": {
+        const l = lesson!;
+        if (l.approval === "rejected") {
+          return (
+            <Button kind="primary" onClick={() => toWeek({ lesson: l.id, stage: "pay" })}>
+              לעדכון הבקשה
+            </Button>
+          );
+        }
+        // waiting for the instructor: a chip, not a dead button — and the global admin decides right here
+        return (
+          <>
+            <Chip tone="warn">ממתין לאישור</Chip>
+            {global && (
+              <Button
+                kind="primary"
+                aria-label={`אישור הבקשה של ${displayName(s)}`}
+                busy={busy === k(`decide:${l.id}`)}
+                onClick={() =>
+                  void act(k(`decide:${l.id}`), () => port.commands(ed).decidePayments([{ lesson_id: l.id, version: l.version }], "approved", null), "הבקשה אושרה", s.id)
+                }
+              >
+                אישור
+              </Button>
+            )}
+          </>
+        );
+      }
+      case "reconfirm":
+        return (
+          <Button kind="primary" onClick={() => toWeek({ lesson: lesson!.id, stage: "msg" })}>
+            לעדכון המרצה
+          </Button>
+        );
+      case "send":
+        return (
+          <Button kind="primary" onClick={() => toWeek({ lesson: lesson!.id, stage: "msg" })}>
+            לשליחת הסיכום
+          </Button>
+        );
+      case "escort":
+        return (
+          <Button kind="primary" onClick={() => toWeek({ lesson: lesson!.id, stage: "escort" })}>
+            לשיבוץ מלווה
+          </Button>
+        );
+      case "sources":
+        return (
+          <Button kind="primary" onClick={() => toWeek({ lesson: lesson!.id, stage: "sources" })}>
+            לעדכון המקורות
+          </Button>
+        );
       case "lesson":
-        return <Button onClick={() => toWeek({ lesson: closed[0].id })}>לשיעור</Button>;
+        return <Button onClick={() => toWeek({ lesson: (lesson ?? closed[0]).id })}>לשיעור</Button>;
       default:
         return null;
     }
