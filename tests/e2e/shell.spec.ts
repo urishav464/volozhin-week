@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -11,7 +12,7 @@ async function noSidewaysScroll(page: Page) {
 
 const member = {
   status: "ok",
-  schema_version: 1,
+  schema_version: EXPECTED_SCHEMA_VERSION,
   email: "member@example.org",
   display_name: "נועה בדיקה",
   global_admin: false,

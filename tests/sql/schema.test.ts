@@ -13,8 +13,11 @@ const STRANGER = "stranger@example.org";
 // What each API role may execute — the complete list. A new browser-callable
 // function means updating this on purpose.
 const ANON_FUNCTIONS = ["ping"];
-const AUTH_PUBLIC_FUNCTIONS = ["ping", "schema_version", "team", "whoami"];
-const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_role"];
+const AUTH_PUBLIC_FUNCTIONS = [
+  "close_lesson", "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape",
+  "schema_version", "set_pitch", "start_edition", "team", "unpropose", "update_lesson", "whoami",
+];
+const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_member_id", "my_role"];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
   const dbName = `vw_schema_${regime}_${process.pid}`;
@@ -121,7 +124,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(1);
+        expect(w.schema_version).toBe(2);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual([
           ADMIN.toLowerCase(),
           CONTENT,
@@ -141,7 +144,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         const w = (await q("select public.whoami() as w")).rows[0].w;
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(false);
-        expect(w.memberships).toEqual([{ edition_id: edition, role: "content" }]);
+        expect(w.memberships).toMatchObject([{ edition_id: edition, role: "content" }]);
+        expect(typeof w.memberships[0].member_id).toBe("number");
         expect((await q("select email from public.members")).rows.map((r) => r.email)).toEqual([CONTENT]);
         const team = await q("select * from public.team($1)", [edition]);
         expect(team.rows).toHaveLength(2);

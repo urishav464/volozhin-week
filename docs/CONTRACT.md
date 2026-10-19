@@ -125,7 +125,7 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
 ### `update_lesson(lesson, version, patch)`
 
 `patch ⊆ { title, category_id, audience, teach_min }`. Content or admin. Version must match
-(`stale`). `teach_min` must be > 0 and ≤ the lesson's length → `bad_shape`. Increments
+(`stale`). `title` and `audience` are trimmed; an empty one becomes null. `teach_min` must be > 0 and ≤ the lesson's length → `bad_shape`. Increments
 `version`.
 
 ## Errors

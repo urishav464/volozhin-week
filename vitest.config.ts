@@ -10,7 +10,7 @@ export default defineConfig({
       {
         test: {
           name: "sql",
-          include: ["tests/sql/**/*.test.ts"],
+          include: ["tests/sql/**/*.test.ts", "tests/parity/**/*.test.ts"],
           environment: "node",
           testTimeout: 60_000,
           hookTimeout: 120_000,

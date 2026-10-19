@@ -238,9 +238,11 @@ export class Engine {
       if (l.version !== version) fail("stale");
       if (patch.teach_min != null && (patch.teach_min <= 0 || patch.teach_min > l.end_min - l.start_min)) fail("bad_shape");
       if (patch.category_id != null && !this.week.categories.some((c) => c.id === patch.category_id)) fail("bad_shape");
-      for (const k of ["title", "category_id", "audience", "teach_min"] as const) {
-        if (k in patch) (l as unknown as Record<string, unknown>)[k] = patch[k] ?? null;
-      }
+      const text = (v: string | null | undefined) => (v == null ? null : v.trim() || null);
+      if ("title" in patch) l.title = text(patch.title);
+      if ("audience" in patch) l.audience = text(patch.audience);
+      if ("category_id" in patch) l.category_id = patch.category_id ?? null;
+      if ("teach_min" in patch) l.teach_min = patch.teach_min ?? null;
       l.version++;
     });
   }

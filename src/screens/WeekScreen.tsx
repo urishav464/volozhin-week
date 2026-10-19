@@ -7,7 +7,7 @@ import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { displayName } from "../domain/names";
 import type { Day } from "../domain/time";
-import type { GridRow, Week } from "../domain/types";
+import type { Edition, GridRow, Week } from "../domain/types";
 import { errorMessage } from "../errors";
 import { DayView } from "../grid/DayView";
 import { GridDesktop } from "../grid/GridDesktop";
@@ -34,6 +34,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   // Below 1280px the grid needs the pool's width: the pool becomes a drawer.
   const roomy = useMedia("(min-width: 1280px)");
   const [poolOpen, setPoolOpen] = useState(false);
+  const [editions, setEditions] = useState<Edition[]>([]);
   const [editionId, setEditionId] = useState<number | null>(null);
   const [week, setWeek] = useState<Week | null>(null);
   const [problem, setProblem] = useState<"none" | "error" | null>(null);
@@ -50,6 +51,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     port
       .editions()
       .then((list) => {
+        setEditions(list);
         const pick = list.find((e) => e.status !== "archived") ?? list[0];
         if (pick) setEditionId(pick.id);
         else setProblem("none");
@@ -220,7 +222,28 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
 
   const toolbar = (
     <div className="flex flex-wrap items-center gap-2">
-      <h2 className="font-display text-lg font-semibold">{model.week.edition.label}</h2>
+      {editions.length > 1 ? (
+        <select
+          aria-label="מחזור"
+          value={editionId ?? ""}
+          onChange={(e) => {
+            setPanel(null);
+            setPlacingId(null);
+            setWeek(null);
+            setEditionId(Number(e.target.value));
+          }}
+          className="rounded-lg border border-line bg-card px-2 py-1 font-display text-lg font-semibold"
+        >
+          {editions.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.label}
+              {e.status === "archived" ? " (ארכיון)" : e.kind === "demo" ? " (הדגמה)" : ""}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <h2 className="font-display text-lg font-semibold">{model.week.edition.label}</h2>
+      )}
       <div role="radiogroup" aria-label="עדשה" className="flex overflow-hidden rounded-lg border border-line">
         {LENSES.map(([key, label]) => (
           <button key={key} type="button" role="radio" aria-checked={lens === key} onClick={() => setLens(key)} className={`px-3 py-1 text-sm ${lens === key ? "bg-ink text-paper" : "bg-card text-ink-soft"}`}>

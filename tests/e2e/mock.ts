@@ -39,6 +39,10 @@ export interface Call {
 
 export class FakeSupabase {
   readonly calls: Call[] = [];
+  /** Bodies of every RPC call, by function name. */
+  readonly rpc = new Map<string, unknown[]>();
+  /** Answers for RPCs other than whoami, and for GET /rest/v1/editions. */
+  readonly answers = new Map<string, unknown>();
   constructor(private whoami: { status: number; body: unknown } = { status: 200, body: {} }) {}
 
   async attach(page: Page) {
@@ -60,7 +64,15 @@ export class FakeSupabase {
       return route.fulfill({ status: this.whoami.status, contentType: "application/json", body: JSON.stringify(this.whoami.body) });
     }
     if (u.pathname === "/auth/v1/logout") return route.fulfill({ status: 204, body: "" });
-    if (u.pathname === "/rest/v1/editions") return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    if (u.pathname === "/rest/v1/editions") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.answers.get("editions") ?? []) });
+    }
+    if (u.pathname.startsWith("/rest/v1/rpc/")) {
+      const fn = u.pathname.slice("/rest/v1/rpc/".length);
+      this.rpc.set(fn, [...(this.rpc.get(fn) ?? []), req.postDataJSON()]);
+      const answer = this.answers.get(fn);
+      if (answer !== undefined) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) });
+    }
     return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   }
 }
