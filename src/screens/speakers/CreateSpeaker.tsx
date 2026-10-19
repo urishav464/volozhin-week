@@ -28,8 +28,8 @@ interface Props {
   initialName?: string;
   wide: boolean;
   onClose: () => void;
-  /** «פתיחה» on a match: that speaker's sheet instead of a new one. */
-  onOpen: (speakerId: number) => void;
+  /** «פתיחה» on a match: that speaker's sheet — with the name typed so far, so «חזרה» brings it back. */
+  onOpen: (speakerId: number, typed: string) => void;
   /** Created: the new speaker's sheet (contacts and availability are added there). */
   onCreated: (speakerId: number) => void;
   notify: Notify;
@@ -46,6 +46,9 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
   const [form, setForm] = useState<ProfileForm>({ ...EMPTY_FORM, name: initialName });
   const [found, setFound] = useState<{ name: string; matches: SpeakerMatch[] } | null>(null);
   const [details, setDetails] = useState(false);
+  // The matches the user saw before «להמשיך» fold into one line; a new name shows its own in full.
+  const [seenFor, setSeenFor] = useState<string | null>(null);
+  const [showSeen, setShowSeen] = useState(false);
   const [claim, setClaim] = useState(true);
   const [approve, setApprove] = useState(false);
   const [notes, setNotes] = useState("");
@@ -76,6 +79,17 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
 
   const current = found && found.name === form.name ? found.matches : null; // null: still searching
   const sameName = !!current?.some((m) => m.match === "same");
+  const folded = details && seenFor === form.name && !showSeen;
+
+  // «להמשיך»: the fields open below the matches — take the eye and the focus there.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!details || opened.current) return;
+    opened.current = true;
+    const first = document.getElementById(`${id}-f-title`);
+    first?.focus();
+    first?.closest("div")?.scrollIntoView({ block: "start" });
+  }, [details, id]);
   // Notes are private, like the contacts: saved only for someone who will see them.
   const realEdition = week.edition.kind === "real" && week.edition.status !== "archived";
   const mayNotes = actor.global || (claim && realEdition);
@@ -146,10 +160,17 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
           />
         </Field>
 
-        <section aria-label="ייתכן שזה…" aria-live="polite" className="space-y-1.5">
-          {key && current == null && <p className="text-sm text-ink-soft">מחפש/ת במאגר…</p>}
-          {key && current?.length === 0 && <p className="text-sm text-ink-soft">אין במאגר שם דומה.</p>}
-          {current && current.length > 0 && (
+        <section aria-label="ייתכן שזה…" className="space-y-1.5">
+          {/* one short line for a screen reader, not the whole list after every pause in typing */}
+          <p role="status" className="text-sm text-ink-soft">
+            {!key ? "" : current == null ? "מחפשים במאגר…" : current.length === 0 ? "אין במאגר שם דומה." : sameName ? "אותו שם כבר במאגר." : current.length === 1 ? "נמצא במאגר שם דומה אחד." : `נמצאו במאגר ${current.length} שמות דומים.`}
+          </p>
+          {current && current.length > 0 && folded && (
+            <Button kind="quiet" aria-expanded={false} onClick={() => setShowSeen(true)}>
+              {current.length === 1 ? "שם דומה אחד במאגר" : `${current.length} שמות דומים במאגר`} — הצגה
+            </Button>
+          )}
+          {current && current.length > 0 && !folded && (
             <>
               <p className="font-semibold">ייתכן שזה…</p>
               <ul className="space-y-1.5">
@@ -167,18 +188,31 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
                         {m.retired && <Chip>{byGender(m.gender, "לא פעיל", "לא פעילה")}</Chip>}
                       </span>
                     </span>
-                    <Button onClick={() => onOpen(m.id)} aria-label={`פתיחת ${displayName(m)}`}>
+                    <Button onClick={() => onOpen(m.id, form.name)} aria-label={`פתיחת ${displayName(m)}`}>
                       פתיחה
                     </Button>
                   </li>
                 ))}
               </ul>
+              {details && seenFor === form.name && (
+                <Button kind="quiet" aria-expanded onClick={() => setShowSeen(false)}>
+                  הסתרת השמות הדומים
+                </Button>
+              )}
             </>
           )}
         </section>
 
         {!details ? (
-          <Button kind="primary" disabled={!key || current == null} onClick={() => setDetails(true)}>
+          <Button
+            kind="primary"
+            disabled={!key || current == null}
+            onClick={() => {
+              setSeenFor(form.name);
+              setShowSeen(false);
+              setDetails(true);
+            }}
+          >
             {current && current.length > 0 ? "זה מישהו אחר — להמשיך" : "להמשיך"}
           </Button>
         ) : (
@@ -209,7 +243,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
             {actor.global && (
               <label className="flex min-h-11 cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} className="size-5 accent-ink" />
-                לאשר כבר עכשיו (אחרת: ממתין/ה לאישור)
+                {`לאשר כבר עכשיו (אחרת: ${byGender(form.gender, "ממתין", "ממתינה")} לאישור)`}
               </label>
             )}
             {problem && problem.field !== "disambiguator" && (
@@ -218,7 +252,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
               </p>
             )}
             <div className="flex flex-wrap gap-2">
-              <Button kind="primary" type="submit" busy={busy === "create"} busyLabel="מוסיף/ה…" disabled={!key}>
+              <Button kind="primary" type="submit" busy={busy === "create"} busyLabel="מוסיף…" disabled={!key}>
                 הוספה למאגר
               </Button>
               <Button onClick={onClose}>ביטול</Button>

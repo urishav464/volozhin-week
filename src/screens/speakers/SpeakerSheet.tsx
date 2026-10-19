@@ -33,6 +33,9 @@ export interface SpeakerSheetProps {
   speakerId: number;
   wide: boolean;
   onClose: () => void;
+  /** Opened from another panel: «חזרה» (and Escape) return to it. */
+  onBack?: () => void;
+  backLabel?: string;
   notify: Notify;
   clear: () => void;
   /** Re-reads the week after a command. */
@@ -47,7 +50,7 @@ export function SpeakerSheet(props: SpeakerSheetProps) {
   const s = props.week.speakers.find((x) => x.id === props.speakerId);
   if (!s) {
     return (
-      <Sheet wide={props.wide} title="מרצה" onClose={props.onClose}>
+      <Sheet wide={props.wide} title="מרצה" onClose={props.onClose} onBack={props.onBack} backLabel={props.backLabel}>
         <p className="text-ink-soft">המרצה לא נמצא/ה במאגר.</p>
       </Sheet>
     );
@@ -71,7 +74,7 @@ const when = (at: string) => {
   return Number.isNaN(d.getTime()) ? "" : WHEN.format(d);
 };
 
-function Body({ port, me, week, s, wide, onClose, notify, clear, reload, onPlace, onLesson }: SpeakerSheetProps & { s: Speaker }) {
+function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, clear, reload, onPlace, onLesson }: SpeakerSheetProps & { s: Speaker }) {
   const edition = week.edition;
   const actor = actorIn(me, edition);
   const a = week.approaches.find((x) => x.speaker_id === s.id) ?? null;
@@ -131,10 +134,11 @@ function Body({ port, me, week, s, wide, onClose, notify, clear, reload, onPlace
       wide={wide}
       title={displayName(s)}
       onClose={onClose}
+      onBack={onBack}
+      backLabel={backLabel}
       subtitle={
         <span className="flex flex-wrap items-center gap-1.5">
-          {s.disambiguator && <span>{s.disambiguator}</span>}
-          {s.affiliation && <span>{s.affiliation}</span>}
+          {(s.disambiguator || s.affiliation) && <span>{[s.disambiguator, s.affiliation].filter(Boolean).join(" · ")}</span>}
           <Chip tone={s.vetted === "approved" ? "ok" : s.vetted === "rejected" ? "bad" : "warn"}>{vettingLabel(s.vetted, s.gender)}</Chip>
           {s.retired && <Chip>{byGender(s.gender, "לא פעיל", "לא פעילה")}</Chip>}
         </span>
@@ -151,8 +155,8 @@ function Body({ port, me, week, s, wide, onClose, notify, clear, reload, onPlace
               <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
                 קבלת הטיפול
               </Button>
-              <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה הוחזרה")}>
-                לא עכשיו
+              <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה נדחתה")}>
+                דחיית ההצעה
               </Button>
             </div>
           </div>
@@ -258,7 +262,7 @@ function Body({ port, me, week, s, wide, onClose, notify, clear, reload, onPlace
           <ol className="space-y-1.5 text-sm">
             {lines.map((l) => (
               <li key={l.id} className="border-s-2 border-line ps-2">
-                <span className="text-xs text-ink-faint tabular-nums">
+                <span className="text-xs text-ink-soft tabular-nums">
                   <bdi>{when(l.at)}</bdi>
                 </span>{" "}
                 {l.who && <b>{l.who}: </b>}
@@ -288,9 +292,20 @@ function vetText(state: Speaker["vetted"], s: Speaker): string {
 
 type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
 
+/**
+ * The speaker's own record is one row across the years (CONTRACT «update»): a global admin, or — in a real
+ * edition that is not archived — its admin or the speaker's handler there. A practice or demo week
+ * (anyone there may claim any pool speaker) and an archived edition give no such right.
+ */
+export function mayEditSpeaker(actor: Actor, edition: Week["edition"], handler: boolean): boolean {
+  if (actor.global) return true;
+  const live = edition.kind === "real" && edition.status !== "archived";
+  return actor.canEdit && live && (actor.isAdmin || handler);
+}
+
 function Details({ port, s, week, actor, handler, busy, act }: { port: DataPort; s: Speaker; week: Week; actor: Actor; handler: boolean; busy: string | null; act: Act }) {
   const [editing, setEditing] = useState(false);
-  const mayEdit = actor.canEdit && (actor.isAdmin || handler);
+  const mayEdit = mayEditSpeaker(actor, week.edition, handler);
   if (editing) {
     return (
       <ProfileEdit
@@ -305,7 +320,7 @@ function Details({ port, s, week, actor, handler, busy, act }: { port: DataPort;
   }
   return (
     <Section title="פרטים" label="פרטים">
-      {s.bio_short ? <p className="whitespace-pre-line">{s.bio_short}</p> : <p className="text-sm text-ink-faint">אין תיאור.</p>}
+      {s.bio_short ? <p className="whitespace-pre-line">{s.bio_short}</p> : <p className="text-sm text-ink-soft">אין תיאור.</p>}
       {s.topics.length > 0 && (
         <ul aria-label="נושאים" className="flex flex-wrap gap-1">
           {s.topics.map((t) => (
@@ -317,11 +332,14 @@ function Details({ port, s, week, actor, handler, busy, act }: { port: DataPort;
       )}
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
         <dt className="text-ink-soft">מגדר</dt>
-        <dd>{s.gender ? GENDER_LABEL[s.gender] : <span className="text-warn">לא ידוע: צריך להשלים לפני סגירת שיעור</span>}</dd>
+        <dd>{s.gender ? GENDER_LABEL[s.gender] : <span className="font-semibold text-amber-900">לא ידוע: צריך להשלים לפני סגירת שיעור</span>}</dd>
         <dt className="text-ink-soft">ערוץ מועדף</dt>
         <dd>{s.contact_pref ? CONTACT_PREF_LABEL[s.contact_pref] : "לא צוין"}</dd>
       </dl>
       {mayEdit && <Button onClick={() => setEditing(true)}>עריכת הפרטים</Button>}
+      {!mayEdit && (handler || actor.isAdmin) && actor.canEdit && (
+        <p className="text-xs text-ink-soft">את פרטי המרצה עורכים במחזור האמיתי של השנה: המאגר משותף לכל השנים, ומחזור תרגול, הדגמה או ארכיון לא משנה אותו.</p>
+      )}
     </Section>
   );
 }
@@ -493,11 +511,11 @@ function HandOver({ team, a, actor, busy, onGo }: { team: TeamMember[]; a: Appro
           {actor.isAdmin && a.owner_member_id != null && <option value="pool">בחזרה למאגר, בלי מטפל/ת</option>}
         </select>
       </Field>
-      <Field id={`${id}-note`} label="הערה (לא חובה)">
+      <Field id={`${id}-note`} label="הערה להעברה (לא חובה)">
         <input id={`${id}-note`} value={note} maxLength={LIMITS.note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
       </Field>
       <p className="text-xs text-ink-soft">
-        {actor.isAdmin ? "המדריך/ה מעביר/ה מיד." : "הטיפול עובר רק כשהצד השני מקבל/ת את ההצעה. עד אז פרטי הקשר נשארים אצלך."}
+        {actor.isAdmin ? "ההעברה מיידית, בלי לחכות לתשובה." : "הטיפול עובר רק כשהצד השני מקבל/ת את ההצעה. עד אז פרטי הקשר נשארים אצלך."}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button kind="primary" disabled={!to} busy={busy === "handover"} onClick={() => void go()}>
@@ -615,7 +633,7 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
                 </div>
                 {mail && (
                   <a href={mail} className={LINK_BUTTON}>
-                    מייל
+                    שליחת מייל
                   </a>
                 )}
               </dd>
@@ -646,6 +664,9 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
 function Vetting({ s, actor, nameOf, busy, onVet }: { s: Speaker; actor: Actor; nameOf: (id: number | null) => string; busy: string | null; onVet: (state: Speaker["vetted"], note: string | null) => Promise<boolean> }) {
   const id = useId();
   const [note, setNote] = useState("");
+  // Open for a speaker waiting for approval; once decided, behind «שינוי האישור» (it is not news on every sheet).
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [s.id, s.vetted]);
   const choices: [Speaker["vetted"], string][] = [
     ["approved", "אישור"],
     ["rejected", "דחייה"],
@@ -658,9 +679,14 @@ function Vetting({ s, actor, nameOf, busy, onVet }: { s: Speaker; actor: Actor; 
         {s.vetted !== "pending" && s.vetted_by != null && <span className="text-ink-soft"> · {nameOf(s.vetted_by)}</span>}
       </p>
       {s.vetted_note && <p className="text-sm text-ink-soft">«{s.vetted_note}»</p>}
-      {actor.global && (
+      {actor.global && s.vetted !== "pending" && !open && (
+        <Button onClick={() => setOpen(true)} aria-expanded={false}>
+          שינוי האישור
+        </Button>
+      )}
+      {actor.global && (s.vetted === "pending" || open) && (
         <div className="space-y-2 rounded-lg border border-line bg-paper p-3">
-          <Field id={`${id}-note`} label="הערה (לא חובה, גלויה לצוות)">
+          <Field id={`${id}-note`} label="הערה על האישור (לא חובה, גלויה לכל הצוות)">
             <input id={`${id}-note`} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
           </Field>
           <div className="flex flex-wrap gap-2">
@@ -678,6 +704,11 @@ function Vetting({ s, actor, nameOf, busy, onVet }: { s: Speaker; actor: Actor; 
                   {label}
                 </Button>
               ))}
+            {open && (
+              <Button kind="quiet" onClick={() => setOpen(false)}>
+                ביטול
+              </Button>
+            )}
           </div>
         </div>
       )}

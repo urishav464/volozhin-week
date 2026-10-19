@@ -10,7 +10,7 @@ export type MineGroup = "offered" | "to_approach" | "awaiting" | "to_schedule" |
 
 /** In the order a phone shows them. */
 export const MINE_GROUPS: readonly { group: MineGroup; label: string }[] = [
-  { group: "offered", label: "הועברו אליי" },
+  { group: "offered", label: "הוצעו לי" },
   { group: "to_approach", label: "לפנות" },
   { group: "awaiting", label: "מחכה לתשובה" },
   { group: "to_schedule", label: "לסגור שעה" },
@@ -28,7 +28,7 @@ export interface MineRow {
   live: Pitch[];
 }
 
-/** My speakers this edition, by next step; a speaker offered to me (not yet mine) under «הועברו אליי». */
+/** My speakers this edition, by next step; a speaker offered to me (not yet mine, waiting for my answer) under «הוצעו לי». */
 export function mySpeakers(week: Week, me: number): Map<MineGroup, MineRow[]> {
   const out = new Map<MineGroup, MineRow[]>(MINE_GROUPS.map((g) => [g.group, []]));
   const speakerById = new Map(week.speakers.map((s) => [s.id, s]));

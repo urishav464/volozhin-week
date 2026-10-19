@@ -7,7 +7,7 @@ import { CONTACT_PREFS, LIMITS } from "../../data/speakerRules";
 import type { SpeakerPatch } from "../../data/speakers";
 import { type Chip as AvailabilityChip, DAY_PARTS, type DayPart, chipsOf } from "../../domain/dayParts";
 import { byGender } from "../../domain/names";
-import { DAYS, DAY_NAMES, type Day } from "../../domain/time";
+import { DAYS, DAY_NAMES, type Day, fmtRange } from "../../domain/time";
 import type { Availability, ContactPref, Gender, Speaker } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import { Button, Field, GenderField, INPUT } from "../settings/kit";
@@ -37,10 +37,12 @@ export interface ProfileForm {
   affiliation: string;
   bio_short: string;
   topics: string[];
+  /** A topic typed but not yet added with Enter or «הוספה»: it is saved with the rest, never dropped. */
+  topicDraft: string;
   contact_pref: ContactPref | "";
 }
 
-export const EMPTY_FORM: ProfileForm = { title: "", name: "", disambiguator: "", gender: null, affiliation: "", bio_short: "", topics: [], contact_pref: "" };
+export const EMPTY_FORM: ProfileForm = { title: "", name: "", disambiguator: "", gender: null, affiliation: "", bio_short: "", topics: [], topicDraft: "", contact_pref: "" };
 
 export function formOf(s: Speaker): ProfileForm {
   return {
@@ -51,8 +53,15 @@ export function formOf(s: Speaker): ProfileForm {
     affiliation: s.affiliation ?? "",
     bio_short: s.bio_short ?? "",
     topics: [...s.topics],
+    topicDraft: "",
     contact_pref: s.contact_pref ?? "",
   };
+}
+
+/** The tags with a typed topic added, as «הוספה» would add it (one space between words, no repeats, at most 10). */
+export function withTopic(tags: string[], draft: string): string[] {
+  const t = draft.replace(/\s+/g, " ").trim();
+  return t && !tags.includes(t) && tags.length < LIMITS.topics ? [...tags, t] : tags;
 }
 
 /** The form as the port takes it — the database cleans and checks every field again (CONTRACT «Text and lists»). */
@@ -64,7 +73,7 @@ export function fieldsOf(f: ProfileForm) {
     gender: f.gender,
     affiliation: f.affiliation.trim() || null,
     bio_short: f.bio_short.trim() || null,
-    topics: f.topics,
+    topics: withTopic(f.topics, f.topicDraft),
     contact_pref: f.contact_pref || null,
   };
 }
@@ -145,7 +154,7 @@ export function ProfileFields({
       <Field id={`${id}-bio`} label="תיאור קצר" hint="כמה מילים על המרצה ועל מה שמלמד/ת. גלוי לכל הצוות.">
         <textarea id={`${id}-bio`} value={form.bio_short} maxLength={LIMITS.bio_short} rows={3} onChange={(e) => set({ bio_short: e.target.value })} className={`${INPUT} py-2`} />
       </Field>
-      <TagInput id={`${id}-topics`} tags={form.topics} onChange={(topics) => set({ topics })} />
+      <TagInput id={`${id}-topics`} tags={form.topics} draft={form.topicDraft} onChange={set} />
       <Field id={`${id}-pref`} label="ערוץ קשר מועדף" hint="רק הערוץ. המספר או הכתובת נכנסים לפרטי הקשר.">
         <select id={`${id}-pref`} value={form.contact_pref} onChange={(e) => set({ contact_pref: e.target.value as ContactPref | "" })} className={INPUT}>
           <option value="">לא צוין</option>
@@ -160,14 +169,26 @@ export function ProfileFields({
   );
 }
 
-/** Free topic tags: type and press Enter (or «הוספה»); × takes one away. At most 10, each up to 40 characters. */
-export function TagInput({ id, tags, onChange }: { id: string; tags: string[]; onChange: (tags: string[]) => void }) {
-  const [draft, setDraft] = useState("");
+/**
+ * Free topic tags: type and press Enter (or «הוספה»); × takes one away. At most 10, each up to 40 characters.
+ * A topic typed and left without Enter is added when the field loses focus — and the form's own submit
+ * takes a pending one too (fieldsOf), so tapping «שמירה» right after typing never drops it.
+ */
+export function TagInput({
+  id,
+  tags,
+  draft,
+  onChange,
+}: {
+  id: string;
+  tags: string[];
+  draft: string;
+  onChange: (p: { topics?: string[]; topicDraft: string }) => void;
+}) {
   const full = tags.length >= LIMITS.topics;
   const add = () => {
-    const t = draft.replace(/\s+/g, " ").trim();
-    if (t && !tags.includes(t) && !full) onChange([...tags, t]);
-    setDraft("");
+    if (!draft) return;
+    onChange({ topics: withTopic(tags, draft), topicDraft: "" });
   };
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") {
@@ -185,7 +206,7 @@ export function TagInput({ id, tags, onChange }: { id: string; tags: string[]; o
           {tags.map((t) => (
             <li key={t} className="inline-flex items-center gap-1 rounded-full border border-line bg-paper ps-3 text-sm">
               {t}
-              <button type="button" onClick={() => onChange(tags.filter((x) => x !== t))} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft hover:bg-line/60">
+              <button type="button" onClick={() => onChange({ topics: tags.filter((x) => x !== t), topicDraft: draft })} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft hover:bg-line/60">
                 ×
               </button>
             </li>
@@ -193,7 +214,17 @@ export function TagInput({ id, tags, onChange }: { id: string; tags: string[]; o
         </ul>
       )}
       <div className="flex gap-2">
-        <input id={id} value={draft} maxLength={LIMITS.topic} disabled={full} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey} placeholder={full ? "אפשר עד 10 נושאים" : "למשל: תנ״ך, שירה"} className={INPUT} />
+        <input
+          id={id}
+          value={draft}
+          maxLength={LIMITS.topic}
+          disabled={full}
+          onChange={(e) => onChange({ topicDraft: e.target.value })}
+          onKeyDown={onKey}
+          onBlur={add}
+          placeholder={full ? "אפשר עד 10 נושאים" : "למשל: תנ״ך, שירה"}
+          className={INPUT}
+        />
         <Button onClick={add} disabled={!draft.trim() || full}>
           הוספה
         </Button>
@@ -203,6 +234,9 @@ export function TagInput({ id, tags, onChange }: { id: string; tags: string[]; o
 }
 
 // ------------------------------------------------------------------ availability: 5 days × 4 parts
+
+/** «06:30–13:00»: a part's hours, as the grid's clock shows them (the evening ends at «24:00», not «00:00»). */
+const partHours = (p: (typeof DAY_PARTS)[number]) => (p.to === 1440 ? `${fmtRange(p.from, p.to).split("–")[0]}–24:00` : fmtRange(p.from, p.to));
 
 const KIND_TEXT = (kind: AvailabilityChip["kind"], g: Gender | null) =>
   kind === "can" ? byGender(g, "יכול", "יכולה") : kind === "cannot" ? byGender(g, "לא יכול", "לא יכולה") : "לא ידוע";
@@ -233,7 +267,9 @@ export function AvailabilityGrid({
     if (await onSet(picked.day, picked.part, kind, kind == null ? null : note.trim() || null)) setPicked(null);
   };
   const tone = (c: AvailabilityChip) =>
-    c.kind === "can" ? "border-ok/50 bg-ok/10 text-ok" : c.kind === "cannot" ? "border-bad/40 bg-bad/10 text-bad" : "border-line bg-card text-ink-faint";
+    c.kind === "can" ? "border-ok/50 bg-ok/10 text-ok" : c.kind === "cannot" ? "border-bad/40 bg-bad/10 text-bad" : "border-line bg-card text-ink-soft";
+  const part = picked && DAY_PARTS.find((p) => p.part === picked.part)!;
+  const notes = chips.filter((c) => c.note);
   return (
     <div className="space-y-2">
       <table className="w-full table-fixed border-separate border-spacing-1 text-sm" aria-label="זמינות לפי ימים וחלקי יום">
@@ -245,6 +281,9 @@ export function AvailabilityGrid({
             {DAY_PARTS.map((p) => (
               <th key={p.part} scope="col" className="text-xs font-semibold text-ink-soft">
                 {p.label}
+                <span className="block text-[11px] font-normal">
+                  <bdi>{partHours(p)}</bdi>
+                </span>
               </th>
             ))}
           </tr>
@@ -285,10 +324,22 @@ export function AvailabilityGrid({
           ))}
         </tbody>
       </table>
-      {picked && onSet && (
-        <div role="group" aria-label={`זמינות ${DAY_NAMES[picked.day]} ${DAY_PARTS.find((p) => p.part === picked.part)!.label}`} className="space-y-2 rounded-lg border border-line bg-paper p-3">
+      {notes.length > 0 && (
+        <ul aria-label="הערות על הזמינות" className="space-y-0.5 text-sm">
+          {notes.map((c) => (
+            <li key={`${c.day}:${c.part}`}>
+              <span className="font-semibold">
+                {DAY_NAMES[c.day]} {DAY_PARTS.find((p) => p.part === c.part)!.label}:
+              </span>{" "}
+              {c.note}
+            </li>
+          ))}
+        </ul>
+      )}
+      {picked && part && onSet && (
+        <div role="group" aria-label={`זמינות ${DAY_NAMES[picked.day]} ${part.label}`} className="space-y-2 rounded-lg border border-line bg-paper p-3">
           <p className="text-sm font-semibold">
-            {DAY_NAMES[picked.day]} · {DAY_PARTS.find((p) => p.part === picked.part)!.label}
+            {DAY_NAMES[picked.day]} · {part.label} <bdi className="font-normal text-ink-soft">{partHours(part)}</bdi>
           </p>
           <Field id="avail-note" label="הערה (לא חובה)">
             <input id="avail-note" value={note} maxLength={LIMITS.avail_note} onChange={(e) => setNote(e.target.value)} className={INPUT} placeholder="למשל: רק עד 21:00" />

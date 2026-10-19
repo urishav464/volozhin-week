@@ -159,9 +159,14 @@ function PendingItem({
           <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`סימון ${displayName(s)}`} className="size-5 accent-ink" />
         </label>
         <div className="min-w-0 flex-1 basis-40">
-          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center text-start font-semibold underline-offset-4 hover:underline">
-            {displayName(s)}
-            {s.disambiguator && <span className="font-normal text-ink-soft">&nbsp;({s.disambiguator})</span>}
+          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-semibold underline decoration-ink-faint underline-offset-4 hover:decoration-ink">
+            <span>
+              {displayName(s)}
+              {s.disambiguator && <span className="font-normal text-ink-soft">&nbsp;({s.disambiguator})</span>}
+            </span>
+            <span aria-hidden className="inline-block text-ink-soft">
+              ‹
+            </span>
           </button>
           <p className="text-sm text-ink-soft break-words">{facts.join(" · ")}</p>
         </div>

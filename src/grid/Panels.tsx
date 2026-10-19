@@ -20,12 +20,30 @@ export interface PanelActions {
   openSpeaker: (speakerId: number) => void;
 }
 
-export function Sheet({ title, subtitle, onClose, children, wide }: { title: string; subtitle?: ReactNode; onClose: () => void; children: ReactNode; wide: boolean }) {
+export function Sheet({
+  title,
+  subtitle,
+  onClose,
+  onBack,
+  backLabel,
+  children,
+  wide,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  onClose: () => void;
+  /** Opened from another panel (a lesson, «מרצה חדש/ה»): «חזרה» — and Escape — return to it; × closes both. */
+  onBack?: () => void;
+  /** Where «חזרה» returns to, for a screen reader («חזרה לשיעור»). */
+  backLabel?: string;
+  children: ReactNode;
+  wide: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   // Focus lands on the sheet once, when it opens: a reload behind it (a command,
   // another device) re-renders the parent and must not pull focus out of a field.
   const close = useRef(onClose);
-  close.current = onClose;
+  close.current = onBack ?? onClose;
   useEffect(() => {
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus(); // a field with autoFocus keeps it
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
@@ -45,11 +63,21 @@ export function Sheet({ title, subtitle, onClose, children, wide }: { title: str
       }
     >
       <header className="flex items-start gap-2 border-b border-line px-4 py-3">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label={backLabel ? `חזרה ל${backLabel}` : "חזרה"}
+            className="-ms-2 -mt-1 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm font-semibold text-ink-soft hover:bg-line/50"
+          >
+            <span aria-hidden>→</span> חזרה
+          </button>
+        )}
         <div className="min-w-0">
           <h2 className="font-display text-lg font-semibold">{title}</h2>
           {subtitle && <div className="text-sm text-ink-soft">{subtitle}</div>}
         </div>
-        <button type="button" onClick={onClose} aria-label="סגירה" className="ms-auto rounded-md px-2 py-1 text-lg leading-none hover:bg-line/50">
+        <button type="button" onClick={onClose} aria-label="סגירה" className="-me-2 -mt-1 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-md text-xl leading-none hover:bg-line/50">
           ×
         </button>
       </header>
@@ -155,7 +183,11 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
             <div className="flex items-center gap-1.5">
               <GenderDot gender={s?.gender ?? null} />
               {s ? (
-                <button type="button" onClick={() => actions.openSpeaker(s.id)} className={`text-start font-semibold underline-offset-2 hover:underline ${p.state === "declined" ? "line-through opacity-60" : ""}`}>
+                <button
+                  type="button"
+                  onClick={() => actions.openSpeaker(s.id)}
+                  className={`inline-flex min-h-11 items-center text-start font-semibold underline underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
+                >
                   {displayName(s)}
                 </button>
               ) : (
@@ -236,7 +268,7 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions }: { mo
         <p className="flex items-center gap-1.5 font-semibold">
           <GenderDot gender={lead?.gender ?? null} />
           {lead ? (
-            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="text-start underline-offset-2 hover:underline">
+            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="inline-flex min-h-11 items-center text-start underline underline-offset-4">
               {displayName(lead)}
             </button>
           ) : (

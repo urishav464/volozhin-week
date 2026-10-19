@@ -29,9 +29,12 @@ type Panel =
   | { kind: "lesson"; id: number }
   | { kind: "cell"; day: Day; row: GridRow }
   | { kind: "warnings" }
-  | { kind: "speaker"; id: number }
+  /** `back`: the panel it was opened from (a lesson, a cell, «מרצה חדש/ה»), which «חזרה» returns to. */
+  | { kind: "speaker"; id: number; back?: Panel }
   | { kind: "create"; name: string }
   | null;
+
+const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות" };
 
 /** What «המרצים שלי» hands the week: a speaker to place, or a lesson to open. */
 export type WeekVisit = { place?: number; lesson?: number } | null;
@@ -151,7 +154,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         setPanel(null);
         void run(() => cmds.reshape(d, rowStart, op), "המשבצת עוצבה מחדש");
       },
-      openSpeaker: (id) => setPanel({ kind: "speaker", id }),
+      openSpeaker: (id) => setPanel((p) => ({ kind: "speaker", id, back: p ?? undefined })),
     };
   }, [cmds, propose, run]);
 
@@ -347,6 +350,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           speakerId={panel.id}
           wide={wide}
           onClose={() => setPanel(null)}
+          onBack={panel.back ? () => setPanel(panel.back ?? null) : undefined}
+          backLabel={panel.back ? BACK_LABEL[panel.back.kind] : undefined}
           notify={(kind, text) => setToast({ kind, text })}
           clear={() => setToast(null)}
           reload={reload}
@@ -362,7 +367,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           initialName={panel.name}
           wide={wide}
           onClose={() => setPanel(null)}
-          onOpen={(id) => setPanel({ kind: "speaker", id })}
+          onOpen={(id, name) => setPanel({ kind: "speaker", id, back: { kind: "create", name } })}
           onCreated={(id) => setPanel({ kind: "speaker", id })}
           notify={(kind, text) => setToast({ kind, text })}
           clear={() => setToast(null)}

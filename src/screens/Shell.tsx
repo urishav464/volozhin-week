@@ -58,11 +58,16 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
                     `inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm font-semibold ${isActive ? "bg-paper text-ink" : "text-paper hover:bg-paper/10"}`
                   }
                 >
-                  {item.label}
-                  {!!item.badge && (
-                    <span aria-hidden className="rounded-full bg-accent px-1.5 text-xs font-bold leading-5 text-paper tabular-nums">
-                      {item.badge}
-                    </span>
+                  {({ isActive }) => (
+                    <>
+                      {item.label}
+                      {!!item.badge && (
+                        // ink on paper / paper on ink: the accent was too faint behind 12px digits
+                        <span aria-hidden className={`rounded-full px-1.5 text-xs font-bold leading-5 tabular-nums ${isActive ? "bg-ink text-paper" : "bg-paper text-ink"}`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </>
                   )}
                 </NavLink>
               ))}

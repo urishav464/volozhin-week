@@ -36,7 +36,19 @@ test.describe("demo build", () => {
     await name.fill("מרצה 07");
     const maybe = sheet.getByRole("region", { name: "ייתכן שזה…" });
     await expect(maybe.getByRole("listitem").filter({ hasText: "מרצה 07" })).toContainText("אותו שם");
+    await expect(maybe.getByRole("status")).toHaveText("אותו שם כבר במאגר.");
+
+    // «פתיחה» to check whether it is the same person — and «חזרה» brings the name back
+    await maybe.getByRole("button", { name: "פתיחת מרצה 07" }).click();
+    const match = page.getByRole("dialog", { name: "מרצה 07" });
+    await expect(match).toBeVisible();
+    await match.getByRole("button", { name: "חזרה למרצה חדש/ה" }).click();
+    await expect(sheet.getByLabel("שם המרצה (בלי תואר)")).toHaveValue("מרצה 07");
+
     await sheet.getByRole("button", { name: "זה מישהו אחר — להמשיך" }).click();
+    await expect(sheet.getByLabel("תואר", { exact: true })).toBeFocused(); // the fields, not the top of the sheet
+    await expect(maybe.getByRole("listitem")).toHaveCount(0); // the matches already seen fold into one line
+    await expect(maybe.getByRole("button", { name: /שמות דומים במאגר — הצגה|שם דומה אחד במאגר — הצגה/ })).toBeVisible();
     await expect(sheet.getByLabel(/פרט מבחין \(חובה/)).toBeVisible();
     await sheet.getByRole("button", { name: "הוספה למאגר" }).click();
     await expect(sheet.getByRole("alert")).toContainText("צריך להוסיף פרט מבחין");
@@ -50,12 +62,15 @@ test.describe("demo build", () => {
     await sheet.getByLabel("נושאים", { exact: true }).fill("שירה");
     await sheet.getByLabel("נושאים", { exact: true }).press("Enter");
     await expect(sheet.getByRole("list", { name: "הנושאים שנבחרו" })).toContainText("שירה");
+    await sheet.getByLabel("נושאים", { exact: true }).fill("תפילה"); // typed, never confirmed with Enter
     await sheet.getByRole("button", { name: "הוספה למאגר" }).click();
     await expect(toast(page, "מרצה 077 נוספה למאגר")).toBeVisible();
 
-    // her sheet opens: waiting for approval, in my hands, nothing guessed
+    // her sheet opens: waiting for approval, in my hands, nothing guessed — both topics kept
     const card = page.getByRole("dialog", { name: "מרצה 077" });
     await expect(card).toContainText("ממתינה לאישור");
+    await expect(card.getByRole("list", { name: "נושאים" })).toContainText("שירה");
+    await expect(card.getByRole("list", { name: "נושאים" })).toContainText("תפילה");
     await expect(card.getByRole("region", { name: "הטיפול השנה" })).toContainText("בטיפולך");
     await expect(card.getByRole("region", { name: "ציר הפעולות" })).toContainText("נוספה למאגר");
     await noSidewaysScroll(page);
@@ -69,7 +84,7 @@ test.describe("demo build", () => {
 
     const sheet = page.getByRole("dialog", { name: "פרופ׳ מרצה 04" });
     const contacts = sheet.getByRole("region", { name: "פרטי קשר" });
-    await expect(contacts.getByRole("link", { name: "מייל" })).toHaveAttribute("href", "mailto:speaker04@example.org");
+    await expect(contacts.getByRole("link", { name: "שליחת מייל" })).toHaveAttribute("href", "mailto:speaker04@example.org");
     await expect(contacts).toContainText("טלפון לדוגמה");
     await expect(contacts.getByRole("link", { name: "חיוג" })).toHaveCount(0); // a placeholder is no number
     await expect(sheet.getByRole("region", { name: "שיעורים במחזורים" })).toContainText("מחזור קודם (לדוגמה)");
@@ -87,6 +102,11 @@ test.describe("demo build", () => {
     await expect(contacts.getByRole("link", { name: "WhatsApp" })).toHaveAttribute("href", "https://wa.me/123456789");
     await expect(sheet.getByRole("region", { name: "ציר הפעולות" })).toContainText("פרטי הקשר עודכנו: טלפון");
     await noSidewaysScroll(page);
+
+    // opened from the lesson: Escape goes back to it, not to nothing
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "שיעור סגור" })).toBeVisible();
+    await expect(sheet).toHaveCount(0);
   });
 
   test("«המרצים שלי»: «פניתי», then «הסכימה» with a note and an availability chip in the sheet, then «שבץ» on the week", async ({ page }) => {
@@ -100,6 +120,15 @@ test.describe("demo build", () => {
     await row("לפנות", "מרצה 32").getByRole("button", { name: "פניתי" }).click();
     await expect(toast(page, "עודכן: מרצה 32 · פנו")).toBeVisible();
     await expect(row("מחכה לתשובה", "מרצה 32")).toBeVisible();
+    await expect(row("מחכה לתשובה", "מרצה 32").getByRole("button", { name: "מרצה 32" })).toBeFocused(); // the focus moved with the row
+
+    // waiting for approval: a chip, not a dead button — and the global admin approves right there
+    const waiting = row("מחכה לתשובה", "מרצה 56");
+    await expect(waiting).toContainText("ממתינה לאישור");
+    await expect(waiting.getByRole("button", { name: "הסכימה" })).toHaveCount(0);
+    await waiting.getByRole("button", { name: "אישור מרצה 56" }).click();
+    await expect(toast(page, "מרצה 56 אושרה")).toBeVisible();
+    await expect(row("מחכה לתשובה", "מרצה 56").getByRole("button", { name: "הסכימה" })).toBeEnabled();
 
     await row("מחכה לתשובה", "מרצה 32").getByRole("button", { name: "מרצה 32" }).click();
     const sheet = page.getByRole("dialog", { name: "מרצה 32" });
@@ -170,11 +199,11 @@ test.describe("demo build", () => {
 
   test("a hand-over: take the one offered to me, and move one of mine to a teammate", async ({ page }) => {
     await page.goto(`${demoUrl()}/mine`);
-    const offered = page.getByRole("region", { name: "הועברו אליי" });
+    const offered = page.getByRole("region", { name: "הוצעו לי" });
     await expect(offered).toContainText("חניך/ה א׳ מציע/ה להעביר אליך את הטיפול");
     await offered.getByRole("button", { name: "קבלת הטיפול" }).click();
     await expect(toast(page, "הטיפול עבר אליך")).toBeVisible();
-    await expect(page.getByRole("region", { name: "הועברו אליי" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "הוצעו לי" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "מחכה לתשובה" })).toContainText("הרב מרצה 13");
 
     await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "מרצה 32" }).click();
@@ -182,7 +211,7 @@ test.describe("demo build", () => {
     await sheet.getByRole("button", { name: "העברה לחבר/ת צוות" }).click();
     const form = sheet.getByRole("group", { name: "העברת הטיפול" });
     await form.getByLabel("להעביר ל…").selectOption({ label: "חניך/ה ב׳" });
-    await form.getByLabel("הערה (לא חובה)").fill("יש לה קשר עם המרצה (נתון לדוגמה)");
+    await form.getByLabel("הערה להעברה (לא חובה)").fill("יש לה קשר עם המרצה (נתון לדוגמה)");
     await form.getByRole("button", { name: "העברה" }).click();
     await expect(toast(page, "הטיפול עבר לחניך/ה ב׳")).toBeVisible();
     await expect(sheet.getByRole("region", { name: "הטיפול השנה" })).toContainText("בטיפול חניך/ה ב׳");
@@ -252,7 +281,7 @@ test.describe("mock build", () => {
 
     // «המרצים שלי»: take the hand-over offered to me, «פניתי»
     await nav(page).getByRole("link", { name: "המרצים שלי" }).click();
-    await page.getByRole("region", { name: "הועברו אליי" }).getByRole("button", { name: "קבלת הטיפול" }).click();
+    await page.getByRole("region", { name: "הוצעו לי" }).getByRole("button", { name: "קבלת הטיפול" }).click();
     await expect.poll(() => sb.rpc.get("answer_handover")).toEqual([{ p_approach: mine(13).id, p_accept: true, p_note: null }]);
     await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "פניתי" }).click();
     await expect.poll(() => sb.rpc.get("set_approach_status")).toEqual([{ p_approach: mine(32).id, p_version: 1, p_status: "approached", p_note: null }]);
@@ -274,6 +303,7 @@ test.describe("mock build", () => {
     await sheet.getByRole("group", { name: "זמינות שני ערב" }).getByRole("button", { name: "לא יכולה" }).click();
     await expect.poll(() => sb.rpc.get("set_availability")).toEqual([{ p_edition: 7, p_speaker: 32, p_day: 1, p_part: "evening", p_kind: "cannot", p_note: null }]);
 
+    await sheet.getByRole("region", { name: "אישור המדריך/ה" }).getByRole("button", { name: "שינוי האישור" }).click();
     await sheet.getByRole("region", { name: "אישור המדריך/ה" }).getByRole("button", { name: "דחייה" }).click();
     await expect.poll(() => sb.rpc.get("vet_speakers")).toEqual([{ p_speakers: [32], p_state: "rejected", p_note: null }]);
 
