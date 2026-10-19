@@ -26,6 +26,11 @@
    - **Database password:** לוחצים Generate ושומרים במנהל סיסמאות. לא נצטרך אותה בהמשך.
    - **Region:** `Central EU (Frankfurt)`, הקרוב ביותר לישראל.
    - **Plan:** Free.
+   - **Security:**
+     - **Enable Data API:** מסומן. דרכו האתר מדבר עם מסד הנתונים.
+     - **Automatically expose new tables:** **מורידים את הסימון.** ההרשאות נקבעות ב-`schema.sql` אחת-אחת, ולא אוטומטית. הסכמה נבדקת בשני המצבים, אז גם סימון לא ישבור, אבל בלי סימון בטוח יותר.
+     - **Enable automatic RLS:** משאירים בלי סימון. `schema.sql` מפעיל RLS על כל טבלה בעצמו, ובדיקה מוודאת את זה.
+   - **Postgres Type** (תחת Advanced): `Postgres`, ברירת המחדל. לא OrioleDB.
 3. מחכים שהפרויקט יעלה, בערך 2 דקות.
 4. מעתיקים לצד שני ערכים. הם נמצאים ב-**Project Settings → API Keys** ובכפתור **Connect** שבראש הפרויקט:
    - **Project URL**, בצורה `https://xxxx.supabase.co`;
