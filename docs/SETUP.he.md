@@ -110,8 +110,11 @@
    - `VITE_SUPABASE_URL` = ה-Project URL
    - `VITE_SUPABASE_PUBLISHABLE_KEY` = ה-Publishable key
 
+   **שני הערכים מהפרויקט `volozhin-week` ב-Supabase** (השם מופיע בראש לוח הבקרה). מי שיש לו/ה גם פרויקט אחר, למשל של המשמרים, צריך/ה לוודא שלא העתיק/ה ממנו. ה-Project URL הוא החלק הראשון של ה-Callback URL משלב 3.4, בלי `/auth/v1/callback`.
+
    בודקים שברשימה של **Preview** לא מופיע אף אחד מהשניים.
    - **אין צורך ב-Retry deployment לפני המיזוג.** הוא ייכשל שוב מאותה סיבה. מיזוג ה-PR ל-`main` מריץ בנייה חדשה מעצמו, והיא כבר תכלול את המשתנים.
+   - **אחרי שינוי משתנה, צריך לבנות מחדש:** האתר קורא אותם רק בזמן הבנייה. ב-**Deployments** לוחצים ⋯ ליד הפריסה **העליונה** (החדשה ביותר), ובוחרים **Retry deployment**. Retry בונה מחדש את הגרסה של אותה פריסה, ולכן Retry על הפריסה הראשונה («Initial commit») ייכשל תמיד.
    - **בלי המשתנים**, תצוגות מקדימות של ענפים רצות **במצב הדגמה**, עם נתונים לדוגמה בלבד, ולכן בטוח לשתף קישור של תצוגה מקדימה.
 
 ## 5. Supabase: כתובות חזרה
@@ -120,7 +123,8 @@
 
 1. ב-**Authentication → URL Configuration**:
    - **Site URL:** `https://volozhin-week.pages.dev`
-   - **Redirect URLs:** מוסיפים `https://volozhin-week.pages.dev/**`
+   - **Redirect URLs:** לוחצים **Add URL**, מוסיפים `https://volozhin-week.pages.dev/**`, ושומרים.
+   - **בלי זה,** אחרי הכניסה עם Google הדפדפן מגיע ל-`localhost:3000` ומציג «This site can't be reached». ‏Supabase שולח לשם כברירת מחדל.
 2. חוזרים ללקוח של Google משלב 3.4 (**Clients** → `volozhin-week web`). אם `https://volozhin-week.pages.dev` עוד לא מופיע ב-**Authorized JavaScript origins**, מוסיפים אותו ולוחצים Save.
 3. **פרסום האפליקציה ב-Google: רשות, אפשר לדלג.** גם במצב Testing הכניסה עובדת לכל חבר/ת צוות (ראו שלב 3.3). אם רוצים לפרסם בכל זאת, עושים זאת רק **אחרי שה-PR הראשון מוזג ל-`main`** (ראו תחילת שלב 7) ו-Cloudflare סיים לפרוס אותו. רק אז האתר ודף מדיניות הפרטיות קיימים. לפני שממשיכים, פותחים בדפדפן את `https://volozhin-week.pages.dev/privacy.html` ומוודאים שמופיע «מדיניות פרטיות».
    1. ב-Google Cloud, **Branding**:
@@ -140,9 +144,10 @@
    - `SUPABASE_URL` = ה-Project URL
    - `SUPABASE_PUBLISHABLE_KEY` = ה-Publishable key
 2. הפעולה היומית רצה רק אחרי שה-PR הראשון ממוזג ל-`main` (ראו תחילת שלב 7): GitHub מריץ תזמונים רק מהענף הראשי. אחרי המיזוג בודקים אותה:
-   1. בלשונית **Actions** בוחרים **keep-alive** ולוחצים **Run workflow**.
-   2. מוודאים שהריצה מסתיימת בירוק ומדפיסה `"ok"`.
-   - **אם היא אדומה,** כנראה ששני הסודות חסרים, או שנשמרו בלשונית **Variables** במקום **Secrets**. GitHub ישלח גם מייל על הכישלון.
+   1. נכנסים ל-`https://github.com/urishav464/volozhin-week/actions/workflows/keep-alive.yml`. זו הלשונית **Actions** שבשורת הלשוניות העליונה של הריפו (ליד Code ו-Pull requests), לא **Settings → Actions**.
+   2. מימין, מעל רשימת הריצות, לוחצים **Run workflow**. בחלון הקטן משאירים `main`, ולוחצים שוב **Run workflow**.
+   3. אחרי חצי דקה בערך מרעננים. הריצה צריכה להסתיים ב-✓ ירוק, ובתוכה להדפיס `"ok"`.
+   - **אם היא אדומה,** כנראה ששני הסודות חסרים, נשמרו בלשונית **Variables** במקום **Secrets**, או הועתקו מפרויקט Supabase אחר. GitHub ישלח גם מייל על הכישלון.
 
 ## 7. בדיקה
 
@@ -154,6 +159,13 @@
    - אם Google מציג בדרך הודעה שהאפליקציה בבדיקה, או «Google hasn't verified this app», לוחצים Continue. זה תקין.
 2. מנסים מחשבון Google אחר, שלא ברשימת הצוות. צריך להופיע «הכתובת עדיין לא ברשימת הצוות». אם במקום זה Google עצמו עוצר עם «Access blocked» או «Error 403: access_denied», מוסיפים את החשבון ב-**Audience → Test users**, או מפרסמים את האפליקציה (שלב 5.3).
 3. ב-Supabase פותחים **Advisors → Security Advisor**. לא אמורות להופיע שגיאות.
+
+**אם הכניסה לא עובדת**
+- **`Unsupported provider: provider is not enabled`.** מסתכלים בשורת הכתובת של הדפדפן: היא מתחילה ב-`https://xxxx.supabase.co`.
+  - אם ה-`xxxx` שונה מהפרויקט `volozhin-week`, האתר מחובר לפרויקט אחר. מתקנים את המשתנים בשלב 4.6, ובונים מחדש.
+  - אם הוא זהה, הכניסה עם Google לא נשמרה בשלב 3.6. ברשימת הספקים ב-Supabase צריך להופיע **Enabled** ליד Google.
+- **`localhost:3000` ו-«This site can't be reached».** חסרים ה-Site URL וה-Redirect URLs של שלב 5.1.
+- **«מסד הנתונים לא מעודכן».** מריצים שוב את `schema.sql` (סוף המסמך).
 
 ---
 
