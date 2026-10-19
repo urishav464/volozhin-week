@@ -35,3 +35,11 @@ grant execute on all functions in schema auth to anon, authenticated, service_ro
 
 create schema if not exists extensions;
 grant usage on schema extensions to anon, authenticated, service_role;
+
+-- Supabase creates this (empty) publication in every project; Realtime reads it.
+do $$
+begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;
+  end if;
+end $$;

@@ -4,6 +4,7 @@
 // must produce the same result under both.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
+import { REALTIME_TABLES } from "../../src/data/realtime";
 import { SCHEMA, as, dropDatabase, emailPassword, freshDatabase, google, linkedPassword, sqlstate, type Regime } from "./db";
 
 const ADMIN = "Admin.Person@Example.org"; // mixed case on purpose: stored and matched lower-case
@@ -82,6 +83,26 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(await exec("authenticated", "app")).toEqual(AUTH_APP_FUNCTIONS);
     });
 
+    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members or log", async () => {
+      const rows = (
+        await db.query(
+          "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
+        )
+      ).rows.map((r) => r.tablename);
+      expect(rows).toEqual([...REALTIME_TABLES].sort());
+    });
+
+    it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
+      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members");
+      await db.query(SCHEMA);
+      const rows = (
+        await db.query(
+          "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
+        )
+      ).rows.map((r) => r.tablename);
+      expect(rows).toEqual([...REALTIME_TABLES].sort());
+    });
+
     it("pins search_path on every SECURITY DEFINER function", async () => {
       const r = await db.query(`
         select n.nspname || '.' || p.proname as fn from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -132,7 +153,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(3);
+        expect(w.schema_version).toBe(4);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
