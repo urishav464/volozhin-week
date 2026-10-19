@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { MINE_GROUPS, mySpeakers, pendingSpeakers } from "./mine";
+import { MINE_GROUPS, mySpeakers, nextStep, pendingSpeakers } from "./mine";
 
 describe("«המרצים שלי»", () => {
   it("groups my speakers by the next step, and puts an offer to me first", () => {
@@ -38,5 +38,9 @@ describe("«המרצים שלי»", () => {
     Object.assign(addSpeaker(w, null, "ג"), { vetted: "pending", retired: true });
     addSpeaker(w, "m", "ד");
     expect(pendingSpeakers(w).map((s) => s.name)).toEqual(["א", "ב"]);
+  });
+
+  it("gives every group one next step, and none once they declined", () => {
+    expect(MINE_GROUPS.map((g) => nextStep(g.group))).toEqual(["accept", "approached", "positive", "schedule", "lesson", null]);
   });
 });

@@ -35,6 +35,11 @@ export function useSettings(): SettingsContext {
  */
 export function useAction() {
   const { notify, clear } = useSettings();
+  return useRunner(notify, clear);
+}
+
+/** useAction outside «הגדרות» (the speaker screens): the same runner, with the screen's own toast. */
+export function useRunner(notify: (kind: "ok" | "error", text: string) => void, clear: () => void) {
   const [busy, setBusy] = useState<string | null>(null);
   const run = useCallback(
     async (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean): Promise<boolean> => {
@@ -107,15 +112,27 @@ export function Field({ id, label, hint, children }: { id: string; label: ReactN
 export const GENDER_LABEL: Record<Gender, string> = { f: "נקבה", m: "זכר" };
 
 /** Gender is optional everywhere: «לא צוין» is a real answer, never a guess. */
-export function GenderField({ name, value, onChange }: { name: string; value: Gender | null; onChange: (g: Gender | null) => void }) {
+export function GenderField({
+  name,
+  value,
+  onChange,
+  legend = "מגדר (לא חובה)",
+  unknown = "לא צוין",
+}: {
+  name: string;
+  value: Gender | null;
+  onChange: (g: Gender | null) => void;
+  legend?: string;
+  unknown?: string;
+}) {
   const options: [Gender | null, string][] = [
-    [null, "לא צוין"],
+    [null, unknown],
     ["f", GENDER_LABEL.f],
     ["m", GENDER_LABEL.m],
   ];
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1 text-sm font-semibold">מגדר (לא חובה)</legend>
+      <legend className="mb-1 text-sm font-semibold">{legend}</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map(([g, label]) => (
           <label key={label} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${value === g ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>

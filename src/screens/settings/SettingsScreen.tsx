@@ -27,7 +27,18 @@ type Slug = (typeof TABS)[number]["slug"];
 
 type Toast = { kind: "ok" | "error"; text: string; at: number } | null;
 
-export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: Me; onMeChanged: () => Promise<void> | void }) {
+export function SettingsScreen({
+  port,
+  me,
+  onMeChanged,
+  onEditionStarted,
+}: {
+  port: DataPort;
+  me: Me;
+  onMeChanged: () => Promise<void> | void;
+  /** A new edition was opened here: the week, «המרצים שלי» and the approvals queue turn to it. */
+  onEditionStarted?: (id: number) => void;
+}) {
   const { tab } = useParams();
   const navigate = useNavigate();
   const wide = useMedia("(min-width: 1024px)");
@@ -102,7 +113,16 @@ export function SettingsScreen({ port, me, onMeChanged }: { port: DataPort; me: 
     const picked = { editions: managed, editionId, setEditionId };
     switch (current.slug) {
       case "edition":
-        return <EditionsTab editions={editions} reload={loadEditions} onStarted={(id) => setEditionId(id)} />;
+        return (
+          <EditionsTab
+            editions={editions}
+            reload={loadEditions}
+            onStarted={(id) => {
+              setEditionId(id);
+              onEditionStarted?.(id);
+            }}
+          />
+        );
       case "team":
         return <TeamTab {...picked} />;
       case "roster":

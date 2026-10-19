@@ -1,12 +1,22 @@
 import type { ReactNode } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, NavLink } from "react-router";
+
+/** One of the site's sections in the header: the week, «המרצים שלי», the approvals queue, «הגדרות». */
+export interface NavItem {
+  to: string;
+  label: string;
+  /** A count beside the label (speakers waiting for approval); hidden at 0. */
+  badge?: number;
+  /** What the count means, for a screen reader: the link reads «אישורים, 5 ממתינים». */
+  badgeLabel?: string;
+}
 
 interface Props {
   demo: boolean;
   user?: { name: string; roleLabel: string } | null;
   onSignOut?: () => void;
-  /** An admin's way to «הגדרות» (and back to the week from there). */
-  settingsLink?: boolean;
+  /** The sections a signed-in member may open. */
+  nav?: NavItem[];
   /** The grid needs the whole width; notices and forms stay in a reading column (the signed-in header is always full width). */
   full?: boolean;
   children: ReactNode;
@@ -14,8 +24,7 @@ interface Props {
 
 const HEADER_BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-md border border-paper/40 px-3 text-sm hover:bg-paper/10";
 
-export function Shell({ demo, user, onSignOut, settingsLink = false, full = false, children }: Props) {
-  const inSettings = useLocation().pathname.startsWith("/settings");
+export function Shell({ demo, user, onSignOut, nav, full = false, children }: Props) {
   return (
     <div className="min-h-dvh flex flex-col">
       {demo && (
@@ -24,10 +33,12 @@ export function Shell({ demo, user, onSignOut, settingsLink = false, full = fals
         </div>
       )}
       <header className="bg-ink text-paper">
-        {/* Signed in, the header keeps one width on every screen, so «הגדרות» / «לשבוע» stays under the pointer. */}
-        <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 h-14 flex items-center gap-2 sm:gap-3`}>
-          <h1 className="shrink-0 font-display font-extrabold text-xl tracking-tight">
-            {settingsLink ? (
+        {/* Signed in, the header keeps one width on every screen, so a section link stays under the pointer.
+            Below 1024px the sections wrap to a row of their own, under the name and «התנתקות»: every
+            entry stays one tap away on a phone, nothing hides behind a menu. */}
+        <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:flex-nowrap`}>
+          <h1 className="flex h-14 shrink-0 items-center font-display font-extrabold text-xl tracking-tight">
+            {nav ? (
               <Link to="/" className="rounded-sm">
                 שבוע וולוז'ין
               </Link>
@@ -35,22 +46,34 @@ export function Shell({ demo, user, onSignOut, settingsLink = false, full = fals
               "שבוע וולוז'ין"
             )}
           </h1>
-          <div className="ms-auto flex items-center gap-2 sm:gap-3 min-w-0">
+          {nav && nav.length > 0 && (
+            <nav aria-label="אזורי המערכת" className="order-last flex w-full gap-1 overflow-x-auto pb-2 lg:order-none lg:w-auto lg:pb-0">
+              {nav.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/"}
+                  aria-label={item.badge ? `${item.label}, ${item.badge} ${item.badgeLabel ?? ""}`.trim() : undefined}
+                  className={({ isActive }) =>
+                    `inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-sm font-semibold ${isActive ? "bg-paper text-ink" : "text-paper hover:bg-paper/10"}`
+                  }
+                >
+                  {item.label}
+                  {!!item.badge && (
+                    <span aria-hidden className="rounded-full bg-accent px-1.5 text-xs font-bold leading-5 text-paper tabular-nums">
+                      {item.badge}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </nav>
+          )}
+          <div className="ms-auto flex h-14 min-w-0 items-center gap-2 sm:gap-3">
             {user && (
               <span className="text-sm truncate">
                 {user.name} · <span className="opacity-80">{user.roleLabel}</span>
               </span>
             )}
-            {settingsLink &&
-              (inSettings ? (
-                <Link to="/" className={HEADER_BUTTON}>
-                  לשבוע
-                </Link>
-              ) : (
-                <Link to="/settings" className={HEADER_BUTTON}>
-                  הגדרות
-                </Link>
-              ))}
             {onSignOut && (
               <button type="button" onClick={onSignOut} className={HEADER_BUTTON}>
                 התנתקות

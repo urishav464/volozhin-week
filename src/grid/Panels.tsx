@@ -16,16 +16,22 @@ export interface PanelActions {
   reopen: (lessonId: number) => void;
   update: (lessonId: number, version: number, patch: LessonPatch) => void;
   reshape: (day: Day, rowStart: number, op: ReshapeOp) => void;
+  /** The speaker sheet (src/screens/speakers/SpeakerSheet.tsx). */
+  openSpeaker: (speakerId: number) => void;
 }
 
 export function Sheet({ title, subtitle, onClose, children, wide }: { title: string; subtitle?: ReactNode; onClose: () => void; children: ReactNode; wide: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Focus lands on the sheet once, when it opens: a reload behind it (a command,
+  // another device) re-renders the parent and must not pull focus out of a field.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    ref.current?.focus();
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    if (!ref.current?.contains(document.activeElement)) ref.current?.focus(); // a field with autoFocus keeps it
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [onClose]);
+  }, []);
   return (
     <div
       ref={ref}
@@ -148,7 +154,13 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
           <li key={p.id} className="rounded-lg border border-line bg-card p-2" data-pitch-id={p.id}>
             <div className="flex items-center gap-1.5">
               <GenderDot gender={s?.gender ?? null} />
-              <span className={`font-semibold ${p.state === "declined" ? "line-through opacity-60" : ""}`}>{s ? displayName(s) : "?"}</span>
+              {s ? (
+                <button type="button" onClick={() => actions.openSpeaker(s.id)} className={`text-start font-semibold underline-offset-2 hover:underline ${p.state === "declined" ? "line-through opacity-60" : ""}`}>
+                  {displayName(s)}
+                </button>
+              ) : (
+                <span className="font-semibold">?</span>
+              )}
               <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
                 {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
               </Chip>
@@ -223,7 +235,13 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions }: { mo
       <Section title="מרצה">
         <p className="flex items-center gap-1.5 font-semibold">
           <GenderDot gender={lead?.gender ?? null} />
-          {lead ? displayName(lead) : "—"}
+          {lead ? (
+            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="text-start underline-offset-2 hover:underline">
+              {displayName(lead)}
+            </button>
+          ) : (
+            "—"
+          )}
         </p>
         {owner != null && <p className="text-xs text-ink-soft">בטיפול: {model.memberName.get(owner)}</p>}
       </Section>

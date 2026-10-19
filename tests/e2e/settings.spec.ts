@@ -79,7 +79,7 @@ test.describe("demo build — an admin", () => {
     await page.getByRole("button", { name: "פתיחת המחזור" }).click();
     await expect(toast(page, "המחזור מחזור לדוגמה נפתח")).toBeVisible();
     await expect(page.getByRole("table", { name: "המחזורים" }).getByRole("row").filter({ hasText: "מחזור לדוגמה" })).toContainText("TBD");
-    await page.getByRole("banner").getByRole("link", { name: "לשבוע" }).click();
+    await page.getByRole("banner").getByRole("link", { name: "השבוע" }).click();
     await expect(page.getByRole("combobox", { name: "מחזור" })).toHaveValue(/\d+/);
     await expect(page.getByRole("combobox", { name: "מחזור" }).locator("option:checked")).toHaveText("מחזור לדוגמה");
     await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();

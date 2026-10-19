@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gateFor, gateForError, isSettingsAdmin, managedEditionIds } from "./gate";
+import { gateFor, gateForError, handlesSpeakers, isSettingsAdmin, managedEditionIds } from "./gate";
 import { type Me, PortError, type WhoAmI } from "./types";
 
 const ok: WhoAmI = {
@@ -63,5 +63,17 @@ describe("who reaches «הגדרות»", () => {
     expect(isSettingsAdmin(me({}))).toBe(false);
     expect(isSettingsAdmin(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }] }))).toBe(false);
     expect(managedEditionIds(me({}), editions)).toEqual([]);
+  });
+});
+
+describe("who has «המרצים שלי»", () => {
+  const me = (patch: Partial<Me>): Me => ({ ...(ok as Me), ...patch });
+  it("content and admins, anywhere; a global admin", () => {
+    expect(handlesSpeakers(me({}))).toBe(true);
+    expect(handlesSpeakers(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }, { edition_id: 4, role: "content", member_id: 8 }] }))).toBe(true);
+    expect(handlesSpeakers(me({ global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] }))).toBe(true);
+  });
+  it("not someone who is logistics only", () => {
+    expect(handlesSpeakers(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }] }))).toBe(false);
   });
 });

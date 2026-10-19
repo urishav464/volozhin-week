@@ -63,3 +63,23 @@ export function mySpeakers(week: Week, me: number): Map<MineGroup, MineRow[]> {
 export function pendingSpeakers(week: Week): Speaker[] {
   return week.speakers.filter((s) => s.vetted === "pending" && !s.retired).sort((a, b) => a.name.localeCompare(b.name, "he") || a.id - b.id);
 }
+
+/** The one primary button of a «המרצים שלי» row. */
+export type MineStep = "accept" | "approached" | "positive" | "schedule" | "lesson" | null;
+
+export function nextStep(group: MineGroup): MineStep {
+  switch (group) {
+    case "offered":
+      return "accept"; // take the hand-over
+    case "to_approach":
+      return "approached"; // «פניתי»
+    case "awaiting":
+      return "positive"; // «הסכים/ה»
+    case "to_schedule":
+      return "schedule"; // to the week, placing them
+    case "closed":
+      return "lesson"; // to the lesson on the week
+    case "declined":
+      return null;
+  }
+}
