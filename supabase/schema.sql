@@ -1240,10 +1240,12 @@ grant execute on function public.start_edition(text, date, integer, text) to aut
 
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
--- supabase_realtime publication, and only rows that browser's RLS lets it
--- SELECT. These five are what the grid listens to (src/data/realtime.ts) —
--- never speaker_contacts, members or activity. Adding is idempotent; a
--- publication FOR ALL TABLES (some older projects) already carries them.
+-- supabase_realtime publication (created empty in every project). These five
+-- are what the grid listens to (src/data/realtime.ts). An insert or update
+-- reaches only a subscriber whose RLS lets them SELECT the row; a DELETE goes
+-- to every signed-in subscriber of the table, carrying the primary key only —
+-- so a table with personal data (speaker_contacts, members, activity,
+-- editions) is never published, and is taken out if someone added it by hand.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -1253,9 +1255,18 @@ begin
     raise notice 'no supabase_realtime publication — live updates stay off until it exists';
     return;
   end if;
-  if (select puballtables from pg_publication where pubname = 'supabase_realtime') then
+  if (select puballtables from pg_publication where pubname = 'supabase_realtime')
+     or exists (select 1 from pg_publication_namespace pn join pg_publication p on p.oid = pn.pnpubid
+                 where p.pubname = 'supabase_realtime') then
+    raise warning 'supabase_realtime publishes whole schemas, personal-data tables included — recreate it empty (create publication supabase_realtime;) and run this file again';
     return;
   end if;
+  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions'] loop
+    if exists (select 1 from pg_publication_tables
+                where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime drop table public.%I', t);
+    end if;
+  end loop;
   foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers'] loop
     if not exists (select 1 from pg_publication_tables
                     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then

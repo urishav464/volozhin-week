@@ -92,6 +92,17 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(rows).toEqual([...REALTIME_TABLES].sort());
     });
 
+    it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
+      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members");
+      await db.query(SCHEMA);
+      const rows = (
+        await db.query(
+          "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
+        )
+      ).rows.map((r) => r.tablename);
+      expect(rows).toEqual([...REALTIME_TABLES].sort());
+    });
+
     it("pins search_path on every SECURITY DEFINER function", async () => {
       const r = await db.query(`
         select n.nspname || '.' || p.proname as fn from pg_proc p join pg_namespace n on n.oid = p.pronamespace

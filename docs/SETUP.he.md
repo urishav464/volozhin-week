@@ -166,6 +166,9 @@
   - אם הוא זהה, הכניסה עם Google לא נשמרה בשלב 3.6. ברשימת הספקים ב-Supabase צריך להופיע **Enabled** ליד Google.
 - **`localhost:3000` ו-«This site can't be reached».** חסרים ה-Site URL וה-Redirect URLs של שלב 5.1.
 - **«מסד הנתונים לא מעודכן».** מריצים שוב את `schema.sql` (סוף המסמך).
+- **שינוי במכשיר אחד לא מופיע במכשיר אחר עד שחוזרים לחלון.**
+  - בודקים שהורצה הגרסה האחרונה של `schema.sql`, ומרעננים את כל הלשוניות הפתוחות.
+  - ב-Supabase, ב-**Realtime → Settings**, צריכות להיות דלוקות **Enable Realtime service** ו-**Allow public access to channels**.
 
 ---
 

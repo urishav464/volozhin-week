@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
 import type { Edition, Week } from "../domain/types";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
 import type { DataPort } from "./port";
@@ -8,6 +8,7 @@ import { PortError, type WhoAmI } from "./types";
 export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
   private readonly sb: SupabaseClient;
+  private topicSeq = 0;
 
   constructor(url: string, key: string) {
     // PKCE: Google sends back a one-time code, never the tokens themselves, so
@@ -105,22 +106,55 @@ export class SupabasePort implements DataPort {
     // One channel per edition. Each event just asks the screen to reload; the
     // grid is small enough (~150 lessons) that a reload is cheaper than merging.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let channel: RealtimeChannel | null = null;
+    let attempt = 0;
+    let closed = false;
     const bounce = () => {
       clearTimeout(timer);
       timer = setTimeout(onChange, 250);
     };
-    const channel = this.sb.channel(`edition-${editionId}`);
-    for (const table of REALTIME_TABLES) {
-      channel.on("postgres_changes", { event: "*", schema: "public", table }, bounce);
-    }
-    channel.subscribe();
+    // The server refuses a postgres_changes subscription for good (a table not
+    // yet published, Realtime switched off, a stale token) and says so only in
+    // a status or `system` message — so listen, and join again with backoff.
+    const again = (why: unknown) => {
+      if (closed || retry) return;
+      console.warn("realtime:", why);
+      const old = channel;
+      channel = null;
+      if (old) void this.sb.removeChannel(old);
+      retry = setTimeout(() => {
+        retry = undefined;
+        join();
+      }, Math.min(60_000, 2_000 * 2 ** attempt++));
+    };
+    const join = () => {
+      if (closed) return;
+      // A fresh topic each time: reusing one whose leave is still in flight
+      // hands back the leaving channel, and the new subscription never starts.
+      const ch = this.sb.channel(`edition-${editionId}-${++this.topicSeq}`);
+      for (const table of REALTIME_TABLES) {
+        ch.on("postgres_changes", { event: "*", schema: "public", table }, bounce);
+      }
+      ch.on("system", {}, (p: { extension?: string; status?: string; message?: string }) => {
+        if (p.extension === "postgres_changes" && p.status === "error") again(p.message);
+        else if (p.extension === "postgres_changes" && p.status === "ok") attempt = 0;
+      });
+      ch.subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") again(err ?? status);
+      });
+      channel = ch;
+    };
+    join();
     // A missed event (sleeping laptop, dropped socket) is healed on return.
     const onFocus = () => document.visibilityState === "visible" && onChange();
     document.addEventListener("visibilitychange", onFocus);
     return () => {
+      closed = true;
       clearTimeout(timer);
+      clearTimeout(retry);
       document.removeEventListener("visibilitychange", onFocus);
-      void this.sb.removeChannel(channel);
+      if (channel) void this.sb.removeChannel(channel);
     };
   }
 
