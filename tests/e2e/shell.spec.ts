@@ -28,6 +28,14 @@ test.describe("demo build", () => {
     await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible();
     await noSidewaysScroll(page);
   });
+
+  test("the privacy page Google's consent screen links to is served as itself, not as the app", async ({ page }) => {
+    await page.goto(`${demoUrl()}/privacy.html`);
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { level: 1, name: "מדיניות פרטיות" })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveCount(0); // no demo banner: the app did not load
+    await noSidewaysScroll(page);
+  });
 });
 
 test.describe("mock build", () => {
@@ -35,6 +43,7 @@ test.describe("mock build", () => {
     const sb = new FakeSupabase();
     await sb.attach(page);
     await page.goto(mockUrl());
+    await expect(page.getByRole("link", { name: "מדיניות פרטיות" })).toHaveAttribute("href", "/privacy.html");
     await page.getByRole("button", { name: "כניסה עם Google" }).click();
     await page.waitForURL("**/auth/v1/authorize**");
     const call = sb.calls.find((c) => c.path === "/auth/v1/authorize")!;

@@ -66,7 +66,10 @@
    - **Audience:** External
    - **Contact email:** הכתובת שלך
    - לוחצים Create.
-3. **Audience → Publish app**, כך שהסטטוס הוא **In production**. בלי זה רק "משתמשי בדיקה" יוכלו להיכנס. אנחנו מבקשים רק שם וכתובת, ולכן לא נדרש אימות של Google.
+3. **Audience:** בינתיים משאירים את הסטטוס **Testing**.
+   - ב-**Test users → Add users** מוסיפים את כתובת ה-Gmail שלך. כך אפשר לבדוק את הכניסה כבר עכשיו.
+   - בכניסה הראשונה Google יציג «Google hasn't verified this app». לוחצים Continue. זה תקין במצב בדיקה.
+   - את **Publish app** עושים רק בשלב 5.3. לפרסום Google דורש כתובת של דף בית ושל מדיניות פרטיות, ואת כתובת האתר מקבלים רק בשלב 4.
 
 **לקוח OAuth**
 
@@ -116,6 +119,15 @@
    - **Site URL:** `https://volozhin-week.pages.dev`
    - **Redirect URLs:** מוסיפים `https://volozhin-week.pages.dev/**`
 2. חוזרים ללקוח של Google משלב 3, ומוודאים ש-`https://volozhin-week.pages.dev` מופיע ב-Authorized JavaScript origins.
+3. **פרסום האפליקציה ב-Google.** אם Cloudflare נתן כתובת אחרת (למשל כי השם היה תפוס), משתמשים בה בכל המקומות שלמטה.
+   1. ב-Google Cloud, **Branding**:
+      - **Application home page:** `https://volozhin-week.pages.dev`
+      - **Application privacy policy link:** `https://volozhin-week.pages.dev/privacy.html`. הדף הזה הוא חלק מהאתר.
+      - **Authorized domains:** `volozhin-week.pages.dev`
+      - **לא מעלים לוגו.** לוגו מחייב אימות של Google, שלוקח שבועות.
+      - לוחצים Save.
+   2. **Audience → Publish app → Confirm.** הסטטוס הופך ל-**In production**. מעכשיו כל חבר צוות שברשימה יכול להיכנס, בלי להירשם כמשתמש בדיקה. אנחנו מבקשים רק שם וכתובת, ולכן לא נדרש אימות.
+   - **אם Google לא מקבל את הדומיין,** אפשר להישאר ב-Testing ולהוסיף כל חבר צוות ב-Test users (עד 100). הכניסה תעבוד, רק עם המסך «hasn't verified» בפעם הראשונה.
 
 ## 6. GitHub: שמירה על הפרויקט ער
 

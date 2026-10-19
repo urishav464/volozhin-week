@@ -26,6 +26,12 @@ export function SignIn({ onSignIn, busy, error }: { onSignIn: () => void; busy: 
           כניסה עם Google
         </button>
       </Card>
+      {/* a plain link, so the host serves the static page rather than the app */}
+      <p className="mt-3 text-center text-sm">
+        <a href="/privacy.html" className="text-ink-soft underline hover:text-ink">
+          מדיניות פרטיות
+        </a>
+      </p>
     </div>
   );
 }

@@ -174,6 +174,7 @@ create policy editions_admin_write on public.editions
 -- editions they administer. Everyone else's names come from public.team(),
 -- which never returns an e-mail address.
 drop policy if exists members_select on public.members;
+-- One's own row; admins see all. public/privacy.html promises e-mails reach no one else.
 create policy members_select on public.members
   for select to authenticated
   using (
@@ -733,6 +734,7 @@ drop policy if exists speakers_read on public.speakers;
 create policy speakers_read on public.speakers for select to authenticated using ((select app.is_member()));
 
 -- Contacts: the admin, or whoever handles the speaker in an edition they belong to.
+-- public/privacy.html tells users exactly this — widen the policy, update that page.
 drop policy if exists speaker_contacts_read on public.speaker_contacts;
 create policy speaker_contacts_read on public.speaker_contacts for select to authenticated using (
   (select app.is_global_admin())
