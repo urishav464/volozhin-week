@@ -8,7 +8,7 @@ const ok: WhoAmI = {
   email: "a@example.org",
   display_name: "א",
   global_admin: false,
-  memberships: [{ edition_id: 3, role: "content" }],
+  memberships: [{ edition_id: 3, role: "content", member_id: 7 }],
 };
 
 describe("gateFor", () => {

@@ -60,6 +60,7 @@ export class FakeSupabase {
       return route.fulfill({ status: this.whoami.status, contentType: "application/json", body: JSON.stringify(this.whoami.body) });
     }
     if (u.pathname === "/auth/v1/logout") return route.fulfill({ status: 204, body: "" });
+    if (u.pathname === "/rest/v1/editions") return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   }
 }

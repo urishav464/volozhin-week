@@ -1,0 +1,98 @@
+import { describe, expect, it } from "vitest";
+import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
+import { warningsFor } from "./warnings";
+
+const kinds = (w: ReturnType<typeof emptyWeek>) => warningsFor(w).map((x) => x.kind).sort();
+
+describe("warningsFor", () => {
+  it("is quiet on a clean day", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600, { title: "א", category_id: 1 }), addSpeaker(w, "m"));
+    closeWith(w, addLesson(w, 1, 600, 690, { title: "ב", category_id: 2 }), addSpeaker(w, "f"));
+    expect(warningsFor(w)).toEqual([]);
+  });
+
+  it("reports parallel lessons as information", () => {
+    const w = emptyWeek();
+    addLesson(w, 2, 960, 1050, { room_id: 1 });
+    addLesson(w, 2, 960, 1050, { room_id: 2 });
+    const [p] = warningsFor(w);
+    expect(p.kind).toBe("parallel");
+    expect(p.severity).toBe("info");
+    expect(p.lessonIds).toHaveLength(2);
+  });
+
+  it("warns on the same category back to back, not across a meal", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600, { title: "א", category_id: 1 }), addSpeaker(w, "m"));
+    closeWith(w, addLesson(w, 1, 600, 690, { title: "ב", category_id: 1 }), addSpeaker(w, "f"));
+    closeWith(w, addLesson(w, 1, 1140 - 90, 1140, { title: "ג", category_id: 2 }), addSpeaker(w, "m"));
+    closeWith(w, addLesson(w, 1, 1200, 1290, { title: "ד", category_id: 2 }), addSpeaker(w, "f")); // after dinner (60 min)
+    expect(kinds(w)).toEqual(["back_to_back"]);
+  });
+
+  it("reports three in a row as one run", () => {
+    const w = emptyWeek();
+    for (const [s, g] of [[510, "m"], [600, "f"], [690, "m"]] as const) {
+      closeWith(w, addLesson(w, 2, s, s + 90, { title: "x", category_id: 2 }), addSpeaker(w, g));
+    }
+    const runs = warningsFor(w).filter((x) => x.kind === "back_to_back");
+    expect(runs).toHaveLength(1);
+    expect(runs[0].lessonIds).toHaveLength(3);
+    expect(runs[0].message).toBe("3 שיעורי «פילוסופיה» ברצף בשלישי");
+  });
+
+  it("warns when one category fills a day past the suggestion", () => {
+    const w = emptyWeek();
+    w.edition.settings.max_category_per_day = 2;
+    for (const [s, g] of [[510, "m"], [690, "f"], [960, "m"]] as const) {
+      closeWith(w, addLesson(w, 3, s, s + 90, { title: "x", category_id: 1 }), addSpeaker(w, g));
+    }
+    expect(kinds(w)).toEqual(["category_load"]);
+  });
+
+  it("warns on a speaker closed twice, by name and gender", () => {
+    const w = emptyWeek();
+    const s = addSpeaker(w, "f", "פלונית");
+    closeWith(w, addLesson(w, 1, 510, 600, { title: "א", category_id: 1 }), s);
+    closeWith(w, addLesson(w, 3, 510, 600, { title: "ב", category_id: 2 }), s);
+    const [x] = warningsFor(w);
+    expect(x.kind).toBe("speaker_twice");
+    expect(x.message).toContain("פלונית משובצת");
+  });
+
+  it("warns on a pitch outside the speaker's stated availability and on a declined speaker", () => {
+    const w = emptyWeek();
+    const s = addSpeaker(w, "m", "פלוני");
+    const a = addApproach(w, s, "declined");
+    w.availability.push({ id: 1, approach_id: a.id, day: 2, from_min: 390, to_min: 780, kind: "cannot", note: null });
+    pitch(w, addLesson(w, 2, 510, 600), a);
+    expect(kinds(w)).toEqual(["declined_pitch", "outside_availability"]);
+    expect(warningsFor(w).find((x) => x.kind === "outside_availability")!.message).toContain("פלוני אמר שלא יכול");
+  });
+
+  it("warns on a lesson outside the week's hours or over a fixed block", () => {
+    const w = emptyWeek();
+    addLesson(w, 4, 1200, 1290); // Thursday 20:00 — the week ended at 19:00
+    addLesson(w, 1, 1140, 1200); // over dinner
+    expect(kinds(w)).toEqual(["fixed_overlap", "outside_window"]);
+  });
+
+  it("lists what a closed lesson is missing", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600), addSpeaker(w, null));
+    const [x] = warningsFor(w);
+    expect(x.kind).toBe("missing_info");
+    expect(x.message).toContain("כותרת");
+    expect(x.message).toContain("קטגוריה");
+    expect(x.message).toContain("מגדר המרצה");
+  });
+
+  it("gives every warning a stable key for «מכוון»", () => {
+    const w = emptyWeek();
+    addLesson(w, 2, 960, 1050, { room_id: 1 });
+    addLesson(w, 2, 960, 1050, { room_id: 2 });
+    expect(warningsFor(w)[0].key).toBe(warningsFor(w)[0].key);
+    expect(warningsFor(w)[0].key).toMatch(/^parallel:\d+,\d+$/);
+  });
+});

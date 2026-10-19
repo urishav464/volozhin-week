@@ -3,10 +3,11 @@ import { gateFor, gateForError, type Gate } from "./data/gate";
 import { makePort } from "./data";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
-import { Home } from "./screens/Home";
 import { Notice } from "./screens/Notice";
 import { Shell } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
+import { WeekScreen } from "./screens/WeekScreen";
+import type { DataPort } from "./data/port";
 
 type State = { kind: "loading" } | { kind: "gate"; gate: Gate; email: string | null } | { kind: "error"; message: string };
 
@@ -53,6 +54,7 @@ export default function App() {
   return (
     <Shell
       demo={demo}
+      full={!!me}
       user={me ? { name: me.display_name || me.email, roleLabel: ROLE_LABEL[topRole(me)] } : null}
       onSignOut={signedIn && !demo ? () => void signOut() : undefined}
     >
@@ -65,12 +67,13 @@ export default function App() {
           </p>
         </Notice>
       )}
-      {state.kind === "gate" && <GateScreen gate={state.gate} email={state.email} busy={busy} onSignIn={signIn} onSignOut={signOut} />}
+      {state.kind === "gate" && <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} onSignIn={signIn} onSignOut={signOut} />}
     </Shell>
   );
 }
 
 function GateScreen(props: {
+  port: DataPort;
   gate: Gate;
   email: string | null;
   busy: boolean;
@@ -109,6 +112,6 @@ function GateScreen(props: {
         </Notice>
       );
     case "home":
-      return <Home me={gate.me} />;
+      return <WeekScreen port={props.port} me={gate.me} />;
   }
 }

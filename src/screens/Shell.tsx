@@ -4,10 +4,12 @@ interface Props {
   demo: boolean;
   user?: { name: string; roleLabel: string } | null;
   onSignOut?: () => void;
+  /** The grid needs the whole width; notices and forms stay in a reading column. */
+  full?: boolean;
   children: ReactNode;
 }
 
-export function Shell({ demo, user, onSignOut, children }: Props) {
+export function Shell({ demo, user, onSignOut, full = false, children }: Props) {
   return (
     <div className="min-h-dvh flex flex-col">
       {demo && (
@@ -16,7 +18,7 @@ export function Shell({ demo, user, onSignOut, children }: Props) {
         </div>
       )}
       <header className="bg-ink text-paper">
-        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-3">
+        <div className={`mx-auto ${full ? "max-w-none" : "max-w-6xl"} px-4 h-14 flex items-center gap-3`}>
           <h1 className="font-display font-extrabold text-xl tracking-tight">שבוע וולוז'ין</h1>
           <div className="ms-auto flex items-center gap-3 min-w-0">
             {user && (
@@ -36,7 +38,7 @@ export function Shell({ demo, user, onSignOut, children }: Props) {
           </div>
         </div>
       </header>
-      <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6">{children}</main>
+      <main className={`flex-1 mx-auto w-full ${full ? "max-w-none px-3 py-3" : "max-w-6xl px-4 py-6"}`}>{children}</main>
     </div>
   );
 }

@@ -3,6 +3,7 @@ export type Role = "admin" | "content" | "logistics";
 export interface Membership {
   edition_id: number | null; // null = every edition
   role: Role;
+  member_id: number;
 }
 
 // public.whoami() — one round trip that decides the screen.

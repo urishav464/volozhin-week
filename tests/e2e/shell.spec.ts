@@ -15,7 +15,7 @@ const member = {
   email: "member@example.org",
   display_name: "נועה בדיקה",
   global_admin: false,
-  memberships: [{ edition_id: 1, role: "content" }],
+  memberships: [{ edition_id: 1, role: "content", member_id: 2 }],
 };
 
 test.describe("demo build", () => {
@@ -26,6 +26,7 @@ test.describe("demo build", () => {
     await expect(page.getByRole("heading", { name: "שבוע וולוז'ין" })).toBeVisible();
     await expect(page.getByRole("status")).toContainText("מצב הדגמה");
     await expect(page.getByText("מדריך/ה (הדגמה)").first()).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible();
     await noSidewaysScroll(page);
   });
 });
@@ -49,8 +50,9 @@ test.describe("mock build", () => {
     await sb.attach(page);
     await signIn(page);
     await page.goto(mockUrl());
-    await expect(page.getByRole("heading", { name: /שלום, נועה בדיקה/ })).toBeVisible();
-    await expect(page.getByText("צוות תוכן")).toBeVisible();
+    await expect(page.getByRole("banner").getByText(/נועה בדיקה/)).toBeVisible();
+    await expect(page.getByRole("banner").getByText(/צוות תוכן/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "עוד לא נפתח מחזור" })).toBeVisible();
     expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/whoami")?.auth).toMatch(/^Bearer /);
     await noSidewaysScroll(page);
   });
