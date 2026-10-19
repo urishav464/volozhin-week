@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TEMPLATE_2026 } from "../domain/template2026";
-import type { Lesson } from "../domain/types";
+import { LESSON_STAGE_DEFAULTS, type Lesson } from "../domain/types";
 import { buildLayout, freeCells, placeDay, rowActive } from "./layout";
 
 const layout = buildLayout(TEMPLATE_2026);
@@ -10,9 +10,7 @@ let nextId = 1;
 function lesson(day: 0 | 1 | 2 | 3 | 4, start: number, end: number, room = 1, state: Lesson["state"] = "closed"): Lesson {
   return {
     id: nextId++, kind: "lesson", state, day, start_min: start, end_min: end, room_id: room,
-    title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, pay_amount: null,
-    transport: "none", approval: "none", confirm_sent_at: null, needs_reconfirm: false, escort_roster_id: null,
-    self_intro: false, sources_kind: "pending", in_reader: false, version: 1, updated_by: null,
+    title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS, version: 1, updated_by: null,
   };
 }
 

@@ -1,7 +1,7 @@
 // Scenarios that walk docs/CONTRACT.md clause by clause. Each runs on the
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
-import { FOREIGN_ROOM, type Step } from "./fixture";
+import { FOREIGN_ROOM, FOREIGN_TRAINEE, type Step } from "./fixture";
 
 export const SCENARIOS: Record<string, Step[]> = {
   "propose, claim, offer, give back": [
@@ -305,5 +305,186 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "B", readContacts: "אלפא" }, // last year's handler
     { as: "B", setContacts: "אלפא", phone: null },
     { as: "admin", readContacts: "אלפא" },
+  ],
+
+  // ------------------------------------------------------------ from placement to arrival (milestone 3)
+
+  "payment and transport: ask, decide, change, ask again": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", pay: [1, 510], amount: 500, transport: "none" }, // a draft: not yet
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", pay: [1, 510], amount: 500, transport: "none" }, // not B's speaker
+    { as: "L", pay: [1, 510], amount: 500, transport: "none" }, // logistics asks for nothing
+    { as: "A", pay: [1, 510], amount: 1.5, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 0, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 100001, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 500, transport: "bus" },
+    { as: "A", pay: [1, 510], amount: 500, transport: "none", staleBy: 1 },
+    { as: "A", pay: [1, 510], amount: null, transport: "none" }, // nothing asked, as before: nothing
+    { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // → pending
+    { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // the same again: nothing
+    { as: "A", decide: [[1, 510]], decision: "approved" }, // only a global admin decides
+    { as: "E", decide: [[1, 510]], decision: "approved" }, // not this edition's admin either
+    { as: "admin", decide: [[1, 510]], decision: "maybe" },
+    { as: "admin", decide: [[1, 510]], decision: "approved", staleBy: 1 }, // changed since the queue was read
+    { as: "admin", decide: [[1, 510]], decision: "approved", note: "  אושר (נתון לדוגמה)  " },
+    { as: "admin", decide: [[1, 510]], decision: "approved" }, // no longer waiting
+    { as: "A", reopen: [1, 510] }, // approved: the instructor's to reopen
+    { as: "A", pay: [1, 510], amount: 400, transport: "round_trip" }, // a change → pending again, the note gone
+    { as: "admin", decide: [[1, 510]], decision: "rejected", note: "לא מאושר (נתון לדוגמה)" },
+    { as: "A", pay: [1, 510], amount: 400, transport: "round_trip" }, // rejected, asked again: pending
+    { as: "A", propose: "בטא", cell: [2, 510, 600] },
+    { as: "A", close: "בטא", at: [2, 510] },
+    { as: "A", pay: [2, 510], amount: null, transport: "one_way" }, // transport alone
+    { as: "admin", decide: [[2, 510], [1, 510]], decision: "approved", note: "באצווה" }, // a batch
+    { as: "A", pay: [2, 510], amount: 150, transport: "one_way" },
+    { as: "admin", decide: [[1, 510], [2, 510]], decision: "rejected" }, // one is not waiting: the whole batch waits
+    { as: "E", pay: [1, 510], amount: null, transport: "none" }, // the edition's admin may; nothing asked → none
+    { archive: true },
+    { as: "A", pay: [2, 510], amount: 200, transport: "one_way" },
+    { as: "admin", decide: [[2, 510]], decision: "approved" },
+  ],
+
+  "the summary message: sent, changed, «לעדכן את המרצה», sent again": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", sent: [1, 510] }, // a draft
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", sent: [1, 510] }, // not B's speaker
+    { as: "L", sent: [1, 510] },
+    { as: "A", sent: [1, 510], staleBy: 1 },
+    { as: "A", sent: [1, 510] },
+    { as: "A", update: [1, 510], patch: { category: "פילוסופיה", audience: "שיעור להורים" } }, // not in the message: no flag
+    { as: "A", update: [1, 510], patch: { title: "כותרת לדוגמה" } }, // retitled → flag
+    { as: "A", sent: [1, 510] }, // sent again: cleared
+    { as: "A", update: [1, 510], patch: { teach_min: 60 } }, // a new teaching time → flag
+    { as: "A", sent: [1, 510] },
+    { as: "A", move: [1, 510], to: [1, 510, 600, "כיתה"] }, // another room → flag
+    { as: "A", sent: [1, 510, "כיתה"] },
+    { as: "A", pay: [1, 510, "כיתה"], amount: 200, transport: "none" }, // a new amount → flag, and pending
+    { as: "A", sent: [1, 510, "כיתה"] }, // waits for the instructor
+    { as: "admin", decide: [[1, 510, "כיתה"]], decision: "rejected" },
+    { as: "A", sent: [1, 510, "כיתה"] }, // rejected
+    { as: "A", pay: [1, 510, "כיתה"], amount: 200, transport: "none" },
+    { as: "admin", decide: [[1, 510, "כיתה"]], decision: "approved" },
+    { as: "A", sent: [1, 510, "כיתה"] },
+    { as: "admin", reopen: [1, 510, "כיתה"] }, // a draft again: no flag
+    { as: "A", move: [1, 510, "כיתה"], to: [3, 870, 960] }, // a draft moves: no flag
+    { as: "A", close: "אלפא", at: [3, 870] }, // closed again after its message → flag
+    { as: "A", sent: [3, 870] },
+    { as: "A", reshape: [3, 870], op: { op: "merge_next" } }, // a closed lesson grows → flag
+    { as: "E", sent: [3, 870] }, // an admin may send for the handler
+  ],
+
+  "escorts and sources: any editor, on a closed lesson": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false }, // a draft
+    { as: "A", sources: [1, 510], kind: "sheet", print: "none", inReader: false },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false, note: "  להגיע מוקדם\r\nבבקשה  " },
+    { as: "B", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false }, // any editor
+    { as: "L", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: true },
+    { as: "A", escort: [1, 510], trainee: FOREIGN_TRAINEE, selfIntro: false }, // another edition's trainee
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: null },
+    { as: "A", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false, staleBy: 1 },
+    { as: "A", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false }, // as it is: nothing
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: true, note: "א".repeat(301) },
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: true }, // self-introduction, no escort
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: " דף אחד ", inReader: true },
+    { as: "A", sources: [1, 510], kind: "pdf", print: "before", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "later", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "ftp://example.org/deck", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "javascript:alert(1)", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://example.org/a b", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "same_day", inReader: null },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "דף אחד", inReader: true, staleBy: 1 },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "דף אחד", inReader: true }, // as it is: nothing
+    { as: "B", sources: [1, 510], kind: "presentation", print: "none", url: "  HTTPS://example.org/deck ", inReader: true }, // no reader for a deck
+    { as: "L", sources: [1, 510], kind: "none", print: "none", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet_video", print: "same_day", url: "http://example.org/v", inReader: true },
+    { as: "A", sources: [1, 510], kind: "sheet_video", print: "same_day", note: "ש".repeat(501), inReader: true },
+    { archive: true },
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: false },
+    { as: "admin", sources: [1, 510], kind: "other", print: "none", inReader: true },
+  ],
+
+  "transport details: the handler, logistics once approved, the instructor; paid": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", readTransport: [1, 510] }, // the handler: nothing yet
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" }, // no transport asked
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
+    { as: "A", setTransport: [1, 510], address: " כתובת   לדוגמה ", time: "07:15" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15" }, // nothing changed
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", phone: "12-34" },
+    { as: "A", setTransport: [1, 510], address: "א".repeat(201) },
+    { as: "L", readTransport: [1, 510] }, // logistics: not before the approval
+    { as: "L", setTransport: [1, 510], driver: "נהג/ת לדוגמה" },
+    { as: "B", readTransport: [1, 510] },
+    { as: "E", readTransport: [1, 510] }, // the edition's admin is not the handler
+    { as: "admin", readTransport: [1, 510] },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", readTransport: [1, 510] },
+    { as: "L", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
+    { as: "B", readTransport: [1, 510] },
+    { as: "A", handOver: "אלפא", to: "B" },
+    { as: "B", readTransport: [1, 510] }, // an offer is not a hand-over yet
+    { as: "B", answerHandOver: "אלפא", accept: true },
+    { as: "B", readTransport: [1, 510] }, // the new handler
+    { as: "A", readTransport: [1, 510] }, // the old one, no longer
+    { as: "L", paid: [1, 510], value: true }, // transport only: nothing to pay
+    { as: "B", pay: [1, 510], amount: 250, transport: "round_trip" }, // pending again
+    { as: "L", readTransport: [1, 510] }, // logistics loses sight until it is approved again
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "B", paid: [1, 510], value: true }, // content does not pay
+    { as: "L", paid: [1, 510], value: null },
+    { as: "L", paid: [1, 510], value: true },
+    { as: "L", paid: [1, 510], value: true }, // already
+    { as: "E", paid: [1, 510], value: false }, // an admin may undo
+    { as: "B", pay: [1, 510], amount: 250, transport: "none" }, // no transport: its details go
+    { as: "admin", readTransport: [1, 510] },
+    { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { as: "B", pay: [1, 510], amount: 250, transport: "one_way" },
+    { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { archive: true },
+    { as: "B", readTransport: [1, 510] }, // last year's handler
+    { as: "B", setTransport: [1, 510], address: null },
+    { as: "L", paid: [1, 510], value: true }, // an archive
+    { as: "admin", readTransport: [1, 510] },
+  ],
+
+  "transport details in a practice week: the instructor only": [
+    { sandbox: true },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "one_way" },
+    { as: "A", readTransport: [1, 510] },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", readTransport: [1, 510] },
+    { as: "admin", setTransport: [1, 510], address: "כתובת לדוגמה", arranged: true },
+    { as: "admin", readTransport: [1, 510] },
+  ],
+
+  "the template and the duty phrases: the edition's admin, the instructor's wording": [
+    { as: "A", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "L", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "E", template: "  נוסח לדוגמה {{פנייה}}\r\nשורה שנייה  " },
+    { as: "admin", template: "א".repeat(4001) },
+    { as: "admin", template: "   " }, // empty: no template
+    { as: "admin", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "A", duty: [{ when: "always", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: [{ when: "always", text: " ניסוח  לדוגמה " }, { when: "self_intro", text: "" }, { when: "always", text: "ניסוח לדוגמה" }, { when: "transport", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: [{ when: "sometimes", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: "ניסוח לדוגמה" },
+    { as: "E", duty: [{ when: "always" }] },
+    { as: "E", duty: [["always", "ניסוח לדוגמה"]] },
+    { as: "E", duty: [{ when: "always", text: "א".repeat(201) }] },
+    { as: "E", duty: Array.from({ length: 31 }, (_, i) => ({ when: "always", text: `ניסוח לדוגמה ${i}` })) },
+    { as: "E", duty: [] }, // empty: none
+    { as: "E", duty: [{ when: "memorial", text: "ניסוח לדוגמה לזיכרון" }, { when: "escort_intro", text: "ניסוח לדוגמה להצגה" }] },
+    { archive: true },
+    { as: "E", template: "נוסח לדוגמה אחר" }, // an admin may still write in an archive
+    { as: "A", template: "נוסח לדוגמה אחר" },
   ],
 };

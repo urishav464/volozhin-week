@@ -48,7 +48,7 @@ test.describe("demo build — an admin", () => {
     await expect(preview.getByText("כפול בהדבקה")).toHaveCount(1);
     await page.getByRole("button", { name: "הוספת 3 שמות" }).click();
     await expect(toast(page, "נוספו 3 שמות לרשימה")).toBeVisible();
-    await expect(page.getByText("3 חניכים")).toBeVisible();
+    await expect(page.getByText("9 חניכים")).toBeVisible(); // the demo's six escorts (DEMO_ROSTER) and these three
     const roster = page.getByRole(wide ? "table" : "list", { name: "רשימת החניכים" });
     for (const n of ["01", "02", "03"]) await expect(roster.getByText(`חניך/ה לדוגמה ${n}`)).toBeVisible();
     await noSidewaysScroll(page);

@@ -50,13 +50,48 @@ describe("demo settings", () => {
 
   it("keeps the roster unique by name key and adds only the new names", async () => {
     const s = new DemoPort().settings;
+    const seeded = (await s.roster(1)).length; // the demo's escorts (DEMO_ROSTER)
     expect(await s.addRoster(1, [{ full_name: "חניך/ה לדוגמה 01", gender: null }, { full_name: "חניך/ה לדוגמה 02", gender: "f" }])).toBe(2);
     expect(await s.addRoster(1, [{ full_name: "חניך/ה  לדוגמה-01", gender: null }, { full_name: "חניך/ה לדוגמה 03", gender: null }])).toBe(1);
-    const list = await s.roster(1);
+    const list = (await s.roster(1)).filter((r) => r.full_name.startsWith("חניך/ה"));
     expect(list.map((r) => r.full_name)).toEqual(["חניך/ה לדוגמה 01", "חניך/ה לדוגמה 02", "חניך/ה לדוגמה 03"]);
     expect(await code(s.updateRoster(list[1].id, { full_name: "חניך/ה לדוגמה 01" }))).toBe("roster_exists");
     await s.deleteRoster(list[2].id);
-    expect(await s.roster(1)).toHaveLength(2);
+    expect(await s.roster(1)).toHaveLength(seeded + 2);
+  });
+
+  it("deleting a trainee who escorts leaves their lessons without an escort — listed first (lessons_escort_roster_fk)", async () => {
+    const port = new DemoPort();
+    const s = port.settings;
+    const escorts = await s.rosterEscorts(1, 2);
+    expect(escorts.map((l) => [l.day, l.start_min])).toEqual([[0, 600], [0, 690]]);
+    await s.deleteRoster(2);
+    expect(await s.rosterEscorts(1, 2)).toEqual([]);
+    const week = await port.loadWeek(1);
+    expect(week.roster.some((r) => r.id === 2)).toBe(false);
+    expect(week.lessons.filter((l) => l.escort_roster_id === 2)).toEqual([]);
+  });
+
+  it("keeps the template and the duty phrases on the edition — an admin's, cleaned as the database cleans them; a new edition carries them over", async () => {
+    const port = new DemoPort();
+    const s = port.settings;
+    expect((await port.loadWeek(1)).edition.settings.confirm_template).toBeUndefined(); // never seeded
+    await s.setConfirmTemplate(1, "  נוסח לדוגמה {{פנייה}}\r\n");
+    await s.setDutyPhrases(1, [{ when: "always", text: " ניסוח לדוגמה " }, { when: "always", text: "ניסוח לדוגמה" }]);
+    expect(await code(s.setDutyPhrases(1, [{ when: "sometimes" as "always", text: "x" }]))).toBe("bad_value");
+    const settings = (await port.loadWeek(1)).edition.settings;
+    expect(settings.confirm_template).toBe("נוסח לדוגמה {{פנייה}}");
+    expect(settings.duty_phrases).toEqual([{ when: "always", text: "ניסוח לדוגמה" }]);
+    // the demo edition is not a real one: the first real edition starts without them …
+    const first = await s.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: null });
+    expect((await port.loadWeek(first)).edition.settings.confirm_template).toBeUndefined();
+    await s.setConfirmTemplate(first, "נוסח לדוגמה {{פנייה}}");
+    await s.setDutyPhrases(first, [{ when: "self_intro", text: "ניסוח לדוגמה" }]);
+    // … and the next real edition inherits the instructor's own
+    const next = await s.startEdition({ label: "מחזור לדוגמה ב", start_date: null, first_day_from: null });
+    expect((await port.loadWeek(next)).edition.settings).toMatchObject({ confirm_template: "נוסח לדוגמה {{פנייה}}", duty_phrases: [{ when: "self_intro", text: "ניסוח לדוגמה" }] });
+    await s.setConfirmTemplate(next, "   ");
+    expect((await port.loadWeek(next)).edition.settings.confirm_template).toBeUndefined();
   });
 
   it("guards the default room and rooms in use; the default moves in one step", async () => {

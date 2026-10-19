@@ -19,6 +19,15 @@ export const ROOMS = [
 /** A room that belongs to another edition: the SQL driver makes one there; the engine has no such room. */
 export const FOREIGN_ROOM = "חדר של מחזור אחר";
 
+/** The edition's trainees (escorts), names only. */
+export const ROSTER: { name: string; gender: "m" | "f" | null }[] = [
+  { name: "חניכה לדוגמה", gender: "f" },
+  { name: "חניך לדוגמה", gender: "m" },
+];
+
+/** A trainee of another edition: the SQL driver makes one there; the engine has no such trainee. */
+export const FOREIGN_TRAINEE = "חניך/ה של מחזור אחר";
+
 export const SPEAKERS: { name: string; gender: "m" | "f" | null; vetted?: "pending" | "approved"; retired?: boolean }[] = [
   { name: "אלפא", gender: "f" },
   { name: "בטא", gender: "m" },
@@ -95,7 +104,18 @@ export type Step =
   | { as: ActorKey; setStatus: string; status: string; note?: string | null; staleBy?: number }
   | { as: ActorKey; handOver: string; to: ActorKey | null; note?: string | null }
   | { as: ActorKey; answerHandOver: string; accept: boolean; note?: string | null }
-  | { as: ActorKey; avail: string; day: number; part: string; kind: string | null; note?: string | null };
+  | { as: ActorKey; avail: string; day: number; part: string; kind: string | null; note?: string | null }
+  // from placement to arrival (milestone 3) — lessons by place, trainees by name
+  | { as: ActorKey; pay: At; amount: number | null; transport: string; staleBy?: number }
+  | { as: ActorKey; decide: At[]; decision: string; note?: string | null; staleBy?: number }
+  | { as: ActorKey; sent: At; staleBy?: number }
+  | { as: ActorKey; escort: At; trainee: string | null; selfIntro: boolean | null; note?: string | null; staleBy?: number }
+  | { as: ActorKey; sources: At; kind: string; print: string; note?: string | null; url?: string | null; inReader: boolean | null; staleBy?: number }
+  | { as: ActorKey; paid: At; value: boolean | null }
+  | { as: ActorKey; readTransport: At }
+  | { as: ActorKey; setTransport: At; address?: string | null; time?: string | null; driver?: string | null; phone?: string | null; arranged?: boolean }
+  | { as: ActorKey; template: string | null }
+  | { as: ActorKey; duty: unknown };
 
 /** The comparable state: everything keyed by natural keys, never by ids. */
 export interface Normal {
@@ -108,6 +128,10 @@ export interface Normal {
   pool: string[];
   contacts: string[];
   availability: string[];
+  /** transport_details, by lesson */
+  transport: string[];
+  /** the edition's template and duty phrases */
+  edition: string[];
 }
 
 const d = (v: unknown) => (v == null ? "-" : String(v));
@@ -136,6 +160,43 @@ export function matchesRead(list: { name: string; disambiguator: string | null; 
 
 export function lessonKey(l: { day: number; start_min: number; end_min: number; room: string }) {
   return `${l.day}|${l.start_min}-${l.end_min}|${l.room}`;
+}
+
+/** A lesson as the state compares it — `member` and `trainee` name ids; times are compared as set or not. */
+export function lessonLine(
+  key: string,
+  l: {
+    kind: string; state: string; title: string | null; audience: string | null; teach_min: number | null; parallel_reason: string | null;
+    pay_amount: number | null; transport: string; approval: string; approval_note: string | null; approved_by: unknown; approved_at: unknown; paid_at: unknown;
+    confirm_sent_at: unknown; confirm_sent_by: unknown; needs_reconfirm: boolean; self_intro: boolean; escort_note: string | null;
+    sources_kind: string; print_when: string; sources_note: string | null; presentation_url: string | null; in_reader: boolean; version: number;
+  },
+  category: string,
+  member: (id: unknown) => string,
+  trainee: string,
+): string {
+  const set = (v: unknown) => (v == null ? "-" : "y");
+  return [
+    key, l.kind, l.state, `t=${d(l.title)}`, `c=${category}`, `a=${d(l.audience)}`, `tm=${d(l.teach_min)}`, `p=${d(l.parallel_reason)}`,
+    `pay=${d(l.pay_amount)}`, `tr=${l.transport}`, `ap=${l.approval}`, `an=${d(l.approval_note)}`, `ab=${member(l.approved_by)}`, `aat=${set(l.approved_at)}`,
+    `paid=${set(l.paid_at)}`, `sent=${set(l.confirm_sent_at)}`, `sb=${member(l.confirm_sent_by)}`, `rc=${l.needs_reconfirm}`,
+    `es=${trainee}`, `si=${l.self_intro}`, `en=${d(l.escort_note)}`,
+    `sk=${l.sources_kind}`, `pw=${l.print_when}`, `sn=${d(l.sources_note)}`, `url=${d(l.presentation_url)}`, `ir=${l.in_reader}`, `v=${l.version}`,
+  ].join("|");
+}
+
+export function transportLine(label: string, t: { pickup_address: string | null; pickup_time: string | null; driver_name: string | null; driver_phone: string | null; arranged: boolean }): string {
+  return `${label}|addr=${d(t.pickup_address)}|time=${d(t.pickup_time)}|drv=${d(t.driver_name)}|ph=${d(t.driver_phone)}|arr=${t.arranged}`;
+}
+
+/** What a transport read returns, as one comparable string. */
+export function transportRead(t: Parameters<typeof transportLine>[1] | null): string {
+  return t == null ? "hidden" : transportLine("seen", t);
+}
+
+/** The edition's template and phrases, as comparable lines. */
+export function editionLines(settings: { confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null }): string[] {
+  return [`template=${d(settings.confirm_template)}`, `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`];
 }
 
 export interface Driver {

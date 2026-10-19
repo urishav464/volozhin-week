@@ -1,14 +1,15 @@
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Category, Edition, Room, Week } from "../domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "../lib/schema";
-import type { CellTarget, LessonPatch, ReshapeOp, WeekCommands } from "./commands";
+import type { CellTarget, EscortPatch, LessonPatch, PaymentItem, ReshapeOp, SourcesPatch, WeekCommands } from "./commands";
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
-import { demoContacts, demoHistory, demoLog, demoWeek } from "./demoWeek";
+import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek } from "./demoWeek";
 import { type Actor, Engine, type PoolShared } from "./engine";
 import type { DataPort } from "./port";
 import type { HistoryLesson } from "./speakers";
 import type { MemberRow, RosterEntry } from "./settings";
+import { nameKey } from "../domain/nameKey";
 import type { WhoAmI } from "./types";
 
 const DEMO_EMAIL = "demo@example.org";
@@ -34,8 +35,9 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
 
   constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
     const week = demoWeek();
-    this.shared = { contacts: demoContacts(), log: demoLog(week) };
+    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week) };
     this.engines.set(week.edition.id, this.newEngine(week));
+    this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
     // The demo team, with placeholder addresses (example.org never delivers).
     this.members = week.team.map((t, i) => ({
@@ -66,18 +68,30 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
       lessonSpeakers: [],
       pitches: [],
       team: [],
+      roster: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
     this.syncTeams();
   }
 
-  /** Each engine's team: the active members of its edition and the all-editions ones (public.team) — hand-overs check it. */
+  /**
+   * Each engine's team — the active members of its edition and the all-editions ones (public.team), which
+   * hand-overs check — and its roster (names only), which escorts check.
+   */
   private syncTeams(): void {
     for (const e of this.engines.values()) {
       e.week.team = this.members
         .filter((m) => m.active && (m.edition_id == null || m.edition_id === e.week.edition.id))
         .map(({ id, display_name, gender, role }) => ({ id, display_name, gender, role }));
+      e.week.roster = this.rosterOf(e.week.edition.id);
     }
+  }
+
+  private rosterOf(editionId: number) {
+    return this.roster
+      .filter((r) => r.edition_id === editionId)
+      .map(({ id, full_name, gender }) => ({ id, full_name, gender }))
+      .sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id);
   }
 
   changed(): void {
@@ -134,6 +148,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
     week.team = this.members
       .filter((m) => m.active && (m.edition_id == null || m.edition_id === week.edition.id))
       .map(({ id, display_name, gender, role }) => ({ id, display_name, gender, role }));
+    week.roster = this.rosterOf(week.edition.id);
     return week;
   }
 
@@ -154,6 +169,15 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
       moveLesson: (lessonId, to) => run(() => e.moveLesson(lessonId, to)),
       reshape: (day, rowStart, op: ReshapeOp) => run(() => e.reshape(day, rowStart, op)),
       updateLesson: (lessonId: number, version: number, patch: LessonPatch) => run(() => e.updateLesson(lessonId, version, patch)),
+      // milestone 3 — the same engine, so a preview refuses what production refuses
+      setPayment: (lessonId, version, amount, transport) => run(() => e.setPayment(lessonId, version, amount, transport)),
+      decidePayments: (items: PaymentItem[], decision, note) => run(() => e.decidePayments(items, decision, note ?? null)),
+      markConfirmSent: (lessonId, version) => run(() => e.markConfirmSent(lessonId, version)),
+      setEscort: (lessonId, version, x: EscortPatch) => run(() => e.setEscort(lessonId, version, x)),
+      setSources: (lessonId, version, x: SourcesPatch) => run(() => e.setSources(lessonId, version, x)),
+      setPaid: (lessonId, paid) => run(() => e.setPaid(lessonId, paid)),
+      transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
+      setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
     };
   }
 

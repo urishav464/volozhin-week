@@ -8,19 +8,27 @@
 // The speaker pool (CONTRACT.md «The speaker pool») lives here too: speakers
 // are one cross-year list, so DemoPort hands every edition's engine the same
 // `shared` store (contacts, the pool's log) and the other editions' weeks
-// (`elsewhere`) for the rules that look across years.
+// (`elsewhere`) for the rules that look across years. So do a lesson's stages
+// (CONTRACT.md «From placement to arrival», milestone 3): payment and
+// transport, the summary message, the escort, sources — with transport
+// details kept in `shared`, never in a Week, as the database keeps them apart.
 import { dayPart } from "../domain/dayParts";
 import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
 import { similarity } from "../domain/trigram";
-import type { Approach, ApproachStatus, Availability, GridRow, Lesson, Pitch, PitchState, Speaker, SpeakerContacts, Vetting, Week } from "../domain/types";
-import { LIVE_PITCH } from "../domain/types";
+import type {
+  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, Speaker, SpeakerContacts, Transport, TransportDetails, Vetting, Week,
+} from "../domain/types";
+import { LESSON_STAGE_DEFAULTS, LIVE_PITCH } from "../domain/types";
 import { rowActive } from "../grid/layout";
-import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "./commands";
+import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
 import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
+import {
+  cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
+} from "./stageRules";
 
 export interface Actor {
   memberId: number;
@@ -35,6 +43,8 @@ export interface PoolShared {
   contacts: Record<number, SpeakerContacts>;
   /** The pool commands' activity rows (the grid's own commands are not logged in memory). */
   log: ActivityEntry[];
+  /** transport_details, by `${edition id}:${lesson id}` (the demo's editions number their lessons apart). */
+  transport: Record<string, TransportDetails>;
 }
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
@@ -47,12 +57,15 @@ function fail(code: string): never {
 
 const PITCH_RANK: Record<PitchState, number> = { approached: 0, candidate: 1, accepted: 2, declined: 3, withdrawn: 4, superseded: 5 };
 
+/** What the summary message says about a lesson: changed after it was sent → «לעדכן את המרצה» (app.lessons_reconfirm). */
+const RECONFIRM_FIELDS = ["day", "start_min", "end_min", "room_id", "title", "teach_min", "pay_amount"] as const;
+
 export class Engine {
   constructor(
     public week: Week,
     private readonly actor: Actor,
     private readonly now: () => string = () => new Date().toISOString(),
-    readonly shared: PoolShared = { contacts: {}, log: [] },
+    readonly shared: PoolShared = { contacts: {}, log: [], transport: {} },
     /** The other editions' weeks (the demo's other engines): closed lessons and contacts across years. */
     private readonly elsewhere: () => Week[] = () => [],
   ) {}
@@ -184,9 +197,7 @@ export class Engine {
           if (!this.speakerFree(x.speaker_id, to.day, to.start_min, to.end_min, l.id)) fail("speaker_busy");
         }
       }
-      const changed = l.day !== to.day || l.start_min !== to.start_min || l.end_min !== to.end_min || l.room_id !== to.room_id;
-      if (l.state === "closed" && l.confirm_sent_at && changed) l.needs_reconfirm = true;
-      Object.assign(l, to);
+      Object.assign(l, to); // needs_reconfirm: the rule in tx() (app.lessons_reconfirm)
       l.version++;
     });
   }
@@ -240,7 +251,6 @@ export class Engine {
             for (const x of this.week.lessonSpeakers.filter((y) => y.lesson_id === l.id)) {
               if (!this.speakerFree(x.speaker_id, day, l.start_min, newEnd, l.id)) fail("speaker_busy");
             }
-            if (l.confirm_sent_at) l.needs_reconfirm = true;
           }
           l.end_min = newEnd;
           l.version++;
@@ -522,17 +532,189 @@ export class Engine {
     });
   }
 
+  // ---------------------------------------------------------------- from placement to arrival (CONTRACT.md, milestone 3)
+
+  /** public.set_payment: the handler (or an admin) asks the instructor for an amount and/or transport. */
+  setPayment(lessonId: number, version: number, amount: number | null, transport: Transport): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      this.requireHandler(l);
+      if (l.version !== version) fail("stale");
+      const pay = cleanAmount(amount);
+      const tr = pickTransport(transport);
+      // the same request again: nothing — unless it was rejected (then it is asked again)
+      if (pay === l.pay_amount && tr === l.transport && l.approval !== "rejected") return;
+      Object.assign(l, {
+        pay_amount: pay, transport: tr, approval: pay == null && tr === "none" ? "none" : "pending",
+        approval_note: null, approved_by: null, approved_at: null, version: l.version + 1, updated_by: this.actor.memberId,
+      });
+      if (tr === "none") delete this.shared.transport[this.transportKey(l.id)]; // its pickup and driver go too
+    });
+  }
+
+  /** public.decide_payments: a global admin, one lesson or a batch, each at the version seen; all or nothing. */
+  decidePayments(items: PaymentItem[], decision: "approved" | "rejected", note: string | null = null): void {
+    this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (decision !== "approved" && decision !== "rejected") fail("bad_value");
+      const n = cleanLine(note, STAGE_LIMITS.decision_note);
+      const now = this.now();
+      for (const it of [...items].sort((a, b) => a.lesson_id - b.lesson_id || a.version - b.version)) {
+        const l = this.week.lessons.find((x) => x.id === it.lesson_id);
+        if (!l || l.version !== it.version || l.approval !== "pending") fail("stale");
+        Object.assign(l!, {
+          approval: decision, approval_note: n, approved_by: this.actor.memberId, approved_at: now, version: l!.version + 1, updated_by: this.actor.memberId,
+        });
+      }
+    });
+  }
+
+  /** public.mark_confirm_sent: «סומן כנשלח». */
+  markConfirmSent(lessonId: number, version: number): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      this.requireHandler(l);
+      if (l.version !== version) fail("stale");
+      if (l.approval === "pending") fail("approval_pending");
+      if (l.approval === "rejected") fail("approval_rejected");
+      Object.assign(l, { confirm_sent_at: this.now(), confirm_sent_by: this.actor.memberId, needs_reconfirm: false, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /** public.set_escort: any editor, on a closed lesson; the escort is a trainee of this edition's roster. */
+  setEscort(lessonId: number, version: number, e: EscortPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      if (l.state !== "closed") fail("not_closed");
+      if (l.version !== version) fail("stale");
+      if (e.roster_id != null && !this.week.roster.some((r) => r.id === e.roster_id)) fail("bad_escort");
+      if (typeof e.self_intro !== "boolean") fail("bad_value");
+      const note = cleanBlock(e.escort_note, STAGE_LIMITS.escort_note);
+      if (e.roster_id === l.escort_roster_id && e.self_intro === l.self_intro && note === l.escort_note) return;
+      Object.assign(l, { escort_roster_id: e.roster_id, self_intro: e.self_intro, escort_note: note, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /** public.set_sources: any editor, on a closed lesson. */
+  setSources(lessonId: number, version: number, s: SourcesPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      if (l.state !== "closed") fail("not_closed");
+      if (l.version !== version) fail("stale");
+      const kind = pickSourcesKind(s.sources_kind);
+      const print = pickPrintWhen(s.print_when);
+      const note = cleanBlock(s.sources_note, STAGE_LIMITS.sources_note);
+      const url = cleanUrl(s.presentation_url);
+      if (typeof s.in_reader !== "boolean") fail("bad_value");
+      const inReader = s.in_reader && readerKind(kind);
+      if (kind === l.sources_kind && print === l.print_when && note === l.sources_note && url === l.presentation_url && inReader === l.in_reader) return;
+      Object.assign(l, {
+        sources_kind: kind, print_when: print, sources_note: note, presentation_url: url, in_reader: inReader, version: l.version + 1, updated_by: this.actor.memberId,
+      });
+    });
+  }
+
+  /** public.set_paid: logistics (or an admin) — an approved payment is paid, or not yet. */
+  setPaid(lessonId: number, paid: boolean): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireLogistics();
+      if (l.pay_amount == null || l.approval !== "approved") fail("payment_not_approved");
+      if (typeof paid !== "boolean") fail("bad_value");
+      if ((l.paid_at != null) === paid) return;
+      Object.assign(l, { paid_at: paid ? this.now() : null, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /**
+   * app.may_see_transport: a global admin; in a real edition that is not archived, the lesson's handler
+   * (content or admin) — and its logistics members once the transport is approved.
+   */
+  mayTransport(lessonId: number): boolean {
+    if (this.actor.global) return true;
+    const l = this.week.lessons.find((x) => x.id === lessonId);
+    const e = this.week.edition;
+    if (!l || e.kind !== "real" || e.status === "archived") return false;
+    if (this.actor.role === "logistics") return l.transport !== "none" && l.approval === "approved";
+    return this.handlerOf(l) === this.actor.memberId;
+  }
+
+  /** public.get_transport_details: null when they are not the caller's to see. */
+  transportOf(lessonId: number): TransportDetails | null {
+    if (!this.mayTransport(lessonId)) return null;
+    return { ...(this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT) };
+  }
+
+  /** public.set_transport_details: the same people; all five replaced; the log names the fields, never the values. */
+  setTransport(lessonId: number, d: TransportDetails): void {
+    this.tx(() => {
+      const l = this.week.lessons.find((x) => x.id === lessonId) ?? fail("stale");
+      if (!this.mayTransport(lessonId)) fail("transport_hidden");
+      if (l.transport === "none") fail("no_transport");
+      const next = cleanTransportDetails(d);
+      const old = this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT;
+      const fields = (["pickup_address", "pickup_time", "driver_name", "driver_phone", "arranged"] as const).filter((k) => old[k] !== next[k]);
+      if (fields.length === 0) return;
+      this.shared.transport[this.transportKey(lessonId)] = next;
+      this.log(this.week.edition.id, "lessons", lessonId, "transport", { fields });
+    });
+  }
+
+  /** public.set_confirm_template: an admin of the edition; the instructor's own wording (empty removes it). */
+  setConfirmTemplate(body: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanBlock(body, STAGE_LIMITS.template);
+      const settings = { ...this.week.edition.settings };
+      if (v == null) delete settings.confirm_template;
+      else settings.confirm_template = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_duty_phrases: an admin of the edition; an empty list removes them. */
+  setDutyPhrases(phrases: DutyPhrase[] | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanDutyPhrases(phrases);
+      const settings = { ...this.week.edition.settings };
+      if (v.length === 0) delete settings.duty_phrases;
+      else settings.duty_phrases = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
   // ---------------------------------------------------------------- helpers
 
   /** Restores IN PLACE on failure, so `engine.week` and `engine.shared` stay the same objects (their rows are the snapshot's). */
   private tx<T>(fn: () => T): T {
     const snapshot = structuredClone({ week: this.week, shared: this.shared });
     try {
-      return fn();
+      const out = fn();
+      this.reconfirm(snapshot.week.lessons);
+      return out;
     } catch (e) {
       Object.assign(this.week, snapshot.week);
       Object.assign(this.shared, snapshot.shared);
       throw e;
+    }
+  }
+
+  /**
+   * app.lessons_reconfirm, for every command at once: a closed lesson that already had its message sent and
+   * whose confirmed details changed (moved, retitled, a new teaching time or amount, or closed again after a
+   * reopen) needs the speaker told again. A new confirm_sent_at (the message re-sent) is the one exception.
+   */
+  private reconfirm(before: Lesson[]) {
+    const old = new Map(before.map((l) => [l.id, l]));
+    for (const l of this.week.lessons) {
+      const o = old.get(l.id);
+      if (!o || l.state !== "closed" || l.confirm_sent_at == null || l.confirm_sent_at !== o.confirm_sent_at) continue;
+      if (o.state !== "closed" || RECONFIRM_FIELDS.some((k) => o[k] !== l[k])) l.needs_reconfirm = true;
     }
   }
 
@@ -603,6 +785,41 @@ export class Engine {
     if (this.actor.role === "logistics") fail("forbidden");
     const e = this.week.edition;
     if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+  }
+
+  /** app.stage_lesson: the lesson a stage command is about; gone (or cancelled) is `stale`. */
+  private stageLesson(id: number): Lesson {
+    const l = this.week.lessons.find((x) => x.id === id);
+    if (!l || l.state === "cancelled") fail("stale");
+    return l!;
+  }
+
+  /** app.lesson_handler: the owner of the lead speaker's approach (a closed lesson has one). */
+  private handlerOf(l: Lesson): number | null {
+    const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
+    return (lead && this.week.approaches.find((a) => a.speaker_id === lead.speaker_id)?.owner_member_id) ?? null;
+  }
+
+  /** app.require_handler: a closed lesson (`not_closed`), and its handler or an admin (`not_handler`). */
+  private requireHandler(l: Lesson) {
+    if (l.state !== "closed") fail("not_closed");
+    if (!this.isAdmin() && this.handlerOf(l) !== this.actor.memberId) fail("not_handler");
+  }
+
+  /** app.require_logistics: logistics or an admin; content `forbidden`; an archive is an admin's only. */
+  private requireLogistics() {
+    if (this.actor.role === "content") fail("forbidden");
+    const e = this.week.edition;
+    if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+  }
+
+  /** app.require_edition_admin. */
+  private requireEditionAdmin() {
+    if (!this.isAdmin()) fail("forbidden");
+  }
+
+  private transportKey(lessonId: number): string {
+    return `${this.week.edition.id}:${lessonId}`;
   }
 
   private requireOwner(a: Approach) {
@@ -693,9 +910,8 @@ export class Engine {
   private newDraft(day: Day, start: number, end: number, room: number, extra: Partial<Lesson> = {}): Lesson {
     const l: Lesson = {
       id: this.nextId(this.week.lessons), kind: "lesson", state: "draft", day, start_min: start, end_min: end, room_id: room,
-      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, pay_amount: null,
-      transport: "none", approval: "none", confirm_sent_at: null, needs_reconfirm: false, escort_roster_id: null,
-      self_intro: false, sources_kind: "pending", in_reader: false, version: 1, updated_by: this.actor.memberId, ...extra,
+      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS,
+      version: 1, updated_by: this.actor.memberId, ...extra,
     };
     this.week.lessons.push(l);
     return l;
@@ -710,6 +926,7 @@ export class Engine {
 
   /** Delete a lesson with its pitches and speakers (callers take the live pitches first, via livePitchesOf). */
   private deleteLesson(id: number) {
+    delete this.shared.transport[this.transportKey(id)]; // on delete cascade
     this.week.lessons = this.week.lessons.filter((l) => l.id !== id);
     this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== id);
     this.week.pitches = this.week.pitches.filter((p) => p.lesson_id !== id);

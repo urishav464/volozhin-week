@@ -18,15 +18,22 @@ const PEER_ADMIN = "peer.admin@example.org";
 // function means updating this on purpose. v6 (the speaker pool) added
 // answer_handover … vet_speakers to the public list, and may_see_contacts —
 // the contacts policy's predicate, which the policy runs as the browser's role.
+// v7 (from placement to arrival) added decide_payments, get_transport_details,
+// mark_confirm_sent, set_confirm_template, set_duty_phrases, set_escort,
+// set_paid, set_payment, set_sources and set_transport_details, and
+// may_see_transport — the transport details policy's predicate.
 const ANON_FUNCTIONS = ["ping"];
 const AUTH_PUBLIC_FUNCTIONS = [
-  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "get_speaker_contacts", "hand_over",
-  "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape", "schema_version",
-  "set_approach_status", "set_availability", "set_default_room", "set_my_profile", "set_pitch",
-  "set_speaker_contacts", "speaker_activity", "speaker_history", "speaker_matches", "start_edition",
-  "team", "unpropose", "update_lesson", "update_speaker", "vet_speakers", "whoami",
+  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "get_speaker_contacts",
+  "get_transport_details", "hand_over", "load_week", "mark_confirm_sent", "move_lesson", "ping", "propose",
+  "reopen_lesson", "reshape", "schema_version", "set_approach_status", "set_availability", "set_confirm_template",
+  "set_default_room", "set_duty_phrases", "set_escort", "set_my_profile", "set_paid", "set_payment", "set_pitch",
+  "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
+  "speaker_matches", "start_edition", "team", "unpropose", "update_lesson", "update_speaker", "vet_speakers", "whoami",
 ];
-const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "may_see_contacts", "my_email", "my_member_id", "my_role", "name_key"];
+const AUTH_APP_FUNCTIONS = [
+  "can_see_edition", "is_global_admin", "is_member", "may_see_contacts", "may_see_transport", "my_email", "my_member_id", "my_role", "name_key",
+];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
   const dbName = `vw_schema_${regime}_${process.pid}`;
@@ -88,7 +95,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(await exec("authenticated", "app")).toEqual(AUTH_APP_FUNCTIONS);
     });
 
-    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members or log", async () => {
+    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members, log or transport details", async () => {
       const rows = (
         await db.query(
           "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
@@ -98,7 +105,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     });
 
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
-      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster");
+      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details");
       await db.query(SCHEMA);
       const rows = (
         await db.query(
@@ -158,7 +165,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(6);
+        expect(w.schema_version).toBe(7);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

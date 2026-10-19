@@ -3,10 +3,10 @@
 // are functions (supabase/schema.sql, «Settings»). Every refusal comes back as
 // a CommandError with a code from src/errors.ts — never a raw Postgres message.
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import type { Category, Room, TeamMember } from "../domain/types";
+import type { Category, DutyPhrase, Room, TeamMember } from "../domain/types";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
-import { type EditionPatch, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
+import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
 import { PortError } from "./types";
 
 const MEMBER_COLUMNS = "id,email,display_name,gender,role,edition_id,active";
@@ -134,6 +134,13 @@ export class SupabaseSettings implements SettingsPort {
     await this.one(this.sb.from("roster").delete().eq("id", id).select("id"));
   }
 
+  async rosterEscorts(editionId: number, rosterId: number): Promise<EscortedLesson[]> {
+    const rows = await this.rows<EscortedLesson>(
+      this.sb.from("lessons").select("id,day,start_min,end_min,title").eq("edition_id", editionId).eq("escort_roster_id", rosterId).order("day").order("start_min").order("id"),
+    );
+    return rows.map((l) => ({ ...l, id: Number(l.id) }));
+  }
+
   // ------------------------------------------------------------- חדרים
 
   async rooms(editionId: number): Promise<Room[]> {
@@ -190,6 +197,16 @@ export class SupabaseSettings implements SettingsPort {
 
   async deleteCategory(id: number): Promise<void> {
     await this.one(this.sb.from("categories").delete().eq("id", id).select("id"));
+  }
+
+  // ------------------------------------------------------------- תבניות (functions: an admin of the edition)
+
+  async setConfirmTemplate(editionId: number, body: string | null): Promise<void> {
+    await this.rpc("set_confirm_template", { p_edition: editionId, p_body: body });
+  }
+
+  async setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void> {
+    await this.rpc("set_duty_phrases", { p_edition: editionId, p_phrases: phrases });
   }
 }
 

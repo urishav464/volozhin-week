@@ -3,7 +3,8 @@
 // RLS, two small functions) and DemoPort (in memory, the same refusals). A
 // refusal is a CommandError whose code src/errors.ts turns into Hebrew. What
 // each write may touch, and why, is in supabase/schema.sql's «Settings» section.
-import type { Category, Edition, Gender, Room, TeamMember } from "../domain/types";
+import type { Day } from "../domain/time";
+import type { Category, DutyPhrase, Edition, Gender, Room, TeamMember } from "../domain/types";
 import type { Role } from "./types";
 
 /** A row of public.members as an admin sees it (RLS shows only the editions they administer). */
@@ -43,6 +44,15 @@ export interface NewEdition {
 
 export type EditionPatch = Partial<Pick<Edition, "start_date" | "first_day_from">>;
 
+/** A lesson a trainee escorts — what deleting them from the roster would leave without an escort. */
+export interface EscortedLesson {
+  id: number;
+  day: Day;
+  start_min: number;
+  end_min: number;
+  title: string | null;
+}
+
 export interface SettingsPort {
   // מחזור
   startEdition(e: NewEdition): Promise<number>;
@@ -63,7 +73,10 @@ export interface SettingsPort {
   /** Adds the names not already there (by name key); returns how many were added. */
   addRoster(editionId: number, names: { full_name: string; gender: Gender | null }[]): Promise<number>;
   updateRoster(id: number, patch: { full_name?: string; gender?: Gender | null }): Promise<void>;
+  /** Deleting a trainee who escorts lessons leaves those lessons without an escort (on delete set null) — list them first. */
   deleteRoster(id: number): Promise<void>;
+  /** The lessons this trainee escorts, by time. */
+  rosterEscorts(editionId: number, rosterId: number): Promise<EscortedLesson[]>;
   // חדרים
   rooms(editionId: number): Promise<Room[]>;
   addRoom(editionId: number, name: string): Promise<void>;
@@ -78,6 +91,11 @@ export interface SettingsPort {
   updateCategory(id: number, patch: Partial<Pick<Category, "name" | "color" | "active">>): Promise<void>;
   reorderCategories(ids: number[]): Promise<void>;
   deleteCategory(id: number): Promise<void>;
+  // תבניות (milestone 3): the instructor's own wording, never seeded — an admin of the edition
+  /** The summary message's template (src/domain/message.ts); empty or null removes it. */
+  setConfirmTemplate(editionId: number, body: string | null): Promise<void>;
+  /** The escorts' duty phrases (src/domain/escorts.ts); an empty list removes them. */
+  setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void>;
 }
 
 /** New sort values (1…n) for `ids` in order — only those that change. */

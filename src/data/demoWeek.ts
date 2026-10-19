@@ -4,9 +4,17 @@
 // demo (milestone 2) adds a speaker for every «המרצים שלי» group, a hand-over
 // waiting for the demo user, a few contacts made of placeholder words (never
 // a number or address that could be someone's) and a past edition's lessons.
+// Milestone 3 adds a lesson in every stage: payment asked, approved (and paid),
+// rejected; a volunteer; a message sent, and one sent and then moved; escorts
+// from a synthetic roster (two lessons close together for one of them); every
+// kind of sources; transport details made of placeholder words. No message
+// template and no duty phrases: those are the instructor's wording, never ours.
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
-import type { Approach, Category, Gender, Lesson, LessonSpeaker, Pitch, Speaker, SpeakerContacts, Week } from "../domain/types";
+import {
+  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type Speaker, type SpeakerContacts,
+  type TransportDetails, type Week,
+} from "../domain/types";
 import type { ActivityEntry, HistoryLesson } from "./speakers";
 
 export const DEMO_CATEGORIES: Category[] = [
@@ -70,9 +78,8 @@ export function demoWeek(): Week {
   const lesson = (day: Day, start: number, end: number, extra: Partial<Lesson> = {}): Lesson => {
     const l: Lesson = {
       id: ++lessonId, kind: "lesson", state: "draft", day, start_min: start, end_min: end, room_id: 1,
-      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, pay_amount: null,
-      transport: "none", approval: "none", confirm_sent_at: null, needs_reconfirm: false, escort_roster_id: null,
-      self_intro: false, sources_kind: "pending", in_reader: false, version: 1, updated_by: null, ...extra,
+      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS,
+      version: 1, updated_by: null, ...extra,
     };
     lessons.push(l);
     return l;
@@ -97,32 +104,42 @@ export function demoWeek(): Week {
     return l;
   };
 
+  // The stages (milestone 3), synthetic: amounts are example numbers, notes say «לדוגמה».
+  const at = (d: number) => `2026-11-${String(d).padStart(2, "0")}T10:00:00Z`;
+  const sent = (by: number) => ({ confirm_sent_at: at(10), confirm_sent_by: by });
+  const approved = { approval: "approved" as const, approved_by: 1, approved_at: at(8) };
+
   // Sunday (opens 08:30 in this demo): mostly men so far → the day asks for women.
-  closed(0, 510, 600, 1, { title: "פתיחת השבוע (לדוגמה)", category_id: 3, teach_min: 75 });
-  closed(0, 600, 690, 3);
-  closed(0, 690, 780, 5, { category_id: 3 });
+  // 08:30 is done in every stage; 10:00 and 11:30 share one escort with no break between.
+  closed(0, 510, 600, 1, {
+    title: "פתיחת השבוע (לדוגמה)", category_id: 3, teach_min: 75,
+    pay_amount: 100, transport: "one_way", ...approved, paid_at: at(12), ...sent(2),
+    escort_roster_id: 1, sources_kind: "sheet", print_when: "before", sources_note: "דף מקורות (נתון לדוגמה)", in_reader: true,
+  });
+  closed(0, 600, 690, 3, { ...sent(4), escort_roster_id: 2, sources_kind: "presentation", presentation_url: "https://slides.example/presentation-demo" });
+  closed(0, 690, 780, 5, { category_id: 3, escort_roster_id: 2 });
   closed(0, 870, 960, 7);
   drafted(0, 960, 1050, [9, 11]);
-  closed(0, 1470, 1560, 2);
+  closed(0, 1470, 1560, 2, { self_intro: true, sources_kind: "none" });
 
   // Monday: a 60+30 split at 14:30, and the all-night merge 00:30–05:00.
-  closed(1, 510, 600, 4);
-  closed(1, 600, 690, 6);
-  closed(1, 870, 930, 8, { teach_min: 60 });
-  closed(1, 930, 960, 10, { teach_min: 30 });
-  closed(1, 1200, 1290, 12);
+  closed(1, 510, 600, 4, { pay_amount: 200, transport: "round_trip", approval: "pending" }); // waits for the instructor
+  closed(1, 600, 690, 6, { pay_amount: 300, approval: "rejected", approval_note: "נתון לדוגמה: לבדוק שוב את הסכום", approved_by: 1, approved_at: at(9) });
+  closed(1, 870, 930, 8, { teach_min: 60, ...sent(1), needs_reconfirm: true }); // moved after the message went out
+  closed(1, 930, 960, 10, { teach_min: 30, sources_kind: "sheet_video", print_when: "same_day" });
+  closed(1, 1200, 1290, 12, { pay_amount: 200, ...approved }); // approved, not yet paid; the message still to send
   closed(1, 1470, 1740, 14, { title: "סדר לילה לדוגמה (כל הלילה)", teach_min: 270 });
 
   // Tuesday: a parallel pair at 16:00 in two rooms; back-to-back same category in the morning.
-  closed(2, 510, 600, 21, { category_id: 1 });
+  closed(2, 510, 600, 21, { category_id: 1, sources_kind: "other", sources_note: "ספר שהמרצה מביא/ה (נתון לדוגמה)" });
   closed(2, 600, 690, 31, { category_id: 1 });
-  closed(2, 960, 1050, 16, { room_id: 1 });
+  closed(2, 960, 1050, 16, { room_id: 1, escort_roster_id: 3, sources_kind: "sheet_presentation" });
   closed(2, 960, 1050, 17, { room_id: 2, parallel_reason: "דוגמה לשיעורים מקבילים" });
   drafted(2, 1200, 1290, [56], "candidate"); // not yet vetted → candidate only
 
   // Wednesday: a declined approach still pitched, and an empty evening.
-  closed(3, 600, 690, 19);
-  closed(3, 690, 780, 20);
+  closed(3, 600, 690, 19, { transport: "one_way", ...approved });
+  closed(3, 690, 780, 20, { escort_roster_id: 4, escort_note: "נתון לדוגמה: להגיע רבע שעה לפני" });
   const declined = approachOf(23, "declined");
   pitches.push({ id: ++pitchId, lesson_id: lesson(3, 870, 960).id, approach_id: declined.id, state: "approached", proposed_by: 2, at: "2026-11-03T10:00:00Z" });
 
@@ -168,6 +185,26 @@ export function demoWeek(): Week {
       { id: 4, display_name: "חניך/ה ג׳", gender: null, role: "content" },
       { id: 5, display_name: "לוגיסטיקה (הדגמה)", gender: null, role: "logistics" },
     ],
+    roster: DEMO_ROSTER.map((r) => ({ ...r })),
+  };
+}
+
+/** The demo's trainees (names only) — escorts come from here. */
+export const DEMO_ROSTER: RosterMember[] = [
+  ["מלווה לדוגמה א׳", "f"],
+  ["מלווה לדוגמה ב׳", "m"],
+  ["מלווה לדוגמה ג׳", "f"],
+  ["מלווה לדוגמה ד׳", "m"],
+  ["מלווה לדוגמה ה׳", null],
+  ["מלווה לדוגמה ו׳", "f"],
+].map(([full_name, gender], i) => ({ id: i + 1, full_name: full_name as string, gender: gender as Gender | null }));
+
+/** Transport details for the demo (kept apart from the week, like the database): placeholder words only. */
+export function demoTransport(week: Week): Record<string, TransportDetails> {
+  const key = (day: number, start: number) => `${week.edition.id}:${week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id}`;
+  return {
+    [key(0, 510)]: { pickup_address: "כתובת לדוגמה", pickup_time: "07:15 (לדוגמה)", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: true },
+    [key(1, 510)]: { pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false },
   };
 }
 

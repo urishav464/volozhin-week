@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 6 $$;
+  as $$ select 7 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -444,7 +444,7 @@ create table if not exists public.lessons (
   audience         text,
   teach_min        integer check (teach_min > 0),
   parallel_reason  text,
-  pay_amount       numeric(8, 2) check (pay_amount > 0),
+  pay_amount       integer check (pay_amount > 0),   -- whole shekels (v7; a database from before is altered below)
   transport        text not null default 'none' check (transport in ('none', 'one_way', 'round_trip')),
   approval         text not null default 'none' check (approval in ('none', 'pending', 'approved', 'rejected')),
   approval_note    text,
@@ -809,39 +809,8 @@ create policy activity_read on public.activity for select to authenticated using
 
 -- ------------------------------------------------------------- reads
 
--- Everything the grid needs, in one round trip, as the caller's RLS allows —
--- invoker, so it can never show more than the tables would.
-create or replace function public.load_week(p_edition bigint) returns jsonb
-  language sql stable security invoker set search_path = ''
-  as $$
-    select jsonb_build_object(
-      'edition', (select to_jsonb(e) from public.editions e where e.id = p_edition),
-      'rows', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.start_min, r.id) from public.grid_rows r where r.edition_id = p_edition), '[]'),
-      'rooms', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.sort, r.id) from public.rooms r where r.edition_id = p_edition), '[]'),
-      'categories', coalesce((select jsonb_agg(to_jsonb(c) order by c.sort, c.id) from public.categories c), '[]'),
-      'speakers', coalesce((select jsonb_agg(jsonb_build_object(
-          'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
-          'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
-          'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
-          'name_key', s.name_key, 'version', s.version)
-          order by s.id) from public.speakers s), '[]'),
-      'approaches', coalesce((select jsonb_agg(jsonb_build_object(
-          'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
-          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
-          from public.approaches a where a.edition_id = p_edition), '[]'),
-      'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
-          join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
-      'lessons', coalesce((select jsonb_agg(to_jsonb(l) - 'span' - 'edition_id' - 'created_at' order by l.id)
-          from public.lessons l where l.edition_id = p_edition), '[]'),
-      'lessonSpeakers', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'role', x.role))
-          from public.lesson_speakers x where x.edition_id = p_edition), '[]'),
-      'pitches', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'lesson_id', p.lesson_id, 'approach_id', p.approach_id,
-          'state', p.state, 'proposed_by', p.proposed_by, 'at', p.at) order by p.id)
-          from public.pitches p where p.edition_id = p_edition), '[]'),
-      'team', coalesce((select jsonb_agg(to_jsonb(t) order by t.id) from public.team(p_edition) t), '[]')
-    )
-    where app.can_see_edition(p_edition)
-  $$;
+-- load_week (everything the grid needs, in one round trip) is defined in the
+-- v7 section below: it reads the roster, which is created further down.
 
 -- ------------------------------------------------------------- commands (docs/CONTRACT.md)
 
@@ -1061,9 +1030,7 @@ create or replace function public.move_lesson(p_lesson bigint, p_day integer, p_
     if not exists (select 1 from public.rooms where id = p_room and edition_id = v_l.edition_id) then perform app.refuse('bad_shape'); end if;
     begin
       update public.lessons
-         set day = p_day, start_min = p_start, end_min = p_end, room_id = p_room,
-             needs_reconfirm = needs_reconfirm or (state = 'closed' and confirm_sent_at is not null
-                               and (day, start_min, end_min, room_id) is distinct from (p_day, p_start, p_end, p_room)),
+         set day = p_day, start_min = p_start, end_min = p_end, room_id = p_room,   -- needs_reconfirm: app.lessons_reconfirm (v7)
              version = version + 1, updated_by = v_me
        where id = v_l.id;
     exception when exclusion_violation then
@@ -1157,8 +1124,7 @@ create or replace function public.reshape(
       delete from public.lessons where id = any (v_ids);
       begin
         update public.lessons
-           set end_min = v_new_end, version = version + 1, updated_by = v_me,
-               needs_reconfirm = needs_reconfirm or (state = 'closed' and confirm_sent_at is not null)
+           set end_min = v_new_end, version = version + 1, updated_by = v_me   -- needs_reconfirm: app.lessons_reconfirm (v7)
          where id = v_l.id;
       exception when exclusion_violation then
         get stacked diagnostics v_c = constraint_name;
@@ -1217,12 +1183,21 @@ create or replace function public.start_edition(p_label text, p_start_date date,
   returns bigint
   language plpgsql security definer set search_path = ''
   as $$
-  declare v bigint;
+  declare
+    v      bigint;
+    v_prev jsonb;
   begin
     if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    -- v7: the confirmation template and the escorts' duty phrases are the
+    -- instructor's own wording — the live real edition's (the one archived
+    -- below; else the newest) carry over. Never a text of ours: the first
+    -- edition starts without them.
+    select settings into v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
     update public.editions set status = 'archived' where kind = 'real' and status <> 'archived';
     insert into public.editions (label, kind, start_date, first_day_from, settings)
-    values (p_label, 'real', p_start_date, p_first_day_from, '{"lesson_minutes": 75, "row_minutes": 90}'::jsonb)
+    values (p_label, 'real', p_start_date, p_first_day_from,
+            '{"lesson_minutes": 75, "row_minutes": 90}'::jsonb
+            || jsonb_strip_nulls(jsonb_build_object('confirm_template', v_prev -> 'confirm_template', 'duty_phrases', v_prev -> 'duty_phrases')))
     returning id into v;
     insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
     select v, start_min, end_min, kind, label, days from public.grid_template;
@@ -2073,6 +2048,512 @@ create or replace function public.set_availability(
   end
   $$;
 
+-- =============================================================================
+-- Milestone 3 (v7) — from placement to arrival. Semantics: docs/CONTRACT.md
+-- «From placement to arrival»; the in-memory twin is src/data/engine.ts, and
+-- tests/parity holds the two together. lessons stays SELECT-only for a
+-- browser: every write below is a SECURITY DEFINER function that checks who is
+-- asking and refuses with a code src/errors.ts has the Hebrew for.
+--   set_payment           the handler (or an admin) asks for an amount and/or
+--                         transport → approval 'pending'; nothing asked → 'none'
+--   decide_payments       a global admin approves or rejects — one or a batch,
+--                         each at the version they saw, with a note
+--   mark_confirm_sent     «סומן כנשלח»: confirm_sent_at/by, clears needs_reconfirm
+--   set_escort            any editor: a roster trainee, self_intro, a note
+--   set_sources           any editor: kind, print_when, note, presentation URL, in_reader
+--   set_paid              logistics (or an admin): paid_at, once a payment is approved
+--   get/set_transport_details   pickup and driver — personal data: their own
+--                         table, app.may_see_transport, never in load_week or Realtime
+--   set_confirm_template, set_duty_phrases   an admin of the edition: the
+--                         instructor's own wording, kept in editions.settings
+--   lessons_reconfirm     (trigger) a closed lesson whose confirmed details
+--                         change after the message was sent → needs_reconfirm
+-- =============================================================================
+
+-- ------------------------------------------------------------- lessons
+
+-- The amount is whole shekels. Before v7 the column was numeric(8,2), as DESIGN
+-- has it; nothing ever wrote it, so an older database's column is altered here.
+do $$
+begin
+  if (select data_type from information_schema.columns
+       where table_schema = 'public' and table_name = 'lessons' and column_name = 'pay_amount') <> 'integer' then
+    alter table public.lessons alter column pay_amount type integer using round(pay_amount)::integer;
+  end if;
+end $$;
+
+-- An escort is one of the edition's trainees (roster). Deleting a trainee
+-- leaves their lessons without an escort — the screen lists those lessons first.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'lessons_escort_roster_fk') then
+    update public.lessons l set escort_roster_id = null
+     where escort_roster_id is not null and not exists (select 1 from public.roster r where r.id = l.escort_roster_id);
+    alter table public.lessons add constraint lessons_escort_roster_fk
+      foreign key (escort_roster_id) references public.roster (id) on delete set null;
+  end if;
+end $$;
+create index if not exists lessons_escort on public.lessons (escort_roster_id);
+
+-- needs_reconfirm, in one place: a CLOSED lesson that already had its message
+-- sent, and whose confirmed details change — moved (day, time, room), retitled,
+-- a new teaching time or amount, or closed again after a reopen — is flagged
+-- «לעדכן את המרצה». Marking a new message sent (a new confirm_sent_at) is the
+-- one update that does not flag; mark_confirm_sent clears the flag.
+create or replace function app.lessons_reconfirm() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if new.state = 'closed' and new.confirm_sent_at is not null
+       and new.confirm_sent_at is not distinct from old.confirm_sent_at
+       and (old.state <> 'closed'
+            or (old.day, old.start_min, old.end_min, old.room_id, old.title, old.teach_min, old.pay_amount)
+               is distinct from (new.day, new.start_min, new.end_min, new.room_id, new.title, new.teach_min, new.pay_amount)) then
+      new.needs_reconfirm := true;
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists lessons_reconfirm on public.lessons;
+create trigger lessons_reconfirm before update of day, start_min, end_min, room_id, title, teach_min, pay_amount, state on public.lessons
+  for each row execute function app.lessons_reconfirm();
+
+-- ------------------------------------------------------------- transport details
+
+-- Pickup and driver: personal data (an address, a driver's phone). Their own
+-- table, like speaker_contacts — never in load_week, never in Realtime.
+-- (DESIGN's `transport` table; renamed, since lessons.transport is the request.)
+create table if not exists public.transport_details (
+  lesson_id      bigint primary key references public.lessons (id) on delete cascade,
+  pickup_address text,
+  pickup_time    text,
+  driver_name    text,
+  driver_phone   text,
+  arranged       boolean not null default false
+);
+alter table public.transport_details enable row level security;
+
+-- Who handles the lesson: the owner of its lead speaker's approach there.
+create or replace function app.lesson_handler(p_lesson bigint) returns bigint
+  language sql stable security definer set search_path = ''
+  as $$
+    select a.owner_member_id
+      from public.lesson_speakers x
+      join public.lessons l on l.id = x.lesson_id
+      join public.approaches a on a.speaker_id = x.speaker_id and a.edition_id = l.edition_id
+     where x.lesson_id = p_lesson and x.role = 'lead'
+     limit 1
+  $$;
+
+-- Who may see (and write) a lesson's transport details: a global admin; in a
+-- real edition that is not archived, whoever handles the lesson (content or
+-- admin there) — and that edition's logistics members, only once the transport
+-- is approved. Practice, demo and archived editions give no access (the rule
+-- of app.may_see_contacts). public/privacy.html says exactly this.
+create or replace function app.may_see_transport(p_lesson bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select app.is_global_admin() or exists (
+      select 1 from public.lessons l join public.editions e on e.id = l.edition_id
+       where l.id = p_lesson and e.kind = 'real' and e.status <> 'archived'
+         and (   (app.my_role(l.edition_id) in ('admin', 'content')
+                  and app.lesson_handler(l.id) = app.my_member_id(l.edition_id))
+              or (app.my_role(l.edition_id) = 'logistics' and l.transport <> 'none' and l.approval = 'approved')))
+  $$;
+
+drop policy if exists transport_details_read on public.transport_details;
+create policy transport_details_read on public.transport_details for select to authenticated
+  using (app.may_see_transport(transport_details.lesson_id));
+
+-- ------------------------------------------------------------- helpers
+
+-- The lesson a stage command is about, locked; a missing one is `stale` (it
+-- was deleted under the screen).
+create or replace function app.stage_lesson(p_lesson bigint) returns public.lessons
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v public.lessons;
+  begin
+    select * into v from public.lessons where id = p_lesson for update;
+    if v.id is null or v.state = 'cancelled' then perform app.refuse('stale'); end if;
+    return v;
+  end
+  $$;
+
+-- The handler of a closed lesson, or an admin of its edition.
+create or replace function app.require_handler(p_lesson public.lessons, p_me bigint) returns void
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if p_lesson.state <> 'closed' then perform app.refuse('not_closed'); end if;
+    if not (app.my_role(p_lesson.edition_id) = 'admin' or coalesce(app.lesson_handler(p_lesson.id) = p_me, false)) then
+      perform app.refuse('not_handler');
+    end if;
+  end
+  $$;
+
+-- Logistics (or an admin) of the edition: paid_at. Content members: forbidden.
+create or replace function app.require_logistics(p_edition bigint) returns bigint
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_role text := app.my_role(p_edition);
+    v_ed   public.editions;
+  begin
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if v_role = 'content' then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = p_edition;
+    if v_ed.id is null then perform app.refuse('not_member'); end if;
+    if (v_ed.kind = 'archive' or v_ed.status = 'archived') and v_role <> 'admin' then perform app.refuse('archived'); end if;
+    return app.my_member_id(p_edition);
+  end
+  $$;
+
+-- An admin of the edition (its templates and phrases).
+create or replace function app.require_edition_admin(p_edition bigint) returns void
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare v_role text := app.my_role(p_edition);
+  begin
+    if v_role is null or not exists (select 1 from public.editions where id = p_edition) then perform app.refuse('not_member'); end if;
+    if v_role <> 'admin' then perform app.refuse('forbidden'); end if;
+  end
+  $$;
+
+-- What a sources note, a URL and a duty phrase may be (src/data/stageRules.ts holds the same).
+create or replace function app.pick_url(p text) returns text
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare v text := app.clean_line(p, 500);
+  begin
+    if v is not null and v !~* '^https?://[^ ]+$' then perform app.refuse('bad_url'); end if;
+    return v;
+  end
+  $$;
+
+-- The escorts' duty phrases: a JSON array of {when, text}; `when` one of the
+-- lesson facts below, `text` one line of at most 200 characters; empty texts
+-- and repeats (the first kept) dropped; at most 30. Never seeded.
+create or replace function app.clean_duty_phrases(p jsonb) returns jsonb
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare
+    v_out jsonb := '[]'::jsonb;
+    e     jsonb;
+    v_t   text;
+    v_one jsonb;
+  begin
+    if p is null or jsonb_typeof(p) = 'null' then return v_out; end if;
+    if jsonb_typeof(p) <> 'array' then perform app.refuse('bad_value'); end if;
+    for e in select x from jsonb_array_elements(p) with ordinality as t(x, o) order by o loop
+      if jsonb_typeof(e) <> 'object' or jsonb_typeof(e -> 'when') is distinct from 'string' or jsonb_typeof(e -> 'text') is distinct from 'string'
+         or not (e ->> 'when' = any (array['always', 'self_intro', 'escort_intro', 'transport', 'memorial'])) then
+        perform app.refuse('bad_value');
+      end if;
+      v_t := app.clean_line(e ->> 'text', 200);
+      continue when v_t is null;
+      v_one := jsonb_build_object('when', e ->> 'when', 'text', v_t);
+      continue when v_out @> jsonb_build_array(v_one);
+      v_out := v_out || jsonb_build_array(v_one);
+    end loop;
+    if jsonb_array_length(v_out) > 30 then perform app.refuse('bad_value'); end if;
+    return v_out;
+  end
+  $$;
+
+-- ------------------------------------------------------------- reads
+
+-- Everything the grid needs, in one round trip, as the caller's RLS allows —
+-- invoker, so it can never show more than the tables would. Never a contact
+-- detail and never a transport detail (their own tables). v7 adds the
+-- edition's roster (names only), for escorts.
+create or replace function public.load_week(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select jsonb_build_object(
+      'edition', (select to_jsonb(e) from public.editions e where e.id = p_edition),
+      'rows', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.start_min, r.id) from public.grid_rows r where r.edition_id = p_edition), '[]'),
+      'rooms', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.sort, r.id) from public.rooms r where r.edition_id = p_edition), '[]'),
+      'categories', coalesce((select jsonb_agg(to_jsonb(c) order by c.sort, c.id) from public.categories c), '[]'),
+      'speakers', coalesce((select jsonb_agg(jsonb_build_object(
+          'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
+          'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
+          'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
+          'name_key', s.name_key, 'version', s.version)
+          order by s.id) from public.speakers s), '[]'),
+      'approaches', coalesce((select jsonb_agg(jsonb_build_object(
+          'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
+          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
+          from public.approaches a where a.edition_id = p_edition), '[]'),
+      'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
+          join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
+      'lessons', coalesce((select jsonb_agg(to_jsonb(l) - 'span' - 'edition_id' - 'created_at' order by l.id)
+          from public.lessons l where l.edition_id = p_edition), '[]'),
+      'lessonSpeakers', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'role', x.role))
+          from public.lesson_speakers x where x.edition_id = p_edition), '[]'),
+      'pitches', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'lesson_id', p.lesson_id, 'approach_id', p.approach_id,
+          'state', p.state, 'proposed_by', p.proposed_by, 'at', p.at) order by p.id)
+          from public.pitches p where p.edition_id = p_edition), '[]'),
+      'team', coalesce((select jsonb_agg(to_jsonb(t) order by t.id) from public.team(p_edition) t), '[]'),
+      'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name, 'gender', r.gender) order by r.full_name, r.id)
+          from public.roster r where r.edition_id = p_edition), '[]')
+    )
+    where app.can_see_edition(p_edition)
+  $$;
+
+-- Transport details, through the policy (invoker): NULL when they are not mine to see.
+create or replace function public.get_transport_details(p_lesson bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select case when app.may_see_transport(p_lesson) then
+      coalesce((select jsonb_build_object('pickup_address', t.pickup_address, 'pickup_time', t.pickup_time,
+                                          'driver_name', t.driver_name, 'driver_phone', t.driver_phone, 'arranged', t.arranged)
+                  from public.transport_details t where t.lesson_id = p_lesson),
+               '{"pickup_address": null, "pickup_time": null, "driver_name": null, "driver_phone": null, "arranged": false}'::jsonb)
+    end
+  $$;
+
+-- ------------------------------------------------------------- commands
+
+-- Payment and transport: what the handler asks the instructor to approve.
+-- An amount is whole shekels, 1–100000 (a typo guard, «הצעה»), or NULL: none
+-- asked (a volunteer, or not decided yet) — never a default of ours.
+create or replace function public.set_payment(p_lesson bigint, p_version integer, p_pay_amount numeric, p_transport text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l      public.lessons := app.stage_lesson(p_lesson);
+    v_me     bigint := app.require_editor(v_l.edition_id);
+    v_amount integer;
+  begin
+    perform app.require_handler(v_l, v_me);
+    if v_l.version <> p_version then perform app.refuse('stale'); end if;
+    if p_pay_amount is not null and (p_pay_amount <> trunc(p_pay_amount) or p_pay_amount < 1 or p_pay_amount > 100000) then
+      perform app.refuse('bad_amount');
+    end if;
+    if p_transport is null or p_transport not in ('none', 'one_way', 'round_trip') then perform app.refuse('bad_value'); end if;
+    v_amount := p_pay_amount::integer;
+    -- the same request again: nothing — unless it was rejected (then it is asked again)
+    if v_amount is not distinct from v_l.pay_amount and p_transport = v_l.transport and v_l.approval <> 'rejected' then return; end if;
+    update public.lessons
+       set pay_amount = v_amount, transport = p_transport,
+           approval = case when v_amount is null and p_transport = 'none' then 'none' else 'pending' end,
+           approval_note = null, approved_by = null, approved_at = null,
+           version = version + 1, updated_by = v_me
+     where id = v_l.id;
+    -- no transport any more: its pickup and driver go too
+    if p_transport = 'none' then delete from public.transport_details where lesson_id = v_l.id; end if;
+  end
+  $$;
+
+-- The instructor's decision: one lesson or a batch, each at the version on the
+-- screen (an amount changed since is `stale`, never approved unseen). All or nothing.
+create or replace function public.decide_payments(p_lessons bigint[], p_versions integer[], p_decision text, p_note text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_note text;
+    v_l    public.lessons;
+    x      record;
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    if p_decision is null or p_decision not in ('approved', 'rejected')
+       or coalesce(cardinality(p_lessons), 0) <> coalesce(cardinality(p_versions), 0) then
+      perform app.refuse('bad_value');
+    end if;
+    v_note := app.clean_line(p_note, 300);
+    for x in select u.l, u.v from unnest(coalesce(p_lessons, '{}'), coalesce(p_versions, '{}')) as u(l, v) order by u.l, u.v loop
+      select * into v_l from public.lessons where id = x.l for update;
+      if v_l.id is null or v_l.version is distinct from x.v or v_l.approval <> 'pending' then perform app.refuse('stale'); end if;
+      update public.lessons
+         set approval = p_decision, approval_note = v_note, approved_by = app.my_member_id(null), approved_at = now(),
+             version = version + 1, updated_by = app.my_member_id(v_l.edition_id)
+       where id = v_l.id;
+    end loop;
+  end
+  $$;
+
+-- «סומן כנשלח»: the summary message went out. Never while the payment or the
+-- transport waits for the instructor (DESIGN, hard constraints) or was rejected.
+create or replace function public.mark_confirm_sent(p_lesson bigint, p_version integer) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l  public.lessons := app.stage_lesson(p_lesson);
+    v_me bigint := app.require_editor(v_l.edition_id);
+  begin
+    perform app.require_handler(v_l, v_me);
+    if v_l.version <> p_version then perform app.refuse('stale'); end if;
+    if v_l.approval = 'pending' then perform app.refuse('approval_pending'); end if;
+    if v_l.approval = 'rejected' then perform app.refuse('approval_rejected'); end if;
+    update public.lessons
+       set confirm_sent_at = now(), confirm_sent_by = v_me, needs_reconfirm = false,
+           version = version + 1, updated_by = v_me
+     where id = v_l.id;
+  end
+  $$;
+
+-- The escort: a trainee of this edition's roster (or none), self-introduction,
+-- and a note for the escorts' list. Any editor, on a closed lesson.
+create or replace function public.set_escort(p_lesson bigint, p_version integer, p_roster bigint, p_self_intro boolean, p_note text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l    public.lessons := app.stage_lesson(p_lesson);
+    v_me   bigint := app.require_editor(v_l.edition_id);
+    v_note text;
+  begin
+    if v_l.state <> 'closed' then perform app.refuse('not_closed'); end if;
+    if v_l.version <> p_version then perform app.refuse('stale'); end if;
+    if p_roster is not null and not exists (select 1 from public.roster where id = p_roster and edition_id = v_l.edition_id) then
+      perform app.refuse('bad_escort');
+    end if;
+    if p_self_intro is null then perform app.refuse('bad_value'); end if;
+    v_note := app.clean_block(p_note, 300);
+    if (p_roster, p_self_intro, v_note) is not distinct from (v_l.escort_roster_id, v_l.self_intro, v_l.escort_note) then return; end if;
+    update public.lessons
+       set escort_roster_id = p_roster, self_intro = p_self_intro, escort_note = v_note,
+           version = version + 1, updated_by = v_me
+     where id = v_l.id;
+  end
+  $$;
+
+-- Sources: what arrived, when to print, a presentation link (http/https only)
+-- and whether the reader has it. A kind with nothing to print (pending, none,
+-- presentation) is never in the reader. Any editor, on a closed lesson.
+create or replace function public.set_sources(
+  p_lesson bigint, p_version integer, p_kind text, p_print_when text, p_note text, p_url text, p_in_reader boolean)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l    public.lessons := app.stage_lesson(p_lesson);
+    v_me   bigint := app.require_editor(v_l.edition_id);
+    v_note text;
+    v_url  text;
+    v_in   boolean;
+  begin
+    if v_l.state <> 'closed' then perform app.refuse('not_closed'); end if;
+    if v_l.version <> p_version then perform app.refuse('stale'); end if;
+    if p_kind is null or p_kind not in ('pending', 'sheet', 'presentation', 'sheet_presentation', 'sheet_video', 'none', 'other') then
+      perform app.refuse('bad_value');
+    end if;
+    if p_print_when is null or p_print_when not in ('none', 'before', 'same_day') then perform app.refuse('bad_value'); end if;
+    v_note := app.clean_block(p_note, 500);
+    v_url := app.pick_url(p_url);
+    if p_in_reader is null then perform app.refuse('bad_value'); end if;
+    v_in := p_in_reader and p_kind not in ('pending', 'none', 'presentation');
+    if (p_kind, p_print_when, v_note, v_url, v_in)
+       is not distinct from (v_l.sources_kind, v_l.print_when, v_l.sources_note, v_l.presentation_url, v_l.in_reader) then
+      return;
+    end if;
+    update public.lessons
+       set sources_kind = p_kind, print_when = p_print_when, sources_note = v_note, presentation_url = v_url, in_reader = v_in,
+           version = version + 1, updated_by = v_me
+     where id = v_l.id;
+  end
+  $$;
+
+-- Logistics marks an approved payment paid (or not yet).
+create or replace function public.set_paid(p_lesson bigint, p_paid boolean) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l  public.lessons := app.stage_lesson(p_lesson);
+    v_me bigint := app.require_logistics(v_l.edition_id);
+  begin
+    if v_l.pay_amount is null or v_l.approval <> 'approved' then perform app.refuse('payment_not_approved'); end if;
+    if p_paid is null then perform app.refuse('bad_value'); end if;
+    if (v_l.paid_at is not null) = p_paid then return; end if;
+    update public.lessons
+       set paid_at = case when p_paid then now() end, version = version + 1, updated_by = v_me
+     where id = v_l.id;
+  end
+  $$;
+
+-- Pickup and driver, for the people app.may_see_transport names (the same who
+-- read them). All five replaced; the log says which fields changed, never to what.
+create or replace function public.set_transport_details(
+  p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean default false)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l      public.lessons;
+    v_old    public.transport_details;
+    v_addr   text;
+    v_time   text;
+    v_name   text;
+    v_phone  text;
+    v_arr    boolean := coalesce(p_arranged, false);
+    v_fields text[];
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    select * into v_l from public.lessons where id = p_lesson;
+    if v_l.id is null then perform app.refuse('stale'); end if;
+    if not app.may_see_transport(p_lesson) then perform app.refuse('transport_hidden'); end if;
+    if v_l.transport = 'none' then perform app.refuse('no_transport'); end if;
+    v_addr  := app.clean_line(p_pickup_address, 200);
+    v_time  := app.clean_line(p_pickup_time, 60);
+    v_name  := app.clean_line(p_driver_name, 80);
+    v_phone := app.clean_line(p_driver_phone, 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+
+    select * into v_old from public.transport_details where lesson_id = p_lesson for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when v_addr is distinct from v_old.pickup_address then 'pickup_address' end,
+        case when v_time is distinct from v_old.pickup_time then 'pickup_time' end,
+        case when v_name is distinct from v_old.driver_name then 'driver_name' end,
+        case when v_phone is distinct from v_old.driver_phone then 'driver_phone' end,
+        case when v_arr is distinct from coalesce(v_old.arranged, false) then 'arranged' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    insert into public.transport_details (lesson_id, pickup_address, pickup_time, driver_name, driver_phone, arranged)
+    values (p_lesson, v_addr, v_time, v_name, v_phone, v_arr)
+    on conflict (lesson_id) do update
+      set pickup_address = excluded.pickup_address, pickup_time = excluded.pickup_time, driver_name = excluded.driver_name,
+          driver_phone = excluded.driver_phone, arranged = excluded.arranged;
+    perform app.log_event(v_l.edition_id, 'lessons', p_lesson, 'transport', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- The summary message's template (DESIGN «תוצרים» 3): the instructor's own
+-- wording, pasted from last year's tracking sheet — never seeded, empty until
+-- then. One per edition, in editions.settings (start_edition carries it over).
+create or replace function public.set_confirm_template(p_edition bigint, p_body text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v text;
+  begin
+    perform app.require_edition_admin(p_edition);
+    v := app.clean_block(p_body, 4000);
+    update public.editions
+       set settings = case when v is null then settings - 'confirm_template'
+                           else settings || jsonb_build_object('confirm_template', v) end
+     where id = p_edition;
+  end
+  $$;
+
+-- The escorts' «משהו שחשוב לדעת» phrases, by the lesson fact each applies to
+-- (src/domain/escorts.ts composes a lesson's duty notes from them).
+create or replace function public.set_duty_phrases(p_edition bigint, p_phrases jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v jsonb;
+  begin
+    perform app.require_edition_admin(p_edition);
+    v := app.clean_duty_phrases(p_phrases);
+    update public.editions
+       set settings = case when jsonb_array_length(v) = 0 then settings - 'duty_phrases'
+                           else settings || jsonb_build_object('duty_phrases', v) end
+     where id = p_edition;
+  end
+  $$;
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -2156,6 +2637,22 @@ grant execute on function public.hand_over(bigint, bigint, text) to authenticate
 grant execute on function public.answer_handover(bigint, boolean, text) to authenticated;
 grant execute on function public.set_availability(bigint, bigint, integer, text, text, text) to authenticated;
 
+-- From placement to arrival (v7): lessons stays SELECT-only (above); every
+-- stage write is a function. transport_details is read through its policy,
+-- whose predicate (may_see_transport) the browser's role runs.
+grant select on public.transport_details to authenticated;
+grant execute on function app.may_see_transport(bigint) to authenticated;
+grant execute on function public.get_transport_details(bigint) to authenticated;
+grant execute on function public.set_transport_details(bigint, text, text, text, text, boolean) to authenticated;
+grant execute on function public.set_payment(bigint, integer, numeric, text) to authenticated;
+grant execute on function public.decide_payments(bigint[], integer[], text, text) to authenticated;
+grant execute on function public.mark_confirm_sent(bigint, integer) to authenticated;
+grant execute on function public.set_escort(bigint, integer, bigint, boolean, text) to authenticated;
+grant execute on function public.set_sources(bigint, integer, text, text, text, text, boolean) to authenticated;
+grant execute on function public.set_paid(bigint, boolean) to authenticated;
+grant execute on function public.set_confirm_template(bigint, text) to authenticated;
+grant execute on function public.set_duty_phrases(bigint, jsonb) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -2164,8 +2661,8 @@ grant execute on function public.set_availability(bigint, bigint, integer, text,
 -- reaches only a subscriber whose RLS lets them SELECT the row; a DELETE goes
 -- to every signed-in subscriber of the table, carrying the primary key only —
 -- so a table with personal data (speaker_contacts, members, activity,
--- editions, roster) is never published, and is taken out if someone added it
--- by hand.
+-- editions, roster, transport_details) is never published, and is taken out if
+-- someone added it by hand.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -2181,7 +2678,7 @@ begin
     raise warning 'supabase_realtime publishes whole schemas, personal-data tables included — recreate it empty (create publication supabase_realtime;) and run this file again';
     return;
   end if;
-  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster'] loop
+  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

@@ -17,7 +17,8 @@ export type WarningKind =
   | "declined_pitch"
   | "fixed_overlap"
   | "outside_window"
-  | "missing_info";
+  | "missing_info"
+  | "escort_gap";
 
 export interface Warning {
   key: string;
@@ -32,6 +33,8 @@ export interface Warning {
 export const DEFAULT_MAX_CATEGORY_PER_DAY = 3;
 /** Two lessons count as back-to-back when at most this many minutes separate them. */
 export const BACK_TO_BACK_GAP = 30;
+/** «הצעה» — an escort needs at least this many minutes between two lessons (DESIGN, כללים רכים). */
+export const ESCORT_MIN_GAP = 30;
 
 export function warningsFor(week: Week): Warning[] {
   const out: Warning[] = [];
@@ -129,6 +132,29 @@ export function warningsFor(week: Week): Warning[] {
     }
     if (a.status === "declined" && p.state !== "accepted") {
       push({ kind: "declined_pitch", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "סירב", "סירבה")} השנה, ועדיין ${byGender(s.gender, "מוצע", "מוצעת")} כאן` });
+    }
+  }
+
+  // An escort with two lessons too close together — or at the same time. On
+  // the week's clock (day × 1440 + minute), so 05:00 → 06:30 the next morning counts too.
+  const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
+  const byEscort = new Map<number, typeof live>();
+  for (const l of live) if (l.escort_roster_id != null) byEscort.set(l.escort_roster_id, [...(byEscort.get(l.escort_roster_id) ?? []), l]);
+  for (const [rid, ls] of byEscort) {
+    const sorted = [...ls].sort((a, b) => a.day * 1440 + a.start_min - (b.day * 1440 + b.start_min) || a.id - b.id);
+    for (let i = 1; i < sorted.length; i++) {
+      const [a, b] = [sorted[i - 1], sorted[i]];
+      const gap = b.day * 1440 + b.start_min - (a.day * 1440 + a.end_min);
+      if (gap >= ESCORT_MIN_GAP) continue;
+      const who = `«${rosterName.get(rid) ?? "מלווה"}»`;
+      const when = `${DAY_NAMES[b.day]} ${fmtRange(b.start_min, b.end_min)}`;
+      const message =
+        gap < 0
+          ? `${who} מלווה שני שיעורים חופפים (${when})`
+          : gap === 0
+            ? `${who} מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP} דקות)`
+            : `${who} מלווה שני שיעורים עם ${gap} דקות ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP})`;
+      push({ kind: "escort_gap", severity: "warn", day: b.day, lessonIds: [a.id, b.id], message });
     }
   }
 

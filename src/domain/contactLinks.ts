@@ -34,3 +34,18 @@ export function mailHref(email: string | null | undefined): string | null {
   const e = (email ?? "").trim();
   return /^[^ @]+@[^ @]+\.[^ @]+$/.test(e) ? `mailto:${e}` : null;
 }
+
+/**
+ * WhatsApp with a message ready to send: to the speaker's number when the
+ * caller may see it (wa.me/<number>?text=), else to a chat they pick
+ * (wa.me/?text=). Nothing is sent by the site — WhatsApp opens with the text.
+ */
+export function whatsappTextHref(text: string, phone?: string | null): string {
+  return `${waHref(phone) ?? "https://wa.me/"}?text=${encodeURIComponent(text)}`;
+}
+
+/** mailto: with a subject and the message (lines as CRLF, RFC 6068); no address when it is not the caller's to see. */
+export function mailtoHref(email: string | null | undefined, subject: string, body: string): string {
+  const to = mailHref(email) ?? "mailto:";
+  return `${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\r?\n/g, "\r\n"))}`;
+}

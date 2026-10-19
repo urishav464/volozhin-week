@@ -5,10 +5,10 @@ import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
-import type { ApproachStatus, Vetting, Week } from "../../src/domain/types";
+import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vetting, Week } from "../../src/domain/types";
 import {
-  APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, FOREIGN_ROOM, lessonKey, matchesRead,
-  MEMBERS, type Normal, poolLine, ROOMS, SPEAKERS, speakerLabel, type Step,
+  APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE,
+  lessonKey, lessonLine, matchesRead, MEMBERS, type Normal, poolLine, ROOMS, ROSTER, SPEAKERS, speakerLabel, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -28,6 +28,7 @@ export function engineDriver(): Driver {
     lessonSpeakers: [],
     pitches: [],
     team: MEMBERS.map((m, i) => ({ id: i + 1, display_name: m.name, gender: null, role: m.role })),
+    roster: ROSTER.map((r, i) => ({ id: i + 1, full_name: r.name, gender: r.gender })),
   };
   const speakerId = (label: string) => week.speakers.find((s) => speakerLabel(s) === label)?.id ?? -1;
   for (const [i, a] of APPROACHES.entries()) {
@@ -37,7 +38,7 @@ export function engineDriver(): Driver {
     const a = week.approaches.find((x) => x.speaker_id === speakerId(v.speaker))!;
     week.availability.push({ id: i + 1, approach_id: a.id, day: v.day as Day, from_min: v.from, to_min: v.to, kind: v.kind, note: v.note });
   }
-  const shared: PoolShared = { contacts: Object.fromEntries(Object.entries(CONTACTS).map(([label, c]) => [speakerId(label), { ...c }])), log: [] };
+  const shared: PoolShared = { contacts: Object.fromEntries(Object.entries(CONTACTS).map(([label, c]) => [speakerId(label), { ...c }])), log: [], transport: {} };
 
   const roomId = (name?: string) => (name === FOREIGN_ROOM ? 999 : name ? week.rooms.find((r) => r.name === name)!.id : week.rooms.find((r) => r.is_default)!.id);
   const lessonAt = ([day, start, room]: At) =>
@@ -48,6 +49,12 @@ export function engineDriver(): Driver {
     return l && a ? week.pitches.find((p) => p.lesson_id === l.id && p.approach_id === a.id) : undefined;
   };
   const approachOf = (label: string) => week.approaches.find((a) => a.speaker_id === speakerId(label));
+  const traineeId = (name: string | null) => (name == null ? null : name === FOREIGN_TRAINEE ? 999 : (week.roster.find((r) => r.full_name === name)?.id ?? -1));
+  /** A lesson by place, and its version less `staleBy`. */
+  const at = (place: At, staleBy = 0) => {
+    const l = lessonAt(place);
+    return { id: l?.id ?? -1, version: (l?.version ?? 0) - staleBy };
+  };
 
   return {
     async run(step: Step): Promise<string> {
@@ -101,6 +108,31 @@ export function engineDriver(): Driver {
         } else if ("handOver" in step) e.handOver(approachOf(step.handOver)?.id ?? -1, step.to == null ? null : memberId(step.to), step.note ?? null);
         else if ("answerHandOver" in step) e.answerHandOver(approachOf(step.answerHandOver)?.id ?? -1, step.accept, step.note ?? null);
         else if ("avail" in step) e.setAvailability(speakerId(step.avail), step.day, step.part as DayPart, step.kind as "can" | "cannot" | null, step.note ?? null);
+        // ---- from placement to arrival
+        else if ("pay" in step) {
+          const l = at(step.pay, step.staleBy);
+          e.setPayment(l.id, l.version, step.amount, step.transport as Transport);
+        } else if ("decide" in step) {
+          e.decidePayments(step.decide.map((p) => at(p, step.staleBy)).map((l) => ({ lesson_id: l.id, version: l.version })), step.decision as "approved", step.note ?? null);
+        } else if ("sent" in step) {
+          const l = at(step.sent, step.staleBy);
+          e.markConfirmSent(l.id, l.version);
+        } else if ("escort" in step) {
+          const l = at(step.escort, step.staleBy);
+          e.setEscort(l.id, l.version, { roster_id: traineeId(step.trainee), self_intro: step.selfIntro as boolean, escort_note: step.note ?? null });
+        } else if ("sources" in step) {
+          const l = at(step.sources, step.staleBy);
+          e.setSources(l.id, l.version, {
+            sources_kind: step.kind as SourcesKind, print_when: step.print as PrintWhen, sources_note: step.note ?? null, presentation_url: step.url ?? null, in_reader: step.inReader as boolean,
+          });
+        } else if ("paid" in step) e.setPaid(at(step.paid).id, step.value as boolean);
+        else if ("readTransport" in step) return transportRead(e.transportOf(at(step.readTransport).id));
+        else if ("setTransport" in step) {
+          e.setTransport(at(step.setTransport).id, {
+            pickup_address: step.address ?? null, pickup_time: step.time ?? null, driver_name: step.driver ?? null, driver_phone: step.phone ?? null, arranged: step.arranged ?? false,
+          });
+        } else if ("template" in step) e.setConfirmTemplate(step.template);
+        else if ("duty" in step) e.setDutyPhrases(step.duty as DutyPhrase[]);
         return "ok";
       } catch (err) {
         if (err instanceof CommandError) return err.code;
@@ -120,10 +152,12 @@ export function engineDriver(): Driver {
       const member = (id: number | null) => (id == null ? "-" : MEMBERS[id - 1].key);
       const cat = (id: number | null) => (id == null ? "-" : week.categories.find((c) => c.id === id)!.name);
       const approachSpeaker = (id: number) => sp(week.approaches.find((a) => a.id === id)!.speaker_id);
+      const trainee = (id: number | null) => (id == null ? "-" : (week.roster.find((r) => r.id === id)?.full_name ?? `#${id}`));
+      const memberOf = (id: unknown) => member(id == null ? null : Number(id));
       return {
         lessons: week.lessons
           .filter((l) => l.state !== "cancelled")
-          .map((l) => `${key(l.id)}|${l.kind}|${l.state}|t=${l.title ?? "-"}|c=${cat(l.category_id)}|a=${l.audience ?? "-"}|tm=${l.teach_min ?? "-"}|p=${l.parallel_reason ?? "-"}|rc=${l.needs_reconfirm}|v=${l.version}`)
+          .map((l) => lessonLine(key(l.id), l, cat(l.category_id), memberOf, trainee(l.escort_roster_id)))
           .sort(),
         pitches: week.pitches.map((p) => `${key(p.lesson_id)}|${approachSpeaker(p.approach_id)}|${p.state}|by=${member(p.proposed_by)}`).sort(),
         approaches: week.approaches.map((a) => `${sp(a.speaker_id)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|v=${a.version}`).sort(),
@@ -131,6 +165,8 @@ export function engineDriver(): Driver {
         pool: week.speakers.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
         availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
+        transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
+        edition: editionLines(week.edition.settings),
       };
     },
 

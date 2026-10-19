@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { warningsFor } from "./warnings";
+import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek, pitch } from "../testing/week";
+import { ESCORT_MIN_GAP, warningsFor } from "./warnings";
 
 const kinds = (w: ReturnType<typeof emptyWeek>) => warningsFor(w).map((x) => x.kind).sort();
 
@@ -94,5 +94,31 @@ describe("warningsFor", () => {
     addLesson(w, 2, 960, 1050, { room_id: 2 });
     expect(warningsFor(w)[0].key).toBe(warningsFor(w)[0].key);
     expect(warningsFor(w)[0].key).toMatch(/^parallel:\d+,\d+$/);
+  });
+
+  it("warns when one escort has two lessons less than 30 minutes apart («הצעה») — across midnight too, and at the same time", () => {
+    expect(ESCORT_MIN_GAP).toBe(30);
+    const w = emptyWeek();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    const lesson = (day: 0 | 1 | 2 | 3 | 4, start: number, end: number) => {
+      const l = addLesson(w, day, start, end, { title: "x", category_id: (start % 2) + 1, escort_roster_id: t.id });
+      return closeWith(w, l, addSpeaker(w, start % 2 ? "f" : "m"));
+    };
+    const a = lesson(1, 510, 600);
+    const b = lesson(1, 600, 690); // right after: 0 minutes
+    lesson(1, 870, 960); // 3 hours later: fine
+    const night = lesson(1, 1650, 1740); // 03:30–05:00 …
+    const morning = lesson(2, 390, 435); // … then 06:30 the next day column: 90 minutes, fine
+    const gaps = warningsFor(w).filter((x) => x.kind === "escort_gap");
+    expect(gaps.map((g) => [g.lessonIds, g.severity])).toEqual([[[a.id, b.id], "warn"]]);
+    expect(gaps[0].message).toBe("«חניכה לדוגמה» מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (שני 10:00–11:30; הצעה: לפחות 30 דקות)");
+    expect([night.id, morning.id].some((id) => gaps.some((g) => g.lessonIds.includes(id)))).toBe(false);
+
+    lesson(2, 410, 500); // overlaps the 06:30 opening
+    lesson(3, 600, 690);
+    lesson(3, 710, 780); // 20 minutes
+    const more = warningsFor(w).filter((x) => x.kind === "escort_gap").map((g) => g.message);
+    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים חופפים (שלישי 06:50–08:20)");
+    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים עם 20 דקות ביניהם (רביעי 11:50–13:00; הצעה: לפחות 30)");
   });
 });

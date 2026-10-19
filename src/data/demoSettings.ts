@@ -2,12 +2,12 @@
 // in memory, refusing what the database refuses with the same codes (a second
 // address in the same edition, deleting someone with history, the default
 // room, a used category…). Synthetic people only.
-import type { Category, Edition, Room, TeamMember, Week } from "../domain/types";
+import type { Category, DutyPhrase, Edition, Room, TeamMember, Week } from "../domain/types";
 import { nameKey } from "../domain/nameKey";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
 import type { Engine, PoolShared } from "./engine";
-import { type EditionPatch, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
+import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
 
 const fail = (code: string): never => {
   throw new CommandError(code);
@@ -66,6 +66,10 @@ export class DemoSettings implements SettingsPort {
     if (!this.isGlobalAdmin()) fail("forbidden");
     const weeks = this.weeks();
     if (weeks.some((w) => w.edition.label === v.label)) fail("edition_exists");
+    // the live real edition's template and duty phrases (else the newest's) carry over (start_edition, v7)
+    const prev = weeks
+      .filter((w) => w.edition.kind === "real")
+      .sort((a, b) => Number(b.edition.status !== "archived") - Number(a.edition.status !== "archived") || b.edition.id - a.edition.id)[0]?.edition.settings;
     for (const w of weeks) if (w.edition.kind === "real" && w.edition.status !== "archived") w.edition.status = "archived";
     const edition: Edition = {
       id: nextId(weeks.map((w) => w.edition)),
@@ -75,7 +79,12 @@ export class DemoSettings implements SettingsPort {
       first_day_from: v.first_day_from,
       last_day_until: 1140,
       status: "planning",
-      settings: { lesson_minutes: 75, row_minutes: 90 },
+      settings: {
+        lesson_minutes: 75,
+        row_minutes: 90,
+        ...(prev?.confirm_template != null ? { confirm_template: prev.confirm_template } : {}),
+        ...(prev?.duty_phrases != null ? { duty_phrases: structuredClone(prev.duty_phrases) } : {}),
+      },
     };
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
     return this.done(edition.id);
@@ -136,15 +145,15 @@ export class DemoSettings implements SettingsPort {
     if (m.email === this.s.myEmail && m.role === "admin") fail("self_lockout");
     // app.member_has_history, for everything the demo keeps: the pool's log
     // (the grid's own commands are not logged in memory), approaches, pitches,
-    // who updated a lesson, who vetted a speaker. Lessons' approved_by /
-    // confirm_sent_by and speakers' created_by are not in the demo's week.
+    // who updated a lesson, approved its payment or sent its message, who vetted
+    // a speaker. Speakers' created_by is not in the demo's week.
     const used =
       this.s.shared.log.some((r) => r.actor === id) ||
       this.weeks().some(
         (w) =>
           w.approaches.some((a) => a.owner_member_id === id) ||
           w.pitches.some((p) => p.proposed_by === id) ||
-          w.lessons.some((l) => l.updated_by === id) ||
+          w.lessons.some((l) => l.updated_by === id || l.approved_by === id || l.confirm_sent_by === id) ||
           w.speakers.some((s) => s.vetted_by === id),
       );
     if (used) fail("member_has_history");
@@ -204,9 +213,19 @@ export class DemoSettings implements SettingsPort {
   }
 
   async deleteRoster(id: number): Promise<void> {
-    this.rosterRow(id);
+    const r = this.rosterRow(id);
     this.s.roster = this.s.roster.filter((x) => x.id !== id);
+    // lessons_escort_roster_fk: on delete set null
+    for (const l of this.s.engines.get(r.edition_id)?.week.lessons ?? []) if (l.escort_roster_id === id) l.escort_roster_id = null;
     this.done(null);
+  }
+
+  async rosterEscorts(editionId: number, rosterId: number): Promise<EscortedLesson[]> {
+    const lessons = this.s.engines.get(editionId)?.week.lessons ?? [];
+    return lessons
+      .filter((l) => l.escort_roster_id === rosterId)
+      .map(({ id, day, start_min, end_min, title }) => ({ id, day, start_min, end_min, title }))
+      .sort((a, b) => a.day - b.day || a.start_min - b.start_min || a.id - b.id);
   }
 
   // ------------------------------------------------------------- חדרים
@@ -310,6 +329,22 @@ export class DemoSettings implements SettingsPort {
     this.category(id);
     if (this.weeks().some((w) => w.lessons.some((l) => l.category_id === id))) fail("category_in_use");
     this.s.categories = this.s.categories.filter((c) => c.id !== id);
+    this.done(null);
+  }
+
+  // ------------------------------------------------------------- תבניות (on the edition's engine: the same rules as the database)
+
+  private engineOf(editionId: number): Engine {
+    return this.s.engines.get(editionId) ?? fail("not_member");
+  }
+
+  async setConfirmTemplate(editionId: number, body: string | null): Promise<void> {
+    this.engineOf(editionId).setConfirmTemplate(body);
+    this.done(null);
+  }
+
+  async setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void> {
+    this.engineOf(editionId).setDutyPhrases(phrases);
     this.done(null);
   }
 }
