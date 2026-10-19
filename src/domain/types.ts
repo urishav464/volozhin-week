@@ -33,18 +33,38 @@ export interface Category {
 
 export type Vetting = "pending" | "approved" | "rejected";
 
+/** How a speaker prefers to be reached (the channel only — never the number or address). */
+export type ContactPref = "phone" | "whatsapp" | "email" | "secretary";
+
 /** A person in the cross-year pool. Contact details are NOT here — they live in speaker_contacts. */
 export interface Speaker {
   id: number;
   title: string | null;
+  /** Without the title («פלונית אלמונית»). */
   name: string;
+  /** Tells two people of the same name apart («ירושלים», «מכון X»); required when the name key is taken. */
+  disambiguator: string | null;
+  /** What someone typed — never guessed from the name. */
   gender: Gender | null;
   affiliation: string | null;
   bio_short: string | null;
   topics: string[];
+  contact_pref: ContactPref | null;
   vetted: Vetting;
+  /** The admin who approved or rejected (a members.id), and their word on it — the team sees both. */
+  vetted_by: number | null;
+  vetted_note: string | null;
   retired: boolean;
   name_key: string;
+  version: number;
+}
+
+/** speaker_contacts — reached only through the port's contacts calls, never in a Week or in Realtime. */
+export interface SpeakerContacts {
+  phone: string | null;
+  email: string | null;
+  secretary_note: string | null;
+  notes: string | null;
 }
 
 export type ApproachStatus = "claimed" | "approached" | "positive" | "declined" | "no_answer";
@@ -56,6 +76,8 @@ export interface Approach {
   owner_member_id: number | null;
   status: ApproachStatus;
   avail_note: string | null;
+  /** A hand-over («העברה») the handler offered this member, waiting for their answer. */
+  offered_to: number | null;
   version: number;
 }
 
@@ -129,6 +151,8 @@ export interface EditionSettings {
   lesson_minutes?: number;
   row_minutes?: number;
   max_category_per_day?: number;
+  /** The titles a speaker may carry this edition; absent = DEFAULT_TITLES (src/data/speakerRules.ts). */
+  titles?: string[];
 }
 
 export interface Edition {

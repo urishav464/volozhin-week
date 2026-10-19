@@ -3,9 +3,11 @@ import type { Category, Edition, Room, Week } from "../domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "../lib/schema";
 import type { CellTarget, LessonPatch, ReshapeOp, WeekCommands } from "./commands";
 import { DemoSettings, type DemoStore } from "./demoSettings";
-import { demoWeek } from "./demoWeek";
-import { type Actor, Engine } from "./engine";
+import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
+import { demoContacts, demoHistory, demoLog, demoWeek } from "./demoWeek";
+import { type Actor, Engine, type PoolShared } from "./engine";
 import type { DataPort } from "./port";
+import type { HistoryLesson } from "./speakers";
 import type { MemberRow, RosterEntry } from "./settings";
 import type { WhoAmI } from "./types";
 
@@ -14,21 +16,26 @@ const DEMO_EMAIL = "demo@example.org";
 // Synthetic data only — never a real name, phone or address. The grid's
 // commands run on the same engine the parity tests hold against the SQL, so
 // the demo behaves like production; nothing leaves the browser tab. Each
-// edition has its own engine (a new one opens from «הגדרות»); the pool, the
-// categories and the team are shared, as in the database.
-export class DemoPort implements DataPort, DemoStore {
+// edition has its own engine (a new one opens from «הגדרות»); the pool (its
+// speakers, contacts and log), the categories and the team are shared, as in
+// the database. The demo user is the global admin (member 1).
+export class DemoPort implements DataPort, DemoStore, DemoPool {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
   readonly settings: DemoSettings;
+  readonly speakers: DemoSpeakers;
+  readonly shared: PoolShared;
+  readonly history: Record<number, HistoryLesson[]> = demoHistory();
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[] = [];
   categories: Category[];
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly actor: Actor = { memberId: 1, role: "admin" }) {
+  constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
     const week = demoWeek();
-    this.engines.set(week.edition.id, new Engine(week, actor));
+    this.shared = { contacts: demoContacts(), log: demoLog(week) };
+    this.engines.set(week.edition.id, this.newEngine(week));
     this.categories = structuredClone(week.categories);
     // The demo team, with placeholder addresses (example.org never delivers).
     this.members = week.team.map((t, i) => ({
@@ -38,6 +45,11 @@ export class DemoPort implements DataPort, DemoStore {
       active: true,
     }));
     this.settings = new DemoSettings(this);
+    this.speakers = new DemoSpeakers(this);
+  }
+
+  private newEngine(week: Week): Engine {
+    return new Engine(week, this.actor, undefined, this.shared, () => [...this.engines.values()].map((e) => e.week));
   }
 
   addEngine(edition: Edition, room: Room): void {
@@ -47,7 +59,7 @@ export class DemoPort implements DataPort, DemoStore {
       rows: structuredClone(TEMPLATE_2026),
       rooms: [room],
       categories: structuredClone(this.categories),
-      speakers: structuredClone(first.speakers),
+      speakers: first.speakers, // one pool across the years
       approaches: [],
       availability: [],
       lessons: [],
@@ -55,15 +67,31 @@ export class DemoPort implements DataPort, DemoStore {
       pitches: [],
       team: [],
     };
-    this.engines.set(edition.id, new Engine(week, this.actor));
+    this.engines.set(edition.id, this.newEngine(week));
+    this.syncTeams();
+  }
+
+  /** Each engine's team: the active members of its edition and the all-editions ones (public.team) — hand-overs check it. */
+  private syncTeams(): void {
+    for (const e of this.engines.values()) {
+      e.week.team = this.members
+        .filter((m) => m.active && (m.edition_id == null || m.edition_id === e.week.edition.id))
+        .map(({ id, display_name, gender, role }) => ({ id, display_name, gender, role }));
+    }
   }
 
   changed(): void {
     for (const e of this.engines.values()) e.week.categories = structuredClone(this.categories);
+    this.syncTeams();
     this.listeners.forEach((l) => l());
   }
 
-  private engine(editionId: number): Engine {
+  poolChanged(from: Engine): void {
+    for (const e of this.engines.values()) if (e !== from) e.week.speakers = from.week.speakers;
+    this.listeners.forEach((l) => l());
+  }
+
+  engine(editionId: number): Engine {
     return this.engines.get(editionId) ?? [...this.engines.values()][0];
   }
 
@@ -104,6 +132,7 @@ export class DemoPort implements DataPort, DemoStore {
       .map(({ id, display_name, gender, role }) => ({ id, display_name, gender, role }));
     return week;
   }
+
 
   commands(editionId: number): WeekCommands {
     const run = async <T>(fn: () => T): Promise<T> => {

@@ -15,14 +15,18 @@ const EDITION_ADMIN = "edition.admin@example.org";
 const PEER_ADMIN = "peer.admin@example.org";
 
 // What each API role may execute — the complete list. A new browser-callable
-// function means updating this on purpose.
+// function means updating this on purpose. v6 (the speaker pool) added
+// answer_handover … vet_speakers to the public list, and may_see_contacts —
+// the contacts policy's predicate, which the policy runs as the browser's role.
 const ANON_FUNCTIONS = ["ping"];
 const AUTH_PUBLIC_FUNCTIONS = [
-  "close_lesson", "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape",
-  "schema_version", "set_default_room", "set_my_profile", "set_pitch", "start_edition", "team",
-  "unpropose", "update_lesson", "whoami",
+  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "get_speaker_contacts", "hand_over",
+  "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape", "schema_version",
+  "set_approach_status", "set_availability", "set_default_room", "set_my_profile", "set_pitch",
+  "set_speaker_contacts", "speaker_activity", "speaker_history", "speaker_matches", "start_edition",
+  "team", "unpropose", "update_lesson", "update_speaker", "vet_speakers", "whoami",
 ];
-const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_member_id", "my_role", "name_key"];
+const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "may_see_contacts", "my_email", "my_member_id", "my_role", "name_key"];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
   const dbName = `vw_schema_${regime}_${process.pid}`;
@@ -154,7 +158,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(5);
+        expect(w.schema_version).toBe(6);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

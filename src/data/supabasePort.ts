@@ -4,11 +4,13 @@ import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type W
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { SupabaseSettings } from "./supabaseSettings";
+import { SupabaseSpeakers } from "./supabaseSpeakers";
 import { PortError, type WhoAmI } from "./types";
 
 export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
   readonly settings: SupabaseSettings;
+  readonly speakers: SupabaseSpeakers;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -17,6 +19,7 @@ export class SupabasePort implements DataPort {
     // no token lands in the address bar or the browser history.
     this.sb = createClient(url, key, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
     this.settings = new SupabaseSettings(this.sb);
+    this.speakers = new SupabaseSpeakers(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {

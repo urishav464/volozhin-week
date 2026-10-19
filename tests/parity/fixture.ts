@@ -24,7 +24,43 @@ export const SPEAKERS: { name: string; gender: "m" | "f" | null; vetted?: "pendi
   { name: "דלתא", gender: null },
   { name: "הא", gender: "m", vetted: "pending" },
   { name: "וו", gender: "f", retired: true },
+  // the pool (milestone 2): names for «ייתכן שזה…», and a speaker B already handles
+  { name: "פלונית אלמונית", gender: "f" },
+  { name: "יוסף בן שמעון", gender: "m", vetted: "pending" },
+  { name: "זין", gender: "m" },
 ];
+
+/** Contacts some speakers start with — placeholder words only. */
+export const CONTACTS: Record<string, { phone: string | null; email: string | null; secretary_note: string | null; notes: string | null }> = {
+  "אלפא": { phone: "טלפון לדוגמה", email: null, secretary_note: "נתון לדוגמה", notes: null },
+};
+
+/** Approaches the edition starts with (owner by actor key), and their availability rows (an older, hand-entered shape: ranges across parts). */
+export const APPROACHES: { speaker: string; owner: ActorKey; status: "claimed" }[] = [{ speaker: "זין", owner: "B", status: "claimed" }];
+export const AVAILABILITY: { speaker: string; day: number; from: number; to: number; kind: "can" | "cannot"; note: string | null }[] = [
+  { speaker: "זין", day: 2, from: 1200, to: 1830, kind: "can", note: "ערב ולילה" },
+  { speaker: "זין", day: 3, from: 700, to: 1200, kind: "cannot", note: null },
+];
+
+/** A speaker as steps name them: «name», or «name#disambiguator» for a namesake. */
+export function speakerLabel(s: { name: string; disambiguator: string | null }): string {
+  return s.disambiguator ? `${s.name}#${s.disambiguator}` : s.name;
+}
+export function splitLabel(label: string): [string, string | null] {
+  const i = label.indexOf("#");
+  return i < 0 ? [label, null] : [label.slice(0, i), label.slice(i + 1)];
+}
+
+export interface CreateFields {
+  name: string;
+  title?: string | null;
+  disambiguator?: string | null;
+  gender?: string | null;
+  affiliation?: string | null;
+  bio_short?: string | null;
+  topics?: unknown;
+  contact_pref?: string | null;
+}
 
 export const CATEGORIES = ["תנ\"ך", "פילוסופיה"];
 
@@ -43,14 +79,55 @@ export type Step =
   | { as: ActorKey; move: At; to: [number, number, number, string?] }
   | { as: ActorKey; reshape: [number, number]; op: { op: "split_parallel"; count: 2 | 3; reason: string } | { op: "split_time"; parts: number[] } | { op: "merge_next" } | { op: "reset" } }
   | { as: ActorKey; update: At; patch: { title?: string | null; category?: string | null; audience?: string | null; teach_min?: number | null }; staleBy?: number }
-  | { archive: true };
+  | { archive: true }
+  // the speaker pool (CONTRACT.md «The speaker pool») — speakers by label
+  | { as: ActorKey; matches: string }
+  | { as: ActorKey; create: CreateFields; opts?: { claim?: boolean; approve?: boolean; confirmed?: boolean } }
+  | { as: ActorKey; updateSpeaker: string; patch: Record<string, unknown>; staleBy?: number }
+  | { as: ActorKey; vet: string[]; state: string; note?: string | null }
+  | { as: ActorKey; readContacts: string }
+  | { as: ActorKey; setContacts: string; phone?: string | null; email?: string | null; secretary_note?: string | null; notes?: string | null }
+  | { as: ActorKey; claim: string }
+  | { as: ActorKey; setStatus: string; status: string; note?: string | null; staleBy?: number }
+  | { as: ActorKey; handOver: string; to: ActorKey | null; note?: string | null }
+  | { as: ActorKey; answerHandOver: string; accept: boolean; note?: string | null }
+  | { as: ActorKey; avail: string; day: number; part: string; kind: string | null; note?: string | null };
 
 /** The comparable state: everything keyed by natural keys, never by ids. */
 export interface Normal {
   lessons: string[];
   pitches: string[];
   approaches: string[];
+  /** lesson_speakers */
   speakers: string[];
+  /** the speakers themselves */
+  pool: string[];
+  contacts: string[];
+  availability: string[];
+}
+
+const d = (v: unknown) => (v == null ? "-" : String(v));
+
+export function poolLine(s: {
+  name: string; disambiguator: string | null; title: string | null; gender: string | null; affiliation: string | null; bio_short: string | null;
+  topics: string[]; contact_pref: string | null; vetted: string; vetted_note: string | null; retired: boolean; version: number;
+}, vettedBy: string): string {
+  return [speakerLabel(s), `t=${d(s.title)}`, `g=${d(s.gender)}`, `a=${d(s.affiliation)}`, `b=${d(s.bio_short)}`, `tp=${s.topics.join(",")}`,
+    `cp=${d(s.contact_pref)}`, `vt=${s.vetted}`, `vb=${vettedBy}`, `vn=${d(s.vetted_note)}`, `r=${s.retired}`, `v=${s.version}`].join("|");
+}
+
+export function contactsLine(label: string, c: { phone: string | null; email: string | null; secretary_note: string | null; notes: string | null }): string {
+  return `${label}|p=${d(c.phone)}|e=${d(c.email)}|s=${d(c.secretary_note)}|n=${d(c.notes)}`;
+}
+
+/** What a contacts read returns, as one comparable string. */
+export function contactsRead(c: { phone: string | null; email: string | null; secretary_note: string | null; notes: string | null } | null): string {
+  return c == null ? "hidden" : contactsLine("seen", c);
+}
+
+/** What a matches read returns, as one comparable string (the order of «similar» ones depends on collation, so sorted). */
+export function matchesRead(list: { name: string; disambiguator: string | null; match: string }[]): string {
+  return list.map((m) => `${speakerLabel(m)}:${m.match}`).sort().join(",") || "none";
 }
 
 export function lessonKey(l: { day: number; start_min: number; end_min: number; room: string }) {

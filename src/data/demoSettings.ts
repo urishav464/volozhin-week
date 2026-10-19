@@ -6,7 +6,7 @@ import type { Category, Edition, Room, TeamMember, Week } from "../domain/types"
 import { nameKey } from "../domain/nameKey";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
-import type { Engine } from "./engine";
+import type { Engine, PoolShared } from "./engine";
 import { type EditionPatch, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
 
 const fail = (code: string): never => {
@@ -17,6 +17,8 @@ const fail = (code: string): never => {
 export interface DemoStore {
   readonly myEmail: string;
   readonly engines: Map<number, Engine>;
+  /** The pool's contacts and log (the demo's activity). */
+  readonly shared: PoolShared;
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[];
   categories: Category[];
@@ -132,15 +134,19 @@ export class DemoSettings implements SettingsPort {
   async deleteMember(id: number): Promise<void> {
     const m = this.member(id);
     if (m.email === this.s.myEmail && m.role === "admin") fail("self_lockout");
-    // app.member_has_history, for every column the demo keeps: activity, lessons'
-    // approved_by / confirm_sent_by and speakers' created_by / vetted_by are not
-    // in the demo's week (src/domain/types.ts), so nothing there can name anyone.
-    const used = this.weeks().some(
-      (w) =>
-        w.approaches.some((a) => a.owner_member_id === id) ||
-        w.pitches.some((p) => p.proposed_by === id) ||
-        w.lessons.some((l) => l.updated_by === id),
-    );
+    // app.member_has_history, for everything the demo keeps: the pool's log
+    // (the grid's own commands are not logged in memory), approaches, pitches,
+    // who updated a lesson, who vetted a speaker. Lessons' approved_by /
+    // confirm_sent_by and speakers' created_by are not in the demo's week.
+    const used =
+      this.s.shared.log.some((r) => r.actor === id) ||
+      this.weeks().some(
+        (w) =>
+          w.approaches.some((a) => a.owner_member_id === id) ||
+          w.pitches.some((p) => p.proposed_by === id) ||
+          w.lessons.some((l) => l.updated_by === id) ||
+          w.speakers.some((s) => s.vetted_by === id),
+      );
     if (used) fail("member_has_history");
     this.s.members = this.s.members.filter((x) => x.id !== id);
     this.done(null);

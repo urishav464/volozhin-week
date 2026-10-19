@@ -1,9 +1,13 @@
 // The demo edition: synthetic people only («מרצה 07»), no dates (TBD), and every
 // shape last year's grid had — a parallel pair, a 60+30 split, an all-night
-// merge, memorial slots — so the decision gate exercises them all.
+// merge, memorial slots — so the decision gate exercises them all. The pool's
+// demo (milestone 2) adds a speaker for every «המרצים שלי» group, a hand-over
+// waiting for the demo user, a few contacts made of placeholder words (never
+// a number or address that could be someone's) and a past edition's lessons.
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
-import type { Approach, Category, Gender, Lesson, LessonSpeaker, Pitch, Speaker, Week } from "../domain/types";
+import type { Approach, Category, Gender, Lesson, LessonSpeaker, Pitch, Speaker, SpeakerContacts, Week } from "../domain/types";
+import type { ActivityEntry, HistoryLesson } from "./speakers";
 
 export const DEMO_CATEGORIES: Category[] = [
   ["תנ\"ך", "#8a5a2b"],
@@ -31,13 +35,18 @@ export function demoWeek(): Week {
       id: i + 1,
       title,
       name: `מרצה ${n}`,
+      disambiguator: null,
       gender: i === 59 ? null : gender, // one unknown, so the "gender missing" path shows
       affiliation: "מוסד לדוגמה",
       bio_short: `מלמד/ת ${cat.name} (נתון לדוגמה)`,
       topics: [cat.name],
+      contact_pref: null,
       vetted: i >= 55 ? "pending" : "approved",
+      vetted_by: i >= 55 ? null : 1,
+      vetted_note: null,
       retired: false,
       name_key: `מרצה ${n}`,
+      version: 1,
     };
   });
 
@@ -49,10 +58,10 @@ export function demoWeek(): Week {
   let approachId = 0;
   let pitchId = 0;
 
-  const approachOf = (speakerId: number, status: Approach["status"] = "approached", owner = 1 + (speakerId % 4)) => {
+  const approachOf = (speakerId: number, status: Approach["status"] = "approached", owner = 1 + (speakerId % 4)): Approach => {
     let a = approaches.find((x) => x.speaker_id === speakerId);
     if (!a) {
-      a = { id: ++approachId, speaker_id: speakerId, owner_member_id: owner, status, avail_note: null, version: 1 };
+      a = { id: ++approachId, speaker_id: speakerId, owner_member_id: owner, status, avail_note: null, offered_to: null, version: 1 };
       approaches.push(a);
     }
     return a;
@@ -124,9 +133,17 @@ export function demoWeek(): Week {
   // Memorial slots: placeholders only — names of the fallen are entered by the instructor, never seeded.
   for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 780, 795, { kind: "memorial", title: "זמן זיכרון" });
 
+  // «המרצים שלי» for the demo user (member 1): one speaker in each group the grid has not filled.
+  approachOf(32, "claimed", 1); // לפנות
+  approachOf(36, "no_answer", 1); // מחכה לתשובה
+  approachOf(28, "positive", 1); // לסגור שעה
+  approachOf(13, "approached", 2).offered_to = 1; // a hand-over waiting for the demo user's answer
+
+  // Availability chips: Sunday morning «לא», Tuesday evening and night «יכול/ה».
   const availability = [
     { id: 1, approach_id: approachOf(9).id, day: 0 as Day, from_min: 390, to_min: 780, kind: "cannot" as const, note: "דוגמה: לא בבקרים" },
-    { id: 2, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1200, to_min: 1830, kind: "can" as const, note: null },
+    { id: 2, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1140, to_min: 1440, kind: "can" as const, note: null },
+    { id: 3, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1440, to_min: 1830, kind: "can" as const, note: null },
   ];
 
   return {
@@ -152,4 +169,47 @@ export function demoWeek(): Week {
       { id: 5, display_name: "לוגיסטיקה (הדגמה)", gender: null, role: "logistics" },
     ],
   };
+}
+
+/** Contacts for the demo's sheet: placeholder words, and addresses at example.org (which never delivers). */
+export function demoContacts(): Record<number, SpeakerContacts> {
+  const one = (n: number, extra: Partial<SpeakerContacts> = {}): SpeakerContacts => ({
+    phone: "טלפון לדוגמה",
+    email: `speaker${String(n).padStart(2, "0")}@example.org`,
+    secretary_note: null,
+    notes: null,
+    ...extra,
+  });
+  return {
+    4: one(4),
+    8: one(8, { secretary_note: "דרך המזכירות (נתון לדוגמה)" }),
+    12: one(12, { notes: "מעדיף/ה הודעה לפני שיחה (נתון לדוגמה)" }),
+    28: one(28, { email: null }),
+    32: one(32, { phone: null }),
+  };
+}
+
+/** Lessons a few demo speakers taught in a past edition — synthetic, like the rest of the demo. */
+export function demoHistory(): Record<number, HistoryLesson[]> {
+  const past = (speaker: number, day: Day, start: number, title: string | null): [number, HistoryLesson[]] => [
+    speaker,
+    [{ edition_id: -1, edition_label: "מחזור קודם (לדוגמה)", edition_kind: "archive", start_date: null, day, start_min: start, end_min: start + 90, title, category: DEMO_CATEGORIES[speaker % DEMO_CATEGORIES.length].name, role: "lead" }],
+  ];
+  return Object.fromEntries([past(1, 0, 510, "שיעור לדוגמה"), past(4, 2, 870, null), past(9, 1, 1200, "שיעור לדוגמה"), past(28, 3, 600, "שיעור לדוגמה")]);
+}
+
+/** A short timeline for the demo's sheet: the hand-over waiting for the demo user (the grid's own commands are not logged in memory). */
+export function demoLog(week: Week, now = Date.now()): ActivityEntry[] {
+  const a = week.approaches.find((x) => x.speaker_id === 13);
+  if (!a) return [];
+  // Days before the demo opens, so what the visitor does next comes after it.
+  const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
+  const row = (id: number, at: string, kind: string, detail: Record<string, unknown>): ActivityEntry => ({
+    id, at, actor: 2, edition_id: week.edition.id, entity: "approaches", entity_id: a.id, kind, detail: { owner: 2, speaker: 13, ...detail },
+  });
+  return [
+    row(1, daysAgo(3), "insert", { status: "claimed" }),
+    row(2, daysAgo(2), "update", { status: "approached", note: "פנייה ראשונה (נתון לדוגמה)" }),
+    row(3, daysAgo(1), "update", { status: "approached", offered_to: 1, note: "הצעה להעביר (נתון לדוגמה)" }),
+  ];
 }

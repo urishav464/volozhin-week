@@ -3,7 +3,10 @@
 // member's Google claims — and committed, like PostgREST would.
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
-import { type At, type Driver, EDITION, FOREIGN_ROOM, lessonKey, MEMBERS, type Normal, ROOMS, SPEAKERS, type Step } from "./fixture";
+import {
+  APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, FOREIGN_ROOM, lessonKey, matchesRead, MEMBERS,
+  type Normal, poolLine, ROOMS, SPEAKERS, speakerLabel, splitLabel, type Step,
+} from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
   const db: pg.Client = await freshDatabase(dbName, "new");
@@ -20,30 +23,48 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   for (const s of SPEAKERS) {
     await db.query("insert into public.speakers (name, gender, vetted, retired) values ($1, $2, $3, $4)", [s.name, s.gender, s.vetted ?? "approved", !!s.retired]);
   }
-
   const one = async (sql: string, params: unknown[]) => (await db.query(sql, params)).rows[0];
+  const memberId = (key: string) => MEMBERS.findIndex((m) => m.key === key) + 1; // inserted in this order: ids 1…
+  const speakerId = async (label: string) => {
+    const [name, dis] = splitLabel(label);
+    const r = await one("select id from public.speakers where name = $1 and coalesce(disambiguator, '') = $2", [name, dis ?? ""]);
+    return r ? Number(r.id) : -1;
+  };
+  for (const [label, c] of Object.entries(CONTACTS)) {
+    await db.query("insert into public.speaker_contacts (speaker_id, phone, email, secretary_note, notes) values ($1, $2, $3, $4, $5)", [await speakerId(label), c.phone, c.email, c.secretary_note, c.notes]);
+  }
+  for (const a of APPROACHES) {
+    await db.query("insert into public.approaches (edition_id, speaker_id, owner_member_id, status) values ($1, $2, $3, $4)", [ed, await speakerId(a.speaker), memberId(a.owner), a.status]);
+  }
+  for (const v of AVAILABILITY) {
+    await db.query(
+      "insert into public.availability (approach_id, day, from_min, to_min, kind, note) select a.id, $3, $4, $5, $6, $7 from public.approaches a where a.edition_id = $1 and a.speaker_id = $2",
+      [ed, await speakerId(v.speaker), v.day, v.from, v.to, v.kind, v.note],
+    );
+  }
+
   const roomId = async (name?: string) =>
     name === FOREIGN_ROOM ? foreignRoom : Number((await one(name ? "select id from public.rooms where edition_id = $1 and name = $2" : "select id from public.rooms where edition_id = $1 and is_default", name ? [ed, name] : [ed])).id);
   const lessonAt = async ([day, start, room]: At) =>
     one("select id, version from public.lessons where edition_id = $1 and day = $2 and start_min = $3 and room_id = $4 and state <> 'cancelled'", [ed, day, start, await roomId(room)]);
-  const speakerId = async (name: string) => Number((await one("select id from public.speakers where name = $1", [name])).id);
   const pitchOf = async (speaker: string, at: At) => {
     const l = await lessonAt(at);
     if (!l) return -1;
     const p = await one("select p.id from public.pitches p join public.approaches a on a.id = p.approach_id where p.lesson_id = $1 and a.speaker_id = $2", [l.id, await speakerId(speaker)]);
     return p ? Number(p.id) : -1;
   };
+  const approachOf = async (label: string) => one("select id, version from public.approaches where edition_id = $1 and speaker_id = $2", [ed, await speakerId(label)]);
 
-  /** One RPC, as a member, committed — or rolled back with the contract's code. */
-  async function call(actor: string, sql: string, params: unknown[]): Promise<string> {
+  /** One RPC, as a member, committed — or rolled back with the contract's code. `read` turns its first column into the result. */
+  async function call(actor: string, sql: string, params: unknown[], read?: (v: unknown) => string): Promise<string> {
     const m = MEMBERS.find((x) => x.key === actor)!;
     await db.query("begin");
     try {
       await db.query("set local role authenticated");
       await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(m.email))]);
-      await db.query(sql, params);
+      const r = await db.query(sql, params);
       await db.query("commit");
-      return "ok";
+      return read ? read(Object.values(r.rows[0])[0]) : "ok";
     } catch (e) {
       await db.query("rollback");
       const err = e as { code?: string; message: string };
@@ -83,14 +104,54 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           o.op === "split_time" ? o.parts : null,
         ]);
       }
-      // update
-      const l = await lessonAt(step.update);
-      const patch: Record<string, unknown> = { ...step.patch };
-      if ("category" in patch) {
-        patch.category_id = patch.category == null ? null : Number((await one("select id from public.categories where name = $1", [patch.category])).id);
-        delete patch.category;
+      if ("update" in step) {
+        const l = await lessonAt(step.update);
+        const patch: Record<string, unknown> = { ...step.patch };
+        if ("category" in patch) {
+          patch.category_id = patch.category == null ? null : Number((await one("select id from public.categories where name = $1", [patch.category])).id);
+          delete patch.category;
+        }
+        return call(step.as, "select public.update_lesson($1, $2, $3)", [l?.id ?? -1, (l?.version ?? 0) - (step.staleBy ?? 0), JSON.stringify(patch)]);
       }
-      return call(step.as, "select public.update_lesson($1, $2, $3)", [l?.id ?? -1, (l?.version ?? 0) - (step.staleBy ?? 0), JSON.stringify(patch)]);
+      // ---- the pool
+      if ("matches" in step) return call(step.as, "select public.speaker_matches($1)", [step.matches], (v) => matchesRead(v as { name: string; disambiguator: string | null; match: string }[]));
+      if ("readContacts" in step) {
+        return call(step.as, "select public.get_speaker_contacts($1)", [await speakerId(step.readContacts)], (v) => contactsRead(v as Parameters<typeof contactsRead>[0]));
+      }
+      if ("create" in step) {
+        const o = step.opts ?? {};
+        return call(step.as, "select public.create_speaker($1, $2::jsonb, $3, $4, $5)", [ed, JSON.stringify(step.create), !!o.claim, !!o.approve, !!o.confirmed]);
+      }
+      if ("updateSpeaker" in step) {
+        const id = await speakerId(step.updateSpeaker);
+        const s = await one("select version from public.speakers where id = $1", [id]);
+        return call(step.as, "select public.update_speaker($1, $2, $3, $4::jsonb)", [ed, id, (s?.version ?? 0) - (step.staleBy ?? 0), JSON.stringify(step.patch)]);
+      }
+      if ("vet" in step) {
+        const ids: number[] = [];
+        for (const label of step.vet) ids.push(await speakerId(label));
+        return call(step.as, "select public.vet_speakers($1::bigint[], $2, $3)", [ids, step.state, step.note ?? null]);
+      }
+      if ("setContacts" in step) {
+        return call(step.as, "select public.set_speaker_contacts($1, $2, $3, $4, $5)", [
+          await speakerId(step.setContacts), step.phone ?? null, step.email ?? null, step.secretary_note ?? null, step.notes ?? null,
+        ]);
+      }
+      if ("claim" in step) return call(step.as, "select public.claim_speaker($1, $2)", [ed, await speakerId(step.claim)]);
+      if ("setStatus" in step) {
+        const a = await approachOf(step.setStatus);
+        return call(step.as, "select public.set_approach_status($1, $2, $3, $4)", [a?.id ?? -1, (a?.version ?? 0) - (step.staleBy ?? 0), step.status, step.note ?? null]);
+      }
+      if ("handOver" in step) {
+        const a = await approachOf(step.handOver);
+        return call(step.as, "select public.hand_over($1, $2, $3)", [a?.id ?? -1, step.to == null ? null : memberId(step.to), step.note ?? null]);
+      }
+      if ("answerHandOver" in step) {
+        const a = await approachOf(step.answerHandOver);
+        return call(step.as, "select public.answer_handover($1, $2, $3)", [a?.id ?? -1, step.accept, step.note ?? null]);
+      }
+      // avail
+      return call(step.as, "select public.set_availability($1, $2, $3, $4, $5, $6)", [ed, await speakerId(step.avail), step.day, step.part, step.kind, step.note ?? null]);
     },
 
     async state(): Promise<Normal> {
@@ -101,20 +162,28 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const byId = new Map(lessons.map((l) => [Number(l.id), lessonKey(l)]));
       const member = (id: number | null) => (id == null ? "-" : MEMBERS.find((_m, i) => i + 1 === Number(id))?.key ?? `#${id}`);
       const pitches = (await db.query(`
-        select p.lesson_id, p.state, p.proposed_by, s.name from public.pitches p
+        select p.lesson_id, p.state, p.proposed_by, s.name, s.disambiguator from public.pitches p
           join public.approaches a on a.id = p.approach_id join public.speakers s on s.id = a.speaker_id
          where p.edition_id = $1`, [ed])).rows;
       const approaches = (await db.query(`
-        select a.*, s.name from public.approaches a join public.speakers s on s.id = a.speaker_id where a.edition_id = $1`, [ed])).rows;
+        select a.*, s.name, s.disambiguator from public.approaches a join public.speakers s on s.id = a.speaker_id where a.edition_id = $1`, [ed])).rows;
       const speakers = (await db.query(`
-        select x.lesson_id, x.role, s.name from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id where x.edition_id = $1`, [ed])).rows;
+        select x.lesson_id, x.role, s.name, s.disambiguator from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id where x.edition_id = $1`, [ed])).rows;
+      const pool = (await db.query("select * from public.speakers")).rows;
+      const contacts = (await db.query("select c.*, s.name, s.disambiguator from public.speaker_contacts c join public.speakers s on s.id = c.speaker_id")).rows;
+      const availability = (await db.query(`
+        select v.*, s.name, s.disambiguator from public.availability v join public.approaches a on a.id = v.approach_id
+          join public.speakers s on s.id = a.speaker_id where a.edition_id = $1`, [ed])).rows;
       return {
         lessons: lessons
           .map((l) => `${lessonKey(l)}|${l.kind}|${l.state}|t=${l.title ?? "-"}|c=${l.cat ?? "-"}|a=${l.audience ?? "-"}|tm=${l.teach_min ?? "-"}|p=${l.parallel_reason ?? "-"}|rc=${l.needs_reconfirm}|v=${l.version}`)
           .sort(),
-        pitches: pitches.map((p) => `${byId.get(Number(p.lesson_id))}|${p.name}|${p.state}|by=${member(p.proposed_by)}`).sort(),
-        approaches: approaches.map((a) => `${a.name}|owner=${member(a.owner_member_id)}|${a.status}|v=${a.version}`).sort(),
-        speakers: speakers.map((x) => `${byId.get(Number(x.lesson_id))}|${x.name}|${x.role}`).sort(),
+        pitches: pitches.map((p) => `${byId.get(Number(p.lesson_id))}|${speakerLabel(p)}|${p.state}|by=${member(p.proposed_by)}`).sort(),
+        approaches: approaches.map((a) => `${speakerLabel(a)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|v=${a.version}`).sort(),
+        speakers: speakers.map((x) => `${byId.get(Number(x.lesson_id))}|${speakerLabel(x)}|${x.role}`).sort(),
+        pool: pool.map((s) => poolLine(s, member(s.vetted_by))).sort(),
+        contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
+        availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
       };
     },
 

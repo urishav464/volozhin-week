@@ -28,13 +28,16 @@ export function emptyWeek(): Week {
 let seq = 1000;
 
 export function addSpeaker(w: Week, gender: Gender | null, name = `מרצה ${seq}`): Speaker {
-  const s: Speaker = { id: ++seq, title: null, name, gender, affiliation: null, bio_short: null, topics: [], vetted: "approved", retired: false, name_key: name };
+  const s: Speaker = {
+    id: ++seq, title: null, name, disambiguator: null, gender, affiliation: null, bio_short: null, topics: [], contact_pref: null,
+    vetted: "approved", vetted_by: null, vetted_note: null, retired: false, name_key: name, version: 1,
+  };
   w.speakers.push(s);
   return s;
 }
 
 export function addApproach(w: Week, s: Speaker, status: Approach["status"] = "approached"): Approach {
-  const a: Approach = { id: ++seq, speaker_id: s.id, owner_member_id: 1, status, avail_note: null, version: 1 };
+  const a: Approach = { id: ++seq, speaker_id: s.id, owner_member_id: 1, status, avail_note: null, offered_to: null, version: 1 };
   w.approaches.push(a);
   return a;
 }

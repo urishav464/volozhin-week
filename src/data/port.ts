@@ -1,6 +1,7 @@
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
 import type { SettingsPort } from "./settings";
+import type { SpeakerPort } from "./speakers";
 import type { WhoAmI } from "./types";
 
 // Everything the screens need from storage goes through this interface. Two
@@ -33,4 +34,6 @@ export interface DataPort {
 
   /** The «הגדרות» screens: editions, team, roster, rooms, categories (src/data/settings.ts). */
   readonly settings: SettingsPort;
+  /** The speaker pool: create (search first), the sheet, contacts, vetting, approaches and hand-overs (src/data/speakers.ts). */
+  readonly speakers: SpeakerPort;
 }

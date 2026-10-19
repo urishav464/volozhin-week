@@ -4,16 +4,42 @@
 //
 // Every command is all-or-nothing: the state is snapshotted first and restored
 // if the command refuses, like a database transaction.
+//
+// The speaker pool (CONTRACT.md «The speaker pool») lives here too: speakers
+// are one cross-year list, so DemoPort hands every edition's engine the same
+// `shared` store (contacts, the pool's log) and the other editions' weeks
+// (`elsewhere`) for the rules that look across years.
+import { dayPart } from "../domain/dayParts";
+import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
-import type { Approach, GridRow, Lesson, Pitch, PitchState, Week } from "../domain/types";
+import { similarity } from "../domain/trigram";
+import type { Approach, ApproachStatus, Availability, GridRow, Lesson, Pitch, PitchState, Speaker, SpeakerContacts, Vetting, Week } from "../domain/types";
 import { LIVE_PITCH } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "./commands";
+import {
+  cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
+} from "./speakerRules";
+import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 
 export interface Actor {
   memberId: number;
   role: "admin" | "content" | "logistics";
+  /** An admin of every edition (members.edition_id null): vets speakers, sees every speaker's contacts. */
+  global?: boolean;
 }
+
+/** What the database keeps outside a Week, shared by every edition's engine in the demo. */
+export interface PoolShared {
+  /** speaker_contacts, by speaker id. */
+  contacts: Record<number, SpeakerContacts>;
+  /** The pool commands' activity rows (the grid's own commands are not logged in memory). */
+  log: ActivityEntry[];
+}
+
+const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
+const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
+const SPEAKER_FIELDS = ["title", "name", "disambiguator", "gender", "affiliation", "bio_short", "topics", "contact_pref", "retired"] as const;
 
 function fail(code: string): never {
   throw new CommandError(code);
@@ -26,6 +52,9 @@ export class Engine {
     public week: Week,
     private readonly actor: Actor,
     private readonly now: () => string = () => new Date().toISOString(),
+    readonly shared: PoolShared = { contacts: {}, log: [] },
+    /** The other editions' weeks (the demo's other engines): closed lessons and contacts across years. */
+    private readonly elsewhere: () => Week[] = () => [],
   ) {}
 
   // ---------------------------------------------------------------- commands
@@ -45,7 +74,7 @@ export class Engine {
       const lesson = this.targetDraft(target);
 
       if (!approach) {
-        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "approached", avail_note: null, version: 1 };
+        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "approached", avail_note: null, offered_to: null, version: 1 };
         this.week.approaches.push(approach);
       } else if (approach.owner_member_id == null || approach.owner_member_id === this.actor.memberId) {
         approach.owner_member_id = this.actor.memberId;
@@ -247,17 +276,312 @@ export class Engine {
     });
   }
 
+  // ---------------------------------------------------------------- the speaker pool (CONTRACT.md «The speaker pool»)
+
+  /** public.speaker_matches: the same name key first, then keys at least SIMILAR_THRESHOLD alike; at most 20. */
+  matches(name: string): SpeakerMatch[] {
+    const key = nameKey(name);
+    if (!key) return [];
+    const min = Math.fround(SIMILAR_THRESHOLD);
+    return this.week.speakers
+      .map((s) => ({ s, sim: similarity(s.name_key, key) }))
+      .filter(({ s, sim }) => s.name_key === key || sim >= min)
+      .sort((a, b) => Number(b.s.name_key === key) - Number(a.s.name_key === key) || b.sim - a.sim || a.s.name.localeCompare(b.s.name, "he") || a.s.id - b.s.id)
+      .slice(0, 20)
+      .map(({ s, sim }) => ({
+        id: s.id, title: s.title, name: s.name, disambiguator: s.disambiguator, gender: s.gender, affiliation: s.affiliation,
+        vetted: s.vetted, retired: s.retired, match: s.name_key === key ? ("same" as const) : ("similar" as const), similarity: sim,
+      }));
+  }
+
+  createSpeaker(input: NewSpeaker, opts: CreateOptions = {}): { speaker_id: number; approach_id: number | null } {
+    return this.tx(() => {
+      this.requireEditor();
+      const name = cleanLine(input.name, LIMITS.name);
+      const key = nameKey(name);
+      if (name == null || !key) fail("name_required");
+      const disambiguator = cleanLine(input.disambiguator, LIMITS.disambiguator);
+      const title = pickTitle(input.title, titlesOf(this.week.edition.settings));
+      const gender = pickGender(input.gender);
+      const affiliation = cleanLine(input.affiliation, LIMITS.affiliation);
+      const bio_short = cleanBlock(input.bio_short, LIMITS.bio_short);
+      const topics = cleanTopics(input.topics);
+      const contact_pref = pickContactPref(input.contact_pref);
+      const approve = !!opts.approve;
+      if (approve && !this.actor.global) fail("forbidden");
+
+      // search first
+      const pool = this.week.speakers;
+      if (pool.some((s) => s.name_key === key && (s.disambiguator ?? "") === (disambiguator ?? ""))) fail("speaker_exists");
+      if (disambiguator == null && pool.some((s) => s.name_key === key)) fail("disambiguator_required");
+      const min = Math.fround(SIMILAR_THRESHOLD);
+      if (!opts.confirmed && pool.some((s) => s.name_key === key || similarity(s.name_key, key) >= min)) fail("speaker_similar");
+
+      const s: Speaker = {
+        id: this.nextId(pool), title, name: name!, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
+        vetted: approve ? "approved" : "pending", vetted_by: approve ? this.actor.memberId : null, vetted_note: null,
+        retired: false, name_key: key, version: 1,
+      };
+      pool.push(s);
+      this.log(this.week.edition.id, "speakers", s.id, "insert", { vetted: s.vetted });
+      let approach_id: number | null = null;
+      if (opts.claim) {
+        const a: Approach = { id: this.nextId(this.week.approaches), speaker_id: s.id, owner_member_id: this.actor.memberId, status: "claimed", avail_note: null, offered_to: null, version: 1 };
+        this.week.approaches.push(a);
+        this.logApproach(a, "insert", null);
+        approach_id = a.id;
+      }
+      return { speaker_id: s.id, approach_id };
+    });
+  }
+
+  updateSpeaker(speakerId: number, version: number, patch: SpeakerPatch): void {
+    this.tx(() => {
+      this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId) ?? fail("stale");
+      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      if (!this.isAdmin() && a?.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (s.version !== version) fail("stale");
+      // A key that is present (and not undefined, which JSON drops) changes; the rest stay.
+      const has = (k: keyof SpeakerPatch) => k in patch && patch[k] !== undefined;
+      const n: Speaker = { ...s };
+      if (has("name")) {
+        const name = cleanLine(patch.name, LIMITS.name);
+        n.name_key = nameKey(name);
+        if (name == null || !n.name_key) fail("name_required");
+        n.name = name!;
+      }
+      if (has("disambiguator")) n.disambiguator = cleanLine(patch.disambiguator, LIMITS.disambiguator);
+      if (has("title")) n.title = pickTitle(patch.title, titlesOf(this.week.edition.settings));
+      if (has("gender")) n.gender = pickGender(patch.gender);
+      if (has("affiliation")) n.affiliation = cleanLine(patch.affiliation, LIMITS.affiliation);
+      if (has("bio_short")) n.bio_short = cleanBlock(patch.bio_short, LIMITS.bio_short);
+      if (has("topics")) n.topics = cleanTopics(patch.topics);
+      if (has("contact_pref")) n.contact_pref = pickContactPref(patch.contact_pref);
+      if (has("retired")) {
+        if (typeof patch.retired !== "boolean") fail("bad_value");
+        if (!this.actor.global) fail("forbidden");
+        n.retired = patch.retired!;
+      }
+
+      if (n.name_key !== s.name_key || (n.disambiguator ?? "") !== (s.disambiguator ?? "")) {
+        const others = this.week.speakers.filter((x) => x.id !== s.id);
+        if (others.some((x) => x.name_key === n.name_key && (x.disambiguator ?? "") === (n.disambiguator ?? ""))) fail("speaker_exists");
+        if (n.disambiguator == null && others.some((x) => x.name_key === n.name_key)) fail("disambiguator_required");
+      }
+      if (((has("gender") && n.gender == null) || (has("retired") && n.retired)) && this.hasLiveClosed(s.id)) fail("lesson_closed");
+
+      const fields = SPEAKER_FIELDS.filter((k) => JSON.stringify(n[k]) !== JSON.stringify(s[k]));
+      if (fields.length === 0) return;
+      Object.assign(s, n, { version: s.version + 1 });
+      this.log(this.week.edition.id, "speakers", s.id, "update", { fields });
+    });
+  }
+
+  /** The quality gate: a global admin approves, rejects or returns to pending — one speaker or many. */
+  vetSpeakers(ids: number[], state: Vetting, note: string | null = null): void {
+    this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (!["approved", "rejected", "pending"].includes(state)) fail("bad_value");
+      const n = cleanLine(note, LIMITS.vetted_note);
+      for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
+        const s = this.week.speakers.find((x) => x.id === id) ?? fail("stale");
+        if (state !== "approved" && this.hasLiveClosed(id)) fail("lesson_closed");
+        if (s.vetted === state && s.vetted_note === n) continue;
+        Object.assign(s, { vetted: state, vetted_note: n, vetted_by: this.actor.memberId, version: s.version + 1 });
+        this.log(null, "speakers", id, "vet", { vetted: state, note: n });
+      }
+    });
+  }
+
+  /** app.may_see_contacts: a global admin, or whoever handles the speaker in a real, non-archived edition. */
+  mayContacts(speakerId: number): boolean {
+    return !!this.actor.global || this.contactsEdition(speakerId) != null;
+  }
+
+  /** public.get_speaker_contacts: null when they are not the caller's to see. */
+  contactsOf(speakerId: number): SpeakerContacts | null {
+    if (!this.mayContacts(speakerId)) return null;
+    return { ...(this.shared.contacts[speakerId] ?? EMPTY_CONTACTS) };
+  }
+
+  setContacts(speakerId: number, c: SpeakerContacts): void {
+    this.tx(() => {
+      if (!this.week.speakers.some((s) => s.id === speakerId)) fail("stale");
+      if (!this.mayContacts(speakerId)) fail("contacts_hidden");
+      const next: SpeakerContacts = {
+        phone: cleanPhone(c.phone),
+        email: cleanContactEmail(c.email),
+        secretary_note: cleanBlock(c.secretary_note, LIMITS.secretary_note),
+        notes: cleanBlock(c.notes, LIMITS.contact_notes),
+      };
+      const old = this.shared.contacts[speakerId] ?? EMPTY_CONTACTS;
+      const fields = (["phone", "email", "secretary_note", "notes"] as const).filter((k) => old[k] !== next[k]);
+      if (fields.length === 0) return;
+      this.shared.contacts[speakerId] = next;
+      this.log(this.contactsEdition(speakerId), "speakers", speakerId, "contacts", { fields });
+    });
+  }
+
+  /** «אני מטפל/ת» without a cell. */
+  claim(speakerId: number): number {
+    return this.tx(() => {
+      this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId);
+      if (!s || s.retired) fail("speaker_retired");
+      let a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      if (!a) {
+        a = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "claimed", avail_note: null, offered_to: null, version: 1 };
+        this.week.approaches.push(a);
+        this.logApproach(a, "insert", null);
+      } else if (a.owner_member_id == null) {
+        Object.assign(a, { owner_member_id: this.actor.memberId, offered_to: null, version: a.version + 1 });
+        this.logApproach(a, "update", null);
+      } else if (a.owner_member_id !== this.actor.memberId) fail("approach_owned");
+      return a.id;
+    });
+  }
+
+  setApproachStatus(approachId: number, version: number, status: ApproachStatus, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      if (!this.isAdmin() && a.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (a.version !== version) fail("stale");
+      if (!STATUSES.includes(status)) fail("bad_value");
+      const n = cleanLine(note, LIMITS.note);
+      const s = this.speakerOf(a);
+      if ((status === "approached" || status === "positive") && s.vetted !== "approved") fail("not_vetted");
+      if (status !== "positive" && this.closedHere(s.id)) fail("lesson_closed");
+      if (status === a.status && n == null) return;
+      // «סירב/ה»: every cell they are still pitched in says so too
+      if (status === "declined") for (const p of this.week.pitches) if (p.approach_id === a.id && LIVE_PITCH.has(p.state)) p.state = "declined";
+      a.status = status;
+      a.version++;
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  /** «העברה»: the handler offers (null withdraws the offer); an admin reassigns at once (null: back to the pool). */
+  handOver(approachId: number, to: number | null, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      const n = cleanLine(note, LIMITS.note);
+      let owner: number | null;
+      let offer: number | null;
+      if (this.isAdmin()) {
+        if (to != null && !this.canHandle(to)) fail("bad_member");
+        owner = to;
+        offer = null;
+      } else if (a.owner_member_id === this.actor.memberId) {
+        if (to != null && (to === this.actor.memberId || !this.canHandle(to))) fail("bad_member");
+        owner = a.owner_member_id;
+        offer = to;
+      } else fail("not_handler");
+      if (owner === a.owner_member_id && offer === a.offered_to && n == null) return;
+      Object.assign(a, { owner_member_id: owner, offered_to: offer, version: a.version + 1 });
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  answerHandOver(approachId: number, accept: boolean, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      const n = cleanLine(note, LIMITS.note);
+      if (a.offered_to == null || a.offered_to !== this.actor.memberId) fail("stale"); // withdrawn, answered, or not mine
+      if (accept) a.owner_member_id = this.actor.memberId;
+      a.offered_to = null;
+      a.version++;
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  /** One availability chip (src/domain/dayParts.ts); rows of the day overlapping the part are cut back to what lies outside it. */
+  setAvailability(speakerId: number, day: number, part: string, kind: "can" | "cannot" | null, note: string | null = null): void {
+    this.tx(() => {
+      this.requireEditor();
+      if (!Number.isInteger(day) || day < 0 || day > 4) fail("bad_value");
+      const range = dayPart(part) ?? fail("bad_value");
+      if (kind != null && kind !== "can" && kind !== "cannot") fail("bad_value");
+      const n = cleanLine(note, LIMITS.avail_note);
+      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      if (!a || !(this.isAdmin() || a.owner_member_id === this.actor.memberId)) fail("not_handler");
+      const hit = this.week.availability
+        .filter((v) => v.approach_id === a!.id && v.day === day && v.from_min < range.to && v.to_min > range.from)
+        .sort((x, y) => x.id - y.id);
+      const rows = this.week.availability.filter((v) => !hit.includes(v));
+      const add = (v: Omit<Availability, "id">) => rows.push({ id: this.nextId([...rows, ...hit]), ...v });
+      for (const { id: _id, ...v } of hit) {
+        if (v.from_min < range.from) add({ ...v, to_min: range.from });
+        if (v.to_min > range.to) add({ ...v, from_min: range.to });
+      }
+      if (kind != null) add({ approach_id: a!.id, day: day as Day, from_min: range.from, to_min: range.to, kind, note: n });
+      this.week.availability = rows;
+      this.log(this.week.edition.id, "approaches", a!.id, "availability", { speaker: speakerId, day, part, kind });
+    });
+  }
+
   // ---------------------------------------------------------------- helpers
 
-  /** Restores IN PLACE on failure, so `engine.week` stays the same object (its rows are the snapshot's). */
+  /** Restores IN PLACE on failure, so `engine.week` and `engine.shared` stay the same objects (their rows are the snapshot's). */
   private tx<T>(fn: () => T): T {
-    const snapshot = structuredClone(this.week);
+    const snapshot = structuredClone({ week: this.week, shared: this.shared });
     try {
       return fn();
     } catch (e) {
-      Object.assign(this.week, snapshot);
+      Object.assign(this.week, snapshot.week);
+      Object.assign(this.shared, snapshot.shared);
       throw e;
     }
+  }
+
+  /** app.contacts_edition: the newest real, non-archived edition in which the actor handles the speaker. */
+  private contactsEdition(speakerId: number): number | null {
+    if (this.actor.role === "logistics") return null;
+    let found: number | null = null;
+    for (const w of [this.week, ...this.elsewhere().filter((x) => x !== this.week)]) {
+      const e = w.edition;
+      if (e.kind !== "real" || e.status === "archived") continue;
+      if (!w.approaches.some((a) => a.speaker_id === speakerId && a.owner_member_id === this.actor.memberId)) continue;
+      if (found == null || e.id > found) found = e.id;
+    }
+    return found;
+  }
+
+  /** app.has_live_closed: a closed lesson in any edition that is not an archive. */
+  private hasLiveClosed(speakerId: number): boolean {
+    return [this.week, ...this.elsewhere().filter((x) => x !== this.week)].some(
+      (w) =>
+        w.edition.kind !== "archive" &&
+        w.edition.status !== "archived" &&
+        w.lessonSpeakers.some((x) => x.speaker_id === speakerId && w.lessons.some((l) => l.id === x.lesson_id && l.state === "closed")),
+    );
+  }
+
+  private closedHere(speakerId: number): boolean {
+    return this.week.lessonSpeakers.some((x) => x.speaker_id === speakerId && this.week.lessons.some((l) => l.id === x.lesson_id && l.state === "closed"));
+  }
+
+  /** app.can_handle: an active content member or admin of this edition (the team holds the active ones). */
+  private canHandle(memberId: number): boolean {
+    return this.week.team.some((t) => t.id === memberId && (t.role === "content" || t.role === "admin"));
+  }
+
+  private log(editionId: number | null, entity: string, entityId: number, kind: string, detail: Record<string, unknown>) {
+    this.shared.log.push({ id: this.nextId(this.shared.log), at: this.now(), actor: this.actor.memberId, edition_id: editionId, entity, entity_id: entityId, kind, detail });
+  }
+
+  /** As the approaches trigger logs a row (app.log_activity). */
+  private logApproach(a: Approach, kind: "insert" | "update", note: string | null) {
+    this.log(this.week.edition.id, "approaches", a.id, kind, {
+      status: a.status,
+      owner: a.owner_member_id,
+      speaker: a.speaker_id,
+      ...(a.offered_to != null ? { offered_to: a.offered_to } : {}),
+      ...(note != null ? { note } : {}),
+    });
   }
 
   private isAdmin() {

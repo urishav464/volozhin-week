@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 5 $$;
+  as $$ select 6 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -354,6 +354,7 @@ create table if not exists public.speakers (
   vetted        text not null default 'pending' check (vetted in ('pending', 'approved', 'rejected')),
   vetted_by     bigint,
   vetted_at     timestamptz,
+  vetted_note   text,                          -- the instructor's word on approving/rejecting (the team sees it)
   retired       boolean not null default false,
   source        text not null default 'manual',
   name_key      text generated always as (app.name_key(name)) stored,
@@ -363,6 +364,9 @@ create table if not exists public.speakers (
   created_at    timestamptz not null default now()
 );
 create unique index if not exists speakers_name_key on public.speakers (name_key, coalesce(disambiguator, ''));
+alter table public.speakers add column if not exists vetted_note text;   -- v6, on a database from before
+-- «ייתכן שזה…» (v6): trigram search over the name's comparison key.
+create index if not exists speakers_name_trgm on public.speakers using gin (name_key extensions.gin_trgm_ops);
 
 -- Contact details: their own table, never in Realtime, readable only by a
 -- global admin and by whoever handles the speaker in the current real edition
@@ -405,10 +409,12 @@ create table if not exists public.approaches (
   owner_member_id bigint references public.members (id) on delete set null,
   status          text not null default 'claimed' check (status in ('claimed', 'approached', 'positive', 'declined', 'no_answer')),
   avail_note      text,
+  offered_to      bigint references public.members (id) on delete set null,   -- a hand-over waiting for its answer (v6)
   version         integer not null default 1,
   created_at      timestamptz not null default now(),
   unique (edition_id, speaker_id)
 );
+alter table public.approaches add column if not exists offered_to bigint references public.members (id) on delete set null;   -- v6
 
 create table if not exists public.availability (
   id          bigint generated always as identity primary key,
@@ -700,6 +706,13 @@ create or replace function app.log_activity() returns trigger
         v_id := old.id; v_ed := old.edition_id; v_det := jsonb_build_object('status', old.status, 'owner', old.owner_member_id, 'speaker', old.speaker_id);
       else
         v_id := new.id; v_ed := new.edition_id; v_det := jsonb_build_object('status', new.status, 'owner', new.owner_member_id, 'speaker', new.speaker_id);
+        -- v6: a hand-over waiting for an answer, and the short note the pool's
+        -- commands pass along (app.set_note sets it around their one UPDATE):
+        -- the log is the approach's history.
+        if new.offered_to is not null then v_det := v_det || jsonb_build_object('offered_to', new.offered_to); end if;
+        if coalesce(current_setting('app.note', true), '') <> '' then
+          v_det := v_det || jsonb_build_object('note', current_setting('app.note', true));
+        end if;
       end if;
     end if;
     insert into public.activity (actor, edition_id, entity, entity_id, kind, detail)
@@ -744,17 +757,33 @@ create policy speakers_read on public.speakers for select to authenticated using
 -- sandbox member may claim any pool speaker there, so they give no access;
 -- an imported 'archive' edition is not real either.
 -- public/privacy.html tells users exactly this — widen the policy, update that page.
--- No function or view returns these columns (load_week leaves them out), so
--- this policy is the only way to them.
+-- The predicate is app.may_see_contacts (v6): one definition for this policy
+-- and for the pool's functions (get_speaker_contacts reads through this
+-- policy; set_speaker_contacts writes for the same people). load_week and
+-- every other function leave these columns out.
+
+-- The real, non-archived edition in which I handle this speaker (content or
+-- admin there), if any — the newest.
+create or replace function app.contacts_edition(p_speaker bigint) returns bigint
+  language sql stable security definer set search_path = ''
+  as $$
+    select a.edition_id from public.approaches a
+      join public.editions e on e.id = a.edition_id
+     where a.speaker_id = p_speaker
+       and e.kind = 'real' and e.status <> 'archived'
+       and a.owner_member_id = app.my_member_id(a.edition_id)
+       and app.my_role(a.edition_id) in ('admin', 'content')
+     order by a.edition_id desc
+     limit 1
+  $$;
+
+create or replace function app.may_see_contacts(p_speaker bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$ select app.is_global_admin() or app.contacts_edition(p_speaker) is not null $$;
+
 drop policy if exists speaker_contacts_read on public.speaker_contacts;
 create policy speaker_contacts_read on public.speaker_contacts for select to authenticated using (
-  (select app.is_global_admin())
-  or exists (select 1 from public.approaches a
-               join public.editions e on e.id = a.edition_id
-              where a.speaker_id = speaker_contacts.speaker_id
-                and e.kind = 'real' and e.status <> 'archived'
-                and a.owner_member_id = app.my_member_id(a.edition_id)
-                and app.my_role(a.edition_id) in ('admin', 'content'))
+  (select app.is_global_admin()) or app.may_see_contacts(speaker_contacts.speaker_id)
 );
 
 drop policy if exists grid_rows_read on public.grid_rows;
@@ -788,12 +817,14 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
       'rooms', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.sort, r.id) from public.rooms r where r.edition_id = p_edition), '[]'),
       'categories', coalesce((select jsonb_agg(to_jsonb(c) order by c.sort, c.id) from public.categories c), '[]'),
       'speakers', coalesce((select jsonb_agg(jsonb_build_object(
-          'id', s.id, 'title', s.title, 'name', s.name, 'gender', s.gender, 'affiliation', s.affiliation,
-          'bio_short', s.bio_short, 'topics', s.topics, 'vetted', s.vetted, 'retired', s.retired, 'name_key', s.name_key)
+          'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
+          'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
+          'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
+          'name_key', s.name_key, 'version', s.version)
           order by s.id) from public.speakers s), '[]'),
       'approaches', coalesce((select jsonb_agg(jsonb_build_object(
           'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
-          'avail_note', a.avail_note, 'version', a.version) order by a.id)
+          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
           from public.approaches a where a.edition_id = p_edition), '[]'),
       'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
           join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
@@ -902,7 +933,8 @@ create or replace function public.unpropose(p_pitch bigint) returns void
     if v_p.id is null then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_p.edition_id);
     select * into v_a from public.approaches where id = v_p.approach_id;
-    if not (app.my_role(v_p.edition_id) = 'admin' or v_a.owner_member_id = v_me or v_p.proposed_by = v_me) then
+    -- coalesce: an approach nobody holds (owner NULL) is no one's — NULL must not slip past the NOT
+    if not (app.my_role(v_p.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false) or coalesce(v_p.proposed_by = v_me, false)) then
       perform app.refuse('forbidden');
     end if;
     if v_p.state not in ('candidate', 'approached') then return; end if;
@@ -926,7 +958,7 @@ create or replace function public.set_pitch(p_pitch bigint, p_state text) return
     v_me := app.require_editor(v_p.edition_id);
     if p_state not in ('candidate', 'approached', 'declined') then perform app.refuse('bad_shape'); end if;
     select * into v_a from public.approaches where id = v_p.approach_id;
-    if not (app.my_role(v_p.edition_id) = 'admin' or v_a.owner_member_id = v_me) then perform app.refuse('forbidden'); end if;
+    if not (app.my_role(v_p.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('forbidden'); end if;
     if (select state from public.lessons where id = v_p.lesson_id) <> 'draft' then perform app.refuse('cell_closed'); end if;
     if v_p.state not in ('candidate', 'approached', 'declined') then return; end if;
     if p_state = 'approached' and (select vetted from public.speakers where id = v_a.speaker_id) <> 'approved' then
@@ -951,7 +983,7 @@ create or replace function public.close_lesson(p_pitch bigint) returns void
     if v_p.id is null then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_p.edition_id);
     select * into v_a from public.approaches where id = v_p.approach_id for update;
-    if not (app.my_role(v_p.edition_id) = 'admin' or v_a.owner_member_id = v_me) then perform app.refuse('forbidden'); end if;
+    if not (app.my_role(v_p.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('forbidden'); end if;
     select * into v_l from public.lessons where id = v_p.lesson_id for update;
     if v_l.state <> 'draft' or v_p.state not in ('candidate', 'approached') then perform app.refuse('cell_closed'); end if;
     select * into v_s from public.speakers where id = v_a.speaker_id;
@@ -1397,6 +1429,626 @@ create policy categories_update on public.categories for update to authenticated
 drop policy if exists categories_delete on public.categories;
 create policy categories_delete on public.categories for delete to authenticated using ((select app.is_global_admin()));
 
+-- =============================================================================
+-- Milestone 2 (v6) — the speaker pool. Semantics: docs/CONTRACT.md «The speaker
+-- pool»; the in-memory twin is src/data/engine.ts, and tests/parity holds the
+-- two together. As in the grid, the browser keeps SELECT only on speakers,
+-- speaker_contacts, approaches and availability: every write below is a
+-- SECURITY DEFINER function that checks who is asking and refuses with a code
+-- src/errors.ts has the Hebrew for.
+--   create_speaker        search first: the same name key needs a
+--                         disambiguator, a similar one (trigram ≥ 0.6, «הצעה»)
+--                         a confirmation
+--   update_speaker        the handler in the edition, or an admin
+--   vet_speakers          a global admin, one or many at once, with a note
+--   get/set_speaker_contacts   app.may_see_contacts — the contacts policy's people
+--   claim_speaker, set_approach_status, hand_over, answer_handover,
+--   set_availability      one handler per speaker per edition; every change
+--                         is logged, with an optional short note
+--   speaker_matches, speaker_history, speaker_activity   reads, never a contact
+-- =============================================================================
+
+-- ------------------------------------------------------------- text and lists
+
+-- One line as the pool stores it: runs of ASCII whitespace → one space,
+-- trimmed; empty → NULL; longer than p_max characters → bad_value.
+-- src/data/speakerRules.ts (cleanLine) is the same rule in the browser.
+create or replace function app.clean_line(p text, p_max integer) returns text
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare v text := btrim(regexp_replace(coalesce(p, ''), '[ \t\n\r\f\v]+', ' ', 'g'));
+  begin
+    if v = '' then return null; end if;
+    if char_length(v) > p_max then perform app.refuse('bad_value'); end if;
+    return v;
+  end
+  $$;
+
+-- A note of several lines: CRLF → LF, ASCII whitespace trimmed at both ends (cleanBlock).
+create or replace function app.clean_block(p text, p_max integer) returns text
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare v text := regexp_replace(replace(coalesce(p, ''), E'\r\n', E'\n'), '^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$', '', 'g');
+  begin
+    if v = '' then return null; end if;
+    if char_length(v) > p_max then perform app.refuse('bad_value'); end if;
+    return v;
+  end
+  $$;
+
+-- The titles a speaker may carry: the edition's settings.titles when it lists
+-- any, else the design's four (DEFAULT_TITLES).
+create or replace function app.titles(p_edition bigint) returns text[]
+  language sql stable security definer set search_path = ''
+  as $$
+    select coalesce(
+      (select array_agg(t.x #>> '{}' order by t.o)
+         from public.editions e,
+              jsonb_array_elements(case when jsonb_typeof(e.settings -> 'titles') = 'array' then e.settings -> 'titles' else '[]'::jsonb end)
+                with ordinality as t(x, o)
+        where e.id = p_edition and jsonb_typeof(t.x) = 'string'),
+      array['ד״ר', 'פרופ׳', 'הרב', 'הרבנית'])
+  $$;
+
+create or replace function app.pick_title(p text, p_edition bigint) returns text
+  language plpgsql stable set search_path = ''
+  as $$
+  declare v text := app.clean_line(p, 40);
+  begin
+    if v is not null and not (v = any (app.titles(p_edition))) then perform app.refuse('bad_value'); end if;
+    return v;
+  end
+  $$;
+
+-- Gender is what someone typed — m, f, or unknown (NULL). Never guessed.
+create or replace function app.pick_gender(p text) returns text
+  language plpgsql immutable set search_path = ''
+  as $$
+  begin
+    if p is null or p = '' then return null; end if;
+    if p not in ('m', 'f') then perform app.refuse('bad_value'); end if;
+    return p;
+  end
+  $$;
+
+create or replace function app.pick_contact_pref(p text) returns text
+  language plpgsql immutable set search_path = ''
+  as $$
+  begin
+    if p is null or p = '' then return null; end if;
+    if p not in ('phone', 'whatsapp', 'email', 'secretary') then perform app.refuse('bad_value'); end if;
+    return p;
+  end
+  $$;
+
+-- Free tags: a JSON array of strings, each one line of at most 40 characters;
+-- empty ones and repeats (the first is kept) dropped; at most 10.
+create or replace function app.clean_topics(p jsonb) returns text[]
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare v text[];
+  begin
+    if p is null or jsonb_typeof(p) = 'null' then return '{}'; end if;
+    if jsonb_typeof(p) <> 'array' or exists (select 1 from jsonb_array_elements(p) x where jsonb_typeof(x) <> 'string') then
+      perform app.refuse('bad_value');
+    end if;
+    select coalesce(array_agg(z.t order by z.o), '{}') into v
+      from (select app.clean_line(e.x, 40) as t, min(e.o) as o
+              from jsonb_array_elements_text(p) with ordinality as e(x, o) group by 1) z
+     where z.t is not null;
+    if cardinality(v) > 10 then perform app.refuse('bad_value'); end if;
+    return v;
+  end
+  $$;
+
+-- «ייתכן שזה…»: two name keys this alike (pg_trgm's similarity) are probably
+-- the same person. 0.6 is the design's «הצעה». SIMILAR_THRESHOLD
+-- (src/data/speakerRules.ts) is the same number and src/domain/trigram.ts is
+-- pg_trgm's similarity in the browser; tests/sql/speakers.test.ts holds both equal.
+create or replace function app.similar_threshold() returns real
+  language sql immutable set search_path = ''
+  as $$ select 0.6::real $$;
+
+-- Does the speaker teach a closed lesson in an edition that is still live (not
+-- an archive)? Then un-approving, clearing the gender or retiring them would
+-- break the closing rule (docs/CONTRACT.md), so those are refused.
+create or replace function app.has_live_closed(p_speaker bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select exists (select 1 from public.lesson_speakers x join public.editions e on e.id = x.edition_id
+                    where x.speaker_id = p_speaker and x.active and e.kind <> 'archive' and e.status <> 'archived')
+  $$;
+
+-- May this member handle speakers in the edition (the receiving end of a hand-over)?
+create or replace function app.can_handle(p_member bigint, p_edition bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select exists (select 1 from public.members m
+                    where m.id = p_member and m.active and m.role in ('content', 'admin')
+                      and (m.edition_id = p_edition or m.edition_id is null))
+  $$;
+
+-- The short note of a pool command, read by the approaches trigger
+-- (app.log_activity) for the one UPDATE between two calls: set, update, clear.
+create or replace function app.set_note(p_note text) returns void
+  language sql set search_path = ''
+  as $$ select set_config('app.note', coalesce(p_note, ''), true) $$;
+
+-- A pool event the triggers do not see (a speaker's own changes,
+-- availability): ids, states and field names — never a contact value.
+create or replace function app.log_event(p_edition bigint, p_entity text, p_id bigint, p_kind text, p_detail jsonb) returns void
+  language sql security definer set search_path = ''
+  as $$
+    insert into public.activity (actor, edition_id, entity, entity_id, kind, detail)
+    values (app.my_member_id(p_edition), p_edition, p_entity, p_id, p_kind, coalesce(p_detail, '{}'::jsonb))
+  $$;
+
+-- ------------------------------------------------------------- reads
+
+-- Search first: speakers with the same name key («same»), then those whose key
+-- is at least app.similar_threshold() alike («similar»). Any member.
+create or replace function public.speaker_matches(p_name text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_key text := app.name_key(p_name);
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if v_key = '' then return '[]'::jsonb; end if;
+    -- lets the trigram index (speakers_name_trgm) answer the % below
+    perform set_config('pg_trgm.similarity_threshold', app.similar_threshold()::text, true);
+    return coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', m.id, 'title', m.title, 'name', m.name, 'disambiguator', m.disambiguator, 'gender', m.gender,
+               'affiliation', m.affiliation, 'vetted', m.vetted, 'retired', m.retired,
+               'match', case when m.name_key = v_key then 'same' else 'similar' end, 'similarity', m.sim)
+             order by (m.name_key = v_key) desc, m.sim desc, m.name, m.id)
+        from (select s.id, s.title, s.name, s.disambiguator, s.gender, s.affiliation, s.vetted, s.retired, s.name_key,
+                     extensions.similarity(s.name_key, v_key) as sim
+                from public.speakers s
+               where s.name_key = v_key
+                  or (s.name_key operator(extensions.%) v_key
+                      and extensions.similarity(s.name_key, v_key) >= app.similar_threshold())
+               order by (s.name_key = v_key) desc, sim desc, s.name, s.id
+               limit 20) m), '[]'::jsonb);
+  end
+  $$;
+
+-- Lessons this speaker taught: closed lessons of real and archive editions,
+-- any year, for any member — no contact detail, no payment.
+create or replace function public.speaker_history(p_speaker bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'edition_id', e.id, 'edition_label', e.label, 'edition_kind', e.kind, 'start_date', e.start_date,
+               'day', l.day, 'start_min', l.start_min, 'end_min', l.end_min, 'title', l.title,
+               'category', c.name, 'role', x.role)
+             order by e.id desc, l.day, l.start_min, l.id)
+        from public.lesson_speakers x
+        join public.lessons l on l.id = x.lesson_id
+        join public.editions e on e.id = l.edition_id
+        left join public.categories c on c.id = l.category_id
+       where x.speaker_id = p_speaker and l.state = 'closed' and e.kind in ('real', 'archive')), '[]'::jsonb);
+  end
+  $$;
+
+-- The speaker's timeline: their own events (created, edited, vetted, contacts
+-- changed — field names only), and the approaches and pitches about them in
+-- the editions I can see. Newest first, at most 200.
+create or replace function public.speaker_activity(p_speaker bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', a.id, 'at', a.at, 'actor', a.actor, 'edition_id', a.edition_id,
+               'entity', a.entity, 'entity_id', a.entity_id, 'kind', a.kind, 'detail', a.detail)
+             order by a.at desc, a.id desc)
+        from (select * from public.activity a
+               where (a.entity = 'speakers' and a.entity_id = p_speaker)
+                  or (a.edition_id is not null and app.can_see_edition(a.edition_id) and (
+                        (a.entity = 'approaches' and a.detail ->> 'speaker' = p_speaker::text)
+                     or (a.entity = 'pitches' and a.detail ->> 'approach' in (
+                           select ap.id::text from public.approaches ap where ap.speaker_id = p_speaker))))
+               order by a.at desc, a.id desc
+               limit 200) a), '[]'::jsonb);
+  end
+  $$;
+
+-- Contacts, through the policy (invoker): NULL when they are not mine to see.
+create or replace function public.get_speaker_contacts(p_speaker bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select case when app.may_see_contacts(p_speaker) then
+      coalesce((select jsonb_build_object('phone', c.phone, 'email', c.email, 'secretary_note', c.secretary_note, 'notes', c.notes)
+                  from public.speaker_contacts c where c.speaker_id = p_speaker),
+               '{"phone": null, "email": null, "secretary_note": null, "notes": null}'::jsonb)
+    end
+  $$;
+
+-- ------------------------------------------------------------- the pool
+
+create or replace function public.create_speaker(
+  p_edition bigint, p_fields jsonb, p_claim boolean default false, p_approve boolean default false, p_confirmed boolean default false)
+  returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me     bigint := app.require_editor(p_edition);
+    v_name   text;
+    v_key    text;
+    v_dis    text;
+    v_title  text;
+    v_gender text;
+    v_aff    text;
+    v_bio    text;
+    v_topics text[];
+    v_pref   text;
+    v_ok     boolean := coalesce(p_approve, false);
+    v_id     bigint;
+    v_app    bigint;
+  begin
+    v_name := app.clean_line(p_fields ->> 'name', 120);
+    v_key := app.name_key(v_name);
+    if v_name is null or v_key = '' then perform app.refuse('name_required'); end if;
+    v_dis    := app.clean_line(p_fields ->> 'disambiguator', 60);
+    v_title  := app.pick_title(p_fields ->> 'title', p_edition);
+    v_gender := app.pick_gender(p_fields ->> 'gender');
+    v_aff    := app.clean_line(p_fields ->> 'affiliation', 120);
+    v_bio    := app.clean_block(p_fields ->> 'bio_short', 400);
+    v_topics := app.clean_topics(p_fields -> 'topics');
+    v_pref   := app.pick_contact_pref(p_fields ->> 'contact_pref');
+    if v_ok and not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+
+    -- search first
+    if exists (select 1 from public.speakers where name_key = v_key and coalesce(disambiguator, '') = coalesce(v_dis, '')) then
+      perform app.refuse('speaker_exists');
+    end if;
+    if v_dis is null and exists (select 1 from public.speakers where name_key = v_key) then
+      perform app.refuse('disambiguator_required');
+    end if;
+    if not coalesce(p_confirmed, false) and exists (
+         select 1 from public.speakers s
+          where s.name_key = v_key or extensions.similarity(s.name_key, v_key) >= app.similar_threshold()) then
+      perform app.refuse('speaker_similar');
+    end if;
+
+    begin
+      insert into public.speakers (title, name, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
+                                   vetted, vetted_by, vetted_at, created_by)
+      values (v_title, v_name, v_dis, v_gender, v_aff, v_bio, v_topics, v_pref,
+              case when v_ok then 'approved' else 'pending' end,
+              case when v_ok then app.my_member_id(null) end,
+              case when v_ok then now() end,
+              v_me)
+      returning id into v_id;
+    exception when unique_violation then
+      perform app.refuse('speaker_exists');   -- someone added the same name a moment ago
+    end;
+    perform app.log_event(p_edition, 'speakers', v_id, 'insert',
+                          jsonb_build_object('vetted', case when v_ok then 'approved' else 'pending' end));
+    if coalesce(p_claim, false) then
+      insert into public.approaches (edition_id, speaker_id, owner_member_id, status)
+      values (p_edition, v_id, v_me, 'claimed') returning id into v_app;
+    end if;
+    return jsonb_build_object('speaker_id', v_id, 'approach_id', v_app);
+  end
+  $$;
+
+create or replace function public.update_speaker(p_edition bigint, p_speaker bigint, p_version integer, p_patch jsonb)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me     bigint := app.require_editor(p_edition);
+    v_s      public.speakers;
+    v_n      public.speakers;
+    v_fields text[];
+  begin
+    select * into v_s from public.speakers where id = p_speaker for update;
+    if v_s.id is null then perform app.refuse('stale'); end if;
+    if not (app.my_role(p_edition) = 'admin'
+            or exists (select 1 from public.approaches a
+                        where a.edition_id = p_edition and a.speaker_id = p_speaker and a.owner_member_id = v_me)) then
+      perform app.refuse('not_handler');
+    end if;
+    if v_s.version <> p_version then perform app.refuse('stale'); end if;
+    p_patch := coalesce(p_patch, '{}'::jsonb);
+    v_n := v_s;
+    if p_patch ? 'name' then
+      v_n.name := app.clean_line(p_patch ->> 'name', 120);
+      v_n.name_key := app.name_key(v_n.name);
+      if v_n.name is null or v_n.name_key = '' then perform app.refuse('name_required'); end if;
+    end if;
+    if p_patch ? 'disambiguator' then v_n.disambiguator := app.clean_line(p_patch ->> 'disambiguator', 60); end if;
+    if p_patch ? 'title' then v_n.title := app.pick_title(p_patch ->> 'title', p_edition); end if;
+    if p_patch ? 'gender' then v_n.gender := app.pick_gender(p_patch ->> 'gender'); end if;
+    if p_patch ? 'affiliation' then v_n.affiliation := app.clean_line(p_patch ->> 'affiliation', 120); end if;
+    if p_patch ? 'bio_short' then v_n.bio_short := app.clean_block(p_patch ->> 'bio_short', 400); end if;
+    if p_patch ? 'topics' then v_n.topics := app.clean_topics(p_patch -> 'topics'); end if;
+    if p_patch ? 'contact_pref' then v_n.contact_pref := app.pick_contact_pref(p_patch ->> 'contact_pref'); end if;
+    if p_patch ? 'retired' then
+      if jsonb_typeof(p_patch -> 'retired') <> 'boolean' then perform app.refuse('bad_value'); end if;
+      if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+      v_n.retired := (p_patch ->> 'retired')::boolean;
+    end if;
+
+    if (v_n.name_key, coalesce(v_n.disambiguator, '')) is distinct from (v_s.name_key, coalesce(v_s.disambiguator, '')) then
+      if exists (select 1 from public.speakers where id <> p_speaker and name_key = v_n.name_key
+                    and coalesce(disambiguator, '') = coalesce(v_n.disambiguator, '')) then
+        perform app.refuse('speaker_exists');
+      end if;
+      if v_n.disambiguator is null and exists (select 1 from public.speakers where id <> p_speaker and name_key = v_n.name_key) then
+        perform app.refuse('disambiguator_required');
+      end if;
+    end if;
+    if ((p_patch ? 'gender' and v_n.gender is null) or (p_patch ? 'retired' and v_n.retired)) and app.has_live_closed(p_speaker) then
+      perform app.refuse('lesson_closed');
+    end if;
+
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when v_n.title is distinct from v_s.title then 'title' end,
+        case when v_n.name is distinct from v_s.name then 'name' end,
+        case when v_n.disambiguator is distinct from v_s.disambiguator then 'disambiguator' end,
+        case when v_n.gender is distinct from v_s.gender then 'gender' end,
+        case when v_n.affiliation is distinct from v_s.affiliation then 'affiliation' end,
+        case when v_n.bio_short is distinct from v_s.bio_short then 'bio_short' end,
+        case when v_n.topics is distinct from v_s.topics then 'topics' end,
+        case when v_n.contact_pref is distinct from v_s.contact_pref then 'contact_pref' end,
+        case when v_n.retired is distinct from v_s.retired then 'retired' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    begin
+      update public.speakers
+         set title = v_n.title, name = v_n.name, disambiguator = v_n.disambiguator, gender = v_n.gender,
+             affiliation = v_n.affiliation, bio_short = v_n.bio_short, topics = v_n.topics,
+             contact_pref = v_n.contact_pref, retired = v_n.retired, version = version + 1
+       where id = p_speaker;
+    exception when unique_violation then
+      perform app.refuse('speaker_exists');
+    end;
+    perform app.log_event(p_edition, 'speakers', p_speaker, 'update', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- The quality gate (DESIGN: אישור מרצים). A global admin only; one tap or a batch.
+create or replace function public.vet_speakers(p_speakers bigint[], p_state text, p_note text default null) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_note text;
+    v_id   bigint;
+    v_s    public.speakers;
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    if p_state is null or p_state not in ('approved', 'rejected', 'pending') then perform app.refuse('bad_value'); end if;
+    v_note := app.clean_line(p_note, 300);
+    for v_id in select distinct x from unnest(coalesce(p_speakers, '{}'::bigint[])) as x where x is not null order by 1 loop
+      select * into v_s from public.speakers where id = v_id for update;
+      if v_s.id is null then perform app.refuse('stale'); end if;
+      if p_state <> 'approved' and app.has_live_closed(v_id) then perform app.refuse('lesson_closed'); end if;
+      continue when v_s.vetted = p_state and v_s.vetted_note is not distinct from v_note;
+      update public.speakers
+         set vetted = p_state, vetted_note = v_note, vetted_by = app.my_member_id(null), vetted_at = now(), version = version + 1
+       where id = v_id;
+      perform app.log_event(null, 'speakers', v_id, 'vet', jsonb_build_object('vetted', p_state, 'note', v_note));
+    end loop;
+  end
+  $$;
+
+-- Contacts, for the people app.may_see_contacts names (the same who read them).
+-- All four are replaced; NULL clears one. The log says which fields changed, never to what.
+create or replace function public.set_speaker_contacts(
+  p_speaker bigint, p_phone text, p_email text, p_secretary_note text default null, p_notes text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_old    public.speaker_contacts;
+    v_phone  text;
+    v_email  text;
+    v_sec    text;
+    v_notes  text;
+    v_fields text[];
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not exists (select 1 from public.speakers where id = p_speaker) then perform app.refuse('stale'); end if;
+    if not app.may_see_contacts(p_speaker) then perform app.refuse('contacts_hidden'); end if;
+    v_phone := app.clean_line(p_phone, 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    v_email := app.clean_line(p_email, 120);
+    if v_email is not null and v_email !~ '^[^ @]+@[^ @]+\.[^ @]+$' then perform app.refuse('bad_contact_email'); end if;
+    v_sec   := app.clean_block(p_secretary_note, 300);
+    v_notes := app.clean_block(p_notes, 1000);
+
+    select * into v_old from public.speaker_contacts where speaker_id = p_speaker for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when v_phone is distinct from v_old.phone then 'phone' end,
+        case when v_email is distinct from v_old.email then 'email' end,
+        case when v_sec is distinct from v_old.secretary_note then 'secretary_note' end,
+        case when v_notes is distinct from v_old.notes then 'notes' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    insert into public.speaker_contacts (speaker_id, phone, email, secretary_note, notes)
+    values (p_speaker, v_phone, v_email, v_sec, v_notes)
+    on conflict (speaker_id) do update
+      set phone = excluded.phone, email = excluded.email, secretary_note = excluded.secretary_note, notes = excluded.notes;
+    perform app.log_event(app.contacts_edition(p_speaker), 'speakers', p_speaker, 'contacts', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- ------------------------------------------------------------- approaches (one handler per speaker per edition)
+
+-- «אני מטפל/ת»: take a free speaker (or an approach nobody holds) without a cell.
+create or replace function public.claim_speaker(p_edition bigint, p_speaker bigint) returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me  bigint := app.require_editor(p_edition);
+    v_app public.approaches;
+  begin
+    if not exists (select 1 from public.speakers where id = p_speaker and not retired) then perform app.refuse('speaker_retired'); end if;
+    select * into v_app from public.approaches where edition_id = p_edition and speaker_id = p_speaker for update;
+    if v_app.id is null then
+      begin
+        insert into public.approaches (edition_id, speaker_id, owner_member_id, status)
+        values (p_edition, p_speaker, v_me, 'claimed') returning * into v_app;
+      exception when unique_violation then
+        perform app.refuse('approach_owned');   -- claimed by someone else a moment ago
+      end;
+    elsif v_app.owner_member_id is null then
+      update public.approaches set owner_member_id = v_me, offered_to = null, version = version + 1 where id = v_app.id;
+    elsif v_app.owner_member_id <> v_me then
+      perform app.refuse('approach_owned');
+    end if;
+    return v_app.id;
+  end
+  $$;
+
+create or replace function public.set_approach_status(p_approach bigint, p_version integer, p_status text, p_note text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_a    public.approaches;
+    v_me   bigint;
+    v_note text;
+  begin
+    select * into v_a from public.approaches where id = p_approach for update;
+    if v_a.id is null then perform app.refuse('stale'); end if;
+    v_me := app.require_editor(v_a.edition_id);
+    if not (app.my_role(v_a.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('not_handler'); end if;
+    if v_a.version <> p_version then perform app.refuse('stale'); end if;
+    if p_status is null or p_status not in ('claimed', 'approached', 'positive', 'declined', 'no_answer') then perform app.refuse('bad_value'); end if;
+    v_note := app.clean_line(p_note, 200);
+    if p_status in ('approached', 'positive') and (select vetted from public.speakers where id = v_a.speaker_id) <> 'approved' then
+      perform app.refuse('not_vetted');
+    end if;
+    if p_status <> 'positive' and exists (select 1 from public.lesson_speakers x
+                                           where x.edition_id = v_a.edition_id and x.speaker_id = v_a.speaker_id and x.active) then
+      perform app.refuse('lesson_closed');
+    end if;
+    if p_status = v_a.status and v_note is null then return; end if;
+    -- «סירב/ה»: every cell they are still pitched in says so too
+    if p_status = 'declined' then
+      update public.pitches set state = 'declined' where approach_id = v_a.id and state in ('candidate', 'approached');
+    end if;
+    perform app.set_note(v_note);
+    update public.approaches set status = p_status, version = version + 1 where id = v_a.id;
+    perform app.set_note(null);
+  end
+  $$;
+
+-- «העברה». The handler offers the speaker to another member (NULL withdraws
+-- the offer) and that member answers (answer_handover); an admin reassigns at
+-- once — to NULL, back to the pool.
+create or replace function public.hand_over(p_approach bigint, p_to bigint, p_note text default null) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_a     public.approaches;
+    v_me    bigint;
+    v_note  text;
+    v_owner bigint;
+    v_offer bigint;
+  begin
+    select * into v_a from public.approaches where id = p_approach for update;
+    if v_a.id is null then perform app.refuse('stale'); end if;
+    v_me := app.require_editor(v_a.edition_id);
+    v_note := app.clean_line(p_note, 200);
+    if app.my_role(v_a.edition_id) = 'admin' then
+      if p_to is not null and not app.can_handle(p_to, v_a.edition_id) then perform app.refuse('bad_member'); end if;
+      v_owner := p_to;
+      v_offer := null;
+    elsif coalesce(v_a.owner_member_id = v_me, false) then
+      if p_to is not null and (p_to = v_me or not app.can_handle(p_to, v_a.edition_id)) then perform app.refuse('bad_member'); end if;
+      v_owner := v_a.owner_member_id;
+      v_offer := p_to;
+    else
+      perform app.refuse('not_handler');
+    end if;
+    if (v_owner, v_offer) is not distinct from (v_a.owner_member_id, v_a.offered_to) and v_note is null then return; end if;
+    perform app.set_note(v_note);
+    update public.approaches set owner_member_id = v_owner, offered_to = v_offer, version = version + 1 where id = v_a.id;
+    perform app.set_note(null);
+  end
+  $$;
+
+create or replace function public.answer_handover(p_approach bigint, p_accept boolean, p_note text default null) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_a    public.approaches;
+    v_me   bigint;
+    v_note text;
+  begin
+    select * into v_a from public.approaches where id = p_approach for update;
+    if v_a.id is null then perform app.refuse('stale'); end if;
+    v_me := app.require_editor(v_a.edition_id);
+    v_note := app.clean_line(p_note, 200);
+    -- the offer was withdrawn, answered, or is someone else's
+    if not coalesce(v_a.offered_to = v_me, false) then perform app.refuse('stale'); end if;
+    perform app.set_note(v_note);
+    update public.approaches
+       set owner_member_id = case when coalesce(p_accept, false) then v_me else owner_member_id end,
+           offered_to = null, version = version + 1
+     where id = v_a.id;
+    perform app.set_note(null);
+  end
+  $$;
+
+-- Availability chips: a day × a part of it (morning 06:30–13:00, afternoon
+-- 13:00–19:00, evening 19:00–24:00, night 00:00–06:30 — DAY_PARTS in
+-- src/domain/dayParts.ts) is can / cannot / unknown (NULL), with a note.
+-- Rows of that day overlapping the part are cut back to what lies outside it.
+create or replace function public.set_availability(
+  p_edition bigint, p_speaker bigint, p_day integer, p_part text, p_kind text, p_note text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me   bigint := app.require_editor(p_edition);
+    v_from integer;
+    v_to   integer;
+    v_note text;
+    v_a    public.approaches;
+    r      public.availability;
+  begin
+    if p_day is null or p_day not between 0 and 4 then perform app.refuse('bad_value'); end if;
+    select x.f, x.t into v_from, v_to
+      from (values ('morning', 390, 780), ('afternoon', 780, 1140), ('evening', 1140, 1440), ('night', 1440, 1830)) as x(p, f, t)
+     where x.p = p_part;
+    if v_from is null then perform app.refuse('bad_value'); end if;
+    if p_kind is not null and p_kind not in ('can', 'cannot') then perform app.refuse('bad_value'); end if;
+    v_note := app.clean_line(p_note, 120);
+    select * into v_a from public.approaches where edition_id = p_edition and speaker_id = p_speaker for update;
+    if v_a.id is null or not (app.my_role(p_edition) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then
+      perform app.refuse('not_handler');
+    end if;
+    for r in select * from public.availability
+              where approach_id = v_a.id and day = p_day and from_min < v_to and to_min > v_from order by id loop
+      if r.from_min < v_from then
+        insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, r.from_min, v_from, r.kind, r.note);
+      end if;
+      if r.to_min > v_to then
+        insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, v_to, r.to_min, r.kind, r.note);
+      end if;
+      delete from public.availability where id = r.id;
+    end loop;
+    if p_kind is not null then
+      insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, v_from, v_to, p_kind, v_note);
+    end if;
+    perform app.log_event(p_edition, 'approaches', v_a.id, 'availability',
+                          jsonb_build_object('speaker', p_speaker, 'day', p_day, 'part', p_part, 'kind', p_kind));
+  end
+  $$;
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -1462,10 +2114,29 @@ grant execute on function public.set_default_room(bigint) to authenticated;
 -- roster.name_key is computed as the inserting browser: a pure, immutable helper.
 grant execute on function app.name_key(text) to authenticated;
 
+-- The speaker pool (v6): every write a function; speakers, speaker_contacts,
+-- approaches and availability stay SELECT-only (above). may_see_contacts is
+-- the contacts policy's predicate, so the browser's role runs it.
+grant execute on function app.may_see_contacts(bigint) to authenticated;
+grant execute on function public.speaker_matches(text) to authenticated;
+grant execute on function public.speaker_history(bigint) to authenticated;
+grant execute on function public.speaker_activity(bigint) to authenticated;
+grant execute on function public.get_speaker_contacts(bigint) to authenticated;
+grant execute on function public.create_speaker(bigint, jsonb, boolean, boolean, boolean) to authenticated;
+grant execute on function public.update_speaker(bigint, bigint, integer, jsonb) to authenticated;
+grant execute on function public.vet_speakers(bigint[], text, text) to authenticated;
+grant execute on function public.set_speaker_contacts(bigint, text, text, text, text) to authenticated;
+grant execute on function public.claim_speaker(bigint, bigint) to authenticated;
+grant execute on function public.set_approach_status(bigint, integer, text, text) to authenticated;
+grant execute on function public.hand_over(bigint, bigint, text) to authenticated;
+grant execute on function public.answer_handover(bigint, boolean, text) to authenticated;
+grant execute on function public.set_availability(bigint, bigint, integer, text, text, text) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
--- supabase_realtime publication (created empty in every project). These five
--- are what the grid listens to (src/data/realtime.ts). An insert or update
+-- supabase_realtime publication (created empty in every project). These six
+-- are what the grid listens to (src/data/realtime.ts); availability joined in
+-- v6, for the pool's chips (days and parts of days — no contact detail). An insert or update
 -- reaches only a subscriber whose RLS lets them SELECT the row; a DELETE goes
 -- to every signed-in subscriber of the table, carrying the primary key only —
 -- so a table with personal data (speaker_contacts, members, activity,
@@ -1492,7 +2163,7 @@ begin
       execute format('alter publication supabase_realtime drop table public.%I', t);
     end if;
   end loop;
-  foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers'] loop
+  foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers', 'availability'] loop
     if not exists (select 1 from pg_publication_tables
                     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);
