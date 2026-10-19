@@ -94,7 +94,10 @@ export interface SpeakerPort {
    * (same name, none given), speaker_similar (a similar name, not `confirmed`).
    */
   create(editionId: number, s: NewSpeaker, opts?: CreateOptions): Promise<{ speaker_id: number; approach_id: number | null }>;
-  /** The handler in the edition or an admin; `version` from the Week (stale otherwise). */
+  /**
+   * A global admin; or, in a real edition that is not archived, its admin or the speaker's handler there
+   * (a practice, demo or archived edition gives no right over the pool's record). `version` from the Week (stale otherwise).
+   */
   update(editionId: number, speakerId: number, version: number, patch: SpeakerPatch): Promise<void>;
 
   // ------------------------------------------------ the quality gate (global admin)
@@ -106,7 +109,7 @@ export interface SpeakerPort {
   contacts(speakerId: number): Promise<SpeakerContacts | null>;
   /** The same people only. All four fields are replaced (null clears). */
   setContacts(speakerId: number, c: SpeakerContacts): Promise<void>;
-  /** Closed lessons in real and archived editions, newest edition first. */
+  /** Closed lessons in real and archived editions, newest edition first — a live edition's only for those who can see it. */
   history(speakerId: number): Promise<HistoryLesson[]>;
   /** Newest first. */
   activity(speakerId: number): Promise<ActivityEntry[]>;

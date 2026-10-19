@@ -17,6 +17,8 @@ export interface DemoPool {
   readonly history: Record<number, HistoryLesson[]>;
   /** The engine of an edition (the first one when the id is unknown, as loadWeek does). */
   engine(editionId: number): Engine;
+  /** app.can_see_edition for the demo user: a membership in that edition, or one in every edition. */
+  canSee(editionId: number): boolean;
   /** After a command: the speaker list to every engine, and open screens told. */
   poolChanged(from: Engine): void;
 }
@@ -64,6 +66,8 @@ export class DemoSpeakers implements SpeakerPort {
     const here: HistoryLesson[] = [];
     for (const { week: w } of this.p.engines.values()) {
       if (w.edition.kind !== "real" && w.edition.kind !== "archive") continue;
+      // past years for anyone; a live edition only for whoever may see it (public.speaker_history)
+      if (!(w.edition.kind === "archive" || w.edition.status === "archived" || this.p.canSee(w.edition.id))) continue;
       for (const x of w.lessonSpeakers.filter((y) => y.speaker_id === speakerId)) {
         const l = w.lessons.find((y) => y.id === x.lesson_id && y.state === "closed");
         if (!l) continue;

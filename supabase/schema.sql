@@ -61,7 +61,10 @@ create table if not exists public.editions (
 -- Members — who may sign in, and as what. An e-mail is stored lower-case (the
 -- CHECK) so the comparison in app.my_email() needs no case-folding operator.
 -- edition_id NULL = every edition (meant for admins); otherwise one edition, so
--- last year's team loses access when a new week starts.
+-- last year's team loses that week's grid when a new week starts. The speaker
+-- pool itself (speakers: names, bios, the vetting note) is one list across the
+-- years, readable by every active member — deactivate a row to close it too
+-- (public/privacy.html says so).
 -- -----------------------------------------------------------------------------
 create table if not exists public.members (
   id           bigint generated always as identity primary key,
@@ -1439,7 +1442,8 @@ create policy categories_delete on public.categories for delete to authenticated
 --   create_speaker        search first: the same name key needs a
 --                         disambiguator, a similar one (trigram ≥ 0.6, «הצעה»)
 --                         a confirmation
---   update_speaker        the handler in the edition, or an admin
+--   update_speaker        a global admin, or in a live real edition its admin
+--                         or the speaker's handler there
 --   vet_speakers          a global admin, one or many at once, with a note
 --   get/set_speaker_contacts   app.may_see_contacts — the contacts policy's people
 --   claim_speaker, set_approach_status, hand_over, answer_handover,
@@ -1549,14 +1553,32 @@ create or replace function app.similar_threshold() returns real
   language sql immutable set search_path = ''
   as $$ select 0.6::real $$;
 
--- Does the speaker teach a closed lesson in an edition that is still live (not
--- an archive)? Then un-approving, clearing the gender or retiring them would
--- break the closing rule (docs/CONTRACT.md), so those are refused.
+-- Does the speaker teach a closed lesson in a real edition that is still live
+-- (not archived)? Then un-approving, clearing the gender or retiring them would
+-- break the closing rule (docs/CONTRACT.md), so those are refused. A practice
+-- or demo week never pins a real speaker's vetting: anyone in a sandbox may
+-- close a lesson there, and sandboxes are never archived.
 create or replace function app.has_live_closed(p_speaker bigint) returns boolean
   language sql stable security definer set search_path = ''
   as $$
     select exists (select 1 from public.lesson_speakers x join public.editions e on e.id = x.edition_id
-                    where x.speaker_id = p_speaker and x.active and e.kind <> 'archive' and e.status <> 'archived')
+                    where x.speaker_id = p_speaker and x.active and e.kind = 'real' and e.status <> 'archived')
+  $$;
+
+-- May the caller rewrite the speaker's own record (one row across all years)?
+-- A global admin; or, in a real edition that is not archived, its admin or
+-- whoever handles the speaker there. A practice or demo edition (anyone there
+-- may claim any pool speaker) and an archived one give no such right — the
+-- same editions the contacts rule (app.contacts_edition) counts.
+create or replace function app.may_edit_speaker(p_edition bigint, p_speaker bigint, p_me bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select app.is_global_admin()
+        or exists (select 1 from public.editions e
+                    where e.id = p_edition and e.kind = 'real' and e.status <> 'archived'
+                      and (app.my_role(p_edition) = 'admin'
+                           or exists (select 1 from public.approaches a
+                                       where a.edition_id = p_edition and a.speaker_id = p_speaker and a.owner_member_id = p_me)))
   $$;
 
 -- May this member handle speakers in the edition (the receiving end of a hand-over)?
@@ -1613,8 +1635,10 @@ create or replace function public.speaker_matches(p_name text) returns jsonb
   end
   $$;
 
--- Lessons this speaker taught: closed lessons of real and archive editions,
--- any year, for any member — no contact detail, no payment.
+-- Lessons this speaker taught: closed lessons of real and archive editions —
+-- past years (an archive, or an archived real edition) for any member, a live
+-- edition only for those who can see it, as lessons_read would. No contact
+-- detail, no payment.
 create or replace function public.speaker_history(p_speaker bigint) returns jsonb
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1630,7 +1654,8 @@ create or replace function public.speaker_history(p_speaker bigint) returns json
         join public.lessons l on l.id = x.lesson_id
         join public.editions e on e.id = l.edition_id
         left join public.categories c on c.id = l.category_id
-       where x.speaker_id = p_speaker and l.state = 'closed' and e.kind in ('real', 'archive')), '[]'::jsonb);
+       where x.speaker_id = p_speaker and l.state = 'closed' and e.kind in ('real', 'archive')
+         and (e.kind = 'archive' or e.status = 'archived' or app.can_see_edition(e.id))), '[]'::jsonb);
   end
   $$;
 
@@ -1690,6 +1715,9 @@ create or replace function public.create_speaker(
     v_ok     boolean := coalesce(p_approve, false);
     v_id     bigint;
     v_app    bigint;
+    -- Added from a demo edition (the decision gate): synthetic like the gate's
+    -- own speakers, so unseed_gate.sql takes it away with the gate.
+    v_source text := case when (select kind from public.editions where id = p_edition) = 'demo' then 'synthetic' else 'manual' end;
   begin
     v_name := app.clean_line(p_fields ->> 'name', 120);
     v_key := app.name_key(v_name);
@@ -1718,12 +1746,12 @@ create or replace function public.create_speaker(
 
     begin
       insert into public.speakers (title, name, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
-                                   vetted, vetted_by, vetted_at, created_by)
+                                   vetted, vetted_by, vetted_at, created_by, source)
       values (v_title, v_name, v_dis, v_gender, v_aff, v_bio, v_topics, v_pref,
               case when v_ok then 'approved' else 'pending' end,
               case when v_ok then app.my_member_id(null) end,
               case when v_ok then now() end,
-              v_me)
+              v_me, v_source)
       returning id into v_id;
     exception when unique_violation then
       perform app.refuse('speaker_exists');   -- someone added the same name a moment ago
@@ -1750,11 +1778,7 @@ create or replace function public.update_speaker(p_edition bigint, p_speaker big
   begin
     select * into v_s from public.speakers where id = p_speaker for update;
     if v_s.id is null then perform app.refuse('stale'); end if;
-    if not (app.my_role(p_edition) = 'admin'
-            or exists (select 1 from public.approaches a
-                        where a.edition_id = p_edition and a.speaker_id = p_speaker and a.owner_member_id = v_me)) then
-      perform app.refuse('not_handler');
-    end if;
+    if not app.may_edit_speaker(p_edition, p_speaker, v_me) then perform app.refuse('not_handler'); end if;
     if v_s.version <> p_version then perform app.refuse('stale'); end if;
     p_patch := coalesce(p_patch, '{}'::jsonb);
     v_n := v_s;

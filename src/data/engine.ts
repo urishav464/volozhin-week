@@ -339,8 +339,7 @@ export class Engine {
     this.tx(() => {
       this.requireEditor();
       const s = this.week.speakers.find((x) => x.id === speakerId) ?? fail("stale");
-      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
-      if (!this.isAdmin() && a?.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (!this.mayEditSpeaker(speakerId)) fail("not_handler");
       if (s.version !== version) fail("stale");
       // A key that is present (and not undefined, which JSON drops) changes; the rest stay.
       const has = (k: keyof SpeakerPatch) => k in patch && patch[k] !== undefined;
@@ -550,11 +549,23 @@ export class Engine {
     return found;
   }
 
-  /** app.has_live_closed: a closed lesson in any edition that is not an archive. */
+  /**
+   * app.may_edit_speaker: the speaker's own record is one row across the years, so a global admin
+   * — or, in a real edition that is not archived, its admin or the speaker's handler there.
+   * A practice/demo edition (anyone may claim any pool speaker there) or an archived one gives no such right.
+   */
+  mayEditSpeaker(speakerId: number): boolean {
+    if (this.actor.global) return true;
+    const e = this.week.edition;
+    if (e.kind !== "real" || e.status === "archived") return false;
+    return this.isAdmin() || this.week.approaches.some((a) => a.speaker_id === speakerId && a.owner_member_id === this.actor.memberId);
+  }
+
+  /** app.has_live_closed: a closed lesson in a real edition that is not archived (a sandbox never pins a speaker). */
   private hasLiveClosed(speakerId: number): boolean {
     return [this.week, ...this.elsewhere().filter((x) => x !== this.week)].some(
       (w) =>
-        w.edition.kind !== "archive" &&
+        w.edition.kind === "real" &&
         w.edition.status !== "archived" &&
         w.lessonSpeakers.some((x) => x.speaker_id === speakerId && w.lessons.some((l) => l.id === x.lesson_id && l.state === "closed")),
     );

@@ -1,7 +1,8 @@
 // The speaker sheet's buttons — call, WhatsApp, e-mail — from the contacts as
 // someone typed them. A phone gets a link only with at least 6 digits (the
-// database's own rule, app.clean_phone); a placeholder or a half-typed number
-// stays plain text. Nothing here is stored: the links are built on screen.
+// database's own rule, written in public.set_speaker_contacts; cleanPhone in
+// src/data/speakerRules.ts is its browser twin); a placeholder or a half-typed
+// number stays plain text. Nothing here is stored: the links are built on screen.
 
 /** The digits of a phone as typed («050 …», «+972-…», «(02) …»). */
 export function phoneDigits(phone: string | null | undefined): string {

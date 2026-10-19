@@ -87,7 +87,7 @@ describe("the demo's speaker pool", () => {
   it("keeps a refused command from changing anything, the pool's store included", async () => {
     const port = new DemoPort();
     const before = JSON.stringify([await port.loadWeek(1), port.shared]);
-    expect(await code(port.speakers.vet([1, 9999], "rejected"))).toBe("lesson_closed"); // speaker 1 teaches a closed lesson
+    expect(await code(port.speakers.vet([1, 9999], "rejected"))).toBe("stale"); // speaker 1 changes first, then 9999 is missing
     expect(await code(port.speakers.setAvailability(1, 9, 0, "morning", "can", "x".repeat(121)))).toBe("bad_value");
     expect(JSON.stringify([await port.loadWeek(1), port.shared])).toBe(before);
   });
@@ -98,5 +98,20 @@ describe("the demo's speaker pool", () => {
     expect((await port.loadWeek(1)).availability.filter((v) => v.day === 3)).toMatchObject([{ from_min: 1140, to_min: 1440, kind: "cannot", note: "דוגמה" }]);
     expect((await port.speakers.history(1)).map((h) => h.edition_label)).toEqual(["מחזור קודם (לדוגמה)"]);
     expect(await port.speakers.history(2)).toEqual([]);
+  });
+
+  it("a sandbox's closed lesson pins nothing; a live real edition's does — and shows in the history only to whoever sees that edition", async () => {
+    const port = new DemoPort();
+    // the demo week is a demo edition: speaker 1 teaches a closed lesson there, and may still be rejected
+    expect(await code(port.speakers.vet([1], "rejected", "דוגמה"))).toBe("ok");
+    await port.speakers.vet([1], "approved");
+    const real = await port.settings.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: 510 });
+    const { pitch_id } = await port.commands(real).propose(1, { day: 1, start_min: 510, end_min: 600, room_id: null });
+    await port.commands(real).closeLesson(pitch_id);
+    expect(await code(port.speakers.vet([1], "rejected"))).toBe("lesson_closed");
+    expect((await port.speakers.history(1)).map((h) => h.edition_id)).toContain(real);
+    // a member of the demo edition only (not of every edition) does not see this year's lesson
+    port.members[0].edition_id = 1;
+    expect((await port.speakers.history(1)).map((h) => h.edition_id)).not.toContain(real);
   });
 });

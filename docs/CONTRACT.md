@@ -183,15 +183,20 @@ function in `public` (`search_path = ''`) that checks the caller.
 | phone | at least 6 digits | `bad_phone` |
 | contact email | `^[^ @]+@[^ @]+\.[^ @]+$`, kept as typed | `bad_contact_email` |
 
-**Similar names.** Two name keys are *similar* when pg_trgm's `similarity(a, b) ≥ 0.6` («הצעה»,
-`app.similar_threshold()` = `SIMILAR_THRESHOLD`). `src/domain/trigram.ts` is pg_trgm's similarity
+**Similar names.** Two name keys are *similar* when pg_trgm's `similarity(a, b) ≥ 0.6` — inclusive,
+like pg_trgm's `%` operator («הצעה», `app.similar_threshold()` = `SIMILAR_THRESHOLD`). `src/domain/trigram.ts` is pg_trgm's similarity
 in the browser (lower-case; words of letters and digits; each padded «␣␣word␣»; distinct
 trigrams; shared / (a + b − shared), a 4-byte float).
 
-**A closed lesson stands.** A speaker teaching a closed lesson in an edition that is not an archive
-(kind ≠ `archive`, status ≠ `archived`) cannot be un-approved, have the gender cleared or be
-retired (`lesson_closed`); an approach with a closed lesson **in its edition** can only be
-`positive`.
+**A closed lesson stands.** A speaker teaching a closed lesson in a **live real** edition (kind
+`real`, status ≠ `archived`) cannot be un-approved, have the gender cleared or be retired
+(`lesson_closed`). An archive, an archived edition and a practice or demo week pin nothing in the
+pool. An approach with a closed lesson **in its own edition** can only be `positive` (any kind).
+
+**The pool's record is cross-year.** Who may rewrite a speaker's own fields (`update`) is decided by
+the same editions the contacts rule counts: a global admin anywhere; otherwise only in a real,
+non-archived edition. A practice or demo edition (anyone there may claim any pool speaker) and an
+archived one give no right over the pool.
 
 ## Reads
 
@@ -210,9 +215,11 @@ gets null; no row yet → four nulls. Never in `load_week`, never in Realtime.
 
 ### `history(speaker)` — `speaker_history(p_speaker)` → `jsonb[]`
 
-Any member. The speaker's closed lessons in editions of kind `real` or `archive` (any year, any
-edition — not practice or demo): `edition_id edition_label edition_kind start_date day start_min
-end_min title category role`, newest edition first. No contact, no payment.
+Any member. The speaker's closed lessons in editions of kind `real` or `archive` (not practice or
+demo): past years (an `archive` edition, or one whose status is `archived`) for every member; a live
+edition only when the caller can see it (`app.can_see_edition`, as the `lessons` policy). Fields
+`edition_id edition_label edition_kind start_date day start_min end_min title category role`, newest
+edition first. No contact, no payment.
 
 ### `activity(speaker)` — `speaker_activity(p_speaker)` → `jsonb[]`
 
@@ -233,15 +240,17 @@ In this order:
    same key with no disambiguator given → `disambiguator_required`; unless `confirmed`, the same
    key or a similar one → `speaker_similar`.
 4. Insert: `vetted = 'approved'` (`vetted_by` = the global admin) when `approve`, else `pending`;
-   `created_by` = actor. Logged (`speakers insert`).
+   `created_by` = actor. Logged (`speakers insert`). (Storage only, not in a Week: from a `demo`
+   edition the row's `source` is `synthetic`, so `unseed_gate.sql` removes it with the gate.)
 5. `claim` → an approach in the edition, owner = actor, status `claimed`.
 
 ### `update(edition, speaker, version, patch)` — `update_speaker` → `void`
 
-Content or admin of the edition; the speaker must exist (`stale`); the actor owns its approach in
-the edition, or is admin there (`not_handler`); `version` must match (`stale`). Keys present in
-`patch` (null clears; unknown keys ignored): those of `create`, and `retired` (a JSON boolean,
-`bad_value`; a global admin's, `forbidden`). A new key/disambiguator: taken by another speaker →
+Content or admin of the edition; the speaker must exist (`stale`); the actor is a global admin, or
+the edition is real and not archived and the actor owns the speaker's approach there or is admin
+there (`not_handler` — also for anyone in a practice, demo or archived edition); `version` must
+match (`stale`). Keys present in `patch` (null clears; unknown keys ignored): those of `create`,
+and `retired` (a JSON boolean, `bad_value`; a global admin's, `forbidden`). A new key/disambiguator: taken by another speaker →
 `speaker_exists`; the key taken and no disambiguator → `disambiguator_required`. Clearing the
 gender or retiring under a live closed lesson → `lesson_closed`. Nothing changed → no-op;
 else `version + 1`, logged with the changed field names.

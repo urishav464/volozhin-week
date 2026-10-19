@@ -16,6 +16,9 @@ const A = "a@example.org";
 const B = "b@example.org";
 const L = "logistics@example.org";
 const PRACTICE = "practice@example.org"; // content in a practice edition only
+const DEMO_ADMIN = "demo.admin@example.org"; // admin of a demo edition only
+const OLD = "old@example.org"; // content in last year's real edition (archived), still active
+const OLD_ADMIN = "old.admin@example.org"; // admin of last year's real edition only
 const STRANGER = "stranger@example.org";
 const PHONE = "555 0100 99"; // a phone-shaped value no scanner takes for an Israeli number
 
@@ -36,6 +39,8 @@ describe("the speaker pool", () => {
   let ed: number;
   let practice: number;
   let archive: number;
+  let demo: number;
+  let old: number;
   const member: Record<string, number> = {};
   const sp: Record<string, number> = {};
 
@@ -62,11 +67,16 @@ describe("the speaker pool", () => {
     ed = Number(await commitAs(ADMIN, "select public.start_edition('תשפ\"ז', '2027-02-14', 510)"));
     practice = Number((await db.query("insert into public.editions (label, kind) values ('תרגול', 'practice') returning id")).rows[0].id);
     archive = Number((await db.query("insert into public.editions (label, kind, status) values ('תשפ\"ו', 'archive', 'archived') returning id")).rows[0].id);
-    for (const e of [practice, archive]) {
+    demo = Number((await db.query("insert into public.editions (label, kind) values ('הדגמה', 'demo') returning id")).rows[0].id);
+    old = Number((await db.query("insert into public.editions (label, kind, status) values ('שנה קודמת', 'real', 'archived') returning id")).rows[0].id);
+    for (const e of [practice, archive, demo, old]) {
       await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, 'בית מדרש', true)", [e]);
       await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template", [e]);
     }
-    for (const [email, role, edition] of [[ED_ADMIN, "admin", ed], [A, "content", ed], [B, "content", ed], [L, "logistics", ed], [PRACTICE, "content", practice]] as const) {
+    for (const [email, role, edition] of [
+      [ED_ADMIN, "admin", ed], [A, "content", ed], [B, "content", ed], [L, "logistics", ed], [PRACTICE, "content", practice],
+      [DEMO_ADMIN, "admin", demo], [OLD, "content", old], [OLD_ADMIN, "admin", old],
+    ] as const) {
       member[email] = Number((await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $1, $2, $3) returning id", [email, role, edition])).rows[0].id);
     }
     member[ADMIN] = Number((await db.query("select id from public.members where email = $1", [ADMIN])).rows[0].id);
@@ -81,6 +91,13 @@ describe("the speaker pool", () => {
   afterAll(async () => {
     if (db) await dropDatabase(db, dbName);
   });
+
+  /** A closed lesson written as the owner (like the import, or last year's week). */
+  async function closedLesson(edition: number, speaker: number, day: number, start: number, title: string): Promise<void> {
+    const room = Number((await db.query("select id from public.rooms where edition_id = $1 and is_default", [edition])).rows[0].id);
+    const l = Number((await db.query("insert into public.lessons (edition_id, state, day, start_min, end_min, room_id, title, category_id) values ($1, 'closed', $2, $3, $3 + 90, $4, $5, (select id from public.categories order by sort limit 1)) returning id", [edition, day, start, room, title])).rows[0].id);
+    await db.query("insert into public.lesson_speakers (lesson_id, speaker_id, role, edition_id, span) values ($1, $2, 'lead', $3, 'empty')", [l, speaker, edition]);
+  }
 
   it("exposes the pool's RPCs with the contract's parameter names (src/data/supabaseSpeakers.ts calls them by name)", async () => {
     const sig = async (fn: string) =>
@@ -269,14 +286,8 @@ describe("the speaker pool", () => {
   });
 
   it("shows what a speaker taught in real and archived editions — not a practice week, never a contact", async () => {
-    // written as the owner, like the import and last year's week
-    const lesson = async (edition: number, day: number, start: number, title: string) => {
-      const room = Number((await db.query("select id from public.rooms where edition_id = $1 and is_default", [edition])).rows[0].id);
-      const l = Number((await db.query("insert into public.lessons (edition_id, state, day, start_min, end_min, room_id, title, category_id) values ($1, 'closed', $2, $3, $3 + 90, $4, $5, (select id from public.categories order by sort limit 1)) returning id", [edition, day, start, room, title])).rows[0].id);
-      await db.query("insert into public.lesson_speakers (lesson_id, speaker_id, role, edition_id, span) values ($1, $2, 'lead', $3, 'empty')", [l, sp.past, edition]);
-    };
-    await lesson(archive, 2, 870, "שיעור לדוגמה אשתקד");
-    await lesson(practice, 1, 510, "שיעור תרגול");
+    await closedLesson(archive, sp.past, 2, 870, "שיעור לדוגמה אשתקד");
+    await closedLesson(practice, sp.past, 1, 510, "שיעור תרגול");
     await db.query("insert into public.speaker_contacts (speaker_id, phone) values ($1, 'synthetic-phone')", [sp.past]);
     for (const who of [B, L, PRACTICE]) {
       await as(db, "authenticated", google(who), async (q) => {
@@ -291,6 +302,126 @@ describe("the speaker pool", () => {
     await as(db, "authenticated", google(A), async (q) => {
       expect((await q("select public.speaker_history($1) as h", [sp.s2])).rows[0].h).toEqual([]);
     });
+  });
+
+  it("shows a live edition's lessons in the history only to those who can see it — past years to everyone", async () => {
+    const s = Number((await db.query("insert into public.speakers (name, gender, vetted) values ('מרצה של השנה', 'f', 'approved') returning id")).rows[0].id);
+    await closedLesson(old, s, 2, 870, "שיעור של שנה קודמת");
+    const seen = async (q: (sql: string, params?: unknown[]) => Promise<pg.QueryResult>) =>
+      ((await q("select public.speaker_history($1) as h", [s])).rows[0].h as { edition_id: number; title: string }[]).map((h) => [h.edition_id, h.title]);
+    await as(db, "authenticated", google(A), async (q) => {
+      // this year's lesson, closed through the grid's own commands
+      await q("select public.claim_speaker($1, $2)", [ed, s]);
+      const p = Number((await q("select (public.propose($1, $2, null, 1, 510, 600, null) ->> 'pitch_id')::bigint as p", [ed, s])).rows[0].p);
+      await q("select public.close_lesson($1)", [p]);
+      expect(await seen(q)).toEqual([[old, "שיעור של שנה קודמת"], [ed, null]]);
+      for (const who of [PRACTICE, OLD, DEMO_ADMIN]) {
+        await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(who))]);
+        // they read none of this year's lessons through RLS, and none through the history either
+        expect((await q("select count(*)::int as n from public.lessons where edition_id = $1", [ed])).rows[0].n, who).toBe(0);
+        expect(await seen(q), who).toEqual([[old, "שיעור של שנה קודמת"]]);
+      }
+      for (const who of [B, L, ADMIN]) {
+        await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(who))]);
+        expect(await seen(q), who).toEqual([[old, "שיעור של שנה קודמת"], [ed, null]]);
+      }
+    });
+  });
+
+  it("lets only a live real edition — or a global admin — rewrite the pool's record of a speaker", async () => {
+    const before = (await db.query("select name, gender, affiliation, bio_short, version from public.speakers where id = $1", [sp.s1])).rows[0];
+    const upd = (edition: number, patch: string): [string, unknown[]] =>
+      [`select public.update_speaker($1, $2, (select version from public.speakers where id = $2), '${patch}')`, [edition, sp.s1]];
+    // a practice-only member who claims s1 there (A handles s1 this year)
+    await as(db, "authenticated", google(PRACTICE), async (q) => {
+      await q("select public.claim_speaker($1, $2)", [practice, sp.s1]);
+      expect(await refusal(q(...upd(practice, '{"name": "שם אחר", "gender": "m", "bio_short": "ביו שהוחלף"}')))).toBe("not_handler");
+      expect(await refusal(q(...upd(ed, '{"bio_short": "x"}')))).toBe("not_member");
+    });
+    // a demo edition's admin, without claiming
+    await as(db, "authenticated", google(DEMO_ADMIN), async (q) => {
+      expect(await refusal(q(...upd(demo, '{"name": "שם של הדגמה"}')))).toBe("not_handler");
+    });
+    // last year's admin — even as the handler there
+    await as(db, "authenticated", google(OLD_ADMIN), async (q) => {
+      expect(await refusal(q(...upd(old, '{"affiliation": "מוסד אחר"}')))).toBe("not_handler");
+      await q("select public.claim_speaker($1, $2)", [old, sp.s1]);
+      expect(await refusal(q(...upd(old, '{"affiliation": "מוסד אחר"}')))).toBe("not_handler");
+    });
+    expect((await db.query("select name, gender, affiliation, bio_short, version from public.speakers where id = $1", [sp.s1])).rows[0]).toEqual(before);
+    // this year's handler and admin may; a global admin may from any edition
+    for (const [who, edition] of [[A, ed], [ED_ADMIN, ed], [ADMIN, practice], [ADMIN, old]] as const) {
+      await as(db, "authenticated", google(who), async (q) => {
+        expect(await refusal(q(...upd(edition, '{"affiliation": "מוסד חדש"}'))), `${who} in ${edition}`).toBe("ok");
+      });
+    }
+  });
+
+  it("a closed lesson elsewhere — an archive, last year, a practice week — pins nothing here or in the pool; this year's does", async () => {
+    const s = Number((await db.query("insert into public.speakers (name, gender, vetted) values ('מרצה שלימדה בעבר', 'f', 'approved') returning id")).rows[0].id);
+    await closedLesson(archive, s, 3, 510, "שיעור בארכיון");
+    await closedLesson(old, s, 3, 600, "שיעור אשתקד");
+    await closedLesson(practice, s, 3, 690, "שיעור בתרגול");
+    await as(db, "authenticated", google(A), async (q) => {
+      const a = Number((await q("select public.claim_speaker($1, $2) as a", [ed, s])).rows[0].a);
+      expect(await refusal(q("select public.set_approach_status($1, 1, 'declined', 'לא השנה')", [a]))).toBe("ok");
+      expect(await refusal(q("select public.set_approach_status($1, 2, 'no_answer')", [a]))).toBe("ok");
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(ADMIN))]);
+      expect(await refusal(q("select public.vet_speakers(array[$1::bigint], 'rejected', 'לא מתאים')", [s]))).toBe("ok");
+      expect(await refusal(q("select public.update_speaker($1, $2, (select version from public.speakers where id = $2), '{\"gender\": null, \"retired\": true}')", [ed, s]))).toBe("ok");
+    });
+    await as(db, "authenticated", google(A), async (q) => {
+      await q("select public.claim_speaker($1, $2)", [ed, s]);
+      const p = Number((await q("select (public.propose($1, $2, null, 3, 510, 600, null) ->> 'pitch_id')::bigint as p", [ed, s])).rows[0].p);
+      await q("select public.close_lesson($1)", [p]);
+      const a = (await q("select id, version from public.approaches where edition_id = $1 and speaker_id = $2", [ed, s])).rows[0];
+      expect(await refusal(q("select public.set_approach_status($1, $2, 'declined')", [a.id, a.version]))).toBe("lesson_closed");
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(ADMIN))]);
+      expect(await refusal(q("select public.vet_speakers(array[$1::bigint], 'rejected')", [s]))).toBe("lesson_closed");
+    });
+  });
+
+  it("hands over only to an active content or admin member of the edition; a handler moved to logistics loses the contacts", async () => {
+    const a = Number((await db.query("select id from public.approaches where edition_id = $1 and speaker_id = $2", [ed, sp.s1])).rows[0].id);
+    const handOver = (to: number) =>
+      as(db, "authenticated", google(A), (q) => refusal(q("select public.hand_over($1, $2)", [a, to])));
+    expect(await handOver(member[PRACTICE])).toBe("bad_member"); // another edition's content member
+    expect(await handOver(member[OLD])).toBe("bad_member"); // last year's
+    expect(await handOver(member[L])).toBe("bad_member"); // logistics
+    expect(await handOver(member[B])).toBe("ok");
+    await db.query("update public.members set active = false where id = $1", [member[B]]);
+    try {
+      expect(await handOver(member[B])).toBe("bad_member");
+    } finally {
+      await db.query("update public.members set active = true where id = $1", [member[B]]);
+    }
+
+    await db.query("update public.members set role = 'logistics' where id = $1", [member[A]]);
+    try {
+      await as(db, "authenticated", google(A), async (q) => {
+        expect((await q("select public.get_speaker_contacts($1) as c", [sp.s1])).rows[0].c).toBeNull();
+        expect((await q("select count(*)::int as n from public.speaker_contacts")).rows[0].n).toBe(0);
+        expect(await refusal(q("select public.set_speaker_contacts($1, $2, null)", [sp.s1, PHONE]))).toBe("contacts_hidden");
+      });
+    } finally {
+      await db.query("update public.members set role = 'content' where id = $1", [member[A]]);
+    }
+    await as(db, "authenticated", google(A), async (q) => {
+      expect((await q("select public.get_speaker_contacts($1) as c", [sp.s1])).rows[0].c).not.toBeNull();
+    });
+  });
+
+  it("marks a speaker added from a demo edition synthetic, so unseed_gate.sql takes it with the gate", async () => {
+    await as(db, "authenticated", google(DEMO_ADMIN), async (q) => {
+      const r = (await q("select public.create_speaker($1, '{\"name\": \"מרצה מן ההדגמה\"}', true, false, true) as r", [demo])).rows[0].r;
+      expect((await q("select source from public.speakers where id = $1", [r.speaker_id])).rows[0].source).toBe("synthetic");
+    });
+    for (const [who, edition] of [[PRACTICE, practice], [A, ed]] as const) {
+      await as(db, "authenticated", google(who), async (q) => {
+        const r = (await q("select public.create_speaker($1, '{\"name\": \"מרצה מן התרגול\"}', false, false, true) as r", [edition])).rows[0].r;
+        expect((await q("select source, vetted from public.speakers where id = $1", [r.speaker_id])).rows[0], who).toEqual({ source: "manual", vetted: "pending" });
+      });
+    }
   });
 
   it("two members claiming the same speaker at once: exactly one gets it", async () => {

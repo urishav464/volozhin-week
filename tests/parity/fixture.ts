@@ -1,11 +1,13 @@
 // The base data every parity scenario starts from — synthetic only.
-export type ActorKey = "admin" | "A" | "B" | "L";
+export type ActorKey = "admin" | "A" | "B" | "L" | "E";
 
-export const MEMBERS: { key: ActorKey; email: string; role: "admin" | "content" | "logistics"; name: string }[] = [
-  { key: "admin", email: "admin@example.org", role: "admin", name: "מדריך" },
+/** `global`: an admin of every edition (members.edition_id null); everyone else belongs to the scenario's edition. */
+export const MEMBERS: { key: ActorKey; email: string; role: "admin" | "content" | "logistics"; name: string; global?: true }[] = [
+  { key: "admin", email: "admin@example.org", role: "admin", name: "מדריך", global: true },
   { key: "A", email: "a@example.org", role: "content", name: "חניך א" },
   { key: "B", email: "b@example.org", role: "content", name: "חניך ב" },
   { key: "L", email: "l@example.org", role: "logistics", name: "לוגיסטיקה" },
+  { key: "E", email: "e@example.org", role: "admin", name: "אדמין המחזור" }, // this edition's admin only
 ];
 
 export const ROOMS = [
@@ -80,6 +82,8 @@ export type Step =
   | { as: ActorKey; reshape: [number, number]; op: { op: "split_parallel"; count: 2 | 3; reason: string } | { op: "split_time"; parts: number[] } | { op: "merge_next" } | { op: "reset" } }
   | { as: ActorKey; update: At; patch: { title?: string | null; category?: string | null; audience?: string | null; teach_min?: number | null }; staleBy?: number }
   | { archive: true }
+  /** The edition becomes a practice week (kind 'practice'): the real pool, no right over it. */
+  | { sandbox: true }
   // the speaker pool (CONTRACT.md «The speaker pool») — speakers by label
   | { as: ActorKey; matches: string }
   | { as: ActorKey; create: CreateFields; opts?: { claim?: boolean; approve?: boolean; confirmed?: boolean } }

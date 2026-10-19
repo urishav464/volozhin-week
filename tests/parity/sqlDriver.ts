@@ -18,7 +18,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ('מחזור אחר', 'practice') returning id")).rows[0].id);
   const foreignRoom = Number((await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, $2, true) returning id", [elsewhere, FOREIGN_ROOM])).rows[0].id);
   for (const m of MEMBERS) {
-    await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $2, $3, $4)", [m.email, m.name, m.role, m.role === "admin" ? null : ed]);
+    await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $2, $3, $4)", [m.email, m.name, m.role, m.global ? null : ed]);
   }
   for (const s of SPEAKERS) {
     await db.query("insert into public.speakers (name, gender, vetted, retired) values ($1, $2, $3, $4)", [s.name, s.gender, s.vetted ?? "approved", !!s.retired]);
@@ -76,6 +76,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     async run(step: Step): Promise<string> {
       if ("archive" in step) {
         await db.query("update public.editions set status = 'archived' where id = $1", [ed]);
+        return "ok";
+      }
+      if ("sandbox" in step) {
+        await db.query("update public.editions set kind = 'practice' where id = $1", [ed]);
         return "ok";
       }
       if ("propose" in step) {

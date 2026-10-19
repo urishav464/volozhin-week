@@ -55,9 +55,12 @@ export function engineDriver(): Driver {
         week.edition.status = "archived";
         return "ok";
       }
+      if ("sandbox" in step) {
+        week.edition.kind = "practice";
+        return "ok";
+      }
       const m = MEMBERS.find((x) => x.key === step.as)!;
-      // An admin in the fixture is an admin of every edition (members.edition_id null).
-      const e = new Engine(week, { memberId: memberId(m.key), role: m.role, global: m.role === "admin" }, undefined, shared);
+      const e = new Engine(week, { memberId: memberId(m.key), role: m.role, global: !!m.global }, undefined, shared);
       try {
         if ("propose" in step) {
           const target = "cell" in step

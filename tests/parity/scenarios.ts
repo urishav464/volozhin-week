@@ -92,6 +92,9 @@ export const SCENARIOS: Record<string, Step[]> = {
 
   "an archived edition": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "E", updateSpeaker: "אלפא", patch: { affiliation: "מוסד" } }, // this year's admin edits the pool's record
+    { as: "admin", vet: ["אלפא"], state: "rejected" }, // a closed lesson this year stands
     { archive: true },
     { as: "A", propose: "בטא", cell: [1, 600, 690] },
     { as: "admin", propose: "בטא", cell: [1, 600, 690] },
@@ -99,6 +102,27 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", create: { name: "מרצה חדשה לגמרי" } },
     { as: "A", setStatus: "אלפא", status: "no_answer" },
     { as: "admin", create: { name: "מרצה חדשה לגמרי", gender: "f" } },
+    { as: "E", updateSpeaker: "אלפא", patch: { affiliation: "מוסד אחר" } }, // last year's admin: no longer
+    { as: "E", claim: "דלתא" }, // an admin may still write in an archive…
+    { as: "E", updateSpeaker: "דלתא", patch: { gender: "f" } }, // …but not the pool's record, even as the handler
+    { as: "admin", vet: ["אלפא"], state: "rejected", note: "לא השנה" }, // last year's lesson pins nothing
+    { as: "admin", updateSpeaker: "אלפא", patch: { retired: true } },
+  ],
+
+  "a practice week: the real pool, no right over it": [
+    { sandbox: true },
+    { as: "A", claim: "אלפא" },
+    { as: "A", readContacts: "אלפא" },
+    { as: "A", updateSpeaker: "אלפא", patch: { name: "שם אחר", gender: "m", bio_short: "ביו שהוחלף" } },
+    { as: "E", updateSpeaker: "גמא", patch: { affiliation: "מוסד" } }, // the practice week's admin
+    { as: "admin", updateSpeaker: "גמא", patch: { affiliation: "מוסד" } }, // a global admin, from anywhere
+    { as: "A", create: { name: "מרצה חדשה מתרגול", gender: "f" }, opts: { claim: true } }, // into the real pool, pending
+    { as: "A", updateSpeaker: "מרצה חדשה מתרגול", patch: { bio_short: "ביו" } }, // not even its creator, from here
+    { as: "A", propose: "בטא", cell: [1, 510, 600] },
+    { as: "A", close: "בטא", at: [1, 510] },
+    { as: "A", setStatus: "בטא", status: "declined" }, // its own edition's closed lesson still stands
+    { as: "admin", vet: ["בטא"], state: "rejected", note: "x" }, // a practice lesson pins nothing in the pool
+    { as: "admin", updateSpeaker: "בטא", patch: { gender: null, retired: true } },
   ],
 
   // ------------------------------------------------------------ the speaker pool (milestone 2)

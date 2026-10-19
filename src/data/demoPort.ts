@@ -95,6 +95,10 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
     return this.engines.get(editionId) ?? [...this.engines.values()][0];
   }
 
+  canSee(editionId: number): boolean {
+    return this.members.some((m) => m.active && m.email === DEMO_EMAIL && (m.edition_id == null || m.edition_id === editionId));
+  }
+
   async sessionEmail(): Promise<string | null> {
     return DEMO_EMAIL;
   }
