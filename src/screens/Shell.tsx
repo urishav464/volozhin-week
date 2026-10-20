@@ -21,6 +21,8 @@ interface Props {
   nav?: NavItem[];
   /** The grid needs the whole width; notices and forms stay in a reading column (the signed-in header is always full width). */
   full?: boolean;
+  /** A quiet line under the header (a new version of the site is waiting). */
+  notice?: ReactNode;
   children: ReactNode;
 }
 
@@ -33,7 +35,7 @@ export function sectionActive(item: Pick<NavItem, "to" | "match">, path: string)
 
 const HEADER_BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-md border border-paper/40 px-3 text-sm hover:bg-paper/10";
 
-export function Shell({ demo, user, onSignOut, nav, full = false, children }: Props) {
+export function Shell({ demo, user, onSignOut, nav, full = false, notice, children }: Props) {
   const path = useLocation().pathname;
   return (
     <div className="app-shell min-h-dvh flex flex-col">
@@ -95,7 +97,20 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
           </div>
         </div>
       </header>
+      {notice}
       <main className={`flex-1 mx-auto w-full print:max-w-none print:p-0 ${full ? "max-w-none px-3 py-3" : "max-w-6xl px-4 py-6"}`}>{children}</main>
+    </div>
+  );
+}
+
+/** «גרסה חדשה של האתר זמינה» — the offline shell's update (src/offline/register.ts). Never reloads by itself. */
+export function UpdateBanner({ onApply }: { onApply: () => void }) {
+  return (
+    <div role="status" data-update-banner className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-line bg-card px-4 py-1.5 text-sm print:hidden">
+      <span>גרסה חדשה של האתר זמינה</span>
+      <button type="button" onClick={onApply} className="inline-flex min-h-11 items-center rounded-md border border-line px-3 font-semibold hover:bg-line/50">
+        רענון
+      </button>
     </div>
   );
 }

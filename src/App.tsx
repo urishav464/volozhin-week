@@ -7,9 +7,14 @@ import { waitingForApproval } from "./domain/mine";
 import type { Week } from "./domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
+import { isNetworkError } from "./offline/network";
+import { useShellWorker } from "./offline/register";
+import type { WeekSnapshot } from "./offline/snapshot";
+import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
+import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
-import { type NavItem, Shell } from "./screens/Shell";
+import { type NavItem, Shell, UpdateBanner } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { ApprovalsScreen } from "./screens/speakers/ApprovalsScreen";
 import { MineScreen } from "./screens/speakers/MineScreen";
@@ -28,10 +33,22 @@ const ReaderScreen = lazy(() => import("./screens/reader/ReaderScreen").then((m)
 const MemorialScreen = lazy(() => import("./screens/memorial/MemorialScreen").then((m) => ({ default: m.MemorialScreen })));
 const LogisticsScreen = lazy(() => import("./screens/logistics/LogisticsScreen").then((m) => ({ default: m.LogisticsScreen })));
 
-type State = { kind: "loading" } | { kind: "gate"; gate: Gate; email: string | null } | { kind: "error"; message: string };
+/** How long the first check may go unanswered before the device's snapshot is shown meanwhile (src/offline/). */
+const SLOW_FIRST_CHECK_MS = 8000;
+
+type State =
+  | { kind: "loading" }
+  | { kind: "gate"; gate: Gate; email: string | null }
+  /** `network`: no answer at all (and no snapshot here to show) — tried again when the connection returns. */
+  | { kind: "error"; message: string; network?: boolean }
+  /** No connection: the day view from the device's snapshot, read-only, until the server answers again (src/offline/). */
+  | { kind: "offline"; snapshot: WeekSnapshot; me: Me };
 
 export default function App() {
   const port = useMemo(makePort, []);
+  // The device's copy of the week for a day without internet — the real database only: the demo's data is in memory.
+  const offline = useMemo(() => (port.mode === "live" ? new OfflineCopy(indexedDbKeyValue(), () => port.deviceUserId(), EXPECTED_SCHEMA_VERSION) : null), [port]);
+  const update = useShellWorker();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -39,25 +56,72 @@ export default function App() {
   const shown = useRef<State>(state);
   shown.current = state;
 
+  /**
+   * No answer from the server: the device's snapshot, when it may be shown here (its own user's, this schema's) —
+   * and only while the screen is still the one it was asked from (`still`): an answer that came meanwhile wins.
+   */
+  const showOffline = useCallback(
+    async (still: (s: State) => boolean): Promise<boolean> => {
+      const d = offline ? await offline.decide() : null;
+      if (d?.kind !== "show" || !still(shown.current)) return false;
+      setState({ kind: "offline", snapshot: d.snapshot, me: d.me });
+      return true;
+    },
+    [offline],
+  );
+
   const refresh = useCallback(async () => {
+    // A first check that hangs (a network that takes requests and never answers) shows the snapshot meanwhile;
+    // the check goes on, and its answer still decides.
+    const slow = window.setTimeout(() => {
+      if (shown.current.kind === "loading") void showOffline((s) => s.kind === "loading");
+    }, SLOW_FIRST_CHECK_MS);
     try {
       const w = await port.whoami();
       const email = w.status === "signed_out" ? null : await port.sessionEmail();
       if (w.status === "signed_out") setAuthError(await port.authError());
-      setState({ kind: "gate", gate: gateFor(w, EXPECTED_SCHEMA_VERSION), email });
+      const gate = gateFor(w, EXPECTED_SCHEMA_VERSION);
+      // The server's answer decides: a member's whoami is kept for the day without internet; any other answer
+      // (signed out, not a member, another provider, another schema) leaves nothing on the device.
+      if (gate.screen === "home") void offline?.saveWhoami(gate.me);
+      else void offline?.clear();
+      setState({ kind: "gate", gate, email });
     } catch (e) {
       const gate = gateForError(e, EXPECTED_SCHEMA_VERSION);
-      if (gate) setState({ kind: "gate", gate, email: await port.sessionEmail() });
+      if (gate) {
+        void offline?.clear();
+        setState({ kind: "gate", gate, email: await port.sessionEmail() });
+        return;
+      }
       // A blip on a later check (back to the tab, a flaky network) keeps the
-      // screen people are working in; only a first load shows the error page.
-      else if (shown.current.kind !== "gate") setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      // screen people are working in — the offline day view included; only a
+      // first load shows the snapshot (no connection) or the error page.
+      if (shown.current.kind === "gate" || shown.current.kind === "offline") return;
+      const network = isNetworkError(e);
+      if (network && (await showOffline((s) => s.kind === "loading" || s.kind === "error"))) return;
+      setState({ kind: "error", message: e instanceof Error ? e.message : String(e), network });
+    } finally {
+      window.clearTimeout(slow);
     }
-  }, [port]);
+  }, [port, offline, showOffline]);
 
   useEffect(() => {
     void refresh();
     return port.onAuthChange(() => void refresh());
   }, [port, refresh]);
+
+  // Offline: back to the live week by itself — when the browser says the connection is back, and every half minute.
+  const isOffline = state.kind === "offline" || (state.kind === "error" && !!state.network);
+  useEffect(() => {
+    if (!isOffline) return;
+    const retry = () => void refresh();
+    window.addEventListener("online", retry);
+    const timer = window.setInterval(retry, 30_000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.clearInterval(timer);
+    };
+  }, [isOffline, refresh]);
 
   const signIn = async () => {
     setBusy(true);
@@ -69,15 +133,30 @@ export default function App() {
     }
   };
   const signOut = async () => {
-    await port.signOut();
+    // The snapshot and the cached whoami go with the session: before (nothing to show while it signs out), and after
+    // (a load that was on its way meanwhile is undone, src/offline/store.ts).
+    await offline?.clear();
+    try {
+      await port.signOut();
+    } finally {
+      await offline?.clear();
+    }
     await refresh();
   };
 
   const demo = port.mode === "demo";
-  const signedIn = state.kind === "gate" && state.gate.screen !== "signed_out";
+  const signedIn = (state.kind === "gate" && state.gate.screen !== "signed_out") || state.kind === "offline";
   const me = state.kind === "gate" && state.gate.screen === "home" ? state.gate.me : null;
-  // One loaded edition for the week, «המרצים שלי» and the approvals queue (src/screens/weekStore.tsx).
-  const store = useWeekStoreState(port, me ? me.email : null);
+  // One loaded edition for the week, «המרצים שלי» and the approvals queue (src/screens/weekStore.tsx); every
+  // load is kept on the device for a day without internet.
+  const store = useWeekStoreState(port, me ? me.email : null, offline ? (id, week) => void offline.saveWeek(id, week) : undefined);
+  // The week itself could not be loaded for want of a connection: the snapshot, if there is one for this member.
+  const { lostConnection } = store;
+  useEffect(() => {
+    if (lostConnection) void showOffline((s) => s.kind === "gate" && s.gate.screen === "home");
+  }, [lostConnection, showOffline]);
+  const offlineMe = state.kind === "offline" ? state.me : null;
+  const header = me ?? offlineMe;
   // Back from «הגדרות»: an edition may have been opened, renamed or re-dated there.
   const inSettings = path.startsWith("/settings");
   const wasInSettings = useRef(inSettings);
@@ -91,23 +170,29 @@ export default function App() {
     <WeekCtx.Provider value={store}>
       <Shell
         demo={demo}
-        full={!!me && (path === "/" || path === "/tracking")}
-        user={me ? { name: me.display_name || me.email, roleLabel: ROLE_LABEL[topRole(me)] } : null}
+        full={(!!me && (path === "/" || path === "/tracking")) || !!offlineMe}
+        user={header ? { name: header.display_name || header.email, roleLabel: ROLE_LABEL[topRole(header)] } : null}
         nav={me ? navFor(me, store.week) : undefined}
         onSignOut={signedIn && !demo ? () => void signOut() : undefined}
+        notice={update.ready ? <UpdateBanner onApply={update.apply} /> : undefined}
       >
         {state.kind === "loading" && <p className="text-ink-soft text-center mt-10">טוען…</p>}
         {state.kind === "error" && (
           <Notice
-            title="משהו השתבש בטעינה"
+            title={state.network ? "אין חיבור לאינטרנט" : "משהו השתבש בטעינה"}
             actions={[{ label: "לנסות שוב", onClick: () => void refresh() }, ...(demo ? [] : [{ label: "התנתקות", onClick: () => void signOut() }])]}
           >
-            <p>לא הצלחנו לדבר עם השרת. אם זה חוזר, כדאי לספר למדריך/ה.</p>
+            {state.network ? (
+              <p>אין חיבור לאינטרנט, ובמכשיר הזה עוד אין עותק של השבוע. העותק נשמר בכל פעם שהשבוע נטען עם חיבור. כשהחיבור חוזר, המסך נטען לבד.</p>
+            ) : (
+              <p>לא הצלחנו לדבר עם השרת. אם זה חוזר, כדאי לספר למדריך/ה.</p>
+            )}
             <p className="text-xs text-ink-faint" dir="ltr">
               {state.message}
             </p>
           </Notice>
         )}
+        {state.kind === "offline" && <OfflineWeek snapshot={state.snapshot} />}
         {state.kind === "gate" && (
           <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} onRefresh={refresh} store={store} />
         )}

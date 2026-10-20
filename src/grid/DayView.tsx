@@ -1,5 +1,7 @@
 // One day at a time, for a phone or a tablet: a strip of day chips, then the
 // day as a vertical timeline. Tap a cell to propose; tap a card to open it.
+// `readOnly` (the offline snapshot, src/screens/OfflineWeek.tsx): a free cell is
+// only a label, never a button; a card still opens, to read.
 import { byGender } from "../domain/names";
 import { DAYS, DAY_NAMES, type Day, fmt, fmtRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Speaker } from "../domain/types";
@@ -16,11 +18,12 @@ interface Props {
   placing: Speaker | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (id: number) => void;
+  readOnly?: boolean;
 }
 
 const ROW_PX = 92;
 
-export function DayView({ model, lens, day, onDay, placing, onCell, onLesson }: Props) {
+export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, readOnly = false }: Props) {
   const { edition } = model.week;
   const lessons = lessonsOfDay(model, day);
   const need = model.days[day].balance.need;
@@ -67,14 +70,14 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson }: 
               </li>
             );
           }
-          return <LessonRow key={row.id} model={model} lens={lens} day={day} row={row} lessons={lessons} placing={placing} need={need} onCell={onCell} onLesson={onLesson} />;
+          return <LessonRow key={row.id} model={model} lens={lens} day={day} row={row} lessons={lessons} placing={placing} need={need} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
         })}
       </ol>
     </div>
   );
 }
 
-function LessonRow({ model, lens, day, row, lessons, placing, need, onCell, onLesson }: { model: GridModel; lens: Lens; day: Day; row: GridRow; lessons: Lesson[]; placing: Speaker | null; need: "m" | "f" | null; onCell: (d: Day, r: GridRow) => void; onLesson: (id: number) => void }) {
+function LessonRow({ model, lens, day, row, lessons, placing, need, onCell, onLesson, readOnly }: { model: GridModel; lens: Lens; day: Day; row: GridRow; lessons: Lesson[]; placing: Speaker | null; need: "m" | "f" | null; onCell: (d: Day, r: GridRow) => void; onLesson: (id: number) => void; readOnly: boolean }) {
   const here = lessons.filter((l) => l.kind === "lesson" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min));
   const starting = here.filter((l) => l.start_min >= row.start_min).sort((a, b) => a.start_min - b.start_min || a.room_id - b.room_id);
   const continuing = here.filter((l) => l.start_min < row.start_min);
@@ -87,6 +90,19 @@ function LessonRow({ model, lens, day, row, lessons, placing, need, onCell, onLe
     const key = `cell:${day}:${row.start_min}:${row.end_min}`;
     const fit = placing ? fitFor(model, placing.id, day, row.start_min, row.end_min) : null;
     const tint = lens === "diversity" && need ? (need === "f" ? "bg-need-f border-pink-200 text-pink-800" : "bg-need-m border-sky-200 text-sky-800") : "bg-card/70 border-line text-ink-faint";
+    if (readOnly) {
+      return (
+        <li className="flex gap-2">
+          {time}
+          <div data-free-cell={key} className={`grid min-h-16 flex-1 place-items-center rounded-md border text-center text-sm ${tint}`}>
+            <span>
+              {lens === "diversity" && need ? GENDER_NEED_LABEL[need] : "פנוי"}
+              {row.label && <span className="block text-[11px] text-ink-faint">{row.label}</span>}
+            </span>
+          </div>
+        </li>
+      );
+    }
     return (
       <li className="flex gap-2">
         {time}
