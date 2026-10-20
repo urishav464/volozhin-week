@@ -19,7 +19,8 @@ Supabase (Postgres + Auth + Realtime + Storage), no server code — all logic is
 
 The approved plan is `docs/DESIGN.md` — read it before building anything. Implementation-time
 decisions that differ from it are in `docs/DECISIONS.md`. The owner's setup steps are in
-`docs/SETUP.he.md`.
+`docs/SETUP.he.md`; the team's one-page guide is `docs/GUIDE.he.md` (also the site's «עזרה» page —
+keep it to markdown-lite).
 
 ## Commands
 
@@ -71,9 +72,119 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - `docs/CONTRACT.md` — what every grid command does. Two implementations: the SQL RPCs and
   `src/data/engine.ts` (behind DemoPort). **Change both together**; `tests/parity` runs the same
   scenarios on both and fails on any difference in result or state.
-- All grid writes are SECURITY DEFINER functions in `public`; `authenticated` has SELECT only.
+- All grid writes are SECURITY DEFINER functions in `public`; `authenticated` has SELECT only on
+  the grid's tables.
+- `src/screens/settings/` — «הגדרות» (`/settings/<tab>`, react-router), admins only: edition, team,
+  roster, rooms, categories, through `port.settings` (`src/data/settings.ts`; SupabaseSettings /
+  DemoSettings refuse with the same codes). Settings are direct writes under RLS — column grants
+  and guard triggers keep their rules (`schema.sql` «Settings»; `docs/DECISIONS.md`).
+- `src/data/speakers.ts` — the speaker pool (`port.speakers`): search first and create, edit, vet,
+  contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
+  availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
+  «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
+- **From placement to arrival (milestone 3, schema v7):** a closed lesson's stages — payment and
+  transport (the handler asks, a global admin decides), the summary message, escorts, sources —
+  are `WeekCommands` (`src/data/commands.ts`), SQL functions in `schema.sql` «Milestone 3» and the
+  engine (CONTRACT «From placement to arrival»); cleaning rules in `src/data/stageRules.ts`.
+  `needs_reconfirm` is ONE rule: the trigger `app.lessons_reconfirm` / `Engine.reconfirm` (and
+  `app.editions_reconfirm` / `DemoSettings.updateEdition` when the week's date moves). The stages are
+  the speaker's: `reopen_lesson` starts them all over and deletes the transport details (never while
+  paid: `paid_locked`).
+  Transport details are personal data: `transport_details`, `app.may_see_transport`, fetched one
+  lesson at a time — never in a Week or Realtime. `src/domain/message.ts` composes the summary
+  message from the instructor's template (`editions.settings.confirm_template` — never seeded;
+  every TBD blocks); `src/domain/escorts.ts` the escorts' load and duty notes.
+  `src/domain/stages.ts` derives the five stage dots and a closed lesson's next step — the card,
+  the lesson panel, «המרצים שלי» and the progress lens all read it. Screens: `src/screens/stages/`
+  (the lesson panel's five sections, handed to `LessonPanel` as `stages`; `MessageComposer` is
+  also in the speaker sheet), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
+  a live preview, the duty phrases), and the approvals queue's payment section. The escort
+  picker warns through `escortClashes` (`src/rules/warnings.ts`), the same rule as `escort_gap`.
+- **Outputs and knowledge (milestone 4, schema v8):** `src/exports/` — pure, unit-tested builders of
+  every output from a loaded Week: the tracking table (`tracking.ts`), the escorts' list (`escorts.ts`),
+  the designer's public schedule and its diff (`designer.ts`), the archive zip (`archive.ts`), and the
+  file writers — CSV with BOM/CRLF (`csv.ts`) and our own small xlsx on `fflate` (`xlsx.ts`; no
+  SheetJS). Every cell passes `guardCell` (the formula-injection guard). Nothing is uploaded but a
+  designer export's snapshot. `port.outputs` (`src/data/outputs.ts`): phones in one invoker call,
+  `get_contacts_for` (never more than `get_speaker_contacts`), the snapshots, the archive's extras;
+  `port.knowledge` (`src/data/knowledge.ts`): notes and milestones — direct writes under RLS with guard
+  triggers (CONTRACT «Outputs and knowledge»). Screens: `src/screens/outputs/` (/tracking,
+  /print/escorts, /export/designer), `src/screens/knowledge/` (/knowledge), the archive in
+  «הגדרות ← מחזור» (`ArchivePanel.tsx`), «עזרה» (/help) rendering `docs/GUIDE.he.md` itself through
+  markdown-lite (`src/domain/markdown.ts` — text nodes only, never HTML). Last year's stage colours:
+  `src/domain/progress.ts`, one definition for the lens, the table and the xlsx.
+- **Links without an account and מכריכה לכריכה (milestone 5a, schema v9):** `share_links` (a token's sha256
+  only; issued, replaced, revoked by an edition's admins — `port.links`, `src/data/links.ts`), the escorts'
+  ticks (`escortTicks` in the Week) and the kk tables (`port.kk`, `src/data/kk.ts`: all writes are functions).
+  **anon's whole reach is `ping` and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
+  kk_form kk_signup schedule_view`), keyed by a token alone; every link problem is the one refusal
+  `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its one accepted
+  residual: «full» after a sign-up — CONTRACT). The rate limit: an escort's link one count; a class link one per
+  caller's address (`app.link_client` / `linkClient`, the sha256 of cf-connecting-ip or X-Forwarded-For's first
+  entry) — never a count the whole class shares. `src/lib/schema.test.ts` holds `EXPECTED_SCHEMA_VERSION` to the file. The public
+  pages read through `PublicPort` (`src/data/publicPort.ts`, `makePublicPort()`): `SupabasePublic` is a plain
+  POST with the `apikey` header and no Authorization; the demo's is `src/data/demoLinks.ts`. Engine ≡ SQL
+  by `tests/parity`, the public answers included; `src/domain/israelTime.ts` counts days as Israel does (W−7).
+  **Screens:** `src/Root.tsx` sends `/e`, `/k`, `/s` to the public pages (`src/screens/public/`) — outside the whoami
+  gate, lazy, the token taken from the hash and out of the address bar at once (`history.replaceState`), in memory
+  only; in production they load `SupabasePublic` alone through `src/data/publicEntry.ts` (no supabase-js, no auth
+  client). «קישורים» (`src/screens/settings/LinksTab.tsx`) issues, replaces and revokes, the token shown once;
+  «מכריכה לכריכה» is `/kk` (`src/screens/kk/KkScreen.tsx`, every member reads; the window's fields in Israel time —
+  `israelInstant`); the ticks show in the lesson panel's escort stage and the escorts' list (`EscortTicksLine`).
+- **Sources and the reader (milestone 5ב-1, schema v10):** a closed lesson's files live in the PRIVATE Storage
+  bucket `sources`, which `schema.sql` creates with its policies on `storage.objects` (no dashboard step): upload =
+  `app.source_refusal` (the set_sources rule — content/admin, a closed lesson of kind 'lesson'; the poster
+  `…/cover/…` admins only) and a path no `source_files` row holds (`app.may_upload_source` — a path is used once),
+  read = the whole edition team, delete = uploader or admin, update nobody, anon nothing —
+  and **restrictive** copies of each so no later policy can widen the bucket. The path convention is one regex in
+  two places (`app.source_path_re` ≡ `SOURCE_PATH_RE`, `src/data/sourceRules.ts`, compared by a test). Upload =
+  Storage first (XHR with the member's token, `Cache-Control: private, no-store`), then `register_source_file` (the
+  object must exist, be the caller's; its size as Storage measured it, its type as the uploader declared it — Storage
+  never sniffs; the display name shortened to ≤ 200 before upload, `displayNameOf`; the lesson row locked before any
+  check; a lost answer asked once more, the object deleted only on a refusal); removal = Storage first, then
+  `remove_source_file` (refuses `file_present`).
+  `source_files` rows remember the lead speaker they came for (`speaker_id`): `reopen_lesson` keeps them as
+  «מהמרצה הקודם», never in the reader. Never in Realtime. `port.sources` (`src/data/sources.ts`: SupabaseSources /
+  DemoSources on the engine's in-memory bucket; synthetic demo files in `src/data/demoFiles.ts`).
+  **The reader** is browser-only (`src/reader/`): `model.ts` the manifest «התקבל / חסר» (one status per closed lesson
+  and memorial slot; `memorialFiles` is 5ב-2's hook), `layout.ts` the pure page plan (cover, TOC with page numbers,
+  days, «סיכום יום»), `assemble.ts` the PDF on pdf-lib 1.17.1 inside a module worker (`worker.ts`; Hebrew drawn on
+  OffscreenCanvas → PNG) — every file opened AND embedded before the plan (a file pdf-lib cannot decode is named, never
+  a failed build), `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
+  newer). **One readable check for the upload and the build:** `readable.ts` — `openSource` is the only way the build
+  opens a file, `readableSource` the same steps for the upload (`pages.ts` `readerPages`, loaded on demand; pdf-lib
+  inside): a picture by its bytes; a PNG whose image data does not inflate to its end refused BEFORE pdf-lib, whose
+  decoder loops for ever on data cut short (`png.ts` `pngInflates`, fflate `inflateSync` — not `unzlibSync`); a JPEG
+  stripped of EXIF/GPS/XMP/ICC/comments (`jpeg.ts`); a PDF's printing annotations and filled fields painted into each
+  page (`annotations.ts` `flattenAnnotations` — never pdf-lib's `form.flatten()`), its box normalised, every page
+  decoded once. A PDF or picture registered with `page_count` NULL was not read (`model.ts` `readableFile`): never
+  printable, manifest status `unreadable` «צריך קובץ אחר». CI: `npm run test:unit` has a step `timeout-minutes: 5`
+  (`.github/workflows/ci.yml`; jobs 15 and 10) — a decoder loop blocks vitest's own timeouts.
+  Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
+  Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
+  (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
+  `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
+- `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
+  grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
+  week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
+  the header's badge); `actorIn` there is the one place a screen asks what the member may do.
 - `supabase/seed_gate.sql` / `unseed_gate.sql` — the decision gate's synthetic practice week.
 - `supabase/schema.sql` — the whole database; `tests/sql/` — its tests on PostgreSQL 16 with a
   Supabase-like bootstrap (`tests/sql/bootstrap.sql`).
 - `tests/e2e/` — builds the app twice (demo / mock) and drives it in Chromium; `mock.ts` fakes the
   Supabase endpoints by route interception.
+- `tests/sql/links.test.ts`, `tests/sql/kk.test.ts` — the anon surface: every bad token refused alike, the
+  escort's page by date (W−7) and by key, the rate limit per address (and the review's lock-out attack, closed), the
+  sign-up races on two connections (each from its own address, so the group's row lock is what is tested), the
+  «full» residual pinned.
+- `tests/sql/sources.test.ts` — the bucket on the Storage stub of `tests/sql/bootstrap.sql` (its assumptions cite
+  Storage's migrations): uploads per role/edition/archive/anon as the Storage API makes them (INSERT as the caller),
+  the restrictive caps against a wide-open policy someone adds, direct SQL deletes refused, register/remove rules
+  (a register waiting on a reopen's lock, on two connections), reopen keeping files, the bucket and policy blocks
+  failing one at a time. `src/reader/files.test.ts` — files that hang or fool plain pdf-lib (PNGs cut short, Huffman-
+  coded — a stub throws and proves nothing), annotations painted in, and `readableSource` ≡ the build on a corpus.
+  `tests/e2e/reader.spec.ts` — upload and removal, the manifest at three widths, a real PDF
+  built and its pages checked, the cover and the Word skeleton; on the mock wire, Storage then register, in order.
+- `tests/e2e/links.spec.ts` — the public pages at three widths (the token out of the address bar, the one refusal),
+  issuing and opening a link, the sign-up and the staff's /kk, the schedule in print; on the mock wire, the public
+  pages send the publishable key alone to the six anon functions, even with a member's session in the browser.

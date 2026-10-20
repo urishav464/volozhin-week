@@ -1,25 +1,48 @@
 // The week: the grid (desktop) or the day view (phone/tablet), the pool, the
 // panels, and every command — through the DataPort, so the demo and the real
-// database behave the same (docs/CONTRACT.md).
+// database behave the same (docs/CONTRACT.md). The edition and its loaded week
+// are shared with «המרצים שלי» and the approvals queue (weekStore.tsx); those
+// screens send a speaker here to be placed, or a lesson to be opened.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "../data/commands";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { displayName } from "../domain/names";
 import type { Day } from "../domain/time";
-import type { Edition, GridRow, Week } from "../domain/types";
+import type { GridRow } from "../domain/types";
 import { errorMessage } from "../errors";
 import { DayView } from "../grid/DayView";
 import { GridDesktop } from "../grid/GridDesktop";
-import type { Lens } from "../grid/LessonCard";
+import { type Lens, PROGRESS_LEGEND, PROGRESS_TONE } from "../grid/LessonCard";
 import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
 import { buildModel } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
 import { Pool } from "../grid/Pool";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
+import { reopenLoses, type StageKey } from "../domain/stages";
+import { STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
+import { CreateSpeaker } from "./speakers/CreateSpeaker";
+import { LessonStages } from "./stages/LessonStages";
+import { DraftFiles } from "./stages/SourceFiles";
+import { SpeakerSheet } from "./speakers/SpeakerSheet";
+import { actorIn, useWeekStore } from "./weekStore";
 
-type Panel = { kind: "lesson"; id: number } | { kind: "cell"; day: Day; row: GridRow } | { kind: "warnings" } | null;
+type Panel =
+  /** `stage`: the section to open (from «המרצים שלי» or the approvals queue). */
+  | { kind: "lesson"; id: number; stage?: StageKey }
+  | { kind: "cell"; day: Day; row: GridRow }
+  | { kind: "warnings" }
+  /** `back`: the panel it was opened from (a lesson, a cell, «מרצה חדש/ה»), which «חזרה» returns to. */
+  | { kind: "speaker"; id: number; back?: Panel }
+  | { kind: "create"; name: string }
+  | null;
+
+const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות" };
+
+/** What «המרצים שלי» (and the approvals queue) hand the week: a speaker to place, or a lesson to open — at one of its stages. */
+export type WeekVisit = { place?: number; lesson?: number; stage?: StageKey } | null;
 type Toast = { kind: "ok" | "error"; text: string; undo?: () => Promise<void> } | null;
 type Offer = { speakerId: number; target: CellTarget; owner: string } | null;
 
@@ -34,10 +57,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   // Below 1280px the grid needs the pool's width: the pool becomes a drawer.
   const roomy = useMedia("(min-width: 1280px)");
   const [poolOpen, setPoolOpen] = useState(false);
-  const [editions, setEditions] = useState<Edition[]>([]);
-  const [editionId, setEditionId] = useState<number | null>(null);
-  const [week, setWeek] = useState<Week | null>(null);
-  const [problem, setProblem] = useState<"none" | "error" | null>(null);
+  const store = useWeekStore();
+  const { editions, editionId, week, problem, reload } = store;
   const [lens, setLens] = useState<Lens>("diversity");
   const [showNight, setShowNight] = useState(true);
   const [day, setDay] = useState<Day>(0);
@@ -46,33 +67,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const [toast, setToast] = useState<Toast>(null);
   const [offer, setOffer] = useState<Offer>(null);
   const [phoneTab, setPhoneTab] = useState<"day" | "pool">("day");
-
-  useEffect(() => {
-    port
-      .editions()
-      .then((list) => {
-        setEditions(list);
-        const pick = list.find((e) => e.status !== "archived") ?? list[0];
-        if (pick) setEditionId(pick.id);
-        else setProblem("none");
-      })
-      .catch(() => setProblem("error"));
-  }, [port]);
-
-  const reload = useCallback(async () => {
-    if (editionId == null) return;
-    try {
-      setWeek(await port.loadWeek(editionId));
-    } catch {
-      setProblem("error");
-    }
-  }, [port, editionId]);
-
-  useEffect(() => {
-    if (editionId == null) return;
-    void reload();
-    return port.subscribe(editionId, () => void reload());
-  }, [port, editionId, reload]);
 
   useEffect(() => {
     if (!toast) return;
@@ -87,12 +81,30 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   }, []);
 
   const model = useMemo(() => (week ? buildModel(week) : null), [week]);
-  const membership = me.memberships.find((m) => m.edition_id === editionId) ?? me.memberships.find((m) => m.edition_id == null);
-  const memberId = membership?.member_id ?? -1;
-  const role = me.global_admin ? "admin" : (membership?.role ?? "logistics");
-  const isAdmin = role === "admin";
-  const canEdit = role !== "logistics";
+  const actor = actorIn(me, week?.edition ?? editions.find((e) => e.id === editionId));
+  const { memberId, isAdmin, canEdit } = actor;
   const cmds = useMemo(() => (editionId != null ? port.commands(editionId) : null), [port, editionId]);
+
+  // Sent here from «המרצים שלי» or a speaker sheet elsewhere: place a speaker, or open a lesson — once.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const visit = location.state as WeekVisit;
+  useEffect(() => {
+    if (!visit || !model) return;
+    if (visit.place != null && model.speakerById.has(visit.place)) {
+      setPanel(null);
+      setPlacingId(visit.place);
+      setPhoneTab("day");
+    } else if (visit.lesson != null) {
+      const l = model.week.lessons.find((x) => x.id === visit.lesson);
+      if (l) {
+        setDay(l.day);
+        setPanel({ kind: "lesson", id: l.id, stage: visit.stage });
+        requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${l.id}"]`)?.scrollIntoView({ block: "center", inline: "center" }));
+      }
+    }
+    navigate(".", { replace: true, state: null });
+  }, [visit, model, navigate]);
 
   /** Run a command, reload, and say what happened (or why not). */
   const run = useCallback(
@@ -147,6 +159,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         setPanel(null);
         void run(() => cmds.reshape(d, rowStart, op), "המשבצת עוצבה מחדש");
       },
+      openSpeaker: (id) => setPanel((p) => ({ kind: "speaker", id, back: p ?? undefined })),
     };
   }, [cmds, propose, run]);
 
@@ -175,7 +188,15 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       }
       const l = model.week.lessons.find((x) => x.id === item.id);
       if (!l) return;
-      if (target.kind === "pool") return void run(() => cmds.reopenLesson(l.id), "השיעור חזר לטיוטה");
+      if (target.kind === "pool") {
+        // a reopen erases the speaker's stages: when any holds something, it is done from the panel, after it says what goes
+        if (l.state === "closed" && (l.paid_at != null || reopenLoses(l).length > 0)) {
+          setPanel({ kind: "lesson", id: l.id });
+          setToast({ kind: "error", text: "לשיעור כבר יש שלבים, ופתיחה מחדש מוחקת אותם. פותחים מחדש מלוח השיעור, אחרי אישור." });
+          return;
+        }
+        return void run(() => cmds.reopenLesson(l.id), "השיעור חזר לטיוטה");
+      }
       if (target.kind === "cell") {
         const len = l.end_min - l.start_min;
         void run(() => cmds.moveLesson(l.id, { day: target.day as Day, start_min: target.start, end_min: target.start + len, room_id: l.room_id }), "השיעור הוזז");
@@ -195,6 +216,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     else {
       if (l && !wide) setDay(l.day);
       setPanel({ kind: "lesson", id });
+      // the docked panel narrows the grid: keep the card that was opened in view
+      if (wide) requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
     }
   };
   const startPlacing = (speakerId: number) => {
@@ -207,7 +230,16 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     return (
       <div className="mx-auto mt-8 max-w-lg rounded-xl border border-line bg-card p-5">
         <h2 className="mb-2 font-display text-lg font-semibold">עוד לא נפתח מחזור</h2>
-        <p className="text-ink-soft">{isAdmin ? "פתיחת מחזור חדש (תשפ״ז) תהיה זמינה מההגדרות." : "המדריך/ה עוד לא פתח/ה את המחזור של השנה."}</p>
+        {me.global_admin ? (
+          <>
+            <p className="mb-4 text-ink-soft">פותחים את המחזור של השנה בהגדרות, ואז מוסיפים את הצוות.</p>
+            <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
+              לפתיחת מחזור
+            </Link>
+          </>
+        ) : (
+          <p className="text-ink-soft">המדריך/ה עוד לא פתח/ה את המחזור של השנה.</p>
+        )}
       </div>
     );
   }
@@ -229,8 +261,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           onChange={(e) => {
             setPanel(null);
             setPlacingId(null);
-            setWeek(null);
-            setEditionId(Number(e.target.value));
+            store.select(Number(e.target.value));
           }}
           className="rounded-lg border border-line bg-card px-2 py-1 font-display text-lg font-semibold"
         >
@@ -267,6 +298,29 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     </div>
   );
 
+  // The progress lens: last year's colours on the cards, and what the five dots are.
+  const legend = lens === "progress" && (
+    <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      {PROGRESS_LEGEND.map(([tone, label]) => (
+        <li key={tone} className="inline-flex items-center gap-1">
+          <span aria-hidden className={`size-3 rounded border border-line ${PROGRESS_TONE[tone]}`} />
+          {label}
+        </li>
+      ))}
+      <li>הנקודות, לפי הסדר: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה</li>
+      {(["done", "waiting", "problem", "open", "na"] as const).map((st) => (
+        <li key={st} className="inline-flex items-center gap-1">
+          <span aria-hidden className={`size-2.5 rounded-full border-2 ${STAGE_DOT[st]}`} />
+          {STAGE_STATE_LABEL[st]}
+        </li>
+      ))}
+      <li className="inline-flex items-center gap-1">
+        <span aria-hidden className="size-2.5 rounded-full bg-bad" />
+        לעדכן את המרצה
+      </li>
+    </ul>
+  );
+
   const placingBanner = placing && (
     <div role="status" className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-paper">
       <span>
@@ -281,16 +335,18 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="flex flex-col gap-2">
       {toolbar}
+      {legend}
       {placingBanner}
 
       {wide ? (
-        <div className="flex gap-3" style={{ height: "calc(100dvh - 9.5rem)" }}>
+        <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 11rem)" : "calc(100dvh - 9.5rem)" }}>
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
             <GridDesktop model={model} lens={lens} showNight={showNight} placing={placing} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} />
           </div>
-          {(roomy || poolOpen) && (
+          {/* an open panel takes the pool's column, so the grid keeps its width */}
+          {(roomy || poolOpen) && !panel && (
             <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper p-3 pt-16 shadow-2xl"} aria-label="מאגר">
-              <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} dropTarget={!!drag && drag.item.kind !== "speaker"} />
+              <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} dropTarget={!!drag && drag.item.kind !== "speaker"} />
             </aside>
           )}
         </div>
@@ -301,7 +357,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
               <DayView model={model} lens={lens} day={day} onDay={setDay} placing={placing} onCell={onCell} onLesson={onLesson} />
             ) : (
               <div style={{ height: "calc(100dvh - 12rem)" }}>
-                <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} />
+                <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} />
               </div>
             )}
           </div>
@@ -323,8 +379,68 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         </>
       )}
 
-      {openLesson && <LessonPanel model={model} lesson={openLesson} me={memberId} isAdmin={isAdmin} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}
+      {openLesson && (
+        <LessonPanel
+          model={model}
+          lesson={openLesson}
+          me={memberId}
+          isAdmin={isAdmin}
+          canEdit={canEdit}
+          actions={actions}
+          onClose={() => setPanel(null)}
+          wide={wide}
+          files={(l) => (
+            <DraftFiles port={port} week={model.week} lesson={l} actor={actor} notify={(kind, text) => setToast({ kind, text })} reload={reload} />
+          )}
+          stages={(l) => (
+            <LessonStages
+              key={`${l.id}:${panel?.kind === "lesson" ? (panel.stage ?? "") : ""}`}
+              port={port}
+              week={model.week}
+              lessonId={l.id}
+              actor={actor}
+              focus={panel?.kind === "lesson" ? panel.stage : null}
+              notify={(kind, text) => setToast({ kind, text })}
+              clear={() => setToast(null)}
+              reload={reload}
+            />
+          )}
+        />
+      )}
       {panel?.kind === "cell" && <CellPanel model={model} me={memberId} day={panel.day} row={panel.row} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}
+      {panel?.kind === "speaker" && (
+        <SpeakerSheet
+          key={panel.id}
+          port={port}
+          me={me}
+          week={model.week}
+          speakerId={panel.id}
+          wide={wide}
+          onClose={() => setPanel(null)}
+          onBack={panel.back ? () => setPanel(panel.back ?? null) : undefined}
+          backLabel={panel.back ? BACK_LABEL[panel.back.kind] : undefined}
+          notify={(kind, text) => setToast({ kind, text })}
+          clear={() => setToast(null)}
+          reload={reload}
+          onPlace={startPlacing}
+          onLesson={onLesson}
+        />
+      )}
+      {panel?.kind === "create" && (
+        <CreateSpeaker
+          port={port}
+          me={me}
+          week={model.week}
+          initialName={panel.name}
+          wide={wide}
+          onClose={() => setPanel(null)}
+          onOpen={(id, name) => setPanel({ kind: "speaker", id, back: { kind: "create", name } })}
+          onCreated={(id) => setPanel({ kind: "speaker", id })}
+          notify={(kind, text) => setToast({ kind, text })}
+          clear={() => setToast(null)}
+          reload={reload}
+        />
+      )}
       {panel?.kind === "warnings" && (
         <WarningsPanel
           model={model}

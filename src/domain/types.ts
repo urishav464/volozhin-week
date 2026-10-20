@@ -33,18 +33,38 @@ export interface Category {
 
 export type Vetting = "pending" | "approved" | "rejected";
 
+/** How a speaker prefers to be reached (the channel only — never the number or address). */
+export type ContactPref = "phone" | "whatsapp" | "email" | "secretary";
+
 /** A person in the cross-year pool. Contact details are NOT here — they live in speaker_contacts. */
 export interface Speaker {
   id: number;
   title: string | null;
+  /** Without the title («פלונית אלמונית»). */
   name: string;
+  /** Tells two people of the same name apart («ירושלים», «מכון X»); required when the name key is taken. */
+  disambiguator: string | null;
+  /** What someone typed — never guessed from the name. */
   gender: Gender | null;
   affiliation: string | null;
   bio_short: string | null;
   topics: string[];
+  contact_pref: ContactPref | null;
   vetted: Vetting;
+  /** The admin who approved or rejected (a members.id), and their word on it — the team sees both. */
+  vetted_by: number | null;
+  vetted_note: string | null;
   retired: boolean;
   name_key: string;
+  version: number;
+}
+
+/** speaker_contacts — reached only through the port's contacts calls, never in a Week or in Realtime. */
+export interface SpeakerContacts {
+  phone: string | null;
+  email: string | null;
+  secretary_note: string | null;
+  notes: string | null;
 }
 
 export type ApproachStatus = "claimed" | "approached" | "positive" | "declined" | "no_answer";
@@ -56,6 +76,8 @@ export interface Approach {
   owner_member_id: number | null;
   status: ApproachStatus;
   avail_note: string | null;
+  /** A hand-over («העברה») the handler offered this member, waiting for their answer. */
+  offered_to: number | null;
   version: number;
 }
 
@@ -72,6 +94,11 @@ export interface Availability {
 export type LessonKind = "lesson" | "memorial";
 export type LessonState = "draft" | "closed" | "cancelled";
 export type SourcesKind = "pending" | "sheet" | "presentation" | "sheet_presentation" | "sheet_video" | "none" | "other";
+/** What was asked for the speaker's travel: nothing, one way, or both ways. */
+export type Transport = "none" | "one_way" | "round_trip";
+/** The instructor's word on the payment/transport request: none asked, waiting, approved, rejected. */
+export type Approval = "none" | "pending" | "approved" | "rejected";
+export type PrintWhen = "none" | "before" | "same_day";
 
 /** One lesson — or a shaped cell with no speaker yet (a draft). Every output is derived from these. */
 export interface Lesson {
@@ -87,17 +114,87 @@ export interface Lesson {
   audience: string | null;
   teach_min: number | null;
   parallel_reason: string | null;
+  // ---- payment and transport (milestone 3): what the handler asked, and the instructor's word
+  /** Whole shekels; null = none asked (a volunteer, or not decided) — never a default. */
   pay_amount: number | null;
-  transport: "none" | "one_way" | "round_trip";
-  approval: "none" | "pending" | "approved" | "rejected";
+  transport: Transport;
+  approval: Approval;
+  approval_note: string | null;
+  /** The global admin who decided (members.id), and when. */
+  approved_by: number | null;
+  approved_at: string | null;
+  /** Logistics marked the approved payment paid. */
+  paid_at: string | null;
+  // ---- the summary message to the speaker
   confirm_sent_at: string | null;
+  confirm_sent_by: number | null;
+  /** The lesson changed after the message went out: «לעדכן את המרצה». */
   needs_reconfirm: boolean;
+  // ---- the escort
+  /** A trainee of the edition's roster. */
   escort_roster_id: number | null;
   self_intro: boolean;
+  escort_note: string | null;
+  // ---- sources
   sources_kind: SourcesKind;
+  print_when: PrintWhen;
+  sources_note: string | null;
+  /** http(s) only. */
+  presentation_url: string | null;
   in_reader: boolean;
   version: number;
   updated_by: number | null;
+}
+
+/** A new lesson's stage fields — nothing asked, nothing sent, no escort, sources pending (the database's defaults). */
+export const LESSON_STAGE_DEFAULTS = {
+  pay_amount: null,
+  transport: "none",
+  approval: "none",
+  approval_note: null,
+  approved_by: null,
+  approved_at: null,
+  paid_at: null,
+  confirm_sent_at: null,
+  confirm_sent_by: null,
+  needs_reconfirm: false,
+  escort_roster_id: null,
+  self_intro: false,
+  escort_note: null,
+  sources_kind: "pending",
+  print_when: "none",
+  sources_note: null,
+  presentation_url: null,
+  in_reader: false,
+} as const satisfies Partial<Lesson>;
+
+/**
+ * Pickup and driver — personal data: transport_details, reached only through
+ * the port's transport calls (app.may_see_transport), never in a Week or Realtime.
+ */
+export interface TransportDetails {
+  pickup_address: string | null;
+  /** As the team writes it («07:15», «אחרי השיעור»). */
+  pickup_time: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  arranged: boolean;
+}
+
+/** One of the year's trainees (roster) — a name only, never a contact detail. Escorts come from here. */
+export interface RosterMember {
+  id: number;
+  full_name: string;
+  gender: Gender | null;
+}
+
+/** The lesson facts an escorts' duty phrase applies to (src/domain/escorts.ts). */
+export type DutyWhen = "always" | "self_intro" | "escort_intro" | "transport" | "memorial";
+
+/** One phrase of «משהו שחשוב לדעת», as the instructor pasted it, and when it applies. */
+export interface DutyPhrase {
+  when: DutyWhen;
+  text: string;
 }
 
 export interface LessonSpeaker {
@@ -129,6 +226,18 @@ export interface EditionSettings {
   lesson_minutes?: number;
   row_minutes?: number;
   max_category_per_day?: number;
+  /** The titles a speaker may carry this edition; absent = DEFAULT_TITLES (src/data/speakerRules.ts). */
+  titles?: string[];
+  /** The summary message's template (src/domain/message.ts) — the instructor's own wording; absent until pasted. */
+  confirm_template?: string;
+  /** The escorts' «משהו שחשוב לדעת» phrases — the instructor's own; absent until pasted. */
+  duty_phrases?: DutyPhrase[];
+  /** מכריכה לכריכה's sign-up window (ISO instants, as toISOString writes them); absent = closed. The admin sets it. */
+  kk_window?: { opens_at: string; closes_at: string };
+  /** The reader's two running headers, [left, right] — the admin's own words; absent until typed (never seeded). */
+  reader_headers?: [string, string];
+  /** The reader's cover: one of the edition's posters (a SourceFile with `cover`); absent = a schedule page made from the week. */
+  reader_cover?: number;
 }
 
 export interface Edition {
@@ -155,6 +264,46 @@ export interface Week {
   lessonSpeakers: LessonSpeaker[];
   pitches: Pitch[];
   team: TeamMember[];
+  /** The edition's trainees (names only), for escorts. */
+  roster: RosterMember[];
+  /** The escorts' ticks, written through their links (v9) — the team reads them. */
+  escortTicks: EscortTick[];
+  /** The sources' files (v10): their rows — the bytes are in Storage, read through short-lived URLs. */
+  sourceFiles: SourceFile[];
+}
+
+/** The four types the sources bucket takes. */
+export type SourceMime = "application/pdf" | "image/png" | "image/jpeg" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/** One uploaded file (source_files): a lesson's source, or the reader's poster (`cover`). */
+export interface SourceFile {
+  id: number;
+  /** null: the poster, or a lesson deleted since (its file stays for removal). */
+  lesson_id: number | null;
+  cover: boolean;
+  /** The lesson's lead speaker when it arrived — another lead now: «מהמרצה הקודם», never in the reader. */
+  speaker_id: number | null;
+  /** <edition>/<lesson|cover>/<uuid>-<safe ascii name> — never the original name. */
+  storage_path: string;
+  /** The name the file had (Hebrew, usually). */
+  display_name: string;
+  mime: SourceMime;
+  size_bytes: number;
+  /** Counted in the browser on upload (a PDF); an image is 1; Word, or a PDF that could not be read: null. */
+  page_count: number | null;
+  uploaded_by: number | null;
+  uploaded_at: string;
+}
+
+/** The four things an escort ticks off: reminded the speaker, met them at the parking, introduced them, gave the gift. */
+export const TICK_ITEMS = ["reminded", "met", "introduced", "gift"] as const;
+export type TickItem = (typeof TICK_ITEMS)[number];
+
+/** One tick, and when it was made (the first time is kept). */
+export interface EscortTick {
+  lesson_id: number;
+  item: TickItem;
+  at: string;
 }
 
 /** Pitch states that still mean "in play" for a cell. */

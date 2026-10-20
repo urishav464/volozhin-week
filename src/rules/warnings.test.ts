@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { warningsFor } from "./warnings";
+import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek, pitch } from "../testing/week";
+import { ESCORT_MIN_GAP, escortClashes, warningsFor, weekGap } from "./warnings";
 
 const kinds = (w: ReturnType<typeof emptyWeek>) => warningsFor(w).map((x) => x.kind).sort();
 
@@ -94,5 +94,65 @@ describe("warningsFor", () => {
     addLesson(w, 2, 960, 1050, { room_id: 2 });
     expect(warningsFor(w)[0].key).toBe(warningsFor(w)[0].key);
     expect(warningsFor(w)[0].key).toMatch(/^parallel:\d+,\d+$/);
+  });
+
+  it("warns when one escort has two lessons less than 30 minutes apart («הצעה») — across midnight too, and at the same time", () => {
+    expect(ESCORT_MIN_GAP).toBe(30);
+    const w = emptyWeek();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    const lesson = (day: 0 | 1 | 2 | 3 | 4, start: number, end: number) => {
+      const l = addLesson(w, day, start, end, { title: "x", category_id: (start % 2) + 1, escort_roster_id: t.id });
+      return closeWith(w, l, addSpeaker(w, start % 2 ? "f" : "m"));
+    };
+    const a = lesson(1, 510, 600);
+    const b = lesson(1, 600, 690); // right after: 0 minutes
+    lesson(1, 870, 960); // 3 hours later: fine
+    const night = lesson(1, 1650, 1740); // 03:30–05:00 …
+    const morning = lesson(2, 390, 435); // … then 06:30 the next day column: 90 minutes, fine
+    const gaps = warningsFor(w).filter((x) => x.kind === "escort_gap");
+    expect(gaps.map((g) => [g.lessonIds, g.severity])).toEqual([[[a.id, b.id], "warn"]]);
+    expect(gaps[0].message).toBe("«חניכה לדוגמה» מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (שני 10:00–11:30; הצעה: לפחות 30 דקות)");
+    expect([night.id, morning.id].some((id) => gaps.some((g) => g.lessonIds.includes(id)))).toBe(false);
+
+    lesson(2, 410, 500); // overlaps the 06:30 opening
+    lesson(3, 600, 690);
+    lesson(3, 710, 780); // 20 minutes
+    const more = warningsFor(w).filter((x) => x.kind === "escort_gap").map((g) => g.message);
+    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים חופפים (שלישי 06:50–08:20)");
+    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים עם 20 דקות ביניהם (רביעי 11:50–13:00; הצעה: לפחות 30)");
+  });
+
+  it("compares every pair of an escort's lessons, not only neighbours — the picker's rule exactly", () => {
+    const w = emptyWeek();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    const long = addLesson(w, 1, 510, 720, { state: "closed", escort_roster_id: t.id }); // 08:30–12:00
+    const short = addLesson(w, 1, 540, 570, { state: "closed", escort_roster_id: t.id, room_id: 2 }); // 09:00–09:30, inside it
+    const late = addLesson(w, 1, 710, 750, { state: "closed", escort_roster_id: t.id, room_id: 3 }); // 11:50–12:30: overlaps the long one only
+    const pairs = warningsFor(w).filter((x) => x.kind === "escort_gap").map((g) => g.lessonIds);
+    expect(pairs).toEqual([[long.id, short.id], [long.id, late.id]]);
+    expect(escortClashes(w, late, t.id).map((x) => x.lesson.id)).toEqual([long.id]);
+  });
+
+  it("the escort picker sees the same rule before saving: the escort's lessons closer than 30 minutes, on the week's clock", () => {
+    const w = emptyWeek();
+    const t = addTrainee(w);
+    const other = addTrainee(w);
+    const here = addLesson(w, 1, 600, 690, { state: "closed" });
+    const before = addLesson(w, 1, 510, 600, { state: "closed", escort_roster_id: t.id }); // back to back
+    addLesson(w, 1, 870, 960, { state: "closed", escort_roster_id: t.id }); // 3 hours later: fine
+    const same = addLesson(w, 1, 630, 720, { state: "closed", escort_roster_id: t.id, room_id: 2 }); // at the same time
+    addLesson(w, 1, 690, 720, { state: "cancelled", escort_roster_id: t.id }); // cancelled: never counts
+    addLesson(w, 1, 690, 780, { state: "closed", escort_roster_id: other.id }); // someone else
+    expect(escortClashes(w, here, t.id).map((x) => [x.lesson.id, x.gap])).toEqual([
+      [before.id, 0],
+      [same.id, -60],
+    ]);
+    expect(escortClashes(w, here, other.id).map((x) => x.gap)).toEqual([0]);
+    expect(escortClashes(w, before, t.id)).toEqual([]); // `here` has no escort yet; 10:30 is exactly 30 minutes after 10:00
+    // across midnight: 05:00–06:30 and the next morning's 06:30 are back to back
+    const night = addLesson(w, 2, 1650, 1830, { state: "closed", escort_roster_id: t.id });
+    expect(weekGap(night, addLesson(w, 3, 390, 435))).toBe(0);
+    expect(weekGap(addLesson(w, 3, 420, 510), night)).toBe(30); // order does not matter
+    expect(ESCORT_MIN_GAP).toBe(30);
   });
 });

@@ -28,7 +28,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # a decoder that loops (a damaged file the reader's checks miss) blocks vitest's own timeouts: fail in minutes
       - run: npm run test:unit
+        timeout-minutes: 5
       - run: npm run build
       - name: No personal data or secrets in the bundle
         run: node scripts/pii-scan.mjs --dir dist

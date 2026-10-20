@@ -1,7 +1,13 @@
 // Scenarios that walk docs/CONTRACT.md clause by clause. Each runs on the
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
-import type { Step } from "./fixture";
+import { addDays, israelDate } from "../../src/domain/israelTime";
+import { FOREIGN_ROOM, FOREIGN_TRAINEE, type Step } from "./fixture";
+
+// Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
+const NOW = Date.now();
+const dateIn = (days: number) => addDays(israelDate(new Date(NOW).toISOString()), days);
+const isoIn = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
 
 export const SCENARIOS: Record<string, Step[]> = {
   "propose, claim, offer, give back": [
@@ -14,6 +20,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", propose: "אלפא", cell: [4, 1200, 1290] }, // Thursday after 19:00
     { as: "A", propose: "אלפא", cell: [0, 390, 435] }, // Sunday before the opening
     { as: "A", propose: "אלפא", cell: [1, 512, 600] }, // not on the 5-minute grid
+    { as: "A", propose: "אלפא", cell: [1, 600, 690, FOREIGN_ROOM] }, // another edition's room
     { as: "A", propose: "וו", cell: [1, 600, 690] }, // retired
     { as: "L", propose: "גמא", cell: [1, 600, 690] }, // logistics may not
     { as: "A", propose: "הא", cell: [1, 600, 690] }, // unvetted → candidate only
@@ -57,6 +64,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", move: [1, 600], to: [3, 870, 960, "כיתה"] }, // parallel in another room is fine
     { as: "B", propose: "גמא", cell: [4, 510, 600] },
     { as: "A", move: [4, 510], to: [4, 600, 690] }, // anyone may move a draft
+    { as: "A", move: [4, 600], to: [4, 600, 690, FOREIGN_ROOM] }, // another edition's room
   ],
 
   "reshaping": [
@@ -90,8 +98,712 @@ export const SCENARIOS: Record<string, Step[]> = {
 
   "an archived edition": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "E", updateSpeaker: "אלפא", patch: { affiliation: "מוסד" } }, // this year's admin edits the pool's record
+    { as: "admin", vet: ["אלפא"], state: "rejected" }, // a closed lesson this year stands
     { archive: true },
     { as: "A", propose: "בטא", cell: [1, 600, 690] },
     { as: "admin", propose: "בטא", cell: [1, 600, 690] },
+    { as: "A", claim: "גמא" },
+    { as: "A", create: { name: "מרצה חדשה לגמרי" } },
+    { as: "A", setStatus: "אלפא", status: "no_answer" },
+    { as: "admin", create: { name: "מרצה חדשה לגמרי", gender: "f" } },
+    { as: "E", updateSpeaker: "אלפא", patch: { affiliation: "מוסד אחר" } }, // last year's admin: no longer
+    { as: "E", claim: "דלתא" }, // an admin may still write in an archive…
+    { as: "E", updateSpeaker: "דלתא", patch: { gender: "f" } }, // …but not the pool's record, even as the handler
+    { as: "admin", vet: ["אלפא"], state: "rejected", note: "לא השנה" }, // last year's lesson pins nothing
+    { as: "admin", updateSpeaker: "אלפא", patch: { retired: true } },
+  ],
+
+  "a practice week: the real pool, no right over it": [
+    { sandbox: true },
+    { as: "A", claim: "אלפא" },
+    { as: "A", readContacts: "אלפא" },
+    { as: "A", updateSpeaker: "אלפא", patch: { name: "שם אחר", gender: "m", bio_short: "ביו שהוחלף" } },
+    { as: "E", updateSpeaker: "גמא", patch: { affiliation: "מוסד" } }, // the practice week's admin
+    { as: "admin", updateSpeaker: "גמא", patch: { affiliation: "מוסד" } }, // a global admin, from anywhere
+    { as: "A", create: { name: "מרצה חדשה מתרגול", gender: "f" }, opts: { claim: true } }, // into the real pool, pending
+    { as: "A", updateSpeaker: "מרצה חדשה מתרגול", patch: { bio_short: "ביו" } }, // not even its creator, from here
+    { as: "A", propose: "בטא", cell: [1, 510, 600] },
+    { as: "A", close: "בטא", at: [1, 510] },
+    { as: "A", setStatus: "בטא", status: "declined" }, // its own edition's closed lesson still stands
+    { as: "admin", vet: ["בטא"], state: "rejected", note: "x" }, // a practice lesson pins nothing in the pool
+    { as: "admin", updateSpeaker: "בטא", patch: { gender: null, retired: true } },
+  ],
+
+  // ------------------------------------------------------------ the speaker pool (milestone 2)
+
+  "create: search first, the same name, a namesake, a similar name": [
+    { as: "A", matches: "אלפא" },
+    { as: "A", matches: "  " }, // nothing to search
+    { as: "A", create: { name: "אלפא" } }, // the same person
+    { as: "A", create: { name: "הרב  אלפא", disambiguator: " " } }, // a title and spacing do not make a new name
+    { as: "A", create: { name: "אלפא", disambiguator: "ירושלים" } }, // a namesake: still «ייתכן שזה…» first
+    { as: "A", create: { name: "אלפא", disambiguator: "ירושלים" }, opts: { confirmed: true } },
+    { as: "B", create: { name: "אלפא", disambiguator: "ירושלים" }, opts: { confirmed: true } }, // that namesake exists now
+    { as: "A", matches: "אלפא" },
+    { as: "A", matches: "פלונית אלמוני" }, // trigram ≥ 0.6
+    { as: "A", matches: "פלונית כהן" }, // 0.44: no
+    { as: "A", matches: "יוסף בן-שמעון" }, // the same key
+    { as: "A", create: { name: "פלונית אלמוני", gender: "f" } },
+    { as: "A", create: { name: "פלונית אלמוני", gender: "f", topics: ["תנ\"ך"] }, opts: { confirmed: true, claim: true } },
+    { as: "A", setContacts: "פלונית אלמוני", phone: "555 0100 99" }, // the creator claimed: theirs to write
+    { as: "A", readContacts: "פלונית אלמוני" },
+    { as: "B", create: { name: "פלונית אלמוני", disambiguator: "חיפה" } }, // a namesake of the new one
+    { as: "B", create: { name: "פלונית אלמוני", disambiguator: "חיפה" }, opts: { confirmed: true } },
+  ],
+
+  "create: the fields, who may, approving at once": [
+    { as: "A", create: { name: "   " } },
+    { as: "A", create: { name: "הרב" } }, // a title alone is a name — and nothing like anyone
+    { as: "A", create: { name: "א".repeat(121) } },
+    { as: "A", create: { name: "מרצה חדשה", title: "מר" } }, // not one of the titles
+    { as: "A", create: { name: "מרצה חדשה", gender: "x" } },
+    { as: "A", create: { name: "מרצה חדשה", contact_pref: "fax" } },
+    { as: "A", create: { name: "מרצה חדשה", topics: "תנ\"ך" } },
+    { as: "A", create: { name: "מרצה חדשה", topics: ["א".repeat(41)] } },
+    { as: "A", create: { name: "מרצה חדשה", topics: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"] } },
+    { as: "A", create: { name: "מרצה חדשה", bio_short: "ב".repeat(401) } },
+    { as: "A", create: { name: "מרצה חדשה" }, opts: { approve: true } }, // only a global admin approves
+    { as: "L", create: { name: "מרצה חדשה" } },
+    {
+      as: "A",
+      create: {
+        name: "  מרצה \t חדשה ", title: "ד״ר", gender: "f", affiliation: " מוסד   לדוגמה ", bio_short: "  שורה\r\nשנייה  ",
+        topics: ["תנ\"ך", " תנ\"ך ", "", "פילוסופיה", "1", "2", "3", "4", "5", "6", "7", "8"], contact_pref: "whatsapp",
+      },
+    },
+    { as: "admin", create: { name: "מרצה נוספת", gender: "f" }, opts: { approve: true, confirmed: true } },
+  ],
+
+  "editing a speaker: the handler or an admin": [
+    { as: "B", updateSpeaker: "אלפא", patch: { bio_short: "ביו" } }, // nobody's yet: not B's
+    { as: "A", claim: "אלפא" },
+    { as: "B", claim: "אלפא" },
+    { as: "A", claim: "אלפא" }, // already mine
+    { as: "A", updateSpeaker: "אלפא", patch: { bio_short: " ביו לדוגמה ", topics: ["תנ\"ך"], contact_pref: "whatsapp", title: "הרבנית", ignored: 1 } },
+    { as: "A", updateSpeaker: "אלפא", patch: { bio_short: "שוב" }, staleBy: 1 },
+    { as: "A", updateSpeaker: "אלפא", patch: { bio_short: " ביו לדוגמה " } }, // nothing changes: no new version
+    { as: "A", updateSpeaker: "אלפא", patch: { contact_pref: "fax" } },
+    { as: "A", updateSpeaker: "אלפא", patch: { name: " " } },
+    { as: "A", updateSpeaker: "אלפא", patch: { name: "בטא" } }, // someone else's name
+    { as: "A", updateSpeaker: "אלפא", patch: { retired: true } }, // a global admin's
+    { as: "B", updateSpeaker: "אלפא", patch: { gender: "m" } },
+    { as: "admin", updateSpeaker: "גמא", patch: { gender: null, affiliation: "מוסד" } },
+    { as: "admin", updateSpeaker: "גמא", patch: { retired: "yes" } },
+    { as: "admin", updateSpeaker: "גמא", patch: { retired: true } },
+    { as: "A", claim: "גמא" }, // retired
+    { as: "L", updateSpeaker: "גמא", patch: { affiliation: "x" } },
+    { as: "A", updateSpeaker: "אלפא", patch: { name: "בטא", disambiguator: "חיפה" } }, // a namesake, told apart
+  ],
+
+  "vetting: the global admin, one or a batch, never under a closed lesson": [
+    { as: "A", vet: ["הא"], state: "approved" },
+    { as: "admin", vet: ["הא", "יוסף בן שמעון"], state: "approved", note: "  נבדק  " },
+    { as: "admin", vet: ["הא"], state: "approved", note: "נבדק" }, // already so: no new version
+    { as: "admin", vet: ["הא"], state: "maybe" },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "admin", vet: ["בטא", "אלפא"], state: "rejected", note: "x" }, // the whole batch waits
+    { as: "admin", vet: ["בטא"], state: "rejected", note: "לא מתאים השנה" },
+    { as: "A", propose: "בטא", cell: [1, 600, 690] }, // a rejected speaker: a candidate only
+    { as: "A", setPitch: "בטא", at: [1, 600], state: "approached" },
+    { as: "A", updateSpeaker: "אלפא", patch: { gender: null } },
+    { as: "admin", updateSpeaker: "אלפא", patch: { retired: true } },
+    { as: "admin", reopen: [1, 510] },
+    { as: "admin", vet: ["אלפא"], state: "pending" },
+  ],
+
+  "approach statuses, notes, «סירב/ה»": [
+    { as: "A", claim: "בטא" },
+    { as: "A", setStatus: "בטא", status: "approached", note: "  שלחתי הודעה " },
+    { as: "B", setStatus: "בטא", status: "positive" },
+    { as: "A", setStatus: "בטא", status: "positive", staleBy: 1 },
+    { as: "A", setStatus: "בטא", status: "maybe" },
+    { as: "A", setStatus: "בטא", status: "no_answer", note: "ש".repeat(201) },
+    { as: "A", setStatus: "בטא", status: "no_answer" },
+    { as: "A", setStatus: "בטא", status: "no_answer" }, // the same, no note: nothing
+    { as: "A", setStatus: "בטא", status: "no_answer", note: "עוד ניסיון" }, // the same, with a note: logged
+    { as: "A", claim: "הא" }, // not yet approved: may be claimed…
+    { as: "A", setStatus: "הא", status: "approached" }, // …not approached
+    { as: "A", setStatus: "הא", status: "declined" },
+    { as: "A", propose: "בטא", cell: [2, 510, 600] },
+    { as: "A", propose: "בטא", cell: [2, 600, 690] },
+    { as: "A", setStatus: "בטא", status: "declined", note: "לא פנוי השנה" }, // every live pitch too
+    { as: "A", setStatus: "בטא", status: "positive" },
+    { as: "A", propose: "גמא", cell: [3, 510, 600] },
+    { as: "A", close: "גמא", at: [3, 510] },
+    { as: "A", setStatus: "גמא", status: "declined" }, // a closed lesson stands
+    { as: "admin", setStatus: "גמא", status: "positive", note: "אושר בטלפון" },
+    { as: "L", setStatus: "בטא", status: "approached" },
+    { as: "A", setStatus: "דלתא", status: "approached" }, // no approach
+  ],
+
+  "hand-over: offer, answer, admin reassigns; the grid's offer still works": [
+    { as: "A", claim: "בטא" },
+    { as: "B", handOver: "בטא", to: "B" }, // not B's to give
+    { as: "A", handOver: "בטא", to: "A" },
+    { as: "A", handOver: "בטא", to: "L" }, // logistics handles no speaker
+    { as: "A", handOver: "בטא", to: "B", note: "מכיר אותו" },
+    { as: "A", answerHandOver: "בטא", accept: true }, // not offered to A
+    { as: "B", propose: "בטא", cell: [1, 510, 600] }, // still A's
+    { as: "B", propose: "בטא", cell: [1, 510, 600], mode: "offer" }, // «מטופל ע"י X»: offer the cell to A
+    { as: "B", answerHandOver: "בטא", accept: false },
+    { as: "B", answerHandOver: "בטא", accept: true }, // nothing waits any more
+    { as: "A", handOver: "בטא", to: "B" },
+    { as: "A", handOver: "בטא", to: null }, // withdrawn
+    { as: "A", handOver: "בטא", to: null }, // nothing to withdraw
+    { as: "A", handOver: "בטא", to: "B" },
+    { as: "B", answerHandOver: "בטא", accept: true, note: "לקחתי" },
+    { as: "A", setStatus: "בטא", status: "approached" }, // B's now
+    { as: "admin", handOver: "בטא", to: "A" }, // an admin reassigns at once
+    { as: "admin", handOver: "בטא", to: "L" },
+    { as: "admin", handOver: "בטא", to: null }, // back to the pool
+    { as: "A", setPitch: "בטא", at: [1, 510], state: "declined" }, // nobody's approach is nobody's to change
+    { as: "A", close: "בטא", at: [1, 510] },
+    { as: "B", unpropose: "בטא", at: [1, 510] }, // the proposer may still take it back
+    { as: "L", handOver: "בטא", to: "B" },
+    { as: "A", claim: "בטא" }, // nobody's: anyone may take it
+  ],
+
+  "availability chips: a part of a day, cut from older ranges": [
+    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "can" }, // no approach
+    { as: "A", claim: "בטא" },
+    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "can", note: " רק אחרי 9 " },
+    { as: "A", avail: "בטא", day: 1, part: "night", kind: "cannot" },
+    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "cannot" },
+    { as: "A", avail: "בטא", day: 1, part: "morning", kind: null, note: "נשכח" },
+    { as: "A", avail: "בטא", day: 5, part: "morning", kind: "can" },
+    { as: "A", avail: "בטא", day: 1, part: "noon", kind: "can" },
+    { as: "A", avail: "בטא", day: 1, part: "evening", kind: "maybe" },
+    { as: "B", avail: "בטא", day: 2, part: "evening", kind: "can" },
+    { as: "admin", avail: "בטא", day: 2, part: "evening", kind: "can" },
+    { as: "L", avail: "בטא", day: 2, part: "evening", kind: "can" },
+    { as: "B", avail: "זין", day: 2, part: "evening", kind: "cannot" }, // 20:00–06:30 → the night is left
+    { as: "B", avail: "זין", day: 3, part: "afternoon", kind: "can" }, // 11:40–20:00 → a piece on each side
+    { as: "B", avail: "זין", day: 2, part: "night", kind: null },
+  ],
+
+  "contacts: the handler in the current real edition, and the admin": [
+    { as: "B", readContacts: "אלפא" },
+    { as: "admin", readContacts: "אלפא" },
+    { as: "A", readContacts: "אלפא" },
+    { as: "A", setContacts: "אלפא", phone: "555 0100 99" },
+    { as: "A", claim: "אלפא" },
+    { as: "A", readContacts: "אלפא" },
+    { as: "L", readContacts: "אלפא" },
+    { as: "A", setContacts: "אלפא", phone: "12-34" },
+    { as: "A", setContacts: "אלפא", phone: "555 0100 99", email: "not-an-address" },
+    { as: "A", setContacts: "אלפא", phone: "5".repeat(41) },
+    { as: "A", setContacts: "אלפא", phone: " 555  0100 99 ", email: "speaker@example.org", secretary_note: "  דרך המזכירות\r\nבבוקר ", notes: null },
+    { as: "A", setContacts: "אלפא", phone: "555 0100 99", email: "speaker@example.org", secretary_note: "דרך המזכירות\nבבוקר" }, // nothing changes
+    { as: "A", readContacts: "אלפא" },
+    { as: "B", readContacts: "אלפא" },
+    { as: "admin", setContacts: "בטא", phone: null, email: "b@example.org" }, // an admin, no approach needed
+    { as: "A", readContacts: "בטא" },
+    { as: "A", setContacts: "בטא", phone: null }, // nothing to write: still not A's
+    { as: "A", handOver: "אלפא", to: "B" },
+    { as: "B", readContacts: "אלפא" }, // an offer is not a hand-over yet
+    { as: "B", answerHandOver: "אלפא", accept: true },
+    { as: "B", readContacts: "אלפא" },
+    { as: "A", readContacts: "אלפא" },
+    { archive: true },
+    { as: "B", readContacts: "אלפא" }, // last year's handler
+    { as: "B", setContacts: "אלפא", phone: null },
+    { as: "admin", readContacts: "אלפא" },
+  ],
+
+  // ------------------------------------------------------------ from placement to arrival (milestone 3)
+
+  "payment and transport: ask, decide, change, ask again": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", pay: [1, 510], amount: 500, transport: "none" }, // a draft: not yet
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", pay: [1, 510], amount: 500, transport: "none" }, // not B's speaker
+    { as: "L", pay: [1, 510], amount: 500, transport: "none" }, // logistics asks for nothing
+    { as: "A", pay: [1, 510], amount: 1.5, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 0, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 100001, transport: "none" },
+    { as: "A", pay: [1, 510], amount: 500, transport: "bus" },
+    { as: "A", pay: [1, 510], amount: 500, transport: "none", staleBy: 1 },
+    { as: "A", pay: [1, 510], amount: null, transport: "none" }, // nothing asked, as before: nothing
+    { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // → pending
+    { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // the same again: nothing
+    { as: "A", decide: [[1, 510]], decision: "approved" }, // only a global admin decides
+    { as: "E", decide: [[1, 510]], decision: "approved" }, // not this edition's admin either
+    { as: "admin", decide: [[1, 510]], decision: "maybe" },
+    { as: "admin", decide: [[1, 510]], decision: "approved", staleBy: 1 }, // changed since the queue was read
+    { as: "admin", decide: [[1, 510]], decision: "approved", note: "  אושר (נתון לדוגמה)  " },
+    { as: "admin", decide: [[1, 510]], decision: "approved" }, // no longer waiting
+    { as: "A", reopen: [1, 510] }, // approved: the instructor's to reopen
+    { as: "A", pay: [1, 510], amount: 400, transport: "round_trip" }, // a change → pending again, the note gone
+    { as: "admin", decide: [[1, 510]], decision: "rejected", note: "לא מאושר (נתון לדוגמה)" },
+    { as: "A", pay: [1, 510], amount: 400, transport: "round_trip" }, // rejected, asked again: pending
+    { as: "A", propose: "בטא", cell: [2, 510, 600] },
+    { as: "A", close: "בטא", at: [2, 510] },
+    { as: "A", pay: [2, 510], amount: null, transport: "one_way" }, // transport alone
+    { as: "admin", decide: [[2, 510], [1, 510]], decision: "approved", note: "באצווה" }, // a batch
+    { as: "A", pay: [2, 510], amount: 150, transport: "one_way" },
+    { as: "admin", decide: [[1, 510], [2, 510]], decision: "rejected" }, // one is not waiting: the whole batch waits
+    { as: "E", pay: [1, 510], amount: null, transport: "none" }, // the edition's admin may; nothing asked → none
+    { archive: true },
+    { as: "A", pay: [2, 510], amount: 200, transport: "one_way" },
+    { as: "admin", decide: [[2, 510]], decision: "approved" },
+  ],
+
+  "the summary message: sent, changed, «לעדכן את המרצה», sent again": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", sent: [1, 510] }, // a draft
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", sent: [1, 510] }, // not B's speaker
+    { as: "L", sent: [1, 510] },
+    { as: "A", sent: [1, 510], staleBy: 1 },
+    { as: "A", sent: [1, 510] },
+    { as: "A", update: [1, 510], patch: { category: "פילוסופיה", audience: "שיעור להורים" } }, // not in the message: no flag
+    { as: "A", update: [1, 510], patch: { title: "כותרת לדוגמה" } }, // retitled → flag
+    { as: "A", sent: [1, 510] }, // sent again: cleared
+    { as: "A", update: [1, 510], patch: { teach_min: 60 } }, // a new teaching time → flag
+    { as: "A", sent: [1, 510] },
+    { as: "A", move: [1, 510], to: [1, 510, 600, "כיתה"] }, // another room → flag
+    { as: "A", sent: [1, 510, "כיתה"] },
+    { as: "A", pay: [1, 510, "כיתה"], amount: 200, transport: "none" }, // a new amount → flag, and pending
+    { as: "A", sent: [1, 510, "כיתה"] }, // waits for the instructor
+    { as: "admin", decide: [[1, 510, "כיתה"]], decision: "rejected" },
+    { as: "A", sent: [1, 510, "כיתה"] }, // rejected
+    { as: "A", pay: [1, 510, "כיתה"], amount: 200, transport: "none" },
+    { as: "admin", decide: [[1, 510, "כיתה"]], decision: "approved" },
+    { as: "A", sent: [1, 510, "כיתה"] },
+    { as: "admin", reopen: [1, 510, "כיתה"] }, // a draft again: its stages start over, the message mark too
+    { as: "A", move: [1, 510, "כיתה"], to: [3, 870, 960] }, // a draft moves: no flag
+    { as: "A", close: "אלפא", at: [3, 870] }, // closed again: a first message to send, not a reconfirm
+    { as: "A", sent: [3, 870] },
+    { as: "A", reshape: [3, 870], op: { op: "merge_next" } }, // a closed lesson grows → flag
+    { as: "E", sent: [3, 870] }, // an admin may send for the handler
+  ],
+
+  "escorts and sources: any editor, on a closed lesson": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false }, // a draft
+    { as: "A", sources: [1, 510], kind: "sheet", print: "none", inReader: false },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false, note: "  להגיע מוקדם\r\nבבקשה  " },
+    { as: "B", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false }, // any editor
+    { as: "L", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: true },
+    { as: "A", escort: [1, 510], trainee: FOREIGN_TRAINEE, selfIntro: false }, // another edition's trainee
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: null },
+    { as: "A", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false, staleBy: 1 },
+    { as: "A", escort: [1, 510], trainee: "חניך לדוגמה", selfIntro: false }, // as it is: nothing
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: true, note: "א".repeat(301) },
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: true }, // self-introduction, no escort
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: " דף אחד ", inReader: true },
+    { as: "A", sources: [1, 510], kind: "pdf", print: "before", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "later", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "ftp://example.org/deck", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "javascript:alert(1)", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://example.org/a b", inReader: false },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "same_day", inReader: null },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "דף אחד", inReader: true, staleBy: 1 },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "דף אחד", inReader: true }, // as it is: nothing
+    { as: "B", sources: [1, 510], kind: "presentation", print: "none", url: "  HTTPS://example.org/deck ", inReader: true }, // no reader for a deck
+    { as: "L", sources: [1, 510], kind: "none", print: "none", inReader: false },
+    { as: "A", sources: [1, 510], kind: "sheet_video", print: "same_day", url: "http://example.org/v", inReader: true },
+    { as: "A", sources: [1, 510], kind: "sheet_video", print: "same_day", note: "ש".repeat(501), inReader: true },
+    { archive: true },
+    { as: "A", escort: [1, 510], trainee: null, selfIntro: false },
+    { as: "admin", sources: [1, 510], kind: "other", print: "none", inReader: true },
+  ],
+
+  "a reopen starts the stages over: the next speaker's handler inherits nothing; money paid stays": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: 700, transport: "round_trip" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15" },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: true, note: "הערה לדוגמה" },
+    { as: "A", sources: [1, 510], kind: "presentation", print: "none", url: "https://example.org/deck", inReader: false },
+    { as: "B", readTransport: [1, 510] },
+    { as: "A", reopen: [1, 510] }, // pending, not approved: the handler may — and every stage starts over
+    { as: "admin", decide: [[1, 510]], decision: "approved" }, // nothing waits any more
+    { as: "B", propose: "גמא", at: [1, 510] },
+    { as: "B", close: "גמא", at: [1, 510] },
+    { as: "B", readTransport: [1, 510] }, // the new handler: not the last speaker's pickup
+    { as: "L", readTransport: [1, 510] },
+    { as: "B", sent: [1, 510] }, // nothing asked for this speaker: a first message
+    { as: "L", paid: [1, 510], value: true }, // nothing approved for this speaker
+    { as: "B", pay: [1, 510], amount: 900, transport: "one_way" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", paid: [1, 510], value: true },
+    { as: "B", pay: [1, 510], amount: 1000, transport: "one_way" }, // paid: the amount stays what was paid
+    { as: "B", pay: [1, 510], amount: null, transport: "one_way" },
+    { as: "B", pay: [1, 510], amount: 900, transport: "round_trip" }, // the transport may change: pending again, still paid
+    { as: "B", reopen: [1, 510] }, // paid
+    { as: "admin", reopen: [1, 510] }, // not even the instructor, while it is paid
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "E", paid: [1, 510], value: false }, // «שולם» undone first …
+    { as: "B", pay: [1, 510], amount: 1000, transport: "round_trip" }, // … then a new amount, back to the instructor
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "B", reopen: [1, 510] }, // approved: the instructor's to reopen
+    { as: "E", reopen: [1, 510] },
+    { as: "admin", decide: [[1, 510]], decision: "rejected" }, // a draft's request is no one's
+  ],
+
+  "transport details: the handler, logistics once approved, the instructor; paid": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", readTransport: [1, 510] }, // the handler: nothing yet
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" }, // no transport asked
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
+    { as: "A", setTransport: [1, 510], address: " כתובת   לדוגמה ", time: "07:15" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15" }, // nothing changed
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", phone: "12-34" },
+    { as: "A", setTransport: [1, 510], address: "א".repeat(201) },
+    { as: "L", readTransport: [1, 510] }, // logistics: not before the approval
+    { as: "L", setTransport: [1, 510], driver: "נהג/ת לדוגמה" },
+    { as: "B", readTransport: [1, 510] },
+    { as: "E", readTransport: [1, 510] }, // the edition's admin is not the handler
+    { as: "admin", readTransport: [1, 510] },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", readTransport: [1, 510] },
+    { as: "L", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
+    { as: "B", readTransport: [1, 510] },
+    { as: "A", handOver: "אלפא", to: "B" },
+    { as: "B", readTransport: [1, 510] }, // an offer is not a hand-over yet
+    { as: "B", answerHandOver: "אלפא", accept: true },
+    { as: "B", readTransport: [1, 510] }, // the new handler
+    { as: "A", readTransport: [1, 510] }, // the old one, no longer
+    { as: "L", paid: [1, 510], value: true }, // transport only: nothing to pay
+    { as: "B", pay: [1, 510], amount: 250, transport: "round_trip" }, // pending again
+    { as: "L", readTransport: [1, 510] }, // logistics loses sight until it is approved again
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "B", paid: [1, 510], value: true }, // content does not pay
+    { as: "L", paid: [1, 510], value: null },
+    { as: "L", paid: [1, 510], value: true },
+    { as: "L", paid: [1, 510], value: true }, // already
+    { as: "E", paid: [1, 510], value: false }, // an admin may undo
+    { as: "B", pay: [1, 510], amount: 250, transport: "none" }, // no transport: its details go
+    { as: "admin", readTransport: [1, 510] },
+    { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { as: "B", pay: [1, 510], amount: 250, transport: "one_way" },
+    { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { archive: true },
+    { as: "B", readTransport: [1, 510] }, // last year's handler
+    { as: "B", setTransport: [1, 510], address: null },
+    { as: "L", paid: [1, 510], value: true }, // an archive
+    { as: "admin", readTransport: [1, 510] },
+  ],
+
+  "transport details in a practice week: the instructor only": [
+    { sandbox: true },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "one_way" },
+    { as: "A", readTransport: [1, 510] },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "L", readTransport: [1, 510] },
+    { as: "admin", setTransport: [1, 510], address: "כתובת לדוגמה", arranged: true },
+    { as: "admin", readTransport: [1, 510] },
+  ],
+
+  "the template and the duty phrases: the edition's admin, the instructor's wording": [
+    { as: "A", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "L", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "E", template: "  נוסח לדוגמה {{פנייה}}\r\nשורה שנייה  " },
+    { as: "admin", template: "א".repeat(4001) },
+    { as: "admin", template: "   " }, // empty: no template
+    { as: "admin", template: "נוסח לדוגמה {{פנייה}}" },
+    { as: "A", duty: [{ when: "always", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: [{ when: "always", text: " ניסוח  לדוגמה " }, { when: "self_intro", text: "" }, { when: "always", text: "ניסוח לדוגמה" }, { when: "transport", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: [{ when: "sometimes", text: "ניסוח לדוגמה" }] },
+    { as: "E", duty: "ניסוח לדוגמה" },
+    { as: "E", duty: [{ when: "always" }] },
+    { as: "E", duty: [["always", "ניסוח לדוגמה"]] },
+    { as: "E", duty: [{ when: "always", text: "א".repeat(201) }] },
+    { as: "E", duty: Array.from({ length: 31 }, (_, i) => ({ when: "always", text: `ניסוח לדוגמה ${i}` })) },
+    { as: "E", duty: [] }, // empty: none
+    { as: "E", duty: [{ when: "memorial", text: "ניסוח לדוגמה לזיכרון" }, { when: "escort_intro", text: "ניסוח לדוגמה להצגה" }] },
+    { archive: true },
+    { as: "E", template: "נוסח לדוגמה אחר" }, // an admin may still write in an archive
+    { as: "A", template: "נוסח לדוגמה אחר" },
+  ],
+
+  // ------------------------------------------------------------ links and מכריכה לכריכה (milestone 5a)
+
+  "links: an edition admin issues, replaces and revokes; a token opens its own page only": [
+    { as: "A", reshape: [1, 510], op: { op: "split_parallel", count: 2, reason: "דוגמה" } },
+    { as: "A", propose: "אלפא", at: [1, 510] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", at: [1, 510, "כיתה"] },
+    { as: "A", close: "בטא", at: [1, 510, "כיתה"] },
+    { as: "A", update: [1, 510], patch: { title: "כותרת לדוגמה", category: "פילוסופיה", teach_min: 60 } },
+    { as: "A", propose: "גמא", cell: [2, 600, 690] }, // a draft: not public
+    { as: "A", issue: "schedule", name: "x" },
+    { as: "L", issue: "schedule", name: "x" },
+    { as: "E", issue: "escort", trainee: FOREIGN_TRAINEE, name: "x" },
+    { as: "E", issue: "escort", trainee: null, name: "x" },
+    { as: "E", issue: "kk_signup", trainee: "חניכה לדוגמה", name: "x" },
+    { as: "E", issue: "poster", name: "x" },
+    { as: "E", issue: "schedule", name: "s1" },
+    { anon: "scheduleView", token: "s1" },
+    { anon: "escortView", token: "s1" }, // another scope's token
+    { anon: "kkForm", token: "s1" },
+    { anon: "scheduleView", token: "nothing" }, // a token that opens nothing
+    { as: "admin", issue: "schedule", name: "s2" }, // replaces s1
+    { anon: "scheduleView", token: "s1" },
+    { anon: "scheduleView", token: "s2" },
+    { as: "A", revoke: "s2" },
+    { as: "E", revoke: "s2" },
+    { as: "E", revoke: "s2" }, // already revoked: nothing
+    { anon: "scheduleView", token: "s2" },
+    { startDate: dateIn(-10) }, // the week is over
+    { as: "E", issue: "schedule", name: "s3" },
+    { startDate: dateIn(20) },
+    { as: "E", issue: "schedule", name: "s3" },
+    { anon: "scheduleView", token: "s3" }, // with dates now
+    { startDate: null }, // TBD again: 30 days after issue
+    { expire: "s3" },
+    { anon: "scheduleView", token: "s3" },
+    { as: "E", issue: "schedule", name: "s4" },
+    { archive: true },
+    { anon: "scheduleView", token: "s4" }, // an archived edition's link
+    { as: "admin", issue: "schedule", name: "s5" },
+  ],
+
+  "links: the rate limit — an escort's link counted as one, a class link per caller's address, never one count for the class": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false },
+    { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניך לדוגמה", name: "e2" },
+    { as: "E", issue: "schedule", name: "s" },
+    { as: "E", issue: "kk_signup", name: "k" },
+    { anon: "escortView", token: "e1", times: 60 },
+    { anon: "escortView", token: "e1" }, // the 61st in ten minutes
+    { anon: "escortView", token: "e1", from: "198.51.100.7" }, // one person's link: one count, from anywhere
+    { anon: "escortView", token: "e2" }, // another link is counted apart
+    { rateWindowPassed: "e1" },
+    { anon: "escortView", token: "e1" }, // ten minutes later
+    { rateHits: "s", from: "198.51.100.7", hits: 1199 },
+    { anon: "scheduleView", token: "s", from: "198.51.100.7", times: 2 }, // the 1200th, then refused
+    { anon: "scheduleView", token: "s", from: "203.0.113.9" }, // someone else holding the same link still gets in
+    { anon: "scheduleView", token: "s" }, // no address reported: a count of its own
+    { rateHits: "k", from: "198.51.100.7", hits: 1200 },
+    { anon: "kkForm", token: "k", from: "198.51.100.7" },
+    { anon: "kkForm", token: "k", from: "203.0.113.9" },
+    { rateWindowPassed: "s" },
+    { anon: "scheduleView", token: "s", from: "198.51.100.7" },
+  ],
+
+  "the escort's link: own lessons only, the phone from W−7, ticks, a write-only pickup address": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", cell: [1, 600, 690] },
+    { as: "A", close: "בטא", at: [1, 600] },
+    { as: "A", propose: "גמא", cell: [2, 510, 600] },
+    { as: "A", close: "גמא", at: [2, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false, note: "הערה לדוגמה" },
+    { as: "A", escort: [1, 600], trainee: "חניכה לדוגמה", selfIntro: true },
+    { as: "A", escort: [2, 510], trainee: "חניך לדוגמה", selfIntro: false },
+    { as: "A", pay: [1, 600], amount: 300, transport: "round_trip" },
+    { as: "admin", decide: [[1, 600]], decision: "approved", note: "הערה לדוגמה" },
+    { as: "A", setTransport: [1, 600], address: "כתובת לדוגמה", driver: "נהג/ת לדוגמה", phone: "555 0100 33", arranged: true },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "הערת מקורות", inReader: true },
+    { as: "E", duty: [{ when: "always", text: "ניסוח לדוגמה" }, { when: "self_intro", text: "ניסוח להצגה עצמית" }, { when: "escort_intro", text: "ניסוח למלווה" }, { when: "transport", text: "ניסוח להסעה" }] },
+    { as: "A", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניך לדוגמה", name: "e2" },
+    { anon: "escortView", token: "e1" }, // the date TBD: no phone
+    { startDate: dateIn(10) },
+    { anon: "escortView", token: "e1" }, // W−10: not yet
+    { startDate: dateIn(7) },
+    { anon: "escortView", token: "e1" }, // W−7: אלפא's phone (בטא has none on file)
+    { startDate: dateIn(3) },
+    { anon: "escortView", token: "e2" },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: true }, // the first time kept
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "gift", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "gift", on: false },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "hug", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: null },
+    { anon: "escortTick", token: "e1", at: [2, 510], item: "met", on: true }, // another escort's lesson
+    { anon: "escortTick", token: "e1", at: [3, 510], item: "met", on: true }, // no lesson there
+    { anon: "escortTick", token: "e2", at: [2, 510], item: "reminded", on: true },
+    { anon: "escortPickup", token: "e1", at: [1, 510], address: "כתובת" }, // no transport asked
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: "   " },
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: "א".repeat(201) },
+    { anon: "escortPickup", token: "e2", at: [1, 600], address: "כתובת" }, // not e2's lesson
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: " רחוב  לדוגמה 1 " }, // written, never read back
+    { anon: "escortView", token: "e1" },
+    { as: "B", readTransport: [1, 600] },
+    { as: "A", readTransport: [1, 600] },
+    { as: "A", escort: [2, 510], trainee: "חניכה לדוגמה", selfIntro: false }, // a new escort: e2's ticks go
+    { anon: "escortView", token: "e2" },
+    { anon: "escortView", token: "e1" },
+    { as: "admin", reopen: [1, 510] }, // a draft again: its escort and ticks go
+    { anon: "escortView", token: "e1" },
+    { expire: "e1" },
+    { anon: "escortView", token: "e1" },
+  ],
+
+  "מכריכה לכריכה: groups on the grid's kk rows, the window, a link that never overwrites, the staff place": [
+    { as: "A", kkAdd: [1, 1290], fields: { title: "ספר א" } },
+    { as: "L", kkAdd: [1, 1290], fields: { title: "ספר א" } },
+    { as: "E", kkAdd: [4, 1290], fields: { title: "ספר א" } }, // Thursday ends at 19:00
+    { as: "E", kkAdd: [1, 510], fields: { title: "ספר א" } }, // a lesson row
+    { as: "E", kkAdd: [1, 1290], fields: {} },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", room: FOREIGN_ROOM } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 0 } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 1.5 } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", open: "yes" } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "trainee", trainee: FOREIGN_TRAINEE }] } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "staff", label: " " }] } },
+    {
+      as: "E",
+      kkAdd: [1, 1290],
+      fields: {
+        title: " ספר  א ", author: "מחבר/ת לדוגמה", room: "כיתה", capacity: 1,
+        leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }, { kind: "staff", label: "צוות לדוגמה" }, { kind: "staff", label: " צוות  לדוגמה " }],
+      },
+    },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר ב", capacity: 5, ignored: true } },
+    { as: "E", kkAdd: [2, 1740], fields: { title: "ספר ג" } }, // no capacity yet: not offered
+    { as: "E", issue: "kk_signup", name: "k" }, // no window yet: 30 days
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" }, // closed: nothing recorded
+    { as: "E", kkWindow: [isoIn(-1), isoIn(3)] },
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר ב" }, // never changed through the link
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר א" }, // full
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" }, // not offered
+    { anon: "kkSignup", token: "k", trainee: FOREIGN_TRAINEE, group: "ספר ב" },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "אין כזה" },
+    { anon: "kkForm", token: "k" }, // ספר א is full
+    { as: "E", kkPlace: "ספר א", trainee: "חניך לדוגמה" }, // the staff decide: over capacity
+    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // moved within the track
+    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // already there
+    { as: "A", kkPlace: "ספר ב", trainee: "חניך לדוגמה" },
+    { as: "E", kkPlace: "ספר ב", trainee: FOREIGN_TRAINEE },
+    { as: "E", kkPlace: "ספר ד", trainee: "חניך לדוגמה" },
+    { as: "E", kkDelete: "ספר ב" },
+    { as: "E", kkUnplace: [1, 1290], trainee: "חניכה לדוגמה" },
+    { as: "E", kkUnplace: [3, 1290], trainee: "חניכה לדוגמה" },
+    { as: "E", kkDelete: "ספר ב" },
+    { as: "E", kkUpdate: "ספר א", patch: { title: "  " } },
+    { as: "E", kkUpdate: "ספר א", patch: { title: "ספר א מתוקן", author: null, capacity: 3, open: false, leaders: [] } },
+    { as: "A", kkUpdate: "ספר ג", patch: { capacity: 2 } },
+    { as: "E", kkUpdate: "ספר ג", patch: { capacity: 2, room: "ספרייה" } },
+    { anon: "kkForm", token: "k" }, // ספר א closed, ספר ג offered now
+    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ה", capacity: 3 } },
+    { anon: "kkForm", token: "k" }, // Sunday's track on offer
+    { firstDayFrom: 1350 }, // Sunday opens at 22:30: its kk row is off the grid
+    { anon: "kkForm", token: "k" }, // the track is not offered any more…
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // …nor signed up for
+    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ו", capacity: 3 } }, // outside_grid
+    { firstDayFrom: 510 },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // on the grid again
+    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
+    { as: "A", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
+    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: true },
+    { as: "E", bookOrder: "ספר א מתוקן", copies: 5, ordered: true }, // the first time kept
+    { as: "E", bookOrder: "ספר א מתוקן", copies: null, ordered: true },
+    { as: "E", bookOrder: "ספר א מתוקן", copies: 1001, ordered: false },
+    { as: "E", bookOrder: "ספר ג", copies: 2, ordered: false },
+    { as: "E", bookOrder: "ספר ג", copies: null, ordered: false },
+    { as: "E", kkWindow: [isoIn(1), null] },
+    { as: "E", kkWindow: [isoIn(3), isoIn(1)] },
+    { as: "A", kkWindow: [isoIn(-1), isoIn(3)] },
+    { as: "E", kkWindow: [isoIn(-3), isoIn(-1)] }, // closed: the link has expired with it
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" },
+    { as: "E", kkWindow: [null, null] }, // no window: 30 days after issue again
+    { anon: "kkForm", token: "k" },
+    { as: "E", issue: "kk_signup", name: "k2" },
+    { anon: "kkForm", token: "k" }, // replaced
+  ],
+
+  // the sources' files (milestone 5ב-1): the bucket's limits and policies, register and remove, the reader's settings
+  "sources' files and the reader": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", cell: [2, 510, 600] }, // a draft
+    { as: "L", store: [1, 510], file: "l1" }, // logistics read and print; they do not upload
+    { as: "A", store: [2, 510], file: "d1" }, // a draft
+    { as: "A", store: [3, 510], file: "n1" }, // no lesson there
+    { as: "A", store: [1, 510], file: "x1", mime: "text/plain" }, // not a type the bucket takes
+    { as: "A", store: [1, 510], file: "big", size: 26_214_401 }, // over 25 MB
+    { as: "A", store: [1, 510], file: "a1", size: 4096 },
+    { as: "B", register: "a1" }, // A's upload, not B's
+    { as: "A", register: "a1", for: [2, 510] }, // the path is another lesson's
+    { as: "A", register: "a1", for: "cover" },
+    { as: "A", register: "a1", display: "   " },
+    { as: "A", register: "a1", pages: 0 },
+    { as: "A", register: "a1", display: "  דף   מקורות.pdf ", pages: 3 }, // «טרם התקבלו» → a sheet, in the reader
+    { as: "A", register: "a1", display: "שוב", pages: 9 }, // a retry: the same row, nothing changes
+    { as: "A", register: "zz", for: [1, 510] }, // nothing stored there
+    { as: "B", store: [1, 510], file: "b1", mime: "image/png", size: 777 }, // any content member
+    { as: "B", register: "b1", pages: 5 }, // an image is one page; not the first file: no change
+    { as: "A", sources: [1, 510], kind: "sheet", print: "none", inReader: false }, // out of the reader on purpose
+    { as: "B", store: [1, 510], file: "b2", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+    { as: "B", register: "b2", pages: 4 }, // Word: no pages; the «off» stays
+    { as: "A", unregister: "b1" }, // not A's
+    { as: "B", unregister: "b1" }, // still stored
+    { as: "A", unstore: "b1" }, // kept: not A's
+    { as: "L", unstore: "b1" }, // kept
+    { as: "B", unstore: "b1" }, // deleted
+    { as: "B", unregister: "b1" },
+    { as: "B", unregister: "b1" }, // gone already: nothing to do
+    { as: "E", unstore: "b2" }, // the edition's admin
+    { as: "E", unregister: "b2" },
+    { as: "A", store: "cover", file: "p1", mime: "image/png" }, // the poster is the admins'
+    { as: "E", store: "cover", file: "p2", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, // never a Word poster
+    { as: "E", store: "cover", file: "p1", mime: "image/png" },
+    { as: "E", register: "p1", pages: 2 }, // the first poster becomes the cover
+    { as: "E", readerCover: "a1" }, // a lesson's file is no poster
+    { as: "A", readerCover: null },
+    { as: "E", readerCover: null },
+    { as: "E", readerCover: "p1" },
+    { as: "A", readerHeaders: ["שמאל", "ימין"] },
+    { as: "E", readerHeaders: ["  כותרת   שמאל ", null] },
+    { as: "E", readerHeaders: [" ", ""] }, // both empty: removed
+    { as: "A", reopen: [1, 510] }, // the files stay — the speaker who left is theirs
+    { as: "A", register: "a1", display: "שוב", pages: 9 }, // a retry whose first answer was lost: the row it made, nothing set on the draft
+    { as: "A", store: [1, 510], file: "a2" }, // a draft now
+    { as: "A", propose: "גמא", at: [1, 510] },
+    { as: "A", close: "גמא", at: [1, 510] }, // another speaker
+    { as: "A", store: [1, 510], file: "a3", mime: "image/jpeg" },
+    { as: "A", register: "a3" }, // the new speaker's first file: in the reader again
+    { as: "A", store: [1, 510], file: "a5", mime: "image/png" },
+    { as: "A", register: "a5", pages: null }, // a picture the browser could not read: no page (out of the reader)
+    { as: "E", unstore: "p1" },
+    { as: "E", unregister: "p1" }, // the cover's file: the mark goes with it
+    // a path is used once: a removal that stopped half way leaves the row, and nobody uploads at its path again
+    { as: "A", store: [1, 510], file: "s1" },
+    { as: "A", register: "s1" },
+    { as: "A", unstore: "s1" }, // deleted — the row stays
+    { as: "B", store: [1, 510], file: "s1" }, // refused: the path is the row's
+    { as: "A", store: [1, 510], file: "s1" }, // the uploader too
+    { as: "A", register: "s1" }, // a retry: the row it made
+    { as: "A", unregister: "s1" },
+    { archive: true },
+    { as: "A", store: [1, 510], file: "a4" }, // an archive: its admins only
+    { as: "A", unstore: "a3" }, // kept
+    { as: "A", unregister: "a1" },
+    { as: "E", unstore: "a1" },
+    { as: "E", unregister: "a1" },
+  ],
+
+  // the cover set by itself: the first poster the browser could read — one it could not, the build never fetches
+  "the reader's cover: the first poster the browser could read": [
+    { as: "E", store: "cover", file: "p1", mime: "image/jpeg" },
+    { as: "E", register: "p1", pages: null }, // not read: no cover — the schedule page
+    { as: "E", readerCover: "p1" }, // nor by hand: bad_value
+    { as: "E", store: "cover", file: "p2" },
+    { as: "E", register: "p2", pages: 2 }, // the first one read: the cover
+    { as: "E", store: "cover", file: "p3", mime: "image/png" },
+    { as: "E", register: "p3" }, // a poster after it leaves the cover as it is
+    { as: "E", unstore: "p2" },
+    { as: "E", unregister: "p2" }, // the cover's file: the mark goes with it, and no other poster takes its place
+    { as: "E", readerCover: "p3" },
   ],
 };

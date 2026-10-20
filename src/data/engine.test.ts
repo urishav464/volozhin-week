@@ -1,7 +1,7 @@
 // docs/CONTRACT.md, clause by clause, against the in-memory engine.
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Week } from "../domain/types";
-import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
+import { LESSON_STAGE_DEFAULTS, type Week } from "../domain/types";
+import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek } from "../testing/week";
 import { CommandError } from "./commands";
 import { type Actor, Engine } from "./engine";
 
@@ -312,5 +312,122 @@ describe("transactions and archives", () => {
     const e = new Engine(w, ME);
     e.propose(s.id, cell(1, 510, 600));
     expect(e.week.approaches[0]).toMatchObject({ owner_member_id: ME.memberId, status: "approached" });
+  });
+});
+
+describe("from placement to arrival (CONTRACT.md, milestone 3)", () => {
+  const GLOBAL: Actor = { memberId: 9, role: "admin", global: true };
+  /** A real edition, a lesson ME closed. */
+  function closedByMe() {
+    w.edition.kind = "real";
+    const e = new Engine(w, ME);
+    const r = e.propose(addSpeaker(w, "f").id, cell(1, 510, 600));
+    e.closeLesson(r.pitch_id);
+    return { e, id: r.lesson_id, l: () => e.week.lessons.find((x) => x.id === r.lesson_id)! };
+  }
+
+  it("flags «לעדכן את המרצה» for what the message says — and only after it was sent", () => {
+    const { e, id, l } = closedByMe();
+    e.updateLesson(id, l().version, { title: "כותרת לדוגמה" });
+    expect(l().needs_reconfirm).toBe(false); // nothing sent yet
+    e.markConfirmSent(id, l().version);
+    expect(l()).toMatchObject({ confirm_sent_by: ME.memberId, needs_reconfirm: false });
+    e.updateLesson(id, l().version, { category_id: 2, audience: "שיעור להורים" });
+    expect(l().needs_reconfirm).toBe(false); // not in the message
+    for (const change of [
+      () => e.updateLesson(id, l().version, { title: "כותרת אחרת" }),
+      () => e.updateLesson(id, l().version, { teach_min: 60 }),
+      () => e.setPayment(id, l().version, 300, "none"),
+      () => e.moveLesson(id, { day: 1, start_min: 510, end_min: 600, room_id: 2 }),
+    ]) {
+      if (l().approval === "pending") new Engine(e.week, GLOBAL).decidePayments([{ lesson_id: id, version: l().version }], "approved");
+      e.markConfirmSent(id, l().version);
+      change();
+      expect(l().needs_reconfirm).toBe(true);
+    }
+  });
+
+  it("a reopen starts the stages over — they were the speaker's: closing again is a first message, not a reconfirm", () => {
+    const { e, id, l } = closedByMe();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    e.setPayment(id, l().version, 700, "round_trip");
+    e.setTransport(id, { pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: false });
+    e.setEscort(id, l().version, { roster_id: t.id, self_intro: true, escort_note: "הערה לדוגמה" });
+    e.setSources(id, l().version, { sources_kind: "presentation", print_when: "none", sources_note: null, presentation_url: "https://example.org/deck", in_reader: false });
+    new Engine(e.week, GLOBAL, undefined, e.shared).decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    e.markConfirmSent(id, l().version);
+    expect(code(() => e.reopenLesson(id))).toBe("approved_locked");
+    const admin = new Engine(e.week, ADMIN, undefined, e.shared);
+    admin.reopenLesson(id);
+    expect(l()).toMatchObject({ state: "draft", ...LESSON_STAGE_DEFAULTS });
+    expect(e.shared.transport).toEqual({});
+    e.moveLesson(id, { day: 3, start_min: 870, end_min: 960, room_id: 1 });
+    expect(l()).toMatchObject({ state: "draft", needs_reconfirm: false });
+    // another member places another speaker: nothing of the first one's reaches them
+    const other = new Engine(e.week, OTHER, undefined, e.shared);
+    const s2 = addSpeaker(w, "m");
+    const p2 = other.propose(s2.id, { lesson_id: id });
+    other.closeLesson(p2.pitch_id);
+    expect(l()).toMatchObject({ state: "closed", ...LESSON_STAGE_DEFAULTS });
+    expect(other.transportOf(id)).toEqual({ pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
+    expect(code(() => new Engine(e.week, LOGISTICS, undefined, e.shared).setPaid(id, true))).toBe("payment_not_approved");
+  });
+
+  it("money paid is never erased: no reopen, no new amount, until «שולם» is undone", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, 500, "none");
+    const g = new Engine(e.week, GLOBAL, undefined, e.shared);
+    g.decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    new Engine(e.week, LOGISTICS, undefined, e.shared).setPaid(id, true);
+    expect(code(() => e.setPayment(id, l().version, 800, "none"))).toBe("paid_locked");
+    expect(code(() => e.setPayment(id, l().version, null, "none"))).toBe("paid_locked");
+    e.setPayment(id, l().version, 500, "one_way"); // the transport may change: pending again, still paid
+    expect(l()).toMatchObject({ pay_amount: 500, approval: "pending", paid_at: expect.any(String) });
+    expect(code(() => new Engine(e.week, ADMIN, undefined, e.shared).reopenLesson(id))).toBe("paid_locked");
+    g.decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    new Engine(e.week, ADMIN, undefined, e.shared).setPaid(id, false);
+    e.setPayment(id, l().version, 800, "one_way");
+    expect(l()).toMatchObject({ pay_amount: 800, approval: "pending", paid_at: null });
+  });
+
+  it("a request on a lesson that is not closed is no one's to decide", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, 300, "none");
+    Object.assign(l(), { state: "draft" }); // as only a hand edit could leave it
+    expect(code(() => new Engine(e.week, GLOBAL).decidePayments([{ lesson_id: id, version: l().version }], "approved"))).toBe("stale");
+  });
+
+  it("a batch decision is all or nothing", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, 100, "none");
+    const r2 = e.propose(addSpeaker(w, "m").id, cell(2, 510, 600));
+    e.closeLesson(r2.pitch_id);
+    const before = JSON.stringify(e.week.lessons);
+    const g = new Engine(e.week, GLOBAL);
+    expect(code(() => g.decidePayments([{ lesson_id: id, version: l().version }, { lesson_id: r2.lesson_id, version: 1 }], "approved"))).toBe("stale");
+    expect(JSON.stringify(g.week.lessons)).toBe(before);
+  });
+
+  it("transport details: kept apart from the Week, gone with the transport, never seen by the team", () => {
+    const { e, id, l } = closedByMe();
+    e.setPayment(id, l().version, null, "round_trip");
+    e.setTransport(id, { pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
+    expect(JSON.stringify(e.week)).not.toContain("כתובת לדוגמה");
+    expect(e.transportOf(id)?.pickup_address).toBe("כתובת לדוגמה");
+    expect(new Engine(e.week, OTHER, undefined, e.shared).transportOf(id)).toBeNull();
+    expect(new Engine(e.week, LOGISTICS, undefined, e.shared).transportOf(id)).toBeNull(); // not approved yet
+    new Engine(e.week, GLOBAL, undefined, e.shared).decidePayments([{ lesson_id: id, version: l().version }], "approved");
+    expect(new Engine(e.week, LOGISTICS, undefined, e.shared).transportOf(id)?.pickup_address).toBe("כתובת לדוגמה");
+    e.setPayment(id, l().version, null, "none");
+    expect(Object.keys(e.shared.transport)).toEqual([]);
+    expect(l()).toMatchObject({ transport: "none", approval: "none", approval_note: null, approved_by: null });
+  });
+
+  it("escorts come from this edition's roster", () => {
+    const { e, id, l } = closedByMe();
+    const t = addTrainee(w, "חניכה לדוגמה", "f");
+    expect(code(() => e.setEscort(id, l().version, { roster_id: t.id + 1, self_intro: false, escort_note: null }))).toBe("bad_escort");
+    e.setEscort(id, l().version, { roster_id: t.id, self_intro: false, escort_note: "  הערה לדוגמה " });
+    expect(l()).toMatchObject({ escort_roster_id: t.id, escort_note: "הערה לדוגמה", version: 3 });
   });
 });

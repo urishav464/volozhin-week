@@ -1,5 +1,6 @@
 // The speaker pool: search, filters, who-handles-whom, and the source of every
-// placement (drag on a desktop, «שבץ» everywhere).
+// placement (drag on a desktop, «שבץ» everywhere). A speaker's name opens their
+// sheet; «+ מרצה חדש/ה» starts the search-first create flow with what was typed.
 import { useMemo, useState } from "react";
 import { byGender, displayName } from "../domain/names";
 import { DAYS, DAY_NAMES, fmtRange } from "../domain/time";
@@ -13,13 +14,17 @@ interface Props {
   canEdit: boolean;
   placingId: number | null;
   onPlace: (speakerId: number) => void;
+  /** The speaker sheet. */
+  onOpen: (speakerId: number) => void;
+  /** «+ מרצה חדש/ה», with the search box's text as the name to look up. */
+  onCreate: (name: string) => void;
   /** Show the pool as the drop target "back to the pool". */
   dropTarget?: boolean;
 }
 
 const SECTIONS: PoolSection[] = ["mine", "free", "others", "closed", "declined"];
 
-export function Pool({ model, me, canEdit, placingId, onPlace, dropTarget }: Props) {
+export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate, dropTarget }: Props) {
   const [query, setQuery] = useState("");
   const [gender, setGender] = useState<Gender | "">("");
   const [category, setCategory] = useState<string>("");
@@ -43,14 +48,21 @@ export function Pool({ model, me, canEdit, placingId, onPlace, dropTarget }: Pro
   return (
     <section aria-label="מאגר המרצים" data-drop={dropTarget ? "pool" : undefined} className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex flex-col gap-1.5">
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="חיפוש מרצה, נושא או מוסד"
-          aria-label="חיפוש מרצה"
-          className="w-full rounded-lg border border-line bg-card px-3 py-2 text-sm"
-        />
+        <div className="flex gap-1.5">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="חיפוש מרצה, נושא או מוסד"
+            aria-label="חיפוש מרצה"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-2 text-sm"
+          />
+          {canEdit && (
+            <button type="button" onClick={() => onCreate(query.trim())} className="min-h-11 shrink-0 rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90">
+              + מרצה חדש/ה
+            </button>
+          )}
+        </div>
         <div className="flex gap-1.5">
           <select aria-label="מגדר" value={gender} onChange={(e) => setGender(e.target.value as Gender | "")} className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-sm">
             <option value="">כל המגדרים</option>
@@ -87,14 +99,30 @@ export function Pool({ model, me, canEdit, placingId, onPlace, dropTarget }: Pro
       <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pe-0.5" aria-label={POOL_SECTION_LABEL[section]}>
         {list.length === 0 && <li className="p-4 text-center text-sm text-ink-faint">אין כאן מרצים</li>}
         {list.map((s) => (
-          <SpeakerCard key={s.id} model={model} speaker={s} section={section} canEdit={canEdit} placing={placingId === s.id} onPlace={() => onPlace(s.id)} />
+          <SpeakerCard key={s.id} model={model} speaker={s} section={section} canEdit={canEdit} placing={placingId === s.id} onPlace={() => onPlace(s.id)} onOpen={() => onOpen(s.id)} />
         ))}
       </ul>
     </section>
   );
 }
 
-function SpeakerCard({ model, speaker: s, section, canEdit, placing, onPlace }: { model: GridModel; speaker: Speaker; section: PoolSection; canEdit: boolean; placing: boolean; onPlace: () => void }) {
+function SpeakerCard({
+  model,
+  speaker: s,
+  section,
+  canEdit,
+  placing,
+  onPlace,
+  onOpen,
+}: {
+  model: GridModel;
+  speaker: Speaker;
+  section: PoolSection;
+  canEdit: boolean;
+  placing: boolean;
+  onPlace: () => void;
+  onOpen: () => void;
+}) {
   const a = model.approachBySpeaker.get(s.id);
   const owner = a?.owner_member_id != null ? model.memberName.get(a.owner_member_id) : undefined;
   const closedLesson = model.week.lessons.find((l) => l.state === "closed" && model.week.lessonSpeakers.some((x) => x.lesson_id === l.id && x.speaker_id === s.id));
@@ -104,12 +132,20 @@ function SpeakerCard({ model, speaker: s, section, canEdit, placing, onPlace }: 
       data-drag={draggable ? `speaker:${s.id}` : undefined}
       data-drag-label={displayName(s)}
       data-speaker-id={s.id}
-      className={`rounded-lg border bg-card p-2 ${placing ? "border-accent ring-2 ring-accent/40" : "border-line"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      className={`relative rounded-lg border bg-card p-2 ${placing ? "border-accent ring-2 ring-accent/40" : "border-line"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
       <div className="flex items-center gap-1.5">
         <GenderDot gender={s.gender} />
-        <span className="truncate text-sm font-semibold">{displayName(s)}</span>
-        {s.vetted !== "approved" && <Chip tone="warn">ממתין לאישור</Chip>}
+        {/* The whole card is this button's target (a phone needs more than a line of text); «שבץ» sits above it. */}
+        <button
+          type="button"
+          onClick={onOpen}
+          className="min-w-0 truncate text-start text-sm font-semibold underline-offset-2 after:absolute after:inset-0 after:rounded-lg after:content-[''] hover:underline"
+          aria-label={`כרטיס ${displayName(s)}`}
+        >
+          {displayName(s)}
+        </button>
+        {s.vetted !== "approved" && <Chip tone="warn">{byGender(s.gender, "ממתין", "ממתינה")} לאישור</Chip>}
       </div>
       {(s.bio_short || s.affiliation) && <p className="truncate text-xs text-ink-soft">{s.bio_short ?? s.affiliation}</p>}
       <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -132,7 +168,7 @@ function SpeakerCard({ model, speaker: s, section, canEdit, placing, onPlace }: 
             type="button"
             onClick={onPlace}
             aria-pressed={placing}
-            className={`ms-auto rounded-md border px-2 py-0.5 text-xs font-semibold ${placing ? "border-accent bg-accent text-paper" : "border-line bg-paper hover:bg-line/50"}`}
+            className={`relative z-10 ms-auto rounded-md border px-2 py-0.5 text-xs font-semibold ${placing ? "border-accent bg-accent text-paper" : "border-line bg-paper hover:bg-line/50"}`}
           >
             {placing ? "בוחרים משבצת…" : "שבץ"}
           </button>
@@ -148,7 +184,7 @@ function Availability({ model, speakerId }: { model: GridModel; speakerId: numbe
   const said = model.week.availability.filter((v) => v.approach_id === a.id);
   if (said.length === 0) return null;
   return (
-    <span className="ms-auto inline-flex gap-0.5" aria-label="זמינות לפי ימים">
+    <span className="relative z-10 ms-auto inline-flex gap-0.5" aria-label="זמינות לפי ימים">
       {DAYS.map((d) => {
         const v = said.filter((x) => x.day === d);
         const tone = v.some((x) => x.kind === "cannot") ? "bg-red-300" : v.some((x) => x.kind === "can") ? "bg-emerald-400" : "bg-line";

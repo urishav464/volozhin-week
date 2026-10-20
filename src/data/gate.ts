@@ -36,3 +36,20 @@ export function gateForError(e: unknown, expectedVersion: number): Gate | null {
   }
   return null;
 }
+
+/** May this person open «הגדרות»? A global admin, or the admin of any edition. */
+export function isSettingsAdmin(me: Me): boolean {
+  return me.global_admin || me.memberships.some((m) => m.role === "admin");
+}
+
+/** The editions whose settings this person manages: all of them for a global admin, else those they administer. */
+export function managedEditionIds(me: Me, all: readonly { id: number }[]): number[] {
+  if (me.global_admin) return all.map((e) => e.id);
+  const mine = new Set(me.memberships.filter((m) => m.role === "admin" && m.edition_id != null).map((m) => m.edition_id));
+  return all.map((e) => e.id).filter((id) => mine.has(id));
+}
+
+/** May this person handle speakers somewhere («המרצים שלי»)? Everyone but members who are logistics only. */
+export function handlesSpeakers(me: Me): boolean {
+  return me.global_admin || me.memberships.some((m) => m.role !== "logistics");
+}

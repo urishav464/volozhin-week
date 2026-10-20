@@ -1,12 +1,17 @@
 // One lesson on the grid, drawn by its stage: a draft with candidates, a closed
-// lesson (category stripe + five stage dots), or a memorial slot.
+// lesson (category stripe + five stage dots, and a red dot «לעדכן את המרצה"
+// when it changed after the message went out), or a memorial slot. The
+// progress lens paints a closed card by its sources, last year's colours.
 import { displayName } from "../domain/names";
+import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
+import { readerFilesOf, stagesOf } from "../domain/stages";
 import { fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
-import { Chip, GenderDot, Initials, StageDots, stagesOf } from "./bits";
+import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
 import { type GridModel, pitchSpeaker } from "./model";
 
 export type Lens = "diversity" | "progress" | "owner";
+export { PROGRESS_TONE };
 
 interface Props {
   model: GridModel;
@@ -52,7 +57,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
         type="button"
         {...common}
         data-drop={`lesson:${lesson.id}`}
-        className={`${common.className} border-2 border-dashed border-ink-faint/60 bg-card/70 px-1.5 py-1`}
+        className={`${common.className} border-2 border-dashed border-ink-faint/60 ${lens === "progress" ? PROGRESS_TONE.draft : "bg-card/70"} px-1.5 py-1`}
         aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${pitches.length ? `, ${pitches.length} מועמדים` : ", ללא מרצה"}`}
       >
         <span className="flex items-center gap-1">
@@ -88,24 +93,26 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   // closed
   const lead = model.leadOf.get(lesson.id);
   const cat = lesson.category_id != null ? model.categoryById.get(lesson.category_id) : undefined;
-  const stages = stagesOf(lesson);
-  const progressBg = lens === "progress" ? progressColor(lesson.sources_kind) : "bg-card";
+  const stages = stagesOf(lesson, readerFilesOf(model.week, lesson.id));
+  const progressBg = lens === "progress" ? PROGRESS_TONE[progressOf(lesson.sources_kind)] : "bg-card";
   const ownerId = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const owner = ownerId != null ? model.memberName.get(ownerId) : undefined;
+  const reconfirm = lesson.needs_reconfirm;
   return (
     <button
       type="button"
       {...common}
       data-drag={`lesson:${lesson.id}`}
       data-drag-label={lead ? displayName(lead) : ""}
-      className={`${common.className} border border-line ${progressBg} px-1.5 py-1 shadow-sm`}
+      className={`${common.className} border ${reconfirm ? "border-bad" : "border-line"} ${progressBg} px-1.5 py-1 shadow-sm`}
       style={{ borderInlineStartWidth: 5, borderInlineStartColor: lens === "diversity" ? (cat?.color ?? "#c9c2b3") : "#c9c2b3" }}
-      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}`}
+      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}${reconfirm ? ", לעדכן את המרצה" : ""}`}
     >
       <span className="flex items-center gap-1">
         <GenderDot gender={lead?.gender ?? null} />
         <span className="truncate text-xs font-semibold">{lead ? displayName(lead) : "—"}</span>
         {parallel}
+        {reconfirm && <ReconfirmDot />}
         {warnings > 0 && <span className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">{warnings}</span>}
       </span>
       {!tiny && <span className="block truncate text-[11px] text-ink-soft">{lesson.title ?? "כותרת: TBD"}</span>}
@@ -117,7 +124,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
               <span className="truncate text-[10px] text-ink-soft">{owner}</span>
             </>
           ) : (
-            <StageDots lesson={lesson} />
+            <StageDots lesson={lesson} week={model.week} />
           )}
           {lesson.audience && <Chip>{lesson.audience}</Chip>}
           <span className="ms-auto">{time}</span>
@@ -128,8 +135,5 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   );
 }
 
-function progressColor(kind: Lesson["sources_kind"]): string {
-  if (kind === "presentation") return "bg-orange-100";
-  if (kind === "pending") return "bg-card";
-  return "bg-cyan-100";
-}
+/** The legend under the toolbar while the progress lens is on (memorial slots keep their own yellow card). */
+export const PROGRESS_LEGEND: [ProgressTone, string][] = (["received", "presentation", "pending", "none", "draft"] as const).map((t) => [t, PROGRESS_LABEL[t]]);

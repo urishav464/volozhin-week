@@ -1,12 +1,25 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
 import type { Edition, Week } from "../domain/types";
-import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
+import type { WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
+import { callRpc, supabaseCommands } from "./supabaseCommands";
+import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
+import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
+import { SupabaseSettings } from "./supabaseSettings";
+import { SupabaseSources } from "./supabaseSources";
+import { SupabaseSpeakers } from "./supabaseSpeakers";
 import { PortError, type WhoAmI } from "./types";
 
 export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
+  readonly settings: SupabaseSettings;
+  readonly speakers: SupabaseSpeakers;
+  readonly outputs: SupabaseOutputs;
+  readonly knowledge: SupabaseKnowledge;
+  readonly links: SupabaseLinks;
+  readonly kk: SupabaseKk;
+  readonly sources: SupabaseSources;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -14,6 +27,13 @@ export class SupabasePort implements DataPort {
     // PKCE: Google sends back a one-time code, never the tokens themselves, so
     // no token lands in the address bar or the browser history.
     this.sb = createClient(url, key, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+    this.settings = new SupabaseSettings(this.sb);
+    this.speakers = new SupabaseSpeakers(this.sb);
+    this.outputs = new SupabaseOutputs(this.sb);
+    this.knowledge = new SupabaseKnowledge(this.sb);
+    this.links = new SupabaseLinks(this.sb);
+    this.kk = new SupabaseKk(this.sb);
+    this.sources = new SupabaseSources(this.sb, url, key);
   }
 
   async sessionEmail(): Promise<string | null> {
@@ -74,32 +94,16 @@ export class SupabasePort implements DataPort {
   }
 
   async loadWeek(editionId: number): Promise<Week> {
-    return (await this.call("load_week", { p_edition: editionId })) as Week;
+    const w = (await callRpc(this.sb, "load_week", { p_edition: editionId })) as Week;
+    // A database from before v7 has no roster in the Week (the schema-version gate shows first; this keeps a screen from breaking under it).
+    if (w && !Array.isArray(w.roster)) w.roster = [];
+    if (w && !Array.isArray(w.escortTicks)) w.escortTicks = []; // and none of the escorts' ticks before v9
+    if (w && !Array.isArray(w.sourceFiles)) w.sourceFiles = []; // nor a file before v10
+    return w;
   }
 
   commands(editionId: number): WeekCommands {
-    const cell = (t: CellTarget) =>
-      "lesson_id" in t
-        ? { p_lesson: t.lesson_id, p_day: null, p_start: null, p_end: null, p_room: null }
-        : { p_lesson: null, p_day: t.day, p_start: t.start_min, p_end: t.end_min, p_room: t.room_id };
-    const reshapeArgs = (op: ReshapeOp) => ({
-      p_op: op.op,
-      p_count: op.op === "split_parallel" ? op.count : null,
-      p_reason: op.op === "split_parallel" ? op.reason : null,
-      p_parts: op.op === "split_time" ? op.parts : null,
-    });
-    return {
-      propose: async (speakerId, target, mode = "self") =>
-        (await this.call("propose", { p_edition: editionId, p_speaker: speakerId, ...cell(target), p_mode: mode })) as { lesson_id: number; pitch_id: number },
-      unpropose: async (pitchId) => void (await this.call("unpropose", { p_pitch: pitchId })),
-      setPitch: async (pitchId, state) => void (await this.call("set_pitch", { p_pitch: pitchId, p_state: state })),
-      closeLesson: async (pitchId) => void (await this.call("close_lesson", { p_pitch: pitchId })),
-      reopenLesson: async (lessonId) => void (await this.call("reopen_lesson", { p_lesson: lessonId })),
-      moveLesson: async (lessonId, to) =>
-        void (await this.call("move_lesson", { p_lesson: lessonId, p_day: to.day, p_start: to.start_min, p_end: to.end_min, p_room: to.room_id })),
-      reshape: async (day, rowStart, op) => void (await this.call("reshape", { p_edition: editionId, p_day: day, p_row_start: rowStart, ...reshapeArgs(op) })),
-      updateLesson: async (lessonId, version, patch: LessonPatch) => void (await this.call("update_lesson", { p_lesson: lessonId, p_version: version, p_patch: patch })),
-    };
+    return supabaseCommands(this.sb, editionId);
   }
 
   subscribe(editionId: number, onChange: () => void): () => void {
@@ -156,18 +160,5 @@ export class SupabasePort implements DataPort {
       document.removeEventListener("visibilitychange", onFocus);
       if (channel) void this.sb.removeChannel(channel);
     };
-  }
-
-  /** An RPC; a refusal comes back as the contract's code (raise … message = '<code>'). */
-  private async call(fn: string, args: Record<string, unknown>): Promise<unknown> {
-    const { data, error } = await this.sb.rpc(fn, args);
-    if (error) {
-      if (error.code === "P0001") throw new CommandError(error.message);
-      // The RPCs re-raise constraint violations under their code; this is the
-      // backstop if one ever slips through raw.
-      if (error.code === "23P01") throw new CommandError(/speaker/.test(error.message) ? "speaker_busy" : "room_taken");
-      throw new PortError(error.code ?? null, error.message);
-    }
-    return data;
   }
 }

@@ -28,3 +28,13 @@ regexes = [
   '''(?i)^noreply@anthropic\.com$''',
   '''(?i)@users\.noreply\.github\.com$''',
 ]
+
+# Two synthetic test tokens, base64url of «NO_REAL_TOKEN_XY» (tests/e2e/links.spec.ts)
+# and «for-the-test-only» (src/data/linksPorts.test.ts): no real secret, but the
+# default generic-api-key rule reads `TOKEN = "…"` as one. Exactly these values.
+[allowlist]
+description = "synthetic test tokens"
+regexes = [
+  '''Tk9fUkVBTF9UT0tFTl9YWQ''',
+  '''Zm9yLXRoZS10ZXN0LW9ubHk''',
+]

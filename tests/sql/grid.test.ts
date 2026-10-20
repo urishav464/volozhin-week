@@ -114,7 +114,7 @@ describe("the grid's tables and functions", () => {
   it("load_week returns the whole Week shape, without contact details", async () => {
     await as(db, "authenticated", google(B), async (q) => {
       const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
-      expect(Object.keys(w).sort()).toEqual(["approaches", "availability", "categories", "edition", "lessonSpeakers", "lessons", "pitches", "rooms", "rows", "speakers", "team"]);
+      expect(Object.keys(w).sort()).toEqual(["approaches", "availability", "categories", "edition", "escortTicks", "lessonSpeakers", "lessons", "pitches", "rooms", "roster", "rows", "sourceFiles", "speakers", "team"]);
       expect(w.rows).toHaveLength(21);
       expect(w.lessons).toHaveLength(1);
       expect(JSON.stringify(w)).not.toContain("synthetic-phone");
@@ -167,6 +167,32 @@ describe("the grid's tables and functions", () => {
       const owner = await db.query("select owner_member_id from public.approaches where edition_id = $1 and speaker_id = $2", [otherEd, speaker]);
       expect(owner.rows.map((r) => Number(r.owner_member_id))).toEqual([memberOther]);
       expect((await db.query("select phone from public.speaker_contacts")).rows).toEqual([]);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
+  it("propose takes a room of its own edition only — another edition's room is refused, and stays deletable there", async () => {
+    const realRoom = Number((await db.query("select id from public.rooms where edition_id = $1 and is_default", [ed])).rows[0].id);
+    await db.query("begin");
+    try {
+      await db.query(
+        "insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template",
+        [otherEd],
+      );
+      await db.query("savepoint s");
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(OTHER))]);
+      let refused = "ok";
+      try {
+        await db.query("select public.propose($1, $2, null, 2, 870, 960, $3, 'self')", [otherEd, speaker, realRoom]);
+      } catch (e) {
+        refused = (e as { message: string }).message;
+        await db.query("rollback to savepoint s");
+      }
+      expect(refused).toBe("bad_shape");
+      await db.query("reset role");
+      expect((await db.query("select count(*)::int as n from public.lessons where room_id = $1 and edition_id <> $2", [realRoom, ed])).rows[0].n).toBe(0);
     } finally {
       await db.query("rollback");
     }

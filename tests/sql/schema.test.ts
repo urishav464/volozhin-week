@@ -15,13 +15,36 @@ const EDITION_ADMIN = "edition.admin@example.org";
 const PEER_ADMIN = "peer.admin@example.org";
 
 // What each API role may execute — the complete list. A new browser-callable
-// function means updating this on purpose.
-const ANON_FUNCTIONS = ["ping"];
+// function means updating this on purpose. v6 (the speaker pool) added
+// answer_handover … vet_speakers to the public list, and may_see_contacts —
+// the contacts policy's predicate, which the policy runs as the browser's role.
+// v7 (from placement to arrival) added decide_payments, get_transport_details,
+// mark_confirm_sent, set_confirm_template, set_duty_phrases, set_escort,
+// set_paid, set_payment, set_sources and set_transport_details, and
+// may_see_transport — the transport details policy's predicate.
+// v8 (outputs and knowledge) added get_contacts_for — the outputs' phones, in
+// one invoker call under the contacts policy.
+// v9 (links without an account, מכריכה לכריכה) gave anon — for the first time —
+// the six link functions, keyed by a token alone (tests/sql/links.test.ts), and
+// the signed-in roles issue_link, revoke_link, load_kk and the kk writes.
+// v10 (sources and the reader) added register_source_file, remove_source_file,
+// set_reader_cover and set_reader_headers, and the three predicates the
+// policies on storage.objects call as the browser's role: may_read_source,
+// may_upload_source, may_delete_source (tests/sql/sources.test.ts).
+const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
-  "close_lesson", "load_week", "move_lesson", "ping", "propose", "reopen_lesson", "reshape",
-  "schema_version", "set_pitch", "start_edition", "team", "unpropose", "update_lesson", "whoami",
+  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "get_contacts_for", "get_speaker_contacts",
+  "get_transport_details", "hand_over", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
+  "kk_update_group", "load_kk", "load_week", "mark_confirm_sent", "move_lesson", "ping", "propose", "register_source_file", "remove_source_file",
+  "reopen_lesson", "reshape", "revoke_link", "schema_version", "set_approach_status", "set_availability", "set_book_order", "set_confirm_template",
+  "set_default_room", "set_duty_phrases", "set_escort", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
+  "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
+  "speaker_matches", "start_edition", "team", "unpropose", "update_lesson", "update_speaker", "vet_speakers", "whoami",
 ];
-const AUTH_APP_FUNCTIONS = ["can_see_edition", "is_global_admin", "is_member", "my_email", "my_member_id", "my_role"];
+const AUTH_APP_FUNCTIONS = [
+  "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_transport", "may_upload_source",
+  "my_email", "my_member_id", "my_role", "name_key",
+];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
   const dbName = `vw_schema_${regime}_${process.pid}`;
@@ -83,7 +106,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(await exec("authenticated", "app")).toEqual(AUTH_APP_FUNCTIONS);
     });
 
-    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members or log", async () => {
+    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members, log, transport details, notes or snapshots", async () => {
       const rows = (
         await db.query(
           "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
@@ -93,7 +116,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     });
 
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
-      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members");
+      await db.query(
+        "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones, " +
+          "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files",
+      );
       await db.query(SCHEMA);
       const rows = (
         await db.query(
@@ -113,13 +139,19 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
   });
 
   describe("anon (the publishable key, no sign-in)", () => {
-    it("can ping and nothing else", async () => {
+    it("can ping (and call the link functions — tests/sql/links.test.ts), and reach nothing else", async () => {
       await as(db, "anon", null, async (q) => {
         expect((await q("select public.ping() as v")).rows[0].v).toBe("ok");
         expect(await sqlstate(q("select * from public.members"))).toBe("42501");
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons"]) {
+          expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
+        }
+        expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
+        expect(await sqlstate(q("select public.load_kk(1)"))).toBe("42501");
+        expect(await sqlstate(q("select app.link_for('x', 'escort')"))).toBe("42501");
       });
     });
   });
@@ -153,7 +185,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(4);
+        expect(w.schema_version).toBe(10);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -226,7 +258,36 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
   });
 
   describe("authenticated's table privileges", () => {
-    it("are SELECT everywhere it reads, writes only on editions/members, and never TRUNCATE/REFERENCES/TRIGGER", async () => {
+    // The complete list, on purpose. editions: whole-row writes under RLS.
+    // members/roster/rooms/categories (settings, v5): DELETE on the row, INSERT
+    // and UPDATE only on the columns below — never an id, never rooms.is_default,
+    // and a member's address and edition never change once written.
+    // Everything else: SELECT only (the grid writes through functions).
+    // v8: notes and milestones (admins, under RLS) like the settings tables;
+    // export_snapshots INSERT by column only — never UPDATE or DELETE: a
+    // snapshot is what an export held. No author, time, version or done_by is
+    // ever a browser's to write (the guard triggers stamp them).
+    const TABLE_WRITES: Record<string, string> = {
+      editions: "DELETE,INSERT,SELECT,UPDATE",
+      members: "DELETE,SELECT",
+      roster: "DELETE,SELECT",
+      rooms: "DELETE,SELECT",
+      categories: "DELETE,SELECT",
+      notes: "DELETE,SELECT",
+      milestones: "DELETE,SELECT",
+    };
+    const COLUMN_WRITES = [
+      "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
+      "export_snapshots.edition_id:INSERT", "export_snapshots.kind:INSERT", "export_snapshots.payload:INSERT",
+      "members.active:INSERT,UPDATE", "members.display_name:INSERT,UPDATE", "members.edition_id:INSERT", "members.email:INSERT",
+      "members.gender:INSERT,UPDATE", "members.role:INSERT,UPDATE",
+      "milestones.days_before:INSERT,UPDATE", "milestones.done_at:UPDATE", "milestones.edition_id:INSERT", "milestones.title:INSERT,UPDATE",
+      "notes.body_md:INSERT,UPDATE", "notes.edition_id:INSERT", "notes.section:INSERT,UPDATE", "notes.title:INSERT,UPDATE",
+      "rooms.edition_id:INSERT", "rooms.name:INSERT,UPDATE", "rooms.sort:INSERT,UPDATE",
+      "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
+    ];
+
+    it("are SELECT everywhere it reads, row writes only on editions, column writes on the settings, knowledge and snapshot tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
       const grants = (
         await db.query(`
           select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
@@ -234,11 +295,43 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
            where grantee = 'authenticated' and table_schema = 'public'
            group by table_name order by table_name`)
       ).rows;
-      for (const g of grants) {
-        if (g.table_name === "editions" || g.table_name === "members") expect(g.p, g.table_name).toBe("DELETE,INSERT,SELECT,UPDATE");
-        else expect(g.p, g.table_name).toBe("SELECT");
+      for (const g of grants) expect(g.p, g.table_name).toBe(TABLE_WRITES[g.table_name] ?? "SELECT");
+      expect(grants.map((g) => g.table_name)).toEqual(expect.arrayContaining(["lessons", ...Object.keys(TABLE_WRITES)]));
+
+      // Column grants beyond what the table grant already gives (editions has whole-row grants).
+      const cols = (
+        await db.query(`
+          select c.relname || '.' || a.attname || ':' ||
+                 concat_ws(',', case when has_column_privilege('authenticated', c.oid, a.attnum, 'INSERT') then 'INSERT' end,
+                                case when has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE') then 'UPDATE' end) as g
+            from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid
+           where n.nspname = 'public' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+             and c.relname <> 'editions'
+             and (has_column_privilege('authenticated', c.oid, a.attnum, 'INSERT')
+                  or has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE'))
+           order by 1`)
+      ).rows.map((r) => r.g);
+      expect(cols).toEqual(COLUMN_WRITES);
+    });
+
+    it("read share_links by column — every one but the token's hash — and never its rate-limit counts", async () => {
+      const cols = (
+        await db.query(`
+          select a.attname from pg_attribute a
+           where a.attrelid = 'public.share_links'::regclass and a.attnum > 0 and not a.attisdropped
+             and has_column_privilege('authenticated', a.attrelid, a.attnum, 'SELECT') order by a.attnum`)
+      ).rows.map((r) => r.attname);
+      expect(cols).toEqual(["id", "edition_id", "scope", "subject_id", "created_by", "created_at", "expires_at", "revoked_at"]);
+      const any = async (table: string, role: string) =>
+        (await db.query(`select has_table_privilege($2, $1::regclass, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') as p`, [table, role])).rows[0].p;
+      expect(await any("public.share_links", "authenticated")).toBe(false);
+      expect(await any("public.share_link_hits", "authenticated")).toBe(false);
+      for (const role of ["anon", "authenticated"]) {
+        expect(
+          (await db.query("select has_column_privilege($1, 'public.share_links'::regclass, 'token_hash', 'SELECT, INSERT, UPDATE, REFERENCES') as p", [role])).rows[0].p,
+          role,
+        ).toBe(false);
       }
-      expect(grants.map((g) => g.table_name)).toContain("lessons");
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { gateFor, gateForError } from "./gate";
-import { PortError, type WhoAmI } from "./types";
+import { gateFor, gateForError, handlesSpeakers, isSettingsAdmin, managedEditionIds } from "./gate";
+import { type Me, PortError, type WhoAmI } from "./types";
 
 const ok: WhoAmI = {
   status: "ok",
@@ -42,5 +42,38 @@ describe("gateForError", () => {
   it("leaves other failures to the error screen", () => {
     expect(gateForError(new PortError("42501", "x"), 1)).toBeNull();
     expect(gateForError(new Error("network"), 1)).toBeNull();
+  });
+});
+
+describe("who reaches «הגדרות»", () => {
+  const me = (patch: Partial<Me>): Me => ({ ...(ok as Me), ...patch });
+  const editions = [{ id: 3 }, { id: 4 }, { id: 5 }];
+
+  it("a global admin, for every edition", () => {
+    const g = me({ global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] });
+    expect(isSettingsAdmin(g)).toBe(true);
+    expect(managedEditionIds(g, editions)).toEqual([3, 4, 5]);
+  });
+  it("an edition's admin, for that edition only", () => {
+    const e = me({ memberships: [{ edition_id: 4, role: "admin", member_id: 2 }, { edition_id: 3, role: "content", member_id: 3 }] });
+    expect(isSettingsAdmin(e)).toBe(true);
+    expect(managedEditionIds(e, editions)).toEqual([4]);
+  });
+  it("never content or logistics", () => {
+    expect(isSettingsAdmin(me({}))).toBe(false);
+    expect(isSettingsAdmin(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }] }))).toBe(false);
+    expect(managedEditionIds(me({}), editions)).toEqual([]);
+  });
+});
+
+describe("who has «המרצים שלי»", () => {
+  const me = (patch: Partial<Me>): Me => ({ ...(ok as Me), ...patch });
+  it("content and admins, anywhere; a global admin", () => {
+    expect(handlesSpeakers(me({}))).toBe(true);
+    expect(handlesSpeakers(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }, { edition_id: 4, role: "content", member_id: 8 }] }))).toBe(true);
+    expect(handlesSpeakers(me({ global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] }))).toBe(true);
+  });
+  it("not someone who is logistics only", () => {
+    expect(handlesSpeakers(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 7 }] }))).toBe(false);
   });
 });

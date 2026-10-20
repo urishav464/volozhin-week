@@ -1,0 +1,691 @@
+// The reader, without a browser: what goes in and in what order (the manifest),
+// the table of contents' page math, the A4 framing, the Word skeleton
+// (unzipped: the headings in order, right to left, a TOC field, the running
+// headers) and the PDF assembly itself (pdf-lib in Node, with a stub for the
+// canvas text: page count, order — by each page's embedded source — and the
+// files it had to leave out).
+import { strFromU8, unzipSync } from "fflate";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFStream, decodePDFRawStream, degrees } from "pdf-lib";
+import { describe, expect, it } from "vitest";
+import { demoWeek, seedDemoSources } from "../data/demoWeek";
+import type { SourceFile, Week } from "../domain/types";
+import { assembleReader, jpegOrientation, orientationTurn, type ReaderJob } from "./assemble";
+import { stripJpegMetadata } from "./jpeg";
+import { buildSkeleton, skeletonParagraphs, skeletonRows } from "./docx";
+import { A4, chunkSchedule, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, scheduleCoverPages, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
+import { manifestTotals, readerEstimate, readerHeader, readerManifest, readerRows, unreadForReader, unreadText, wordText } from "./model";
+import { nextLessonStep, readerFilesOf, stagesOf } from "../domain/stages";
+import type { Png, ScheduleLine, TextRenderer } from "./render";
+import { fit, wrap } from "./render";
+
+function demo(): Week {
+  const w = demoWeek();
+  seedDemoSources(w);
+  return w;
+}
+const at = (w: Week, day: number, start: number, room = 1) => w.lessons.find((l) => l.day === day && l.start_min === start && l.room_id === room && l.state !== "cancelled")!;
+
+describe("the manifest", () => {
+  it("lists every closed lesson and memorial slot in schedule order — day, time, the room's place — never a draft", () => {
+    const w = demo();
+    const m = readerManifest(w);
+    const keys = m.rows.map((r) => [r.day, r.lesson.start_min, r.lesson.room_id]);
+    const sorted = [...keys].sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    expect(keys).toEqual(sorted);
+    expect(m.rows.every((r) => r.lesson.state === "closed" || r.kind === "memorial")).toBe(true);
+    expect(m.rows.filter((r) => r.kind === "memorial")).toHaveLength(5);
+  });
+
+  it("says for each lesson what the reader has of it", () => {
+    const w = demo();
+    const m = readerManifest(w);
+    const row = (day: number, start: number, room = 1) => m.rows.find((r) => r.lesson.id === at(w, day, start, room).id)!;
+    expect(row(0, 510)).toMatchObject({ status: "included", pages: 3 });
+    expect(row(0, 510).printable.map((f) => f.display_name)).toEqual(["דף מקורות לדוגמה.pdf", "מקור נוסף לדוגמה.pdf"]);
+    expect(row(0, 600).status).toBe("presentation_only");
+    expect(row(0, 1470).status).toBe("no_sources");
+    expect(row(2, 510)).toMatchObject({ status: "needs_pdf", pages: 0 });
+    expect(row(2, 510).word).toHaveLength(1);
+    expect(row(1, 930).status).toBe("missing");
+    expect(row(2, 960, 1)).toMatchObject({ status: "included", pages: 1 });
+    expect(row(2, 960, 2).status).toBe("pending");
+    expect(row(0, 870).status).toBe("pending");
+    const t = manifestTotals(m);
+    expect(t).toMatchObject({ included: 2, memorial: 5, needsPdf: 1, presentationOnly: 1, noSources: 1, files: 4, filePages: 4 });
+    expect(t.missing).toBeGreaterThanOrEqual(1);
+  });
+
+  it("puts in the reader only what has printable pages, and the memorial slots — never a presentation alone, never Word alone", () => {
+    const w = demo();
+    // even marked for the reader by hand, and with a PDF of its slides uploaded, a presentation stays out (in_reader's own rule, and the manifest's)
+    const slides = at(w, 0, 600);
+    slides.in_reader = true;
+    w.sourceFiles.push({
+      id: 99, lesson_id: slides.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === slides.id && x.role === "lead")!.speaker_id,
+      storage_path: `1/${slides.id}/x`, display_name: "שקפים.pdf", mime: "application/pdf", size_bytes: 1, page_count: 12, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    expect(readerManifest(w).rows.find((r) => r.lesson.id === slides.id)).toMatchObject({ status: "presentation_only", pages: 0 });
+    const rows = readerRows(readerManifest(w));
+    expect(rows.map((r) => r.status)).not.toContain("presentation_only");
+    expect(rows.map((r) => r.status)).not.toContain("needs_pdf");
+    expect(rows.map((r) => (r.kind === "memorial" ? `m${r.day}` : r.lesson.id))).toEqual([at(w, 0, 510).id, "m0", "m1", "m2", at(w, 2, 960).id, "m3", "m4"]); // memorial at 13:00, before Tuesday's 16:00
+  });
+
+  it("keeps a previous speaker's files out of the reader, for removal", () => {
+    const w = demo();
+    const l = at(w, 0, 510);
+    const x = w.lessonSpeakers.find((s) => s.lesson_id === l.id && s.role === "lead")!;
+    x.speaker_id = 40; // another speaker closed the slot since
+    const row = readerManifest(w).rows.find((r) => r.lesson.id === l.id)!;
+    expect(row.previous).toHaveLength(2);
+    expect(row).toMatchObject({ status: "missing", pages: 0, printable: [] });
+  });
+
+  it("gathers the files no lesson shows — a draft's, a deleted lesson's — and finds the marked cover", () => {
+    const w = demo();
+    const draft = w.lessons.find((l) => l.state === "draft" && l.kind === "lesson")!;
+    const extra = (o: Partial<SourceFile>): SourceFile => ({
+      id: 100 + w.sourceFiles.length, lesson_id: null, cover: false, speaker_id: null, storage_path: `1/x/${w.sourceFiles.length}`, display_name: "x.pdf",
+      mime: "application/pdf", size_bytes: 1, page_count: 1, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z", ...o,
+    });
+    w.sourceFiles.push(extra({ lesson_id: draft.id }), extra({}), extra({ cover: true, id: 500 }), extra({ cover: true, id: 501, mime: "image/png" }));
+    w.edition.settings.reader_cover = 501;
+    const m = readerManifest(w);
+    expect(m.leftovers.map((f) => f.lesson_id)).toEqual([draft.id, null]);
+    expect(m.covers.map((f) => f.id)).toEqual([500, 501]);
+    expect(m.cover?.id).toBe(501);
+  });
+
+  // the second review's proof: a PDF or a picture the browser could not read on upload was «התקבל» in the manifest, a
+  // green dot on the card and counted in the panel — and left out of the reader only when it was built
+  it("leaves out a file the browser could not read on upload (no page count) — «צריך קובץ אחר», never «התקבל»", () => {
+    const w = demo();
+    const l = at(w, 1, 930); // marked for the reader, nothing arrived yet
+    const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
+    const file = (id: number, mime: SourceFile["mime"], page_count: number | null): SourceFile => ({
+      id, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/${id}`, display_name: `${id}`, mime, size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    const rowOf = () => readerManifest(w).rows.find((r) => r.lesson.id === l.id)!;
+    w.sourceFiles.push(file(90, "application/pdf", null), file(91, "image/png", null));
+    expect(rowOf()).toMatchObject({ status: "unreadable", pages: 0, printable: [] });
+    expect(rowOf().unread.map((f) => f.id)).toEqual([90, 91]);
+    expect(readerRows(readerManifest(w)).map((r) => r.lesson.id)).not.toContain(l.id);
+    expect(manifestTotals(readerManifest(w))).toMatchObject({ unreadable: 1, files: 6 });
+    // with Word beside them, «צריך PDF» first — as the lesson's stage says it
+    w.sourceFiles.push(file(92, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", null));
+    expect(rowOf().status).toBe("needs_pdf");
+    // a file it did read puts the lesson in; the others stay out, named
+    w.sourceFiles.push(file(93, "application/pdf", 4));
+    expect(rowOf()).toMatchObject({ status: "included", pages: 4 });
+    expect(rowOf().printable.map((f) => f.id)).toEqual([93]);
+    expect(rowOf().unread.map((f) => f.id)).toEqual([90, 91]);
+    // not marked: files came all the same
+    w.sourceFiles = w.sourceFiles.filter((f) => f.id !== 92 && f.id !== 93);
+    l.in_reader = false;
+    expect(rowOf().status).toBe("not_marked");
+    // a marked poster the browser could not read is no cover: the schedule is
+    w.sourceFiles.push({ ...file(94, "image/jpeg", null), lesson_id: null, cover: true });
+    w.edition.settings.reader_cover = 94;
+    expect(readerManifest(w).cover).toBeNull();
+  });
+
+  // the third round's proof: a build named the unread files of the lessons in the reader only — a lesson marked for it
+  // whose files were all unread («צריך קובץ אחר») was named nowhere once the reader was built
+  it("names after a build every unread file of a lesson marked for the reader — in schedule order, none the build fetches", () => {
+    const w = demo();
+    const file = (l: { id: number }, id: number, page_count: number | null): SourceFile => ({
+      id, lesson_id: l.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id,
+      storage_path: `1/${l.id}/${id}`, display_name: `${id}.pdf`, mime: "application/pdf", size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    const allUnread = at(w, 1, 930); // marked, nothing arrived yet
+    const opening = at(w, 0, 510); // in the reader, with its files
+    const slides = at(w, 0, 600); // a presentation: not marked
+    w.sourceFiles.push(file(allUnread, 90, null), file(allUnread, 91, null), file(opening, 92, null), file(slides, 93, null));
+    const m = readerManifest(w);
+    expect(m.rows.find((r) => r.lesson.id === allUnread.id)!.status).toBe("unreadable");
+    expect(unreadForReader(m).map((f) => f.id)).toEqual([92, 90, 91]);
+    const fetched = [...readerRows(m).flatMap((r) => r.printable), ...(m.cover ? [m.cover] : [])].map((f) => f.id);
+    expect(fetched.length).toBeGreaterThan(0);
+    expect(unreadForReader(m).filter((f) => fetched.includes(f.id))).toEqual([]);
+  });
+
+  it("says what it leaves out in one wording, the count by number", () => {
+    expect(wordText(1)).toBe("ועוד קובץ Word אחד שלא נכנס — צריך PDF");
+    expect(wordText(2)).toBe("ועוד 2 קבצי Word שלא נכנסו — צריך PDF");
+    expect(unreadText(1, false)).toBe("קובץ אחד לא נקרא — צריך קובץ אחר");
+    expect(unreadText(3, false)).toBe("3 קבצים לא נקראו — צריך קובץ אחר");
+    expect(unreadText(1, true)).toBe("ועוד קובץ אחד שלא נקרא — צריך קובץ אחר");
+    expect(unreadText(2, true)).toBe("ועוד 2 קבצים שלא נקראו — צריך קובץ אחר");
+  });
+
+  // the code review's proof: «ד״ר מרצה 10» was «חסר» in the manifest and a green «במקראה» dot on its card
+  it("agrees with the lesson's «מקראה» stage — the card's dot, the panel — lesson by lesson", () => {
+    const w = demo();
+    // and a lesson whose only file could not be read on upload
+    const l = at(w, 0, 870);
+    Object.assign(l, { sources_kind: "sheet", in_reader: true });
+    const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
+    w.sourceFiles.push({ id: 90, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/x`, display_name: "x.pdf", mime: "application/pdf", size_bytes: 1, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z" });
+    const rows = readerManifest(w).rows.filter((r) => r.kind === "lesson");
+    expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "missing", "needs_pdf", "unreadable"]));
+    for (const r of rows) {
+      const files = readerFilesOf(w, r.lesson.id);
+      const reader = stagesOf(r.lesson, files).find((s) => s.key === "reader")!;
+      expect(reader.state === "done", `${r.header}: ${r.status} / ${reader.note}`).toBe(r.status === "included");
+      expect(files, r.header).toEqual({ printable: r.printable.length, word: r.word.length, unread: r.unread.length });
+      if (r.status === "missing" && r.lesson.in_reader) expect(reader.note).toBe("חסר קובץ");
+      if (r.status === "needs_pdf") expect(reader.note).toBe("צריך PDF");
+      if (r.status === "unreadable") expect(reader.note).toBe("צריך קובץ אחר");
+      // and «המרצים שלי» / the tracking table: such a lesson's sources are still a step to take, once the steps before it are done
+      const settled = { ...r.lesson, approval: "none" as const, needs_reconfirm: false, confirm_sent_at: "2026-11-01T00:00:00Z", self_intro: true };
+      if (r.status === "missing" || r.status === "needs_pdf" || r.status === "unreadable") expect(nextLessonStep(settled, files), r.header).toBe("sources");
+      if (r.status === "included") expect(nextLessonStep(settled, files), r.header).toBeNull();
+    }
+  });
+
+  it("writes the header «מרצה – כותרת», TBD for what is missing, and the memorial slot's own", () => {
+    expect(readerHeader("lesson", "ד״ר פלונית", "על הדרך")).toBe("ד״ר פלונית – על הדרך");
+    expect(readerHeader("lesson", "ד״ר פלונית", null)).toBe("ד״ר פלונית – TBD");
+    expect(readerHeader("memorial", "", "זמן זיכרון")).toBe("זמן זיכרון");
+    expect(readerHeader("memorial", "", null)).toBe("זמן זיכרון");
+    expect(readerHeader("memorial", "", "שם לדוגמה")).toBe("זמן זיכרון – שם לדוגמה");
+  });
+});
+
+describe("the page plan", () => {
+  it("fits the table of contents: its first page loses two lines to the title", () => {
+    const first = TOC_LINES_PER_PAGE - TOC_TITLE_LINES;
+    expect(paginateToc([]).length).toBe(1);
+    expect(paginateToc(Array(first).fill(0)).length).toBe(1);
+    expect(paginateToc(Array(first + 1).fill(0)).length).toBe(2);
+    expect(paginateToc(Array(first + TOC_LINES_PER_PAGE).fill(0)).length).toBe(2);
+    expect(paginateToc(Array(first + TOC_LINES_PER_PAGE + 1).fill(0)).map((p) => p.length)).toEqual([first, TOC_LINES_PER_PAGE, 1]);
+  });
+
+  it("orders the book: cover, contents, each day's entries and its «סיכום יום» — and the contents point at the right pages", () => {
+    const entries = [
+      { ref: 0, day: 0 as const, header: "א – כותרת", filePages: [2, 1] },
+      { ref: 1, day: 0 as const, header: "זמן זיכרון", filePages: [] },
+      { ref: 2, day: 2 as const, header: "ב – כותרת", filePages: [0, 3] }, // a file that could not be read adds nothing
+    ];
+    const plan = planReader(entries, 1);
+    expect(plan.pages.map((p) => p.kind)).toEqual([
+      "cover", "toc", "file", "file", "file", "header", "summary", "summary", "file", "file", "file", "summary", "summary", "summary",
+    ]);
+    expect(plan.pages[2]).toEqual({ kind: "file", ref: 0, file: 0, page: 0, first: true });
+    expect(plan.pages[4]).toEqual({ kind: "file", ref: 0, file: 1, page: 0, first: false });
+    expect(plan.pages[8]).toEqual({ kind: "file", ref: 2, file: 1, page: 0, first: true });
+    for (const line of plan.toc) {
+      if (line.kind === "entry") expect(plan.pages[line.page - 1]).toMatchObject({ ref: line.ref });
+      if (line.kind === "summary") expect(plan.pages[line.page - 1]).toEqual({ kind: "summary", day: line.day });
+    }
+    expect(plan.toc.filter((l) => l.kind === "entry").map((l) => (l.kind === "entry" ? l.page : 0))).toEqual([3, 6, 9]);
+    expect(plan.toc.filter((l) => l.kind === "day")).toHaveLength(5);
+  });
+
+  it("gives a long table of contents more pages, and every number still lands on its entry", () => {
+    const entries = Array.from({ length: 60 }, (_, i) => ({ ref: i, day: (i % 5) as 0 | 1 | 2 | 3 | 4, header: `מרצה ${i} – כותרת`, filePages: [1 + (i % 3)] }));
+    const plan = planReader(entries, 2);
+    // 5 day lines + 60 entries + 5 summaries = 70 lines: 32 + 34 + 4
+    expect(plan.tocPages.map((p) => p.length)).toEqual([32, 34, 4]);
+    expect(plan.pages.slice(0, 5).map((p) => p.kind)).toEqual(["cover", "cover", "toc", "toc", "toc"]);
+    const filePages = entries.reduce((n, e) => n + e.filePages[0], 0);
+    expect(plan.pages).toHaveLength(2 + 3 + filePages + 5);
+    for (const line of plan.toc) if (line.kind === "entry") expect(plan.pages[line.page - 1]).toMatchObject({ kind: "file", ref: line.ref, first: true });
+  });
+
+  it("alternates the running headers — odd pages the left one — never on the cover, and numbers every page after it", () => {
+    const h = ["שמאל", "ימין"] as const;
+    expect([1, 2, 3, 4, 5].map((p) => runningHeader(p, 1, h))).toEqual([null, "ימין", "שמאל", "ימין", "שמאל"]);
+    expect(runningHeader(3, 1, undefined)).toBeNull();
+    expect(runningHeader(3, 1, ["", "ימין"])).toBeNull();
+    expect([1, 2, 3].map((p) => numbered(p, 2))).toEqual([false, false, true]);
+  });
+});
+
+describe("A4 framing", () => {
+  const box = { x: 10, y: 20, width: 500, height: 700 };
+
+  it("scales a page to fit, keeps its aspect and centres it", () => {
+    const a4 = frame(A4.width, A4.height, 0, box);
+    expect(a4.rotate).toBe(0);
+    expect(a4.box.width / a4.box.height).toBeCloseTo(A4.width / A4.height, 6);
+    expect(a4.box.width <= box.width + 1e-9 && a4.box.height <= box.height + 1e-9).toBe(true);
+    expect(Math.min(box.width - a4.box.width, box.height - a4.box.height)).toBeCloseTo(0, 6); // touches one pair of sides
+    const wide = frame(800, 400, 0, box);
+    expect(wide.scale).toBeCloseTo(500 / 800);
+    expect(wide.box).toEqual({ x: 10, y: 20 + (700 - 250) / 2, width: 500, height: 250 });
+    const small = frame(100, 100, 0, box);
+    expect(small.scale).toBe(5); // up as well as down
+  });
+
+  it("turns a page with /Rotate the way it is displayed, and puts the origin where the rotation needs it", () => {
+    const r90 = frame(800, 400, 90, box); // shown 400 wide, 800 tall
+    expect(r90.rotate).toBe(-90);
+    expect(r90.scale).toBeCloseTo(Math.min(500 / 400, 700 / 800));
+    expect(r90.box.height).toBeCloseTo(700);
+    expect([r90.x, r90.y]).toEqual([r90.box.x, r90.box.y + r90.box.height]);
+    const r180 = frame(100, 200, 180, box);
+    expect([r180.x, r180.y]).toEqual([r180.box.x + r180.box.width, r180.box.y + r180.box.height]);
+    const r270 = frame(100, 200, -90, box);
+    expect(r270.rotate).toBe(-270);
+    expect([r270.x, r270.y]).toEqual([r270.box.x + r270.box.width, r270.box.y]);
+  });
+
+  it("keeps the header bands free: a first page leaves room for the strip", () => {
+    const first = contentBox(true);
+    const other = contentBox(false);
+    expect(first.height).toBeLessThan(other.height);
+    expect(first.x).toBe(MARGIN);
+    expect(other.y + other.height).toBeLessThan(A4.height - MARGIN);
+  });
+
+  it("reads a JPEG's EXIF orientation", () => {
+    const exif = (o: number, little: boolean) => {
+      const u16 = (v: number) => (little ? [v & 255, v >> 8] : [v >> 8, v & 255]);
+      const u32 = (v: number) => (little ? [v & 255, (v >> 8) & 255, (v >> 16) & 255, v >>> 24] : [v >>> 24, (v >> 16) & 255, (v >> 8) & 255, v & 255]);
+      const tiff = [...(little ? [0x49, 0x49] : [0x4d, 0x4d]), ...u16(42), ...u32(8), ...u16(1), ...u16(0x0112), ...u16(3), ...u32(1), ...u16(o), 0, 0, ...u32(0)];
+      const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff];
+      return new Uint8Array([0xff, 0xd8, 0xff, 0xe1, (app1.length + 2) >> 8, (app1.length + 2) & 255, ...app1, 0xff, 0xda, 0, 2]);
+    };
+    expect(jpegOrientation(exif(6, true))).toBe(6);
+    expect(jpegOrientation(exif(3, false))).toBe(3);
+    expect(jpegOrientation(new Uint8Array([0xff, 0xd8, 0xff, 0xda]))).toBe(1);
+    expect([1, 3, 6, 8].map(orientationTurn)).toEqual([0, 180, 90, 270]);
+  });
+});
+
+describe("text that must fit", () => {
+  const measure = (s: string) => s.length * 10;
+  it("wraps by words into at most two lines, the last cut with «…»", () => {
+    expect(wrap(measure, "אחת שתיים שלוש", 100)).toEqual(["אחת שתיים", "שלוש"]);
+    expect(wrap(measure, "אחת שתיים שלוש ארבע חמש שש", 100)).toEqual(["אחת שתיים", "שלוש ארבע…"]);
+    expect(fit(measure, "קצר", 100)).toBe("קצר");
+    expect(fit(measure, "ארוך מאוד מאוד", 60)).toBe("ארוך…");
+  });
+  it("splits the schedule cover into pages, never leaving a day's heading alone at a page's foot", () => {
+    const lines = [{ kind: "day" as const, text: "יום ראשון" }, ...Array.from({ length: 40 }, () => ({ kind: "row" as const, text: "08:30–09:45" })), { kind: "day" as const, text: "יום שני" }, { kind: "row" as const, text: "x" }];
+    const pages = chunkSchedule(lines, 44);
+    expect(pages.map((p) => p.length)).toEqual([41, 2]);
+    expect(pages[1][0].kind).toBe("day");
+  });
+  it("counts the schedule cover's pages without pdf-lib (the reader screen's estimate): one even for no lines", () => {
+    expect(scheduleCoverPages([])).toBe(1);
+    expect(scheduleCoverPages(designWeek())).toBe(2);
+  });
+});
+
+/** The week the design describes: 5 days × (the day's line, 10 lessons, a memorial slot) — 60 lines, two cover pages. */
+function designWeek(): ScheduleLine[] {
+  const lines: ScheduleLine[] = [];
+  for (let d = 0; d < 5; d++) {
+    lines.push({ kind: "day", text: `יום ${d + 1}` });
+    for (let i = 0; i < 10; i++) lines.push({ kind: "row", text: "08:30–09:45", speaker: "א", title: "ב" });
+    lines.push({ kind: "row", text: "13:00–13:15", title: "זמן זיכרון", memorial: true });
+  }
+  return lines;
+}
+
+describe("the Word skeleton", () => {
+  it("has the headings in schedule order, a page each, right to left, a TOC field and the running headers", async () => {
+    const w = demo();
+    const m = readerManifest(w);
+    const rows = skeletonRows(m);
+    // the marked lessons whatever their files (Word only, nothing yet — this is where they are pasted), and the memorial slots
+    expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "needs_pdf", "missing", "memorial"]));
+    expect(rows.map((r) => r.status)).not.toContain("presentation_only");
+    const bytes = await buildSkeleton({ manifest: m, editionLabel: "הדגמה", headers: ["כותרת שמאל לבדיקה", "כותרת ימין לבדיקה"] });
+    const zip = unzipSync(bytes);
+    const doc = strFromU8(zip["word/document.xml"]);
+    const texts = [...doc.matchAll(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g)].map((x) => x[1]);
+    const expected = skeletonParagraphs({ manifest: m, editionLabel: "הדגמה" }).filter((p) => p.text).map((p) => p.text);
+    // each heading found after the one before it: in this order, every one of them
+    let from = 0;
+    for (const t of expected) {
+      const i = texts.indexOf(t, from);
+      expect(i, t).toBeGreaterThanOrEqual(0);
+      from = i + 1;
+    }
+    expect(expected[0]).toBe("יום ראשון");
+    expect(expected).toContain("סיכום יום חמישי");
+    expect(expected).toContain(m.rows.find((r) => r.status === "needs_pdf")!.header);
+    expect(doc).toContain("<w:bidi/>");
+    expect(doc).toContain("<w:rtl/>");
+    expect(doc).toMatch(/TOC \\h \\o &quot;1-2&quot;/);
+    // a page each — but a day's heading shares its page with its first entry (never a day's name alone on a page)
+    const paras = skeletonParagraphs({ manifest: m, editionLabel: "הדגמה" });
+    expect((doc.match(/<w:pageBreakBefore\/>/g) ?? []).length).toBe(paras.filter((p) => p.pageBreak).length);
+    paras.forEach((p, i) => {
+      if (p.style === "h1") expect(p.pageBreak).toBe(true);
+      if (i > 0 && paras[i - 1].style === "h1") expect(p.pageBreak, p.text).toBe(false);
+    });
+    // «סיכום יום»'s ruled lines: a between border too, or Word and LibreOffice draw one line under the whole block
+    expect(doc).toMatch(/<w:between /);
+    expect(doc).toContain("תוכן העניינים"); // the table of contents has a title on the page, not only the field's alias
+    // right to left by default (the TOC's own paragraphs too), and outline levels a TOC can be built from
+    const styles = strFromU8(zip["word/styles.xml"]);
+    expect(styles).toMatch(/<w:pPrDefault><w:pPr>(?:(?!<\/w:pPr>).)*<w:bidi\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading1"(?:(?!<\/w:style>).)*<w:outlineLvl w:val="0"\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading1"(?:(?!<\/w:style>).)*<w:keepNext\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading2"(?:(?!<\/w:style>).)*<w:outlineLvl w:val="1"\/>/s);
+    const settings = strFromU8(zip["word/settings.xml"]);
+    expect(settings).toContain("w:evenAndOddHeaders");
+    expect(settings).toContain("w:updateFields");
+    const headers = Object.keys(zip).filter((k) => /^word\/header\d+\.xml$/.test(k)).map((k) => strFromU8(zip[k])).join("");
+    expect(headers).toContain("כותרת שמאל לבדיקה");
+    expect(headers).toContain("כותרת ימין לבדיקה");
+  });
+
+  it("writes no running header the admin did not type", async () => {
+    const m = readerManifest(demo());
+    const zip = unzipSync(await buildSkeleton({ manifest: m, editionLabel: "הדגמה" }));
+    const headers = Object.keys(zip).filter((k) => /^word\/header\d+\.xml$/.test(k)).map((k) => strFromU8(zip[k])).join("");
+    expect(headers).not.toMatch(/<w:t[ >]/);
+  });
+});
+
+/** Scan data with a stuffed byte (FF 00) and a restart marker (FF D0) in it. */
+const SCAN = [0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78, 0x9a];
+
+/**
+ * A photo as a phone writes it, synthetic: JFIF, EXIF (orientation 6, the camera's make, a GPS IFD), XMP, an
+ * ICC-like APP2, a comment, Adobe's APP14, the tables, a 16×8 frame, a scan — and a «motion photo» after the end.
+ * pdf-lib reads only the frame, so the scan need not decode.
+ */
+function syntheticPhoto(): Uint8Array {
+  const seg = (marker: number, body: number[]) => [0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255, ...body];
+  const ascii = (t: string) => [...Buffer.from(t, "latin1")];
+  // EXIF, little-endian: IFD0 with Orientation (0x0112) = 6, Make (0x010f) → «SamsungPhone», GPS IFD (0x8825) → one GPS tag
+  const u16 = (v: number) => [v & 255, v >> 8];
+  const u32 = (v: number) => [v & 255, (v >> 8) & 255, (v >> 16) & 255, v >>> 24];
+  const make = ascii("SamsungPhone\0");
+  const ifd0At = 8;
+  const ifd0Len = 2 + 3 * 12 + 4;
+  const makeAt = ifd0At + ifd0Len;
+  const gpsAt = makeAt + make.length;
+  const tiff = [
+    0x49, 0x49, ...u16(42), ...u32(ifd0At),
+    ...u16(3),
+    ...u16(0x010f), ...u16(2), ...u32(make.length), ...u32(makeAt),
+    ...u16(0x0112), ...u16(3), ...u32(1), ...u16(6), 0, 0,
+    ...u16(0x8825), ...u16(4), ...u32(1), ...u32(gpsAt),
+    ...u32(0),
+    ...make,
+    ...u16(1), ...u16(1), ...u16(2), ...u32(2), ...ascii("N\0"), 0, 0, ...u32(0), // GPSLatitudeRef = N
+    ...ascii("GPS"),
+  ];
+  return Uint8Array.from([
+    0xff, 0xd8,
+    ...seg(0xe0, [...ascii("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]),
+    ...seg(0xe1, [...ascii("Exif\0\0"), ...tiff]),
+    ...seg(0xe1, [...ascii("http://ns.adobe.com/xap/1.0/\0"), ...ascii("<x:xmpmeta/>")]),
+    ...seg(0xe2, [...ascii("ICC_PROFILE\0"), 1, 1, 0, 0]),
+    ...seg(0xfe, ascii("a comment")),
+    ...seg(0xee, [...ascii("Adobe"), 0, 100, 0, 0, 0, 0, 1]),
+    ...seg(0xdb, [0, ...Array(64).fill(1)]),
+    ...seg(0xc0, [8, 0, 8, 0, 16, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]),
+    ...seg(0xc4, [0, ...Array(16).fill(0)]),
+    ...seg(0xda, [3, 1, 0, 2, 0, 3, 0, 0, 63, 0]),
+    ...SCAN,
+    0xff, 0xd9,
+    ...ascii("MotionPhoto_Data"), 0, 0, 0, 0x18, ...ascii("ftypmp42"),
+  ]);
+}
+
+// A 1×1 PNG: what the stub text drawer hands back for every line of Hebrew.
+const PIXEL = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64"));
+const stub: TextRenderer = {
+  runningHeader: async (_t, w) => ({ bytes: PIXEL, widthPt: w, heightPt: 14 }) as Png,
+  entryStrip: async (_h, _w, width, height) => ({ bytes: PIXEL, widthPt: width, heightPt: height }),
+  tocPage: async () => ({ bytes: PIXEL, widthPt: A4.width, heightPt: A4.height }),
+  schedulePage: async () => ({ bytes: PIXEL, widthPt: A4.width, heightPt: A4.height }),
+  summaryTitle: async (_t, w) => ({ bytes: PIXEL, widthPt: w, heightPt: 30 }),
+};
+
+async function pdfOf(sizes: [number, number][], rotate = 0, blank = false): Promise<ArrayBuffer> {
+  const d = await PDFDocument.create();
+  for (const s of sizes) {
+    const p = d.addPage(s);
+    p.setRotation(degrees(rotate));
+    if (!blank) p.drawRectangle({ x: 10, y: 10, width: 20, height: 20 });
+  }
+  const b = await d.save();
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+}
+
+/** A page's content stream, decoded. */
+function pageContent(doc: PDFDocument, n: number): string {
+  const c = doc.getPage(n).node.normalizedEntries().Contents!;
+  return Array.from({ length: c.size() }, (_, i) => {
+    const s = c.lookup(i, PDFStream);
+    return s instanceof PDFRawStream ? Buffer.from(decodePDFRawStream(s).decode()).toString("latin1") : "";
+  }).join("\n");
+}
+
+/** Each page's embedded source page, by its BBox («300x400»), or «-» for a page with none (text pictures only). */
+function sources(doc: PDFDocument): string[] {
+  return doc.getPages().map((p) => {
+    const xo = p.node.Resources()?.lookupMaybe(PDFName.of("XObject"), PDFDict);
+    if (!xo) return "-";
+    for (const [, ref] of xo.entries()) {
+      const s = doc.context.lookup(ref);
+      if (s instanceof PDFRawStream && s.dict.get(PDFName.of("Subtype"))?.toString() === "/Form") {
+        const bb = s.dict.lookup(PDFName.of("BBox"), PDFArray).asArray().map((n) => (n as PDFNumber).asNumber());
+        return `${bb[2] - bb[0]}x${bb[3] - bb[1]}`;
+      }
+    }
+    return "-";
+  });
+}
+
+describe("the PDF assembly", () => {
+  it("builds cover, contents, each lesson's pages re-framed to A4 and a «סיכום יום» per day — and leaves out what it cannot read", async () => {
+    const job: ReaderJob = {
+      editionLabel: "בדיקה",
+      headers: ["שמאל", "ימין"],
+      cover: null,
+      schedule: [{ kind: "day", text: "יום ראשון" }, { kind: "row", text: "08:30–09:45", speaker: "א", title: "ב" }],
+      scheduleTitle: "לו\"ז",
+      entries: [
+        { ref: 0, day: 0, header: "א – ראשון", when: "ראשון 08:30–09:45", files: [{ id: 1, name: "a.pdf", mime: "application/pdf", bytes: await pdfOf([[300, 400], [300, 400]]) }] },
+        { ref: 1, day: 0, header: "זמן זיכרון", when: "ראשון 13:00–13:15", files: [] },
+        {
+          ref: 2, day: 1, header: "ב – שני", when: "שני 10:00–11:15",
+          files: [
+            { id: 2, name: "broken.pdf", mime: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.4 not really").buffer as ArrayBuffer },
+            { id: 3, name: "c.pdf", mime: "application/pdf", bytes: await pdfOf([[500, 250]], 90) },
+            { id: 4, name: "d.png", mime: "image/png", bytes: PIXEL.buffer.slice(0) as ArrayBuffer },
+            { id: 5, name: "blank.pdf", mime: "application/pdf", bytes: await pdfOf([[400, 400]], 0, true) }, // a page with no content at all: a blank page, still a page
+          ],
+        },
+      ],
+    };
+    const progress: string[] = [];
+    const r = await assembleReader(job, stub, (p) => progress.push(p.step));
+    const out = await PDFDocument.load(r.bytes);
+    // 1 schedule page + 1 contents + 2 + 1 (memorial header) + 1 + 1 + 1 (blank) + 5 summaries
+    expect(r.pages).toBe(13);
+    expect(out.getPageCount()).toBe(13);
+    expect(out.getPages().every((p) => Math.abs(p.getWidth() - A4.width) < 0.01 && Math.abs(p.getHeight() - A4.height) < 0.01)).toBe(true);
+    expect(sources(out)).toEqual(["-", "-", "300x400", "300x400", "-", "-", "500x250", "-", "-", "-", "-", "-", "-"]);
+    expect(r.skipped).toEqual([{ name: "broken.pdf", reason: "unreadable" }]);
+    expect(progress).toContain("read");
+    expect(progress.at(-1)).toBe("save");
+  });
+
+  it("opens with the marked poster's pages instead of the schedule", async () => {
+    const job: ReaderJob = {
+      editionLabel: "בדיקה", cover: { id: 9, name: "poster.pdf", mime: "application/pdf", bytes: await pdfOf([[1000, 1414]]) }, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 3, header: "א – ב", when: "", files: [{ id: 1, name: "a.pdf", mime: "application/pdf", bytes: await pdfOf([[200, 200]]) }] }],
+    };
+    const out = await PDFDocument.load((await assembleReader(job, stub)).bytes);
+    expect(sources(out).slice(0, 3)).toEqual(["1000x1414", "-", "-"]);
+    expect(sources(out)).toContain("200x200");
+    expect(out.getPageCount()).toBe(1 + 1 + 1 + 5);
+  });
+
+  // the reviewer's proof (a damaged picture failed the whole build with «SOI not found in JPEG»), turned round
+  it("leaves out a damaged picture, a broken PNG and a PDF whose pages cannot be embedded — names each, and builds the rest", async () => {
+    const pngHead = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
+    // a PDF that opens, with a page whose content is in a filter pdf-lib cannot decode: embedding it throws
+    const odd = await PDFDocument.create();
+    const page = odd.addPage([300, 300]);
+    page.node.set(PDFName.of("Contents"), odd.context.register(odd.context.stream("x", { Filter: "JBIG2Decode" })));
+    odd.addPage([300, 300]).drawRectangle({ x: 1, y: 1, width: 5, height: 5 });
+    const oddBytes = await odd.save();
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [
+        { id: 1, name: "photo.jpg", mime: "image/jpeg", bytes: new TextEncoder().encode("not a jpeg at all").buffer as ArrayBuffer },
+        { id: 2, name: "broken.png", mime: "image/png", bytes: pngHead.buffer as ArrayBuffer },
+        { id: 3, name: "odd.pdf", mime: "application/pdf", bytes: oddBytes.buffer.slice(oddBytes.byteOffset, oddBytes.byteOffset + oddBytes.byteLength) as ArrayBuffer },
+        { id: 4, name: "good.pdf", mime: "application/pdf", bytes: await pdfOf([[300, 400]]) },
+        { id: 5, name: "really-a-png.jpg", mime: "image/jpeg", bytes: PIXEL.buffer.slice(0) as ArrayBuffer }, // drawn as the PNG it is
+      ] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([
+      { name: "photo.jpg", reason: "unreadable" },
+      { name: "broken.png", reason: "unreadable" },
+      { name: "odd.pdf", reason: "unreadable" }, // all of its pages, or none
+    ]);
+    const out = await PDFDocument.load(r.bytes);
+    // 1 schedule page + 1 contents + good.pdf + the PNG + 5 summaries
+    expect(out.getPageCount()).toBe(1 + 1 + 1 + 1 + 5);
+    expect(sources(out).slice(2, 4)).toEqual(["300x400", "-"]);
+  });
+
+  it("puts a phone's photo in without its metadata — no EXIF, no GPS, no camera, no comment, nothing after the image — and still turns it upright", async () => {
+    const jpeg = syntheticPhoto();
+    const has = (b: Uint8Array, text: string) => Buffer.from(b).includes(Buffer.from(text, "latin1"));
+    expect(has(jpeg, "Exif\0\0") && has(jpeg, "SamsungPhone") && has(jpeg, "a comment") && has(jpeg, "MotionPhoto")).toBe(true);
+    // the control: pdf-lib alone copies the photo's bytes into the PDF as they are
+    const raw = await PDFDocument.create();
+    raw.addPage().drawImage(await raw.embedJpg(jpeg), { x: 0, y: 0, width: 10, height: 10 });
+    expect(has(await raw.save(), "SamsungPhone")).toBe(true);
+
+    const clean = stripJpegMetadata(jpeg)!;
+    for (const t of ["Exif\0\0", "SamsungPhone", "GPS", "a comment", "MotionPhoto", "http://ns.adobe.com/xap/1.0/"]) expect(has(clean, t), t).toBe(false);
+    expect(has(clean, "JFIF\0")).toBe(true); // APP0 kept
+    expect(has(clean, "Adobe")).toBe(true); // APP14 kept (the colour transform)
+    expect(Buffer.from(clean.subarray(-2)).toString("hex")).toBe("ffd9");
+    // the picture's own segments and its scan data, byte for byte
+    expect(Buffer.from(clean).includes(Buffer.from(SCAN))).toBe(true);
+    expect(jpegOrientation(jpeg)).toBe(6);
+
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [{ id: 1, name: "צילום.jpg", mime: "image/jpeg", bytes: jpeg.buffer.slice(0) as ArrayBuffer }] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([]);
+    for (const t of ["Exif\0\0", "SamsungPhone", "a comment", "MotionPhoto"]) expect(has(r.bytes, t), t).toBe(false);
+    // drawn turned a quarter clockwise (EXIF orientation 6): pdf-lib's rotate of -90° is the matrix [cos −1 1 cos 0 0]
+    const out = await PDFDocument.load(r.bytes);
+    expect(pageContent(out, 2)).toMatch(/\S+ -1 1 \S+ 0 0 cm/);
+  });
+
+  it("follows a JPEG's structure or says it cannot: cut short, no frame, a segment past the end", () => {
+    const jpeg = syntheticPhoto();
+    const eoi = jpeg.lastIndexOf(0xd9) - 1;
+    const cut = stripJpegMetadata(jpeg.subarray(0, eoi - 3).slice())!; // cut inside the scan data: kept, its end marker back
+    expect(Buffer.from(cut.subarray(-2)).toString("hex")).toBe("ffd9");
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xda, 0, 2, 1, 2]))).toBeNull(); // a scan before any frame
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x40, 0, 1, 2]))).toBeNull(); // a segment past the end
+    expect(stripJpegMetadata(new TextEncoder().encode("not a jpeg"))).toBeNull();
+    // no scan at all: a frame and the end; or a segment and then stray bytes to the end of the file
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 8, 0, 16, 1, 1, 0x11, 0, 0xff, 0xd9]))).toBeNull();
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 1, 2, 9, 9, 9]))).toBeNull();
+  });
+
+  it("follows the two shapes libjpeg decodes that a strict walk would refuse — and still leaves no metadata", async () => {
+    const jpeg = syntheticPhoto();
+    const at = (seq: number[]) => Buffer.from(jpeg).indexOf(Buffer.from(seq));
+    const has = (b: Uint8Array, text: string) => Buffer.from(b).includes(Buffer.from(text, "latin1"));
+    // a fill byte before a restart marker inside the scan (… FF FF D0 …): still the scan's data, kept as it is
+    const rst = at(SCAN) + 5;
+    const fill = Uint8Array.from([...jpeg.subarray(0, rst), 0xff, ...jpeg.subarray(rst)]);
+    const filled = stripJpegMetadata(fill)!;
+    expect(filled).not.toBeNull();
+    expect(Buffer.from(filled).includes(Buffer.from([0x56, 0xff, 0xff, 0xd0, 0x78, 0x9a]))).toBe(true);
+    expect(Buffer.from(filled.subarray(-2)).toString("hex")).toBe("ffd9");
+    // stray bytes between two segments (libjpeg: «extraneous bytes before marker»), FF 00 among them or first: passed over, left behind
+    const dqt = at([0xff, 0xdb]);
+    const stray = Uint8Array.from([...jpeg.subarray(0, dqt), 0, 0, 0x2a, 0xff, 0x00, 7, ...jpeg.subarray(dqt)]);
+    const strayFirst = Uint8Array.from([...jpeg.subarray(0, dqt), 0xff, 0x00, 7, ...jpeg.subarray(dqt)]);
+    for (const b of [stray, strayFirst]) expect(Buffer.from(stripJpegMetadata(b)!)).toEqual(Buffer.from(stripJpegMetadata(jpeg)!));
+    await expect(PDFDocument.create().then((d) => d.embedJpg(stray))).rejects.toThrow(); // pdf-lib alone cannot read it
+    for (const b of [filled, stripJpegMetadata(stray)!]) for (const t of ["Exif\0\0", "SamsungPhone", "GPS", "a comment", "MotionPhoto"]) expect(has(b, t), t).toBe(false);
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [
+        { id: 1, name: "fill.jpg", mime: "image/jpeg", bytes: fill.buffer.slice(0) as ArrayBuffer },
+        { id: 2, name: "stray.jpg", mime: "image/jpeg", bytes: stray.buffer.slice(0) as ArrayBuffer },
+      ] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([]);
+    expect(r.pages).toBe(1 + 1 + 2 + 5);
+    for (const t of ["Exif\0\0", "SamsungPhone", "a comment", "MotionPhoto"]) expect(has(r.bytes, t), t).toBe(false);
+  });
+
+  it("opens with as many schedule pages as the screen's estimate counts (scheduleCoverPages)", async () => {
+    const schedule = designWeek();
+    const r = await assembleReader({ editionLabel: "x", cover: null, schedule, scheduleTitle: "לו\"ז", entries: [] }, stub);
+    expect(r.pages).toBe(planReader([], scheduleCoverPages(schedule)).pages.length);
+    expect(r.pages).toBe(2 + 1 + 5);
+  });
+
+  // the second review's proof: «בערך N עמודים» was one page short for a week whose schedule takes two cover pages
+  it("has as many pages as the screen's estimate says (readerEstimate) — a schedule cover of two pages, or a poster", async () => {
+    const w = demo();
+    const m = readerManifest(w);
+    const schedule = designWeek();
+    // the manifest's files as the build gets them: a PDF of its counted pages, a picture
+    const job = async (cover: ReaderJob["cover"]): Promise<ReaderJob> => ({
+      editionLabel: "x", cover, schedule, scheduleTitle: "לו\"ז",
+      entries: await Promise.all(
+        readerRows(m).map(async (r, i) => ({
+          ref: i, day: r.day, header: r.header, when: r.when,
+          files: await Promise.all(
+            r.printable.map(async (f) => ({
+              id: f.id, name: f.display_name, mime: f.mime as "application/pdf" | "image/png",
+              bytes: f.mime === "application/pdf" ? await pdfOf(Array.from({ length: f.page_count! }, () => [300, 400] as [number, number])) : (PIXEL.buffer.slice(0) as ArrayBuffer),
+            })),
+          ),
+        })),
+      ),
+    });
+    const r = await assembleReader(await job(null), stub);
+    expect(r.skipped).toEqual([]);
+    expect(readerEstimate(m, schedule)).toBe(r.pages);
+    expect(r.pages).toBe(2 + 1 + (3 + 1 + 1) + (1 + 1) + (1 + 1 + 1) + (1 + 1) + (1 + 1)); // the two schedule pages, the contents, then each day's files, memorial slot and «סיכום יום»
+    // a marked poster of two pages instead
+    const poster: SourceFile = { ...w.sourceFiles[0], id: 70, lesson_id: null, cover: true, page_count: 2 };
+    const withPoster = { ...m, covers: [poster], cover: poster };
+    const p = await assembleReader(await job({ id: 70, name: "poster.pdf", mime: "application/pdf", bytes: await pdfOf([[300, 400], [300, 400]]) }), stub);
+    expect(readerEstimate(withPoster, schedule)).toBe(p.pages);
+  });
+
+  it("frames a page whose box names its corners top-left first ([0 842 595 0]) upright, as every viewer shows it", async () => {
+    const d = await PDFDocument.create();
+    const p = d.addPage([595, 842]);
+    p.drawRectangle({ x: 20, y: 20, width: 100, height: 50 });
+    p.node.set(PDFName.of("MediaBox"), d.context.obj([0, 842, 595, 0]));
+    const b = await d.save();
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [{ id: 1, name: "inverted.pdf", mime: "application/pdf", bytes: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }] }],
+    };
+    const out = await PDFDocument.load((await assembleReader(job, stub)).bytes);
+    expect(sources(out)[2]).toBe("595x842");
+    // drawn at a positive scale — pdf-lib's drawPage scales just before the page's Do — not turned upside down
+    const scale = /(\S+) 0 0 (\S+) 0 0 cm\s*\/\S+ Do/.exec(pageContent(out, 2));
+    expect(scale && [Number(scale[1]), Number(scale[2])].every((n) => n > 0.9 && n < 1.1), pageContent(out, 2)).toBe(true);
+  });
+
+  it("stops when cancelled", async () => {
+    const job: ReaderJob = { editionLabel: "x", cover: null, schedule: [], scheduleTitle: "", entries: [] };
+    await expect(assembleReader(job, stub, () => {}, () => true)).rejects.toThrow(/cancelled/);
+  });
+});

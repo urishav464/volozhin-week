@@ -4,7 +4,7 @@
 // «מכוון» and stay quiet.
 import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
-import type { Week } from "../domain/types";
+import type { Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { categoryLoad } from "./balance";
 
@@ -17,7 +17,8 @@ export type WarningKind =
   | "declined_pitch"
   | "fixed_overlap"
   | "outside_window"
-  | "missing_info";
+  | "missing_info"
+  | "escort_gap";
 
 export interface Warning {
   key: string;
@@ -32,6 +33,28 @@ export interface Warning {
 export const DEFAULT_MAX_CATEGORY_PER_DAY = 3;
 /** Two lessons count as back-to-back when at most this many minutes separate them. */
 export const BACK_TO_BACK_GAP = 30;
+/** «הצעה» — an escort needs at least this many minutes between two lessons (DESIGN, כללים רכים). */
+export const ESCORT_MIN_GAP = 30;
+
+type Timed = Pick<Lesson, "day" | "start_min" | "end_min">;
+
+/** Minutes between two lessons on the week's clock (day × 1440 + minute): 0 back to back, negative when they overlap. */
+export function weekGap(a: Timed, b: Timed): number {
+  const [x, y] = a.day * 1440 + a.start_min <= b.day * 1440 + b.start_min ? [a, b] : [b, a];
+  return y.day * 1440 + y.start_min - (x.day * 1440 + x.end_min);
+}
+
+/**
+ * The escort's other lessons less than ESCORT_MIN_GAP («הצעה») from this one, or at the same time —
+ * what the escort picker says before anything is saved (the same rule as the `escort_gap` warning).
+ */
+export function escortClashes(week: Pick<Week, "lessons">, lesson: Timed & { id: number }, rosterId: number): { lesson: Lesson; gap: number }[] {
+  return week.lessons
+    .filter((l) => l.id !== lesson.id && l.state !== "cancelled" && l.escort_roster_id === rosterId)
+    .map((l) => ({ lesson: l, gap: weekGap(lesson, l) }))
+    .filter((x) => x.gap < ESCORT_MIN_GAP)
+    .sort((a, b) => a.lesson.day - b.lesson.day || a.lesson.start_min - b.lesson.start_min || a.lesson.id - b.lesson.id);
+}
 
 export function warningsFor(week: Week): Warning[] {
   const out: Warning[] = [];
@@ -129,6 +152,34 @@ export function warningsFor(week: Week): Warning[] {
     }
     if (a.status === "declined" && p.state !== "accepted") {
       push({ kind: "declined_pitch", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "סירב", "סירבה")} השנה, ועדיין ${byGender(s.gender, "מוצע", "מוצעת")} כאן` });
+    }
+  }
+
+  // An escort with two lessons too close together — or at the same time. On
+  // the week's clock (day × 1440 + minute), so 05:00 → 06:30 the next morning counts too.
+  // Every pair, through escortClashes — the picker's rule — so a long lesson
+  // overlapping a later one that is not its neighbour is caught too.
+  const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
+  const clock = (l: Lesson) => l.day * 1440 + l.start_min;
+  const byEscort = new Map<number, typeof live>();
+  for (const l of live) if (l.escort_roster_id != null) byEscort.set(l.escort_roster_id, [...(byEscort.get(l.escort_roster_id) ?? []), l]);
+  for (const [rid, ls] of byEscort) {
+    const sorted = [...ls].sort((a, b) => clock(a) - clock(b) || a.id - b.id);
+    const pairs = sorted.flatMap((x) =>
+      escortClashes({ lessons: live }, x, rid)
+        .filter(({ lesson: y }) => clock(x) < clock(y) || (clock(x) === clock(y) && x.id < y.id)) // each pair once, earlier first
+        .map(({ lesson: y, gap }) => ({ a: x, b: y, gap })),
+    );
+    for (const { a, b, gap } of pairs) {
+      const who = `«${rosterName.get(rid) ?? "מלווה"}»`;
+      const when = `${DAY_NAMES[b.day]} ${fmtRange(b.start_min, b.end_min)}`;
+      const message =
+        gap < 0
+          ? `${who} מלווה שני שיעורים חופפים (${when})`
+          : gap === 0
+            ? `${who} מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP} דקות)`
+            : `${who} מלווה שני שיעורים עם ${gap} דקות ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP})`;
+      push({ kind: "escort_gap", severity: "warn", day: b.day, lessonIds: [a.id, b.id], message });
     }
   }
 

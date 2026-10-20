@@ -1,4 +1,4 @@
-# The grid contract (Phase 1)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), and sources and the reader (milestone 5ב-1)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -17,7 +17,9 @@ this file** (`forbidden`). An `archive`-kind or `archived`-status edition refuse
 from non-admins (`archived`).
 
 `actor` = the caller's `members.id`. "Owner or admin" = the approach's `owner_member_id` is the
-actor, or the actor is admin of the edition.
+actor, or the actor is admin of the edition. An approach nobody holds (`owner_member_id` null — an
+admin sent the speaker back to the pool) is no one's: only an admin passes "owner or admin" for it
+(v6 made the SQL say so; the engine always did).
 
 ## Invariants (enforced by the database itself, mirrored by the engine)
 
@@ -48,7 +50,8 @@ draft) or `{ day, start_min, end_min, room_id | null }` (a cell). `mode` is `sel
    - `{ lesson_id }`: must be a non-cancelled `lesson`-kind lesson of the edition in state
      `draft` → else `cell_closed`.
    - a cell: the range must lie within one lesson row of that day → else `outside_grid`.
-     `room_id null` = the edition's default room. If a draft with exactly that
+     `room_id null` = the edition's default room; a room of another edition → `bad_shape`
+     (as in `move_lesson`). If a draft with exactly that
      `(day, start, end, room)` exists, use it; else create a draft there (the room invariant may
      refuse with `room_taken`).
 3. Approach for `(edition, speaker)`:
@@ -89,16 +92,25 @@ Owner or admin. The pitch must be live and its lesson a draft (`cell_closed` oth
 ### `reopen_lesson(lesson)`
 
 Owner-of-the-lead-speaker's-approach or admin. Closed → draft. If `approval = 'approved'` and the
-actor is not admin → `approved_locked`. Deletes its `lesson_speakers`; its `accepted` pitch →
-`approached`. Does not change times, title, category or stage fields.
+actor is not admin → `approved_locked`; if `paid_at` is set → `paid_locked`, for everyone (money
+that went out is not erased with the speaker: «שולם» is undone first). Deletes its
+`lesson_speakers`; its `accepted` pitch → `approached`. Does not change times, title, category,
+audience or teaching time. **Its stages start over** — they belonged to the speaker who leaves
+(«From placement to arrival»): the lesson's `transport_details` row is deleted, and every stage
+column goes back to its default (`pay_amount` null, `transport` none, `approval` none,
+`approval_note approved_by approved_at confirm_sent_at confirm_sent_by` null, `needs_reconfirm`
+false, `escort_roster_id` null, `self_intro` false, `escort_note` null, `sources_kind` pending,
+`print_when` none, `sources_note presentation_url` null, `in_reader` false). So whoever closes the
+lesson next — another member, another speaker — never inherits the last speaker's pickup address,
+approved amount or «נשלחה».
 
 ### `move_lesson(lesson, day, start_min, end_min, room_id)`
 
 Owner or admin for a closed lesson; any content member for a draft. Bounds and
 lesson-row containment as in `propose` (a range may span several consecutive lesson rows of
 the day — a merged lesson moved whole). Room and speaker invariants apply (`room_taken`,
-`speaker_busy`). If the lesson is closed and `confirm_sent_at` is set and the time, day or room
-changed → `needs_reconfirm = true`. Increments `version`.
+`speaker_busy`). A closed lesson whose message was sent is flagged by the reconfirm rule
+(«From placement to arrival»). Increments `version`.
 
 ### `reshape(edition, day, row_start, op, …)`
 
@@ -116,7 +128,7 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
   starting at or after its end). Any closed lesson in the swallowed range → `merge_blocked`.
   Drafts in the swallowed range: their live pitches move onto the extended lesson (deduplicated),
   then they are deleted. Room and speaker invariants apply. A closed lesson that changes time
-  with `confirm_sent_at` set → `needs_reconfirm`.
+  with `confirm_sent_at` set → `needs_reconfirm` (the reconfirm rule).
 - `reset()`: the lessons overlapping the row: any closed → `cell_closed`. Otherwise all are
   deleted; if they held live pitches, one plain draft is created on the row (default room)
   carrying them (deduplicated per approach). A merged lesson that started on this row is reset to
@@ -126,24 +138,25 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
 
 `patch ⊆ { title, category_id, audience, teach_min }`. Content or admin. Version must match
 (`stale`). `title` and `audience` are trimmed; an empty one becomes null. `teach_min` must be > 0 and ≤ the lesson's length → `bad_shape`. Increments
-`version`.
+`version`. A new title or teaching time after the message was sent → the reconfirm rule.
 
 ## Errors
 
-Exactly the codes above, each with a Hebrew message in `src/errors.ts`:
+Exactly the codes above and those of «The speaker pool» below, each with a Hebrew message in
+`src/errors.ts`:
 `not_member forbidden archived speaker_retired approach_owned not_vetted gender_unknown room_taken
-speaker_busy cell_closed merge_blocked bad_shape outside_grid approved_locked stale`.
+speaker_busy cell_closed merge_blocked bad_shape outside_grid approved_locked paid_locked stale`.
 SQL raises them as `raise exception using message = '<code>', errcode = 'P0001'` (constraints
 are caught and re-raised under their code), so PostgREST returns the code as the error message.
 
 ## RPC signatures (PostgREST, schema `public`)
 
-All `SECURITY INVOKER` (RLS and the guard triggers apply), granted to `authenticated` only.
+All `SECURITY DEFINER` functions that check the caller themselves (DECISIONS, phase 1 §5) — `load_week` alone is `SECURITY INVOKER`, so RLS decides what it returns — granted to `authenticated` only.
 Parameter names are part of the contract — `SupabasePort` calls them by name.
 
 | RPC | Parameters | Returns |
 |---|---|---|
-| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team`) |
+| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team roster escortTicks`; `roster` since v7, `escortTicks` since v9) |
 | `propose` | `p_edition bigint, p_speaker bigint, p_lesson bigint` (null for a cell), `p_day int, p_start int, p_end int, p_room bigint` (null = default room), `p_mode text` (`self`/`offer`) | `jsonb {lesson_id, pitch_id}` |
 | `unpropose` | `p_pitch bigint` | `void` |
 | `set_pitch` | `p_pitch bigint, p_state text` | `void` |
@@ -155,3 +168,817 @@ Parameter names are part of the contract — `SupabasePort` calls them by name.
 
 `load_week` is a function (not a set of table reads) so the grid loads in one round trip; it
 returns only what the caller's RLS lets them see, and never a contact detail.
+
+# The speaker pool (milestone 2, schema v6)
+
+The same two implementations: the SQL functions of `supabase/schema.sql` «Milestone 2» and
+`src/data/engine.ts` (behind `DemoPort`, through `src/data/demoSpeakers.ts`); `tests/parity` runs
+the same scenarios on both. As in the grid, `authenticated` has SELECT only on `speakers`,
+`speaker_contacts`, `approaches` and `availability`; every write below is a `SECURITY DEFINER`
+function in `public` (`search_path = ''`) that checks the caller.
+
+## Text and lists (what both sides accept)
+
+| Rule | Detail | Code |
+|---|---|---|
+| one line | runs of ASCII whitespace → one space, trimmed; empty → null; counted in characters (code points) | `bad_value` past the limit |
+| a block (notes) | CRLF → LF, ASCII whitespace trimmed at both ends | `bad_value` past the limit |
+| limits | name 120 · disambiguator 60 · title 40 · affiliation 120 · bio_short 400 (block) · topic 40, at most 10 · status/hand-over note 200 · vetting note 300 · availability note 120 · phone 40 · email 120 · secretary_note 300 (block) · contact notes 1000 (block) | `bad_value` |
+| name | required; its key (`app.name_key`) must not be empty | `name_required` |
+| title | null, or one of the edition's `settings.titles` (a non-empty array of strings), else ד״ר · פרופ׳ · הרב · הרבנית | `bad_value` |
+| gender | `m`, `f` or null (unknown) — what someone chose, **never guessed** | `bad_value` |
+| contact_pref | `phone`, `whatsapp`, `email`, `secretary` or null | `bad_value` |
+| topics | a JSON array of strings (or absent/null = none); empty ones and repeats (the first kept) dropped | `bad_value` |
+| phone | at least 6 digits | `bad_phone` |
+| contact email | `^[^ @]+@[^ @]+\.[^ @]+$`, kept as typed | `bad_contact_email` |
+
+**Similar names.** Two name keys are *similar* when pg_trgm's `similarity(a, b) ≥ 0.6` — inclusive,
+like pg_trgm's `%` operator («הצעה», `app.similar_threshold()` = `SIMILAR_THRESHOLD`). `src/domain/trigram.ts` is pg_trgm's similarity
+in the browser (lower-case; words of letters and digits; each padded «␣␣word␣»; distinct
+trigrams; shared / (a + b − shared), a 4-byte float).
+
+**A closed lesson stands.** A speaker teaching a closed lesson in a **live real** edition (kind
+`real`, status ≠ `archived`) cannot be un-approved, have the gender cleared or be retired
+(`lesson_closed`). An archive, an archived edition and a practice or demo week pin nothing in the
+pool. An approach with a closed lesson **in its own edition** can only be `positive` (any kind).
+
+**The pool's record is cross-year.** Who may rewrite a speaker's own fields (`update`) is decided by
+the same editions the contacts rule counts: a global admin anywhere; otherwise only in a real,
+non-archived edition. A practice or demo edition (anyone there may claim any pool speaker) and an
+archived one give no right over the pool.
+
+## Reads
+
+### `matches(name)` — `speaker_matches(p_name)` → `jsonb[]`
+
+Any member (`not_member`). The key of `name`; empty → `[]`. Every speaker (retired too) whose key
+is the same (`match = 'same'`) or similar (`'similar'`), same first, then by similarity, at most
+20. Fields: `id title name disambiguator gender affiliation vetted retired match similarity`.
+
+### `contacts(speaker)` — `get_speaker_contacts(p_speaker)` → `jsonb | null`
+
+`SECURITY INVOKER`: read through the policy `speaker_contacts_read`, whose predicate is
+`app.may_see_contacts(speaker)` — a **global admin**, or whoever handles the speaker (owns its
+approach, as content or admin) in a **real, non-archived** edition (unchanged from v3). Anyone else
+gets null; no row yet → four nulls. Never in `load_week`, never in Realtime.
+
+### `history(speaker)` — `speaker_history(p_speaker)` → `jsonb[]`
+
+Any member. The speaker's closed lessons in editions of kind `real` or `archive` (not practice or
+demo): past years (an `archive` edition, or one whose status is `archived`) for every member; a live
+edition only when the caller can see it (`app.can_see_edition`, as the `lessons` policy). Fields
+`edition_id edition_label edition_kind start_date day start_min end_min title category role`, newest
+edition first. No contact, no payment.
+
+### `activity(speaker)` — `speaker_activity(p_speaker)` → `jsonb[]`
+
+Any member. Newest first, at most 200: the speaker's own events (any edition) and the
+`approaches` / `pitches` rows about them in editions the caller can see. Ids, states, field names
+and short notes only — never a contact value. (The demo logs the pool's commands only.)
+
+## Commands
+
+### `create(edition, fields, {claim, approve, confirmed})` — `create_speaker` → `{speaker_id, approach_id}`
+
+Content or admin of the edition (`not_member` / `forbidden` / `archived`, as `app.require_editor`).
+In this order:
+1. name (`bad_value`, `name_required`), disambiguator, title, gender, affiliation, bio_short,
+   topics, contact_pref — each cleaned and checked as above.
+2. `approve` by anyone but a global admin → `forbidden`.
+3. Search first: the same key **and** the same disambiguator (null = '') → `speaker_exists`; the
+   same key with no disambiguator given → `disambiguator_required`; unless `confirmed`, the same
+   key or a similar one → `speaker_similar`.
+4. Insert: `vetted = 'approved'` (`vetted_by` = the global admin) when `approve`, else `pending`;
+   `created_by` = actor. Logged (`speakers insert`). (Storage only, not in a Week: from a `demo`
+   edition the row's `source` is `synthetic`, so `unseed_gate.sql` removes it with the gate.)
+5. `claim` → an approach in the edition, owner = actor, status `claimed`.
+
+### `update(edition, speaker, version, patch)` — `update_speaker` → `void`
+
+Content or admin of the edition; the speaker must exist (`stale`); the actor is a global admin, or
+the edition is real and not archived and the actor owns the speaker's approach there or is admin
+there (`not_handler` — also for anyone in a practice, demo or archived edition); `version` must
+match (`stale`). Keys present in `patch` (null clears; unknown keys ignored): those of `create`,
+and `retired` (a JSON boolean, `bad_value`; a global admin's, `forbidden`). A new key/disambiguator: taken by another speaker →
+`speaker_exists`; the key taken and no disambiguator → `disambiguator_required`. Clearing the
+gender or retiring under a live closed lesson → `lesson_closed`. Nothing changed → no-op;
+else `version + 1`, logged with the changed field names.
+
+### `vet(speakers[], state, note)` — `vet_speakers` → `void`
+
+A global admin (`forbidden`); `state ∈ {approved, rejected, pending}` (`bad_value`). Each id in
+ascending order, all or nothing: missing → `stale`; not `approved` under a live closed lesson →
+`lesson_closed`; already that state with that note → unchanged; else `vetted`, `vetted_note`,
+`vetted_by`, `vetted_at`, `version + 1`, logged (`speakers vet`, no edition).
+
+### `setContacts(speaker, {phone, email, secretary_note, notes})` — `set_speaker_contacts` → `void`
+
+Any member (`not_member`); the speaker must exist (`stale`); `may_see_contacts` (`contacts_hidden`).
+All four replaced (null clears); nothing changed → no-op; logged with the field names only.
+
+### `claim(edition, speaker)` — `claim_speaker` → approach id
+
+Content or admin; the speaker exists and is not retired (`speaker_retired`). No approach → one,
+owner = actor, `claimed`; owner null → the actor takes it (`version + 1`); the actor's → as is;
+someone else's → `approach_owned` (also when two claim at once: one wins).
+
+### `setStatus(approach, version, status, note)` — `set_approach_status` → `void`
+
+The approach must exist (`stale`); editor of its edition; owner or admin (`not_handler`); version
+(`stale`); `status ∈ {claimed, approached, positive, declined, no_answer}` (`bad_value`); note.
+`approached`/`positive` for a speaker not approved → `not_vetted`; anything but `positive` with a
+closed lesson in the edition → `lesson_closed`. The same status and no note → no-op. `declined`:
+the approach's live pitches → `declined`. `version + 1`; logged with the note.
+
+### `handOver(approach, to, note)` — `hand_over` → `void`
+
+The approach must exist (`stale`); editor of its edition. **Admin** of the edition: owner := `to`
+(null = back to the pool), any pending offer cleared. **Owner**: `offered_to := to` (null withdraws
+the offer). Anyone else → `not_handler`. `to` must be an active content or admin member of the
+edition (or of every edition), and not the owner offering to themselves → `bad_member`. No
+change and no note → no-op; else `version + 1`, logged with the note.
+
+### `answerHandOver(approach, accept, note)` — `answer_handover` → `void`
+
+The approach must exist (`stale`); editor of its edition; an offer waiting for the actor, else
+`stale`. Accept → owner := actor; either way `offered_to := null`, `version + 1`, logged.
+
+### `setAvailability(edition, speaker, day, part, kind, note)` — `set_availability` → `void`
+
+Editor of the edition; `day` 0–4, `part ∈ {morning 390–780, afternoon 780–1140, evening 1140–1440,
+night 1440–1830}`, `kind ∈ {can, cannot, null}` (`bad_value`); note. The speaker's approach in the
+edition, owned by the actor or the actor admin (`not_handler` — also when there is none). Every
+row of that approach and day overlapping the part is cut back to what lies outside it; then, unless
+`kind` is null, one row for the whole part. Logged.
+
+## Errors (the pool)
+
+`speaker_exists disambiguator_required speaker_similar not_handler lesson_closed bad_member
+contacts_hidden bad_phone bad_contact_email name_required bad_value` — plus the grid's
+`not_member forbidden archived stale not_vetted speaker_retired approach_owned`.
+
+## RPC signatures (the pool)
+
+| RPC | Parameters | Returns |
+|---|---|---|
+| `speaker_matches` | `p_name text` | `jsonb` |
+| `create_speaker` | `p_edition bigint, p_fields jsonb, p_claim boolean, p_approve boolean, p_confirmed boolean` (all three default false) | `jsonb {speaker_id, approach_id}` |
+| `update_speaker` | `p_edition bigint, p_speaker bigint, p_version integer, p_patch jsonb` | `void` |
+| `vet_speakers` | `p_speakers bigint[], p_state text, p_note text` | `void` |
+| `get_speaker_contacts` | `p_speaker bigint` (invoker) | `jsonb` or null |
+| `set_speaker_contacts` | `p_speaker bigint, p_phone text, p_email text, p_secretary_note text, p_notes text` | `void` |
+| `speaker_history` | `p_speaker bigint` | `jsonb` |
+| `speaker_activity` | `p_speaker bigint` | `jsonb` |
+| `claim_speaker` | `p_edition bigint, p_speaker bigint` | `bigint` |
+| `set_approach_status` | `p_approach bigint, p_version integer, p_status text, p_note text` | `void` |
+| `hand_over` | `p_approach bigint, p_to bigint, p_note text` | `void` |
+| `answer_handover` | `p_approach bigint, p_accept boolean, p_note text` | `void` |
+| `set_availability` | `p_edition bigint, p_speaker bigint, p_day integer, p_part text, p_kind text, p_note text` | `void` |
+
+`load_week` (v6) also returns each speaker's `disambiguator contact_pref vetted_by vetted_note
+version` and each approach's `offered_to` — still never a contact detail.
+
+# From placement to arrival (milestone 3, schema v7)
+
+A closed lesson's stages: payment and transport (with the instructor's approval), the summary
+message to the speaker, the escort, the sources. The same two implementations: the SQL functions
+of `supabase/schema.sql` «Milestone 3» and `src/data/engine.ts` (behind `DemoPort`); the cleaning
+rules are `src/data/stageRules.ts` in the browser. `tests/parity` runs the same scenarios on both.
+`lessons` stays SELECT-only for a browser; every write below is a `SECURITY DEFINER` function in
+`public` (`search_path = ''`) that checks the caller.
+
+"Handler" = the owner of the approach of the lesson's **lead** speaker in the edition
+(`app.lesson_handler`); a closed lesson has one. "Handler or admin" = that member, or an admin of
+the edition (`app.require_handler`: `not_closed` for a lesson that is not closed, then
+`not_handler`). A lesson the command names that does not exist (or is cancelled) → `stale`.
+Every successful lesson write increments `version` and sets `updated_by`.
+
+## The reconfirm rule (all commands)
+
+A **closed** lesson whose `confirm_sent_at` is set gets `needs_reconfirm = true` when a command
+changes what the message says: `day start_min end_min room_id title teach_min pay_amount`, or
+when it becomes closed again with its message still marked (`reopen_lesson` clears the mark, so
+only a hand edit gets there: a lesson closed again after a reopen has a first message to send,
+not a reconfirm). A write that sets a **new** `confirm_sent_at` (the message re-sent) is the one
+exception. In SQL this is one trigger (`app.lessons_reconfirm`, so it holds for any write path —
+the SQL Editor too); in the engine, one check after every command (`Engine.reconfirm`). Drafts are
+never flagged. Only `mark_confirm_sent` clears the flag.
+
+`{{תאריך}}` and `{{יום}}` come from the edition's opening Sunday, so moving `editions.start_date`
+from one date to another (or back to TBD) flags every closed lesson of the edition whose message
+was sent, with `version + 1` (`app.editions_reconfirm`, a trigger on `editions` — the «מחזור» tab
+writes the row directly; `DemoSettings.updateEdition` in the demo). Setting a date that was TBD
+flags nothing: no message carried one.
+
+## Text and values (what both sides accept)
+
+| Rule | Detail | Code |
+|---|---|---|
+| amount | `null` (none asked: a volunteer, or not decided — never a default), or a whole number 1–100000 (a typo guard, «הצעה») | `bad_amount` |
+| transport | `none`, `one_way`, `round_trip` | `bad_value` |
+| decision | `approved` or `rejected`; note one line ≤ 300 | `bad_value` |
+| escort | a `roster` row **of the lesson's edition**, or null; `self_intro` a boolean; note a block ≤ 300 | `bad_escort` / `bad_value` |
+| sources | kind `pending sheet presentation sheet_presentation sheet_video none other`; print_when `none before same_day`; note a block ≤ 500; `in_reader` a boolean, stored **false** for `pending`, `none` and `presentation` (nothing to print) | `bad_value` |
+| presentation_url | null, or one line ≤ 500 matching `^https?://[^ ]+$` (case-insensitive) | `bad_url` |
+| transport details | pickup_address ≤ 200, pickup_time ≤ 60 (as the team writes it), driver_name ≤ 80 — one line each; driver_phone ≤ 40 with ≥ 6 digits; `arranged` true/false (null = false) | `bad_value` / `bad_phone` |
+| template | a block ≤ 4000; empty removes it | `bad_value` |
+| duty phrases | a JSON array of `{when, text}`: `when` ∈ `always self_intro escort_intro transport memorial`, `text` one line ≤ 200; empty texts and repeats (the first kept) dropped; at most 30; empty removes them | `bad_value` |
+
+## Commands
+
+### `setPayment(lesson, version, amount, transport)` — `set_payment` → `void`
+
+Editor (`app.require_editor`: logistics `forbidden`, an archive `archived` for non-admins);
+handler or admin; `version` (`stale`); amount and transport (above). The same amount and transport
+as stored, and the approval not `rejected` → no-op. A lesson marked paid (`paid_at` set) keeps its
+amount: a different one (null included) → `paid_locked` — «שולם» is undone first (`setPaid`, by
+logistics or an admin), so a new amount is never shown as paid; the transport may still change.
+Otherwise: `pay_amount`, `transport`;
+`approval` := `none` when nothing is asked (amount null and transport `none`), else `pending`;
+`approval_note`, `approved_by`, `approved_at` := null. So changing an approved request sends it
+back to the instructor, and asking a rejected one again re-opens it. Transport `none` deletes the
+lesson's transport details (and so does `reopen_lesson`: they were the speaker's).
+
+### `decidePayments(items[{lesson, version}], decision, note)` — `decide_payments` → `void`
+
+A global admin (`forbidden`); decision (`bad_value`); `p_lessons` and `p_versions` of one length
+(`bad_value`). Each item in ascending (lesson, version) order, all or nothing: the lesson missing,
+at another version, not `pending`, or not `closed` → `stale` (the queue on screen is out of date;
+an amount changed since is never approved unseen; a draft's request is no one's — `reopen_lesson`
+clears it, so only a hand edit leaves one). Sets `approval`, `approval_note`, `approved_by` (the
+global admin's row), `approved_at`.
+
+### `markConfirmSent(lesson, version)` — `mark_confirm_sent` → `void`
+
+Editor; handler or admin; `version`; approval `pending` → `approval_pending`, `rejected` →
+`approval_rejected` (DESIGN: no summary while a payment or transport waits). Sets
+`confirm_sent_at = now`, `confirm_sent_by`, `needs_reconfirm = false` — every time (sending again
+refreshes it).
+
+### `setEscort(lesson, version, {roster_id, self_intro, escort_note})` — `set_escort` → `void`
+
+Editor (any content member or admin); the lesson closed (`not_closed`); `version`; values (above).
+Nothing changed → no-op.
+
+### `setSources(lesson, version, {sources_kind, print_when, sources_note, presentation_url, in_reader})` — `set_sources` → `void`
+
+Editor; closed (`not_closed`); `version`; values in that order (above). Nothing changed → no-op.
+
+### `setPaid(lesson, paid)` — `set_paid` → `void`
+
+`app.require_logistics`: logistics or an admin of the edition (content → `forbidden`; an archive
+`archived` for non-admins). The lesson has an amount and `approval = 'approved'`, else
+`payment_not_approved`; `paid` a boolean (`bad_value`). Already so → no-op; else `paid_at` :=
+now / null.
+
+### Transport details — `get_transport_details` / `set_transport_details`
+
+Personal data (an address, a driver's phone): `transport_details(lesson_id PK, pickup_address,
+pickup_time, driver_name, driver_phone, arranged)`, never in `load_week`, never in Realtime.
+`app.may_see_transport(lesson)`: a **global admin**; or, in a **real, non-archived** edition, the
+lesson's **handler** (content or admin there) — and that edition's **logistics** members once the
+lesson's transport is not `none` and `approval = 'approved'`. Nobody else: not another content
+member, not the edition's admin who is not the handler, not a practice or demo week's team, not
+last year's. Because the handler is whoever handles the lesson's *current* lead speaker, the row
+never outlives that speaker: `reopen_lesson` deletes it with the other stages.
+- `transport(lesson)` — `get_transport_details(p_lesson)`, `SECURITY INVOKER` (read through the
+  policy `transport_details_read`, whose predicate is the same function): null when hidden; no row
+  yet → four nulls and `arranged: false`.
+- `setTransport(lesson, details)` — any member (`not_member`); the lesson exists (`stale`);
+  `may_see_transport` (`transport_hidden`); `transport <> 'none'` (`no_transport`); values (above).
+  All five replaced; nothing changed → no-op; logged (`lessons transport {fields}`) with the field
+  names only, never a value. Since v9 the escort's link writes `pickup_address` too
+  (`escort_pickup`), so the lesson panel saves the fields its form changed over the details read
+  again at the moment of saving (`mergeTransport`, `src/data/stageRules.ts`), never a stale copy.
+
+### Templates — `set_confirm_template` / `set_duty_phrases`
+
+An admin of the edition (`app.require_edition_admin`: `not_member`, then `forbidden`). They write
+`editions.settings.confirm_template` (the summary message's template — `src/domain/message.ts`)
+and `editions.settings.duty_phrases` (the escorts' phrases — `src/domain/escorts.ts`), the
+instructor's own wording: **never seeded**, absent until pasted. `start_edition` carries both over
+from the live real edition (else the newest real one) to the new one.
+
+## Errors (milestone 3)
+
+`not_closed not_handler bad_amount approval_pending approval_rejected bad_escort bad_url
+no_transport transport_hidden payment_not_approved paid_locked bad_phone bad_value` — plus
+`not_member forbidden archived stale`. (`paid_locked` is also `reopen_lesson`'s.)
+
+## RPC signatures (milestone 3)
+
+| RPC | Parameters | Returns |
+|---|---|---|
+| `set_payment` | `p_lesson bigint, p_version integer, p_pay_amount numeric, p_transport text` | `void` |
+| `decide_payments` | `p_lessons bigint[], p_versions integer[], p_decision text, p_note text` (default null) | `void` |
+| `mark_confirm_sent` | `p_lesson bigint, p_version integer` | `void` |
+| `set_escort` | `p_lesson bigint, p_version integer, p_roster bigint, p_self_intro boolean, p_note text` (default null) | `void` |
+| `set_sources` | `p_lesson bigint, p_version integer, p_kind text, p_print_when text, p_note text, p_url text, p_in_reader boolean` | `void` |
+| `set_paid` | `p_lesson bigint, p_paid boolean` | `void` |
+| `get_transport_details` | `p_lesson bigint` (invoker) | `jsonb` or null |
+| `set_transport_details` | `p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean` (default false) | `void` |
+| `set_confirm_template` | `p_edition bigint, p_body text` | `void` |
+| `set_duty_phrases` | `p_edition bigint, p_phrases jsonb` | `void` |
+
+`load_week` (v7) also returns the edition's `roster` (`id full_name gender` — names only), and each
+lesson's stage columns (`pay_amount transport approval approval_note approved_by approved_at
+paid_at confirm_sent_at confirm_sent_by needs_reconfirm escort_roster_id self_intro escort_note
+sources_kind print_when sources_note presentation_url in_reader`) — never a transport detail.
+
+# Outputs and knowledge (milestone 4, schema v8)
+
+The outputs — the tracking table, the escorts' list, the designer's export, the archive — are made
+in the browser from a loaded Week (`src/exports/`, pure and unit-tested); nothing is uploaded but a
+designer export's snapshot. The database adds three tables and one function (`supabase/schema.sql`
+«Milestone 4»), reached as `port.outputs` (`src/data/outputs.ts`) and `port.knowledge`
+(`src/data/knowledge.ts`), each with a Supabase and a Demo implementation. Unlike the grid, these
+are **direct writes under RLS** (as «הגדרות»): column grants, and a guard trigger that stamps who and
+when and keeps what one statement cannot. A refusal is a code of `src/errors.ts`.
+
+## Reads and writes
+
+| What | Read | Write | Rules |
+|---|---|---|---|
+| `export_snapshots(id, edition_id, kind 'designer', payload jsonb, created_by, created_at)` | the edition's admins (`app.my_role = 'admin'`, a global admin included) | INSERT `(edition_id, kind, payload)` by the same; never UPDATE or DELETE | `payload` an array (≤ 2000 rows, ≤ 1 MB) of objects whose keys are only `lesson_id kind day date time speaker title category room parallel` with scalar values, else `bad_value`; `created_by`/`created_at` the database's |
+| `notes(id, edition_id NULL, section, title, body_md, version, created_by, updated_by, created_at, updated_at)` | cross-year (`edition_id` null): every member; an edition's: whoever sees it | cross-year: a global admin; an edition's: its admins — INSERT `(edition_id, section, title, body_md)`, UPDATE `(section, title, body_md)`, DELETE | `section ∈ process lessons_learned challenges templates` (`23514`); title one line ≤ 120, required (`title_required`); body a block ≤ 20000 (`bad_value`); `version + 1` on every update (the browser updates `where version = <seen>`: no row → `stale`); `edition_id`, authors and times never the browser's |
+| `milestones(id, edition_id, title, days_before, done_at, done_by, created_by, created_at)` | the edition's members | its admins — INSERT `(edition_id, title, days_before)`, UPDATE `(title, days_before, done_at)`, DELETE | `days_before` −90…365 (`23514`; negative = after the week, W+n); title as a note's; `done_at` set → the database's `now()` and the marker as `done_by` (a second «done» keeps the first time), null → both null |
+
+`start_edition` copies the milestones (title, days_before — none done) of the edition whose settings it
+carries over (the live real one, else the newest real). `app.member_has_history` counts notes,
+milestones and snapshots. None of the three tables is ever published to Realtime.
+
+## `phones(lessons)` — `get_contacts_for(p_lessons bigint[])` → `jsonb` (an array of `{lesson_id, speaker_id, phone}`)
+
+`SECURITY INVOKER`: `lesson_speakers` and `speaker_contacts` are read through their policies, and every
+row also passes `app.may_see_contacts(speaker)` — the predicate of `get_speaker_contacts`. Rows
+`{lesson_id, speaker_id, phone}` for the given lessons' speakers (at most the first 1000 ids) whose phone
+is set; phones only. Never more than `get_speaker_contacts` would show one speaker at a time
+(`tests/sql/outputs.test.ts` holds the two equal for every member and lesson); `[]` for a null or empty list.
+
+## The archive's reads
+
+A global admin's archive reads `activity` (the edition's rows, in pages of 1000), `speaker_contacts`
+(the speakers the edition touched) and `transport_details` (its lessons) **directly, through their
+policies** — the grants were already SELECT; what comes back is exactly what the caller may see.
+
+## Errors (milestone 4)
+
+`title_required` — plus `bad_value forbidden stale`.
+
+## RPC signatures (milestone 4)
+
+| RPC | Parameters | Returns |
+|---|---|---|
+| `get_contacts_for` | `p_lessons bigint[]` (invoker) | `jsonb` |
+
+# Links and מכריכה לכריכה (milestone 5a, schema v9)
+
+Links without an account (DESIGN «גישה בלי חשבון»): an escort's link, the class's sign-up link for
+מכריכה לכריכה, the schedule link. The same two implementations: the SQL functions of
+`supabase/schema.sql` «Milestone 5a» and `src/data/engine.ts` (behind `DemoPort`, through
+`src/data/demoLinks.ts`); `tests/parity` runs the same scenarios on both — the public pages' answers
+included. This is the first surface for `anon`: it may execute `ping` and the six functions of «The
+anon functions» below, and nothing else — no table, no other function.
+
+## Links
+
+`share_links(id, edition_id, scope escort|kk_signup|schedule, subject_id, token_hash, created_by,
+created_at, expires_at, revoked_at)`. `subject_id` is the escort (a `roster` row of the edition) for
+`escort`, null otherwise. **The token** is 128 random bits (`extensions.gen_random_bytes(16)`),
+base64url (22 characters), returned once by `issue_link`; the database keeps only
+`sha256(token)` and finds a link by the hash of what was presented, never by the plaintext. No
+browser role may read `token_hash` (column grants): an edition's admins read every other column of
+their edition's links (`share_links_read`), everyone else nothing. A link opens at `/e#<token>`,
+`/k#<token>`, `/s#<token>` — after `#`, so the token reaches no log and no Referer.
+
+| Rule | Detail |
+|---|---|
+| expiry («הצעה») | `escort`, `schedule`: the end of the week, Friday 00:00 Israel time (`start_date + 5`); while the date is TBD, 720 hours after issue. `kk_signup`: `settings.kk_window.closes_at`; no window, 720 hours after issue (`app.link_expiry`, `linkExpiry`). Stored in `expires_at` and recomputed, for links not revoked, whenever the edition's `start_date` or `kk_window` changes (`app.editions_link_expiry`; `Engine.refreshLinkExpiry`) |
+| rate limit («הצעה») | 10 minutes. An `escort` link (one person's) is one count: 60 calls. A class link (`kk_signup`, `schedule`, held by the whole class) is counted **per caller's address** — Cloudflare's `cf-connecting-ip`, else the first entry of `X-Forwarded-For` from PostgREST's `request.headers`, kept only as its sha256; none reported is a count of its own — 1200 calls each (`share_link_hits(token_hash, client_hash, window_start, hits)`, `app.link_rate` / `linkRate`, `app.link_client` / `linkClient`). There is no count the class shares, so nobody can use up the link for the others. A refused call is rolled back with everything else, so only answered calls count; a counted call clears the link's counts whose window has passed |
+| one live link | per `(edition, scope, subject)`: issuing again revokes the live one (replace) |
+
+### `issue(edition, scope, subject)` — `issue_link` → `{link_id, token, expires_at}`
+
+`app.require_edition_admin` (`not_member`, then `forbidden`); an archive or archived edition
+`archived`; `scope` one of the three (`bad_value`); `escort` needs a trainee of the edition
+(`bad_escort`), the others none (`bad_value`); an expiry already past — the week over, the window
+closed — `link_past`. Then the live link of the same subject is revoked, and the new one inserted
+(`created_by` = the caller's member row). `expires_at` as `app.iso` writes it.
+
+### `revoke(link)` — `revoke_link` → `void`
+
+The link must exist (`stale`); an admin of its edition; already revoked → nothing.
+
+## The anon functions
+
+Each is `SECURITY DEFINER`, `search_path = ''`, takes the token first, and answers a fixed shape.
+**One refusal for every link problem: `link_invalid`** (P0001, no detail, no hint) — a token
+outside 16–64 characters, unknown, of another scope, revoked, expired, of an archived or archive
+edition, or past its rate limit; and, for the escort's writes, a lesson that is not closed, not in
+the link's edition, or not escorted by its trainee. In that order: the shape, the lookup and the
+link's state, the edition, then the count (`app.link_for`, `Engine.linkFor`).
+
+### `escortView(token)` — `escort_view` → `jsonb`
+
+`{edition: {label, start_date}, escort: {full_name, gender}, phones_from, lessons: [...]}` — the
+link's trainee's **closed** lessons in its edition, in grid order (day, start, the room's sort, id).
+Each lesson exactly: `lesson_id kind day date start_min end_min room speaker title self_intro
+duty_notes escort_note phone transport driver ticks`.
+- `date`: the day column's date (`start_date + day`) or null; `start_min`/`end_min`: the teaching
+  time (`app.teach_end` = the lesson's `teach_min`, else min(`settings.lesson_minutes` ?? 75, the
+  slot); a memorial slot its whole length).
+- `speaker`: the lead speaker's `{name (title + name), gender}`, or null.
+- `duty_notes`: the edition's duty phrases that apply, in their order — `app.duty_notes`, the rule
+  of `src/domain/escorts.ts` (`dutyNotes`). Never the amount.
+- `phone`: the lead speaker's `speaker_contacts.phone` — only in a `real` edition whose
+  `start_date` is set, and only from W−7: the date in Israel ≥ `start_date − 7`. Else null.
+  `phones_from` is that date (`start_date − 7`) in a real edition, else null.
+- `transport`: transport asked and approved (`transport <> 'none' and approval = 'approved'`).
+- `driver`: `{name, phone}` from `transport_details` once `transport` and `arranged`, in a real
+  edition; else null.
+- `ticks`: `{reminded, met, introduced, gift}` — when each was ticked, or null.
+
+Never an amount, an approval or its note, an e-mail, the pickup address or time, any note but
+`escort_note`, another escort's lesson, a draft.
+
+### `escortTick(token, lesson, item, on)` — `escort_tick` → `jsonb` (the lesson's four ticks)
+
+The lesson as above (`link_invalid`); `item ∈ {reminded, met, introduced, gift}`, `on` a boolean
+(`bad_value`). On → `escort_ticks(lesson, item, at = now)` unless there (the first time is kept);
+off → deleted.
+
+### `escortPickup(token, lesson, address)` — `escort_pickup` → `void`
+
+The lesson as above; transport approved, else `no_transport`; `address` one line ≤ 200, required
+(`bad_value`). Upserts `transport_details.pickup_address` (the rest untouched). **Write-only**: no
+function returns it through a link. Logged (`lessons transport {fields: [pickup_address], via:
+escort_link}`, actor null) — never the value.
+
+### `kkForm(token)` — `kk_form` → `jsonb`
+
+`{edition: {label, start_date}, window: {opens_at, closes_at}, open, roster: [{id, full_name}],
+tracks: [{id, day, date, start_min, end_min, groups: [{id, title, author, room, leaders: [{kind,
+name}], full}]}]}`. `open`: `opens_at ≤ now < closes_at`. `roster`: the edition's trainees, names
+only — nothing about who signed up. `tracks`: those still on the grid (their kk row active that
+day — `app.kk_track_on_grid`; the first or last day's hours may move after groups exist) with a
+group **on offer** (`open` and a `capacity` entered); `groups`: those on offer; `full`: the sign-ups
+≥ the capacity (a count, never who). Lists the SQL orders by collation (trainees, groups by title)
+are compared sorted.
+
+**The one residual** (accepted, `tests/sql/kk.test.ts` «RESIDUAL»): `full` together with a sign-up
+can tell whether a named trainee already had a sign-up in a track — sign them up for a group with
+exactly one place left and read the form again: still not full means they had one. One bit per
+probe, and the probe is itself a sign-up (`via 'link'`) the staff see. The link never *answers* who
+signed up.
+
+### `kkSignup(token, roster, group)` — `kk_signup` → `{status: 'received'}`, always
+
+Records `kk_signups(track of the group, group, roster, via 'link')` only when **all** hold: the
+group is of the link's edition, `open`, with a capacity, its track on the grid, the window open
+now, the trainee of the edition, fewer sign-ups than the capacity — counted under the group's row
+lock, which `kk_place` takes too — and no sign-up of
+that trainee for that track yet (**an existing sign-up is never changed through the link**; only
+`kk_place` moves one). Otherwise nothing. The answer is the same in every case: the link is no
+oracle of who signed up.
+
+### `scheduleView(token)` — `schedule_view` → `jsonb`
+
+`{edition: {label, start_date}, rows: [...]}` — closed lessons and memorial slots (not cancelled), in
+grid order, each exactly `kind day date start_min end_min speaker title category room parallel`:
+the facts of `scheduleEntries` (`src/exports/designer.ts`), from which the designer's rows are
+written. `speaker`: the names (title + name), the lead first then by speaker id, joined « · »;
+`category`, `room`: names or ""; `parallel`: a lesson-kind lesson overlapping another closed
+lesson-kind lesson of the day (by the slot). Never a contact, an amount or a note.
+
+## The escorts' ticks for the team
+
+`escort_ticks(lesson_id, item, at)`, read by the edition's members (`escort_ticks_read`) and in
+`load_week` as `escortTicks: [{lesson_id, item, at}]`. A lesson whose `escort_roster_id` changes —
+`set_escort`, `reopen_lesson`, a trainee deleted (`on delete set null`) — loses its ticks
+(`app.lessons_escort_ticks`; `Engine.dropStaleTicks` after every command). No browser writes them
+but through a link.
+
+## מכריכה לכריכה
+
+`kk_tracks(edition, day, start_min, end_min)` — one per kk occurrence of the grid (a kk `grid_rows`
+row active that day, as `rowActive`), made by the first group on it; `kk_groups(edition, track,
+title, author, room_id, capacity, open)`; `kk_leaders(group, kind staff|trainee|ein_prat, roster_id
+| label, sort)`; `kk_signups(edition, track, group, roster, via link|staff, created_at)`, unique
+`(track, roster)`, the group inside its track and the trainee inside the edition by composite keys;
+`book_orders(group, copies, ordered_at)`. The window: `editions.settings.kk_window = {opens_at,
+closes_at}` (instants as `toISOString` writes them). Nothing is seeded: books, leaders and
+capacities are what an admin typed. Every member of the edition reads them (`load_kk`, RLS); a
+browser writes none directly.
+
+### Fields (what both sides accept — `app.kk_clean_group` / `cleanGroupFields`, in this order)
+
+| Key | Rule | Code |
+|---|---|---|
+| `title` | one line ≤ 200, required (on a new group; on an update when present) | `title_required` / `bad_value` |
+| `author` | null, or one line ≤ 120 | `bad_value` |
+| `room_id` | null, or a room of the edition | `bad_value` |
+| `capacity` | null (not offered through the link yet — never a default), or a whole number 1–1000 | `bad_value` |
+| `open` | a boolean (a new group: true) | `bad_value` |
+| `leaders` | an array of `{kind: 'trainee', roster_id}` (a trainee of the edition, else `bad_trainee`) or `{kind: 'staff'\|'ein_prat', label}` (one line ≤ 80); repeats dropped, the first kept; at most 6 («הצעה») | `bad_value` / `bad_trainee` |
+
+Unknown keys are ignored; a patch writes only the keys present (`leaders` replaces them all).
+
+### Commands — an admin of the edition (`app.require_edition_admin`), except book orders
+
+- `addGroup(edition, day, start, fields)` — `kk_add_group` → group id: the kk row of that day
+  starting at `start` (else `outside_grid`); fields; the track made on first use.
+- `updateGroup(group, patch)` — `kk_update_group`: the group (`stale`), then the admin.
+- `deleteGroup(group)` — `kk_delete_group`: `stale`; signed-up trainees → `group_has_signups`; a
+  track left with no group goes too.
+- `place(group, roster)` — `kk_place`: `stale`; a trainee of the edition (`bad_trainee`); a new
+  sign-up `via staff`, or the trainee's sign-up for that track moved here. Not bound by the window
+  or the capacity: the staff decide.
+- `unplace(track, roster)` — `kk_unplace`: the track (`stale`); the sign-up deleted, if any.
+- `setWindow(edition, opens, closes)` — `kk_set_window`: both or neither (`bad_value`), `opens <
+  closes` (`bad_value`); neither removes the window (closed). The sign-up link's expiry follows.
+- `setBookOrder(group, copies, ordered)` — `set_book_order`: `stale`; `app.require_logistics`
+  (logistics or an admin; content `forbidden`); `ordered` a boolean, `copies` 0–1000 or null —
+  null removes the line (and may not be `ordered`) (`bad_value`); `ordered_at` := the first time
+  it was ordered, or null.
+
+`load(edition)` — `load_kk(p_edition)`, invoker: `{tracks, groups, leaders, signups, orders}`
+(`signups[].created_at`, `orders[].ordered_at` as `toISOString` writes them); null for an edition
+the caller does not see.
+
+None of `share_links`, `share_link_hits`, `escort_ticks` or the kk tables is ever published to
+Realtime (the never-publish list of `schema.sql`).
+
+## Errors (milestone 5a)
+
+`link_invalid link_past bad_trainee group_has_signups` — plus `not_member forbidden archived stale
+bad_value bad_escort title_required outside_grid no_transport`.
+
+## RPC signatures (milestone 5a)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `escort_view` | `p_token text` | `jsonb` | anon |
+| `escort_tick` | `p_token text, p_lesson bigint, p_item text, p_on boolean` | `jsonb` | anon |
+| `escort_pickup` | `p_token text, p_lesson bigint, p_address text` | `void` | anon |
+| `kk_form` | `p_token text` | `jsonb` | anon |
+| `kk_signup` | `p_token text, p_roster bigint, p_group bigint` | `jsonb` | anon |
+| `schedule_view` | `p_token text` | `jsonb` | anon |
+| `issue_link` | `p_edition bigint, p_scope text, p_subject bigint` (default null) | `jsonb` | authenticated |
+| `revoke_link` | `p_link bigint` | `void` | authenticated |
+| `load_kk` | `p_edition bigint` (invoker) | `jsonb` | authenticated |
+| `kk_add_group` | `p_edition bigint, p_day integer, p_start integer, p_fields jsonb` | `bigint` | authenticated |
+| `kk_update_group` | `p_group bigint, p_patch jsonb` | `void` | authenticated |
+| `kk_delete_group` | `p_group bigint` | `void` | authenticated |
+| `kk_place` | `p_group bigint, p_roster bigint` | `void` | authenticated |
+| `kk_unplace` | `p_track bigint, p_roster bigint` | `void` | authenticated |
+| `kk_set_window` | `p_edition bigint, p_opens timestamptz, p_closes timestamptz` | `void` | authenticated |
+| `set_book_order` | `p_group bigint, p_copies integer, p_ordered boolean` | `void` | authenticated |
+
+The public pages call the anon functions through `SupabasePublic` (`src/data/supabaseLinks.ts`): a
+plain POST to `/rest/v1/rpc/<function>` with the publishable key in `apikey` and **no
+Authorization header**, the token in the body — no session read or refreshed, so PostgREST runs it as
+`anon`. A public page gets it from `loadPublicPort()` (`src/data/publicEntry.ts`), which in production
+never loads supabase-js or `SupabasePort` at all; the pages call nothing else (`tests/e2e/links.spec.ts`
+checks every request on the wire).
+
+# Sources and the reader (milestone 5ב-1, schema v10)
+
+A closed lesson's source files, and the reader built from them (DESIGN «תוצרים» 5). The same two
+implementations: the SQL of `supabase/schema.sql` «Milestone 5ב-1» with the Storage policies, and
+`src/data/engine.ts` (an in-memory bucket, `PoolShared.objects`, behind `DemoSources`);
+`tests/parity` runs the same scenario on both — the uploads, the registrations, the refusals, the
+cover and the headers included. The reader itself (`src/reader/`) is pure browser code over a loaded
+Week: nothing of it is in the database but two settings.
+
+## The bucket
+
+Supabase Storage, bucket `sources`, created by `schema.sql`: **private** (a re-run makes it private
+again, with a warning, and never rewrites its size or types), `file_size_limit` 25 MB (26214400),
+`allowed_mime_types` `application/pdf image/png image/jpeg` and DOCX
+(`application/vnd.openxmlformats-officedocument.wordprocessingml.document`). The bucket and its
+policies are two `do` blocks, each with its own handler (no privilege on `storage`): a failed block
+rolls back alone and warns — the bucket as it was before the run, or the previous policies (on a
+first run none: no upload) — so the bucket goes private even when the policies cannot be
+(re)created; the rest of the file applies.
+
+**The path** (`app.source_path_re()` ≡ `SOURCE_PATH_RE` in `src/data/sourceRules.ts`, a unit test
+compares the two): `<edition id>/<lesson id | cover>/<uuid>-<safe name>.<ext>` — ids without leading
+zeros; the uuid lower-case hex; the safe name `[A-Za-z0-9][A-Za-z0-9_-]{0,59}` (`safeName`: the
+original's base, anything else → `-`, "file" when nothing is left); `ext` one of `pdf png jpg jpeg
+docx`. The original name is never in the path; it is the row's `display_name`.
+
+| Who (policies on `storage.objects`, `bucket_id = 'sources'`) | Rule | Function |
+|---|---|---|
+| upload (INSERT, `authenticated`) | `app.source_refusal(name)` is null — below — and **no `source_files` row holds the path**: a path is used once (a row whose object a half-way removal deleted is never fronted by someone else's new bytes; a real upload always has a new uuid) | `app.may_upload_source` |
+| read (SELECT, `authenticated`) | a member of the path's edition, any role (logistics print) | `app.may_read_source` |
+| delete (DELETE, `authenticated`) | an admin of the edition; else (not an archive) its uploader — the row's `uploaded_by` is the caller's member row, or, for an object never registered, its `owner_id` is the caller's JWT `sub` | `app.may_delete_source` |
+| update | nobody — a replacement is a delete and an upload | — |
+| `anon` | nothing | — |
+
+Every one of them is also a **restrictive** policy (`sources_cap_read/upload/update/delete`, and
+`sources_cap_anon` for every command of `anon`), ANDed with every permissive policy on
+`storage.objects`: a policy someone adds later cannot widen this bucket.
+
+**`app.source_refusal(path)`** — in this order: not the convention → `bad_path`; the caller is no
+member of the path's edition (or it does not exist) → `not_member`; logistics → `forbidden`; an
+archive-kind or archived edition and not an admin → `archived`; `cover`: not an admin → `forbidden`,
+a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `bad_path`; a lesson not
+`closed`, or not of kind `lesson` (memorial slots: 5ב-2) → `not_closed`. It is the rule of
+`set_sources` (content or admin, a closed lesson). Engine: `Engine.sourceRefusal`; the upload
+policy's whole predicate (with the used path): `Engine.mayUploadSource`.
+
+The Storage API's own answers, as the browser maps them (`SupabaseSources`; `Engine.storeObject`):
+over the bucket's size (413) → `file_too_big`; not one of its types (415) → `bad_file`; a policy refusal (401/403) →
+`upload_refused` — a path a row already holds included; anything else, or an unregistered object
+already at the path → `upload_failed`.
+
+**What the Storage API knows of a file** (`objects.metadata`): `size` is measured by Storage itself;
+`mimetype` is the uploader's declared `Content-Type`, held only to the bucket's four types — Storage
+never looks at the bytes. `register_source_file` holds the type to the path's extension as well, but a
+row marked `application/pdf` can still hold any bytes. The reader therefore checks the bytes
+themselves — at upload and at the build, by one check (`src/reader/readable.ts`, below).
+
+**Every upload carries `Cache-Control: private, no-store`**, which Storage stores and sends back on
+every read of the file, signed URLs included: no browser or shared cache keeps a copy past its signed
+URL or past a removal.
+
+## `source_files`
+
+`source_files(id, edition_id, lesson_id null — the poster or a lesson deleted since (on delete set
+null), cover, speaker_id — the lesson's lead speaker when the file arrived (on delete set null),
+storage_path unique, display_name, mime, size_bytes ≤ 26214400, page_count 1–5000 | null,
+uploaded_by → members (on delete set null), uploaded_at)`. Read under RLS by every member of the
+edition, in `load_week` as `sourceFiles` (`uploaded_at` as `toISOString` writes it). No browser
+writes it but through the functions below. **Never published to Realtime** (the never-publish list):
+the week reloads after an upload. `member_has_history` counts `uploaded_by`.
+
+**A file of the previous speaker:** `speaker_id` is not the lesson's lead any more — after
+`reopen_lesson` (which keeps every file) or a lead replaced. Listed «מהמרצה הקודם», for removal; never
+in the reader; `register_source_file`'s "first file" counts only the current speaker's.
+
+## Commands
+
+### `upload(edition, lesson | null, file, {pages})` — Storage, then `register_source_file` → the row
+
+The browser checks the pick (`checkPicked`, each reason its own code: a poster that is not a PDF or
+a picture → `cover_bad_file`; a type we do not take → `bad_file`; over 25 MB → `file_too_big`),
+reads the bytes as the reader will (`readerPages`, `src/reader/pages.ts` → `readableSource`: a PDF's
+pages, a picture 1, null when the reader cannot print it — protected, damaged, not what its name
+says; Word null, never read), POSTs the bytes to `/storage/v1/object/sources/<path>` with the
+member's own access token (never a service key), then calls:
+
+`register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages)` — in this order:
+- the caller not a member of `p_edition` → `not_member`;
+- `p_path` not the convention for exactly this edition and this lesson (`cover` when `p_lesson` is
+  null) → `bad_path`;
+- the lesson row locked (`for update`, this edition's) **before any other check**: a `reopen_lesson`
+  that commits while this waits is seen by every check after it (→ `not_closed`), never a file
+  registered on the draft and its stages set again;
+- a row already at `p_path` → that row again (a retry — the browser lost the first answer —
+  answered even if the lesson was reopened since), unless it is another edition's or lesson's
+  (`bad_path`);
+- `app.source_refusal(p_path)` → its code;
+- no live object at `p_path`, or not uploaded by the caller (`owner_id` ≠ the JWT `sub`) → `no_file`;
+- the object's `metadata.mimetype` not one of the four or not matching the extension, or its
+  `metadata.size` missing or over 25 MB → `bad_file` — the size as Storage measured it; the type as the
+  uploader declared it (Storage held it to the four, never sniffing the bytes);
+- `display_name` one line ≤ 200, required; `p_pages` null or 1–5000 → else `bad_value`. The browser
+  sends the picked file's name shortened to fit before the bytes go up (`displayNameOf`: cut before
+  the extension, which stays — «….pdf»), so a long name is never refused after the upload.
+
+Then the row: `page_count` = `p_pages` for a PDF; for an image 1 when the browser read it (`p_pages`
+not null), else null; null for Word. **A PDF or picture with no page count was not read**
+(«לא נקרא»): never printable (`readableFile`, `src/reader/model.ts`), never fetched by the build.
+`speaker_id` = the lesson's lead; `uploaded_by` = the caller's member row. **A lesson's file:** `sources_kind`
+`pending` → `sheet` (a file arrived); and when it is the current speaker's first file and the kind
+prints something (not `pending none presentation`), `in_reader` := true — only then, so a lesson
+someone unmarked stays unmarked. `version + 1` when either changed. **A poster:** the edition's first
+one the browser read (`page_count` not null) becomes the cover (`settings.reader_cover`), when none
+is marked; one it could not read never does (the build would not fetch it). Engine:
+`Engine.registerSourceFile` (`arrived`, `pagesFor`).
+
+A registration the database refuses (a `CommandError`) removes the uploaded object again (the
+browser, under the delete policy), and the refusal is shown. A registration with no answer (a
+dropped connection, a 5xx — no refusal) is asked once more with the same arguments: the row it made,
+or the row now, or a refusal (→ the object removed). No answer twice: the object is kept — it may be
+registered — and the error shown.
+
+### `remove(file)` — Storage, then `remove_source_file(p_file)` → `void`
+
+The stored object first, through the Storage API under the delete policy — a refused delete is no
+error there (nothing is deleted, the answer an empty list), so the refusal comes from
+`remove_source_file` (`not_uploader`, or `file_present`); a failed call to the Storage API →
+`remove_failed`. Then: no such row → nothing; not a member → `not_member`; an archive and not an
+admin → `archived`; not an admin and not its uploader → `not_uploader`; **the object still in the
+bucket → `file_present`**; else the row goes, and `settings.reader_cover` with it when it named the
+file. So a failure half-way leaves a row whose file is gone — visible, removed again with one tap —
+never an object nobody can see.
+
+### `urls(edition, paths)` — signed URLs
+
+`createSignedUrls` for 600 seconds (`SIGNED_URL_SECONDS`), at most 20 per call when the reader is
+built; the bucket has no public URL. The demo: object URLs of its in-memory blobs.
+
+### `setHeaders(edition, left, right)` — `set_reader_headers` → `void`
+
+`app.require_edition_admin`; each one line ≤ 120 (`clean_line`); both empty removes
+`settings.reader_headers`, else it is `[left ?? '', right ?? '']`. **Never seeded:** absent, the
+reader has no running headers.
+
+### `setCover(edition, file | null)` — `set_reader_cover` → `void`
+
+`app.require_edition_admin`; a file must be a poster (`cover`) of this edition, not Word, and one the
+browser could read (`page_count` not null — the build never fetches one it could not), else
+`bad_value`; null removes `settings.reader_cover` (the reader opens with a schedule page).
+
+## The reader (browser only — `src/reader/`)
+
+`readerManifest(week)` (`model.ts`): one row per `scheduleEntries` entry — every closed lesson and
+memorial slot, not cancelled, in grid order — with its status:
+
+| Status | When |
+|---|---|
+| `no_sources` | `sources_kind = none` |
+| `presentation_only` | `sources_kind = presentation` (whatever `in_reader` says) |
+| `included` | `in_reader`, and a PDF or an image of the current speaker that was read (a page count) |
+| `needs_pdf` | `in_reader`, none read, and Word files |
+| `unreadable` («צריך קובץ אחר») | `in_reader`, none read, no Word, and PDFs or images not read |
+| `missing` | `in_reader` and no file; or not marked, not pending, and no file |
+| `pending` | not marked, `sources_kind = pending` |
+| `not_marked` | not marked, files arrived (read or not) |
+| `memorial` | a memorial slot: always in, its header page (its materials: `memorialFiles`, 5ב-2) |
+
+A row's files split into `printable` (read: what the build merges), `word` and `unread`; an
+`included` row counts `printable`, then names the rest («ועוד קובץ Word אחד שלא נכנס — צריך PDF»,
+«ועוד קובץ אחד שלא נקרא — צריך קובץ אחר»; `wordText`, `unreadText` — the lesson panel's words too).
+`manifestTotals` counts each status (`unreadable` included). The marked poster is the cover only when
+it was read; else the schedule is. The screen's estimate is `readerEstimate(manifest,
+scheduleLines(week))`: the build's own plan, the cover the poster's pages or the schedule's
+(`scheduleCoverPages`).
+
+The PDF (`layout.ts`, `assemble.ts`, in a module worker): first the cover — the marked poster's
+pages, else schedule pages made from the designer's rows; the table of contents (each day, each
+entry with the page it starts on); then each day: every `included` row — a header strip «מרצה –
+כותרת» (TBD for a missing name or title) with its day and teaching time on its first page, then its
+files' pages, each scaled to fit A4 with its aspect and rotation kept — and every memorial slot; a
+«סיכום יום» page closes every day. Running headers `[left, right]` alternate (an odd page the left
+one); page numbers count from the cover's first page as 1; the cover carries neither. Hebrew is drawn on an OffscreenCanvas and
+embedded as PNG. Only read files are fetched; the screen names the unread ones at once, under «לא
+נכנסו (צריך להעלות קובץ אחר):» — every one of every lesson marked `in_reader`, a row left out
+(`unreadable`) as well as an `included` one (`unreadForReader`, `src/reader/model.ts`), in schedule
+order, then what the build left out (never the same file: it fetches only read ones). Every file is
+opened — `openSource` (`src/reader/readable.ts`), the same steps as the upload's `readableSource` —
+and embedded before the pages are planned; a file that
+cannot be read — a PDF that does not open or is protected, has no pages, or one whose pages pdf-lib
+cannot decode (all its pages or none), a picture that is neither PNG nor JPEG by its bytes, a PNG
+whose image data does not inflate to its end (`src/reader/png.ts`, before pdf-lib's decoder, which
+never returns on data cut short), a JPEG whose structure cannot be followed or whose frame pdf-lib
+does not take (its own header read, `JpegEmbedder.for`, on the cleaned bytes: not 1, 3 or 4
+components) or whose frame has no width or height — is left out and named, and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
+JPEG goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame
+and the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the
+image are dropped, and so is a marker without a length (RST0–7, TEM) outside a scan, which libjpeg
+ignores; its EXIF orientation is read first and honoured. A PDF's pages are copied with
+**their printing annotations and filled form fields painted in** (`src/reader/annotations.ts`, as a
+viewer prints, PDF 32000-1 §12.5.5: the Print flag and not Hidden, never a Popup or a Link; the
+normal appearance — a check box's by its /AS — its /BBox through its /Matrix onto its /Rect; one
+that cannot be followed is skipped alone, never the file); an annotation with no appearance stream
+is not drawn. A page's box is taken with its corners in order (`[0 842 595 0]` is an upright A4).
+An image inside a PDF keeps what it carries. The result is downloaded — never uploaded.
+
+**The lesson's «מקראה» stage** (`stagesOf(lesson, readerFilesOf(week, id))`, `src/domain/stages.ts`)
+says what the manifest says (`readerFilesOf` → `{printable, word, unread}`): «במקראה» (done) only
+for `included`; marked with no PDF or picture of the current speaker that was read → open, «חסר
+קובץ», «צריך PDF» when Word files came, or «צריך קובץ אחר» when only unread ones did.
+`nextLessonStep` then still says `sources` for such a lesson («המרצים שלי», the tracking table).
+
+The build's button shows on a computer — `(min-width: 1024px), (pointer: fine)`: a mouse at any
+width, or 1024px and up; elsewhere the screen says it is built on a computer.
+
+The Word skeleton (`docx.ts`, docx 9.8.1): a title «תוכן העניינים» and a TOC field updated on open,
+a heading per day (Heading 1, outline level 0) opening a page with its first entry under it, every
+lesson marked `in_reader` (not `presentation_only`, not `no_sources` — whatever its files) and every
+memorial slot as a heading (Heading 2, outline level 1) on its own page, a «סיכום יום» page per day of
+22 ruled lines (a bottom and a between border: a bottom alone is drawn once under the whole block),
+right to left by default (`pPrDefault` `w:bidi` — the TOC's paragraphs too), A4, the same running
+headers and a page number.
+
+## Errors (milestone 5ב-1)
+
+`bad_path no_file bad_file not_uploader file_present not_closed` from the database; `upload_refused
+upload_failed remove_failed read_failed`, and `file_too_big` (413), from the Storage API as the
+browser maps it; `bad_file cover_bad_file file_too_big` from the browser's own check of a pick
+(`checkPicked`) — plus `not_member forbidden archived bad_value`.
+
+## RPC signatures (milestone 5ב-1)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `register_source_file` | `p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer` | `jsonb` (the row) | authenticated |
+| `remove_source_file` | `p_file bigint` | `void` | authenticated |
+| `set_reader_headers` | `p_edition bigint, p_left text, p_right text` | `void` | authenticated |
+| `set_reader_cover` | `p_edition bigint, p_file bigint` | `void` | authenticated |
+
+`authenticated` may also execute `app.may_upload_source`, `app.may_read_source` and
+`app.may_delete_source` — the policies run as the browser's role (`tests/sql/schema.test.ts` pins
+them).

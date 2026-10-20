@@ -1,19 +1,104 @@
 // docs/CONTRACT.md, in memory. DemoPort runs on this, so the demo and the
 // decision gate behave exactly like production; tests/parity runs the same
 // scenarios here and against the SQL and compares the results.
+// So do the sources' files (CONTRACT.md «Sources and the reader», milestone
+// 5ב-1): `shared.objects` is the Storage bucket (what the policies on
+// storage.objects allow, by the same predicates), a Week's sourceFiles the
+// table, and register/remove the two functions.
 //
 // Every command is all-or-nothing: the state is snapshotted first and restored
 // if the command refuses, like a database transaction.
+//
+// The speaker pool (CONTRACT.md «The speaker pool») lives here too: speakers
+// are one cross-year list, so DemoPort hands every edition's engine the same
+// `shared` store (contacts, the pool's log) and the other editions' weeks
+// (`elsewhere`) for the rules that look across years. So do a lesson's stages
+// (CONTRACT.md «From placement to arrival», milestone 3): payment and
+// transport, the summary message, the escort, sources — with transport
+// details kept in `shared`, never in a Week, as the database keeps them apart.
+import { dayPart } from "../domain/dayParts";
+import { dutyNotes } from "../domain/escorts";
+import { addDays, israelDate } from "../domain/israelTime";
+import { teachMinutes } from "../domain/message";
+import { displayName } from "../domain/names";
+import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
-import type { Approach, GridRow, Lesson, Pitch, PitchState, Week } from "../domain/types";
-import { LIVE_PITCH } from "../domain/types";
+import { similarity } from "../domain/trigram";
+import type {
+  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts, Transport, TransportDetails,
+  Vetting, Week,
+} from "../domain/types";
+import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
+import { scheduleEntries } from "../exports/designer";
+import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
-import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "./commands";
+import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
+import {
+  cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
+} from "./speakerRules";
+import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup, type KkTrack } from "./kk";
+import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
+import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
+import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
+import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
+import {
+  cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
+} from "./stageRules";
 
 export interface Actor {
   memberId: number;
   role: "admin" | "content" | "logistics";
+  /** An admin of every edition (members.edition_id null): vets speakers, sees every speaker's contacts. */
+  global?: boolean;
+  /** anon's calls through a class link: the caller's address as the API reports it (app.link_client) — keys the rate limit. */
+  address?: string;
 }
+
+/** share_links as the demo keeps them: with the token itself (synthetic; the database keeps only its sha256). */
+export type DemoLink = ShareLink & { edition_id: number; token: string };
+
+/** מכריכה לכריכה's tables, across editions as in the database. */
+export interface KkStore {
+  tracks: (KkTrack & { edition_id: number })[];
+  groups: (KkGroup & { edition_id: number })[];
+  leaders: (KkLeader & { sort: number })[];
+  signups: (KkSignup & { edition_id: number })[];
+  orders: BookOrder[];
+}
+
+export const emptyKk = (): KkStore => ({ tracks: [], groups: [], leaders: [], signups: [], orders: [] });
+
+/** What the database keeps outside a Week, shared by every edition's engine in the demo. */
+export interface PoolShared {
+  /** speaker_contacts, by speaker id. */
+  contacts: Record<number, SpeakerContacts>;
+  /** The pool commands' activity rows (the grid's own commands are not logged in memory). */
+  log: ActivityEntry[];
+  /** transport_details, by `${edition id}:${lesson id}` (the demo's editions number their lessons apart). */
+  transport: Record<string, TransportDetails>;
+  /** share_links (v9). */
+  links: DemoLink[];
+  /** share_link_hits: the rate limit, by token and caller (`${token} ${linkClient(…)}`). */
+  linkHits: Record<string, { window_start: string; hits: number }>;
+  /** kk_tracks, kk_groups, kk_leaders, kk_signups, book_orders (v9). */
+  kk: KkStore;
+  /** The «sources» bucket (v10), by object path: what Storage keeps of each — its type, size and uploader. The bytes are DemoPort's. */
+  objects: Record<string, StoredObject>;
+}
+
+/** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
+export interface StoredObject {
+  mime: string;
+  size: number;
+  /** Who uploaded it (the API writes the session's sub; here, the member). */
+  owner: string;
+}
+
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {} });
+
+const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
+const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
+const SPEAKER_FIELDS = ["title", "name", "disambiguator", "gender", "affiliation", "bio_short", "topics", "contact_pref", "retired"] as const;
 
 function fail(code: string): never {
   throw new CommandError(code);
@@ -21,11 +106,19 @@ function fail(code: string): never {
 
 const PITCH_RANK: Record<PitchState, number> = { approached: 0, candidate: 1, accepted: 2, declined: 3, withdrawn: 4, superseded: 5 };
 
+/** What the summary message says about a lesson: changed after it was sent → «לעדכן את המרצה» (app.lessons_reconfirm). */
+const RECONFIRM_FIELDS = ["day", "start_min", "end_min", "room_id", "title", "teach_min", "pay_amount"] as const;
+
 export class Engine {
   constructor(
     public week: Week,
     private readonly actor: Actor,
     private readonly now: () => string = () => new Date().toISOString(),
+    readonly shared: PoolShared = emptyShared(),
+    /** The other editions' weeks (the demo's other engines): closed lessons and contacts across years. */
+    private readonly elsewhere: () => Week[] = () => [],
+    /** A new link's token: 128 random bits, as public.issue_link makes it (the demo's say what they open). */
+    private readonly newToken: (scope: LinkScope, subjectId: number | null) => string = () => randomToken(),
   ) {}
 
   // ---------------------------------------------------------------- commands
@@ -45,7 +138,7 @@ export class Engine {
       const lesson = this.targetDraft(target);
 
       if (!approach) {
-        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "approached", avail_note: null, version: 1 };
+        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "approached", avail_note: null, offered_to: null, version: 1 };
         this.week.approaches.push(approach);
       } else if (approach.owner_member_id == null || approach.owner_member_id === this.actor.memberId) {
         approach.owner_member_id = this.actor.memberId;
@@ -133,10 +226,12 @@ export class Engine {
       const a = lead ? this.week.approaches.find((x) => x.speaker_id === lead.speaker_id) : undefined;
       if (!this.isAdmin() && !(a && a.owner_member_id === this.actor.memberId)) fail("forbidden");
       if (l.approval === "approved" && !this.isAdmin()) fail("approved_locked");
+      if (l.paid_at != null) fail("paid_locked"); // money that went out is not erased with the speaker
       this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== l.id);
       for (const p of this.week.pitches) if (p.lesson_id === l.id && p.state === "accepted") p.state = "approached";
-      l.state = "draft";
-      l.version++;
+      // The stages were the speaker's: whoever closes the lesson next starts them over (CONTRACT reopen_lesson).
+      delete this.shared.transport[this.transportKey(l.id)];
+      Object.assign(l, LESSON_STAGE_DEFAULTS, { state: "draft", version: l.version + 1, updated_by: this.actor.memberId });
     });
   }
 
@@ -155,9 +250,7 @@ export class Engine {
           if (!this.speakerFree(x.speaker_id, to.day, to.start_min, to.end_min, l.id)) fail("speaker_busy");
         }
       }
-      const changed = l.day !== to.day || l.start_min !== to.start_min || l.end_min !== to.end_min || l.room_id !== to.room_id;
-      if (l.state === "closed" && l.confirm_sent_at && changed) l.needs_reconfirm = true;
-      Object.assign(l, to);
+      Object.assign(l, to); // needs_reconfirm: the rule in tx() (app.lessons_reconfirm)
       l.version++;
     });
   }
@@ -211,7 +304,6 @@ export class Engine {
             for (const x of this.week.lessonSpeakers.filter((y) => y.lesson_id === l.id)) {
               if (!this.speakerFree(x.speaker_id, day, l.start_min, newEnd, l.id)) fail("speaker_busy");
             }
-            if (l.confirm_sent_at) l.needs_reconfirm = true;
           }
           l.end_min = newEnd;
           l.version++;
@@ -247,17 +339,1057 @@ export class Engine {
     });
   }
 
+  // ---------------------------------------------------------------- the speaker pool (CONTRACT.md «The speaker pool»)
+
+  /** public.speaker_matches: the same name key first, then keys at least SIMILAR_THRESHOLD alike; at most 20. */
+  matches(name: string): SpeakerMatch[] {
+    const key = nameKey(name);
+    if (!key) return [];
+    const min = Math.fround(SIMILAR_THRESHOLD);
+    return this.week.speakers
+      .map((s) => ({ s, sim: similarity(s.name_key, key) }))
+      .filter(({ s, sim }) => s.name_key === key || sim >= min)
+      .sort((a, b) => Number(b.s.name_key === key) - Number(a.s.name_key === key) || b.sim - a.sim || a.s.name.localeCompare(b.s.name, "he") || a.s.id - b.s.id)
+      .slice(0, 20)
+      .map(({ s, sim }) => ({
+        id: s.id, title: s.title, name: s.name, disambiguator: s.disambiguator, gender: s.gender, affiliation: s.affiliation,
+        vetted: s.vetted, retired: s.retired, match: s.name_key === key ? ("same" as const) : ("similar" as const), similarity: sim,
+      }));
+  }
+
+  createSpeaker(input: NewSpeaker, opts: CreateOptions = {}): { speaker_id: number; approach_id: number | null } {
+    return this.tx(() => {
+      this.requireEditor();
+      const name = cleanLine(input.name, LIMITS.name);
+      const key = nameKey(name);
+      if (name == null || !key) fail("name_required");
+      const disambiguator = cleanLine(input.disambiguator, LIMITS.disambiguator);
+      const title = pickTitle(input.title, titlesOf(this.week.edition.settings));
+      const gender = pickGender(input.gender);
+      const affiliation = cleanLine(input.affiliation, LIMITS.affiliation);
+      const bio_short = cleanBlock(input.bio_short, LIMITS.bio_short);
+      const topics = cleanTopics(input.topics);
+      const contact_pref = pickContactPref(input.contact_pref);
+      const approve = !!opts.approve;
+      if (approve && !this.actor.global) fail("forbidden");
+
+      // search first
+      const pool = this.week.speakers;
+      if (pool.some((s) => s.name_key === key && (s.disambiguator ?? "") === (disambiguator ?? ""))) fail("speaker_exists");
+      if (disambiguator == null && pool.some((s) => s.name_key === key)) fail("disambiguator_required");
+      const min = Math.fround(SIMILAR_THRESHOLD);
+      if (!opts.confirmed && pool.some((s) => s.name_key === key || similarity(s.name_key, key) >= min)) fail("speaker_similar");
+
+      const s: Speaker = {
+        id: this.nextId(pool), title, name: name!, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
+        vetted: approve ? "approved" : "pending", vetted_by: approve ? this.actor.memberId : null, vetted_note: null,
+        retired: false, name_key: key, version: 1,
+      };
+      pool.push(s);
+      this.log(this.week.edition.id, "speakers", s.id, "insert", { vetted: s.vetted });
+      let approach_id: number | null = null;
+      if (opts.claim) {
+        const a: Approach = { id: this.nextId(this.week.approaches), speaker_id: s.id, owner_member_id: this.actor.memberId, status: "claimed", avail_note: null, offered_to: null, version: 1 };
+        this.week.approaches.push(a);
+        this.logApproach(a, "insert", null);
+        approach_id = a.id;
+      }
+      return { speaker_id: s.id, approach_id };
+    });
+  }
+
+  updateSpeaker(speakerId: number, version: number, patch: SpeakerPatch): void {
+    this.tx(() => {
+      this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId) ?? fail("stale");
+      if (!this.mayEditSpeaker(speakerId)) fail("not_handler");
+      if (s.version !== version) fail("stale");
+      // A key that is present (and not undefined, which JSON drops) changes; the rest stay.
+      const has = (k: keyof SpeakerPatch) => k in patch && patch[k] !== undefined;
+      const n: Speaker = { ...s };
+      if (has("name")) {
+        const name = cleanLine(patch.name, LIMITS.name);
+        n.name_key = nameKey(name);
+        if (name == null || !n.name_key) fail("name_required");
+        n.name = name!;
+      }
+      if (has("disambiguator")) n.disambiguator = cleanLine(patch.disambiguator, LIMITS.disambiguator);
+      if (has("title")) n.title = pickTitle(patch.title, titlesOf(this.week.edition.settings));
+      if (has("gender")) n.gender = pickGender(patch.gender);
+      if (has("affiliation")) n.affiliation = cleanLine(patch.affiliation, LIMITS.affiliation);
+      if (has("bio_short")) n.bio_short = cleanBlock(patch.bio_short, LIMITS.bio_short);
+      if (has("topics")) n.topics = cleanTopics(patch.topics);
+      if (has("contact_pref")) n.contact_pref = pickContactPref(patch.contact_pref);
+      if (has("retired")) {
+        if (typeof patch.retired !== "boolean") fail("bad_value");
+        if (!this.actor.global) fail("forbidden");
+        n.retired = patch.retired!;
+      }
+
+      if (n.name_key !== s.name_key || (n.disambiguator ?? "") !== (s.disambiguator ?? "")) {
+        const others = this.week.speakers.filter((x) => x.id !== s.id);
+        if (others.some((x) => x.name_key === n.name_key && (x.disambiguator ?? "") === (n.disambiguator ?? ""))) fail("speaker_exists");
+        if (n.disambiguator == null && others.some((x) => x.name_key === n.name_key)) fail("disambiguator_required");
+      }
+      if (((has("gender") && n.gender == null) || (has("retired") && n.retired)) && this.hasLiveClosed(s.id)) fail("lesson_closed");
+
+      const fields = SPEAKER_FIELDS.filter((k) => JSON.stringify(n[k]) !== JSON.stringify(s[k]));
+      if (fields.length === 0) return;
+      Object.assign(s, n, { version: s.version + 1 });
+      this.log(this.week.edition.id, "speakers", s.id, "update", { fields });
+    });
+  }
+
+  /** The quality gate: a global admin approves, rejects or returns to pending — one speaker or many. */
+  vetSpeakers(ids: number[], state: Vetting, note: string | null = null): void {
+    this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (!["approved", "rejected", "pending"].includes(state)) fail("bad_value");
+      const n = cleanLine(note, LIMITS.vetted_note);
+      for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
+        const s = this.week.speakers.find((x) => x.id === id) ?? fail("stale");
+        if (state !== "approved" && this.hasLiveClosed(id)) fail("lesson_closed");
+        if (s.vetted === state && s.vetted_note === n) continue;
+        Object.assign(s, { vetted: state, vetted_note: n, vetted_by: this.actor.memberId, version: s.version + 1 });
+        this.log(null, "speakers", id, "vet", { vetted: state, note: n });
+      }
+    });
+  }
+
+  /** app.may_see_contacts: a global admin, or whoever handles the speaker in a real, non-archived edition. */
+  mayContacts(speakerId: number): boolean {
+    return !!this.actor.global || this.contactsEdition(speakerId) != null;
+  }
+
+  /** public.get_speaker_contacts: null when they are not the caller's to see. */
+  contactsOf(speakerId: number): SpeakerContacts | null {
+    if (!this.mayContacts(speakerId)) return null;
+    return { ...(this.shared.contacts[speakerId] ?? EMPTY_CONTACTS) };
+  }
+
+  setContacts(speakerId: number, c: SpeakerContacts): void {
+    this.tx(() => {
+      if (!this.week.speakers.some((s) => s.id === speakerId)) fail("stale");
+      if (!this.mayContacts(speakerId)) fail("contacts_hidden");
+      const next: SpeakerContacts = {
+        phone: cleanPhone(c.phone),
+        email: cleanContactEmail(c.email),
+        secretary_note: cleanBlock(c.secretary_note, LIMITS.secretary_note),
+        notes: cleanBlock(c.notes, LIMITS.contact_notes),
+      };
+      const old = this.shared.contacts[speakerId] ?? EMPTY_CONTACTS;
+      const fields = (["phone", "email", "secretary_note", "notes"] as const).filter((k) => old[k] !== next[k]);
+      if (fields.length === 0) return;
+      this.shared.contacts[speakerId] = next;
+      this.log(this.contactsEdition(speakerId), "speakers", speakerId, "contacts", { fields });
+    });
+  }
+
+  /** «אני מטפל/ת» without a cell. */
+  claim(speakerId: number): number {
+    return this.tx(() => {
+      this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId);
+      if (!s || s.retired) fail("speaker_retired");
+      let a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      if (!a) {
+        a = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "claimed", avail_note: null, offered_to: null, version: 1 };
+        this.week.approaches.push(a);
+        this.logApproach(a, "insert", null);
+      } else if (a.owner_member_id == null) {
+        Object.assign(a, { owner_member_id: this.actor.memberId, offered_to: null, version: a.version + 1 });
+        this.logApproach(a, "update", null);
+      } else if (a.owner_member_id !== this.actor.memberId) fail("approach_owned");
+      return a.id;
+    });
+  }
+
+  setApproachStatus(approachId: number, version: number, status: ApproachStatus, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      if (!this.isAdmin() && a.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (a.version !== version) fail("stale");
+      if (!STATUSES.includes(status)) fail("bad_value");
+      const n = cleanLine(note, LIMITS.note);
+      const s = this.speakerOf(a);
+      if ((status === "approached" || status === "positive") && s.vetted !== "approved") fail("not_vetted");
+      if (status !== "positive" && this.closedHere(s.id)) fail("lesson_closed");
+      if (status === a.status && n == null) return;
+      // «סירב/ה»: every cell they are still pitched in says so too
+      if (status === "declined") for (const p of this.week.pitches) if (p.approach_id === a.id && LIVE_PITCH.has(p.state)) p.state = "declined";
+      a.status = status;
+      a.version++;
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  /** «העברה»: the handler offers (null withdraws the offer); an admin reassigns at once (null: back to the pool). */
+  handOver(approachId: number, to: number | null, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      const n = cleanLine(note, LIMITS.note);
+      let owner: number | null;
+      let offer: number | null;
+      if (this.isAdmin()) {
+        if (to != null && !this.canHandle(to)) fail("bad_member");
+        owner = to;
+        offer = null;
+      } else if (a.owner_member_id === this.actor.memberId) {
+        if (to != null && (to === this.actor.memberId || !this.canHandle(to))) fail("bad_member");
+        owner = a.owner_member_id;
+        offer = to;
+      } else fail("not_handler");
+      if (owner === a.owner_member_id && offer === a.offered_to && n == null) return;
+      Object.assign(a, { owner_member_id: owner, offered_to: offer, version: a.version + 1 });
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  answerHandOver(approachId: number, accept: boolean, note: string | null = null): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      const n = cleanLine(note, LIMITS.note);
+      if (a.offered_to == null || a.offered_to !== this.actor.memberId) fail("stale"); // withdrawn, answered, or not mine
+      if (accept) a.owner_member_id = this.actor.memberId;
+      a.offered_to = null;
+      a.version++;
+      this.logApproach(a, "update", n);
+    });
+  }
+
+  /** One availability chip (src/domain/dayParts.ts); rows of the day overlapping the part are cut back to what lies outside it. */
+  setAvailability(speakerId: number, day: number, part: string, kind: "can" | "cannot" | null, note: string | null = null): void {
+    this.tx(() => {
+      this.requireEditor();
+      if (!Number.isInteger(day) || day < 0 || day > 4) fail("bad_value");
+      const range = dayPart(part) ?? fail("bad_value");
+      if (kind != null && kind !== "can" && kind !== "cannot") fail("bad_value");
+      const n = cleanLine(note, LIMITS.avail_note);
+      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      if (!a || !(this.isAdmin() || a.owner_member_id === this.actor.memberId)) fail("not_handler");
+      const hit = this.week.availability
+        .filter((v) => v.approach_id === a!.id && v.day === day && v.from_min < range.to && v.to_min > range.from)
+        .sort((x, y) => x.id - y.id);
+      const rows = this.week.availability.filter((v) => !hit.includes(v));
+      const add = (v: Omit<Availability, "id">) => rows.push({ id: this.nextId([...rows, ...hit]), ...v });
+      for (const { id: _id, ...v } of hit) {
+        if (v.from_min < range.from) add({ ...v, to_min: range.from });
+        if (v.to_min > range.to) add({ ...v, from_min: range.to });
+      }
+      if (kind != null) add({ approach_id: a!.id, day: day as Day, from_min: range.from, to_min: range.to, kind, note: n });
+      this.week.availability = rows;
+      this.log(this.week.edition.id, "approaches", a!.id, "availability", { speaker: speakerId, day, part, kind });
+    });
+  }
+
+  // ---------------------------------------------------------------- from placement to arrival (CONTRACT.md, milestone 3)
+
+  /** public.set_payment: the handler (or an admin) asks the instructor for an amount and/or transport. */
+  setPayment(lessonId: number, version: number, amount: number | null, transport: Transport): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      this.requireHandler(l);
+      if (l.version !== version) fail("stale");
+      const pay = cleanAmount(amount);
+      const tr = pickTransport(transport);
+      if (l.paid_at != null && pay !== l.pay_amount) fail("paid_locked"); // a paid amount stays what was paid
+      // the same request again: nothing — unless it was rejected (then it is asked again)
+      if (pay === l.pay_amount && tr === l.transport && l.approval !== "rejected") return;
+      Object.assign(l, {
+        pay_amount: pay, transport: tr, approval: pay == null && tr === "none" ? "none" : "pending",
+        approval_note: null, approved_by: null, approved_at: null, version: l.version + 1, updated_by: this.actor.memberId,
+      });
+      if (tr === "none") delete this.shared.transport[this.transportKey(l.id)]; // its pickup and driver go too
+    });
+  }
+
+  /** public.decide_payments: a global admin, one lesson or a batch, each at the version seen; all or nothing. */
+  decidePayments(items: PaymentItem[], decision: "approved" | "rejected", note: string | null = null): void {
+    this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (decision !== "approved" && decision !== "rejected") fail("bad_value");
+      const n = cleanLine(note, STAGE_LIMITS.decision_note);
+      const now = this.now();
+      for (const it of [...items].sort((a, b) => a.lesson_id - b.lesson_id || a.version - b.version)) {
+        const l = this.week.lessons.find((x) => x.id === it.lesson_id);
+        if (!l || l.version !== it.version || l.approval !== "pending" || l.state !== "closed") fail("stale");
+        Object.assign(l!, {
+          approval: decision, approval_note: n, approved_by: this.actor.memberId, approved_at: now, version: l!.version + 1, updated_by: this.actor.memberId,
+        });
+      }
+    });
+  }
+
+  /** public.mark_confirm_sent: «סומן כנשלח». */
+  markConfirmSent(lessonId: number, version: number): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      this.requireHandler(l);
+      if (l.version !== version) fail("stale");
+      if (l.approval === "pending") fail("approval_pending");
+      if (l.approval === "rejected") fail("approval_rejected");
+      Object.assign(l, { confirm_sent_at: this.now(), confirm_sent_by: this.actor.memberId, needs_reconfirm: false, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /** public.set_escort: any editor, on a closed lesson; the escort is a trainee of this edition's roster. */
+  setEscort(lessonId: number, version: number, e: EscortPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      if (l.state !== "closed") fail("not_closed");
+      if (l.version !== version) fail("stale");
+      if (e.roster_id != null && !this.week.roster.some((r) => r.id === e.roster_id)) fail("bad_escort");
+      if (typeof e.self_intro !== "boolean") fail("bad_value");
+      const note = cleanBlock(e.escort_note, STAGE_LIMITS.escort_note);
+      if (e.roster_id === l.escort_roster_id && e.self_intro === l.self_intro && note === l.escort_note) return;
+      Object.assign(l, { escort_roster_id: e.roster_id, self_intro: e.self_intro, escort_note: note, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /** public.set_sources: any editor, on a closed lesson. */
+  setSources(lessonId: number, version: number, s: SourcesPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      if (l.state !== "closed") fail("not_closed");
+      if (l.version !== version) fail("stale");
+      const kind = pickSourcesKind(s.sources_kind);
+      const print = pickPrintWhen(s.print_when);
+      const note = cleanBlock(s.sources_note, STAGE_LIMITS.sources_note);
+      const url = cleanUrl(s.presentation_url);
+      if (typeof s.in_reader !== "boolean") fail("bad_value");
+      const inReader = s.in_reader && readerKind(kind);
+      if (kind === l.sources_kind && print === l.print_when && note === l.sources_note && url === l.presentation_url && inReader === l.in_reader) return;
+      Object.assign(l, {
+        sources_kind: kind, print_when: print, sources_note: note, presentation_url: url, in_reader: inReader, version: l.version + 1, updated_by: this.actor.memberId,
+      });
+    });
+  }
+
+  /** public.set_paid: logistics (or an admin) — an approved payment is paid, or not yet. */
+  setPaid(lessonId: number, paid: boolean): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireLogistics();
+      if (l.pay_amount == null || l.approval !== "approved") fail("payment_not_approved");
+      if (typeof paid !== "boolean") fail("bad_value");
+      if ((l.paid_at != null) === paid) return;
+      Object.assign(l, { paid_at: paid ? this.now() : null, version: l.version + 1, updated_by: this.actor.memberId });
+    });
+  }
+
+  /**
+   * app.may_see_transport: a global admin; in a real edition that is not archived, the lesson's handler
+   * (content or admin) — and its logistics members once the transport is approved.
+   */
+  mayTransport(lessonId: number): boolean {
+    if (this.actor.global) return true;
+    const l = this.week.lessons.find((x) => x.id === lessonId);
+    const e = this.week.edition;
+    if (!l || e.kind !== "real" || e.status === "archived") return false;
+    if (this.actor.role === "logistics") return l.transport !== "none" && l.approval === "approved";
+    return this.handlerOf(l) === this.actor.memberId;
+  }
+
+  /** public.get_transport_details: null when they are not the caller's to see. */
+  transportOf(lessonId: number): TransportDetails | null {
+    if (!this.mayTransport(lessonId)) return null;
+    return { ...(this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT) };
+  }
+
+  /** public.set_transport_details: the same people; all five replaced; the log names the fields, never the values. */
+  setTransport(lessonId: number, d: TransportDetails): void {
+    this.tx(() => {
+      const l = this.week.lessons.find((x) => x.id === lessonId) ?? fail("stale");
+      if (!this.mayTransport(lessonId)) fail("transport_hidden");
+      if (l.transport === "none") fail("no_transport");
+      const next = cleanTransportDetails(d);
+      const old = this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT;
+      const fields = (["pickup_address", "pickup_time", "driver_name", "driver_phone", "arranged"] as const).filter((k) => old[k] !== next[k]);
+      if (fields.length === 0) return;
+      this.shared.transport[this.transportKey(lessonId)] = next;
+      this.log(this.week.edition.id, "lessons", lessonId, "transport", { fields });
+    });
+  }
+
+  /** public.set_confirm_template: an admin of the edition; the instructor's own wording (empty removes it). */
+  setConfirmTemplate(body: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanBlock(body, STAGE_LIMITS.template);
+      const settings = { ...this.week.edition.settings };
+      if (v == null) delete settings.confirm_template;
+      else settings.confirm_template = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_duty_phrases: an admin of the edition; an empty list removes them. */
+  setDutyPhrases(phrases: DutyPhrase[] | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanDutyPhrases(phrases);
+      const settings = { ...this.week.edition.settings };
+      if (v.length === 0) delete settings.duty_phrases;
+      else settings.duty_phrases = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  // ---------------------------------------------------------------- sources (CONTRACT.md «Sources and the reader», milestone 5ב-1)
+
+  /**
+   * app.source_refusal: why the actor may not upload to this path — null when they may. The rule of set_sources:
+   * content or admin of the path's edition (an archive: its admins), a closed lesson of kind 'lesson' there;
+   * the poster (…/cover/…, never Word) for the edition's admins.
+   */
+  sourceRefusal(path: string): string | null {
+    const p = parseSourcePath(path);
+    if (!p) return "bad_path";
+    const at = this.editionAt(p.edition);
+    if (!at) return "not_member";
+    const { week, role } = at;
+    if (role === "logistics") return "forbidden";
+    const e = week.edition;
+    if ((e.kind === "archive" || e.status === "archived") && role !== "admin") return "archived";
+    if (p.lesson == null) return role !== "admin" ? "forbidden" : p.ext === "docx" ? "bad_file" : null;
+    const l = week.lessons.find((x) => x.id === p.lesson);
+    if (!l) return "bad_path";
+    if (l.state !== "closed" || l.kind !== "lesson") return "not_closed";
+    return null;
+  }
+
+  /** The sources_upload policy (app.may_upload_source): sourceRefusal's rule, and a path no source_files row holds — a path is used once. */
+  mayUploadSource(path: string): boolean {
+    if (this.sourceRefusal(path) != null) return false;
+    const p = parseSourcePath(path);
+    const at = p && this.editionAt(p.edition);
+    return !at || !at.week.sourceFiles.some((f) => f.storage_path === path);
+  }
+
+  /** The sources_read policy (app.may_read_source): the whole team of the path's edition, logistics included. */
+  maySeeSource(path: string): boolean {
+    const p = parseSourcePath(path);
+    return !!p && !!this.editionAt(p.edition) && !!this.shared.objects[path];
+  }
+
+  /** The sources_delete policy (app.may_delete_source): an admin of the edition, else its uploader (the row's, or an unregistered object's owner). */
+  mayDeleteSource(path: string): boolean {
+    const p = parseSourcePath(path);
+    const at = p && this.editionAt(p.edition);
+    if (!at) return false;
+    if (at.role === "admin") return true;
+    const e = at.week.edition;
+    if (e.kind === "archive" || e.status === "archived") return false;
+    const row = at.week.sourceFiles.find((f) => f.storage_path === path);
+    if (row) return row.uploaded_by != null && row.uploaded_by === this.actor.memberId;
+    return this.shared.objects[path]?.owner === this.ownerKey();
+  }
+
+  /**
+   * An upload through the Storage API: the bucket takes the four types (bad_file — the API's 415) up to 25 MB
+   * (file_too_big — its 413), then the INSERT policy decides (upload_refused — the API's 403). Never replaces an object.
+   */
+  storeObject(path: string, mime: string, size: number): void {
+    this.tx(() => {
+      if (!(SOURCE_MIMES as readonly string[]).includes(mime)) fail("bad_file");
+      if (!(size >= 0) || size > MAX_SOURCE_BYTES) fail("file_too_big");
+      if (!this.mayUploadSource(path)) fail("upload_refused");
+      if (this.shared.objects[path]) fail("upload_failed");
+      this.shared.objects[path] = { mime, size, owner: this.ownerKey() };
+    });
+  }
+
+  /** A delete through the Storage API: as the caller — nothing happens when the policies do not allow it. True when the object went. */
+  deleteObject(path: string): boolean {
+    if (!this.shared.objects[path] || !this.mayDeleteSource(path)) return false;
+    delete this.shared.objects[path];
+    return true;
+  }
+
+  /** public.register_source_file: the uploaded object becomes the lesson's file (lessonId null: the edition's poster). */
+  registerSourceFile(lessonId: number | null, path: string, displayName: string, pages: number | null): SourceFile {
+    return this.tx(() => {
+      const p = parseSourcePath(path);
+      if (!p || p.edition !== this.week.edition.id || p.lesson !== lessonId) fail("bad_path");
+      // a retry (the first answer lost) answers the row that call made, whatever changed since
+      const existing = this.week.sourceFiles.find((f) => f.storage_path === path);
+      if (existing) {
+        if (existing.lesson_id !== lessonId) fail("bad_path");
+        return { ...existing };
+      }
+      const code = this.sourceRefusal(path);
+      if (code) fail(code);
+      const obj = this.shared.objects[path];
+      if (!obj || obj.owner !== this.ownerKey()) fail("no_file");
+      if (!mimeMatches(obj!.mime, p!.ext) || obj!.size > MAX_SOURCE_BYTES) fail("bad_file");
+      const mime = obj!.mime as SourceMime;
+      const name = cleanDisplayName(displayName);
+      const pageCount = pagesFor(mime, pages);
+      const lesson = lessonId == null ? null : this.week.lessons.find((l) => l.id === lessonId)!;
+      const lead = lesson ? (this.week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead")?.speaker_id ?? null) : null;
+      const first = lesson != null && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead);
+      const row: SourceFile = {
+        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null, speaker_id: lead, storage_path: path, display_name: name,
+        mime, size_bytes: obj!.size, page_count: pageCount, uploaded_by: this.actor.memberId, uploaded_at: this.now(),
+      };
+      this.week.sourceFiles.push(row);
+      if (lesson) {
+        const next = arrived(lesson, first);
+        if (next.sources_kind !== lesson.sources_kind || next.in_reader !== lesson.in_reader) {
+          Object.assign(lesson, next, { version: lesson.version + 1, updated_by: this.actor.memberId });
+        }
+      } else if (pageCount != null && this.week.edition.settings.reader_cover == null) {
+        // the first poster the browser could read is the cover (one it could not, the build never fetches)
+        this.week.edition.settings = { ...this.week.edition.settings, reader_cover: row.id };
+      }
+      return { ...row };
+    });
+  }
+
+  /** public.remove_source_file: the uploader or an admin, once the stored object is gone (file_present). A row already gone: nothing. */
+  removeSourceFile(fileId: number): void {
+    this.tx(() => {
+      const f = this.week.sourceFiles.find((x) => x.id === fileId);
+      if (!f) return;
+      const e = this.week.edition;
+      if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+      if (!this.isAdmin() && (f.uploaded_by == null || f.uploaded_by !== this.actor.memberId)) fail("not_uploader");
+      if (this.shared.objects[f.storage_path]) fail("file_present");
+      this.week.sourceFiles = this.week.sourceFiles.filter((x) => x.id !== f.id);
+      if (this.week.edition.settings.reader_cover === f.id) {
+        const settings = { ...this.week.edition.settings };
+        delete settings.reader_cover;
+        this.week.edition.settings = settings;
+      }
+    });
+  }
+
+  /** public.set_reader_headers: an admin of the edition; one line each (≤ 120); both empty removes them. */
+  setReaderHeaders(left: string | null, right: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const l = cleanLine(left, 120);
+      const r = cleanLine(right, 120);
+      const settings = { ...this.week.edition.settings };
+      if (l == null && r == null) delete settings.reader_headers;
+      else settings.reader_headers = [l ?? "", r ?? ""];
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_reader_cover: an admin of the edition; one of its posters (not Word) the browser could read, or null. */
+  setReaderCover(fileId: number | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.page_count != null && f.mime !== DOCX)) fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      if (fileId == null) delete settings.reader_cover;
+      else settings.reader_cover = fileId;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** The edition a path names and the actor's role there: this engine's own, or — for an admin of every edition — another one's. */
+  private editionAt(editionId: number): { week: Week; role: Actor["role"] } | null {
+    if (editionId === this.week.edition.id) return { week: this.week, role: this.actor.role };
+    if (!this.actor.global) return null;
+    const week = this.elsewhere().find((w) => w.edition.id === editionId);
+    return week ? { week, role: "admin" } : null;
+  }
+
+  /** Whose object an upload is (the Storage API's owner_id): the member, in the demo. */
+  private ownerKey(): string {
+    return `member:${this.actor.memberId}`;
+  }
+
+  // ---------------------------------------------------------------- links (CONTRACT.md «Links and מכריכה לכריכה», milestone 5a)
+
+  /** share_links_read: an edition's admins see its links — never a token; anyone else, none. */
+  links(): ShareLink[] {
+    if (!this.isAdmin()) return [];
+    return this.shared.links
+      .filter((l) => l.edition_id === this.week.edition.id)
+      .sort((a, b) => b.id - a.id)
+      .map(({ id, scope, subject_id, created_by, created_at, expires_at, revoked_at }) => ({ id, scope, subject_id, created_by, created_at, expires_at, revoked_at }));
+  }
+
+  /** public.issue_link: an admin of the edition; the live link of the same subject is revoked (replace); the token comes back once. */
+  issueLink(scope: LinkScope, subjectId: number | null = null): IssuedLink {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      const e = this.week.edition;
+      if (e.kind === "archive" || e.status === "archived") fail("archived");
+      if (!LINK_SCOPES.includes(scope)) fail("bad_value");
+      if (scope === "escort") {
+        if (subjectId == null || !this.week.roster.some((r) => r.id === subjectId)) fail("bad_escort");
+      } else if (subjectId != null) fail("bad_value");
+      const now = this.now();
+      const expires = linkExpiry(e, scope, now);
+      if (Date.parse(expires) <= Date.parse(now)) fail("link_past");
+      for (const l of this.shared.links) {
+        if (l.edition_id === e.id && l.scope === scope && l.subject_id === subjectId && l.revoked_at == null) l.revoked_at = now;
+      }
+      const token = this.newToken(scope, subjectId);
+      const link: DemoLink = {
+        id: this.nextId(this.shared.links), edition_id: e.id, scope, subject_id: subjectId, token, created_by: this.actor.memberId, created_at: now, expires_at: expires, revoked_at: null,
+      };
+      this.shared.links.push(link);
+      return { link_id: link.id, token, expires_at: expires };
+    });
+  }
+
+  /** public.revoke_link: an admin of the link's edition; already revoked → nothing. */
+  revokeLink(linkId: number): void {
+    this.tx(() => {
+      const l = this.shared.links.find((x) => x.id === linkId && x.edition_id === this.week.edition.id) ?? fail("stale");
+      this.requireEditionAdmin();
+      if (l.revoked_at == null) l.revoked_at = this.now();
+    });
+  }
+
+  /** app.editions_link_expiry: the week's date or the sign-up window moved — the live links' expiry follows. */
+  refreshLinkExpiry(): void {
+    for (const l of this.shared.links) {
+      if (l.edition_id === this.week.edition.id && l.revoked_at == null) l.expires_at = linkExpiry(this.week.edition, l.scope, l.created_at);
+    }
+  }
+
+  // ---------------------------------------------------------------- the anon functions: a token is the only key
+
+  /** public.escort_view: that trainee's closed lessons; the phone only from W−7 of a real edition with a date. */
+  escortView(token: unknown): EscortView {
+    return this.tx(() => {
+      const link = this.linkFor(token, "escort");
+      const e = this.week.edition;
+      const r = this.week.roster.find((x) => x.id === link.subject_id)!;
+      const phones = e.kind === "real" && e.start_date != null && israelDate(this.now()) >= addDays(e.start_date, -7);
+      const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
+      const lessons: EscortLesson[] = this.week.lessons
+        .filter((l) => l.state === "closed" && l.escort_roster_id === link.subject_id)
+        .sort(gridOrder(this.week))
+        .map((l) => {
+          const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
+          const s = lead ? this.week.speakers.find((x) => x.id === lead.speaker_id) : undefined;
+          const approved = l.transport !== "none" && l.approval === "approved";
+          const t = this.shared.transport[this.transportKey(l.id)];
+          return {
+            lesson_id: l.id,
+            kind: l.kind,
+            day: l.day,
+            date: e.start_date ? addDays(e.start_date, l.day) : null,
+            start_min: l.start_min,
+            end_min: this.teachEnd(l),
+            room: rooms.get(l.room_id)!,
+            speaker: s ? { name: displayName(s), gender: s.gender } : null,
+            title: l.title,
+            self_intro: l.self_intro,
+            duty_notes: dutyNotes(l, e.settings?.duty_phrases),
+            escort_note: l.escort_note,
+            phone: phones && s ? (this.shared.contacts[s.id]?.phone ?? null) : null,
+            transport: approved,
+            driver: e.kind === "real" && approved && t?.arranged ? { name: t.driver_name, phone: t.driver_phone } : null,
+            ticks: this.ticksOf(l.id),
+          };
+        });
+      return {
+        edition: { label: e.label, start_date: e.start_date },
+        escort: { full_name: r.full_name, gender: r.gender },
+        phones_from: e.kind === "real" && e.start_date ? addDays(e.start_date, -7) : null,
+        lessons,
+      };
+    });
+  }
+
+  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons. */
+  escortTick(token: unknown, lessonId: number, item: TickItem, on: boolean): EscortTicks {
+    return this.tx(() => {
+      const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
+      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean") fail("bad_value");
+      const has = this.week.escortTicks.some((t) => t.lesson_id === l.id && t.item === item);
+      if (on && !has) this.week.escortTicks.push({ lesson_id: l.id, item, at: this.now() });
+      if (!on) this.week.escortTicks = this.week.escortTicks.filter((t) => !(t.lesson_id === l.id && t.item === item));
+      return this.ticksOf(l.id);
+    });
+  }
+
+  /** public.escort_pickup: write-only, on a lesson whose transport was approved. */
+  escortPickup(token: unknown, lessonId: number, address: string): void {
+    this.tx(() => {
+      const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
+      if (!(l.transport !== "none" && l.approval === "approved")) fail("no_transport");
+      const a = typeof address === "string" ? cleanLine(address, STAGE_LIMITS.pickup_address) : null;
+      if (a == null) fail("bad_value");
+      const key = this.transportKey(l.id);
+      this.shared.transport[key] = { ...(this.shared.transport[key] ?? EMPTY_TRANSPORT), pickup_address: a };
+      this.shared.log.push({
+        id: this.nextId(this.shared.log), at: this.now(), actor: null, edition_id: this.week.edition.id, entity: "lessons", entity_id: l.id, kind: "transport",
+        detail: { fields: ["pickup_address"], via: "escort_link" },
+      });
+    });
+  }
+
+  /** public.kk_form: the window, the trainees (names only), and the groups on offer — whether each is full, never who is in it. */
+  kkForm(token: unknown): KkForm {
+    return this.tx(() => {
+      this.linkFor(token, "kk_signup");
+      const e = this.week.edition;
+      const k = this.shared.kk;
+      const offered = (g: KkGroup) => g.open && g.capacity != null;
+      const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
+      const names = new Map(this.week.roster.map((x) => [x.id, x.full_name]));
+      return {
+        edition: { label: e.label, start_date: e.start_date },
+        window: { opens_at: e.settings?.kk_window?.opens_at ?? null, closes_at: e.settings?.kk_window?.closes_at ?? null },
+        open: this.kkOpen(),
+        roster: [...this.week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id).map(({ id, full_name }) => ({ id, full_name })),
+        tracks: k.tracks
+          .filter((t) => t.edition_id === e.id && this.kkTrackOnGrid(t) && k.groups.some((g) => g.track_id === t.id && offered(g)))
+          .sort((a, b) => a.day - b.day || a.start_min - b.start_min)
+          .map((t) => ({
+            id: t.id, day: t.day, date: e.start_date ? addDays(e.start_date, t.day) : null, start_min: t.start_min, end_min: t.end_min,
+            groups: k.groups
+              .filter((g) => g.track_id === t.id && offered(g))
+              .sort((a, b) => a.title.localeCompare(b.title, "he") || a.id - b.id)
+              .map((g) => ({
+                id: g.id, title: g.title, author: g.author, room: g.room_id == null ? null : (rooms.get(g.room_id) ?? null),
+                leaders: k.leaders
+                  .filter((x) => x.group_id === g.id)
+                  .sort((a, b) => a.sort - b.sort || a.id - b.id)
+                  .map((x) => ({ kind: x.kind, name: (x.roster_id != null ? names.get(x.roster_id) : x.label) ?? "" })),
+                full: k.signups.filter((x) => x.group_id === g.id).length >= g.capacity!,
+              })),
+          })),
+      };
+    });
+  }
+
+  /** public.kk_signup: recorded only when everything allows it; an existing sign-up is never changed; the same answer always. */
+  kkSignup(token: unknown, rosterId: number, groupId: number): void {
+    this.tx(() => {
+      this.linkFor(token, "kk_signup");
+      const e = this.week.edition;
+      const k = this.shared.kk;
+      const g = k.groups.find((x) => x.id === groupId && x.edition_id === e.id);
+      if (
+        g && g.open && g.capacity != null && this.kkOpen() && this.kkTrackOnGrid(k.tracks.find((t) => t.id === g.track_id)!) &&
+        this.week.roster.some((r) => r.id === rosterId) &&
+        k.signups.filter((x) => x.group_id === g.id).length < g.capacity &&
+        !k.signups.some((x) => x.track_id === g.track_id && x.roster_id === rosterId)
+      ) {
+        k.signups.push({ id: this.nextId(k.signups), edition_id: e.id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "link", created_at: this.now() });
+      }
+    });
+  }
+
+  /** public.schedule_view: the public schedule (src/exports/designer.ts). */
+  scheduleView(token: unknown): ScheduleView {
+    return this.tx(() => {
+      this.linkFor(token, "schedule");
+      const e = this.week.edition;
+      return { edition: { label: e.label, start_date: e.start_date }, rows: scheduleEntries(this.week).map(({ lesson_id: _id, ...r }) => r) };
+    });
+  }
+
+  // ---------------------------------------------------------------- מכריכה לכריכה (the edition's admins)
+
+  /** public.load_kk. */
+  loadKk(): KkData {
+    const ed = this.week.edition.id;
+    const k = this.shared.kk;
+    const groups = k.groups.filter((g) => g.edition_id === ed);
+    const ids = new Set(groups.map((g) => g.id));
+    return structuredClone({
+      tracks: k.tracks.filter((t) => t.edition_id === ed).sort((a, b) => a.day - b.day || a.start_min - b.start_min).map(({ edition_id: _e, ...t }) => t),
+      groups: [...groups].sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...g }) => g),
+      leaders: k.leaders.filter((x) => ids.has(x.group_id)).sort((a, b) => a.group_id - b.group_id || a.sort - b.sort || a.id - b.id).map(({ sort: _s, ...x }) => x),
+      signups: k.signups.filter((x) => x.edition_id === ed).sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...x }) => x),
+      orders: k.orders.filter((o) => ids.has(o.group_id)).sort((a, b) => a.group_id - b.group_id),
+    });
+  }
+
+  /** public.kk_add_group: on a kk occurrence of the grid (`outside_grid`); its track made on first use. */
+  kkAddGroup(day: number, startMin: number, fields: KkGroupFields): number {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      const e = this.week.edition;
+      const row = this.week.rows
+        .filter((r) => r.kind === "kk" && rowActive(r, day as Day, e) && r.start_min === startMin)
+        .sort((a, b) => a.start_min - b.start_min || a.end_min - b.end_min)[0];
+      if (!row) fail("outside_grid");
+      const f = this.cleanGroup(fields);
+      if (f.title === undefined) fail("title_required");
+      const k = this.shared.kk;
+      let track = k.tracks.find((t) => t.edition_id === e.id && t.day === day && t.start_min === startMin);
+      if (!track) {
+        track = { id: this.nextId(k.tracks), edition_id: e.id, day: day as Day, start_min: startMin, end_min: row!.end_min };
+        k.tracks.push(track);
+      }
+      const g = {
+        id: this.nextId(k.groups), edition_id: e.id, track_id: track.id, title: f.title!, author: f.author ?? null, room_id: f.room_id ?? null,
+        capacity: f.capacity ?? null, open: f.open ?? true,
+      };
+      k.groups.push(g);
+      this.writeLeaders(g.id, f.leaders ?? []);
+      return g.id;
+    });
+  }
+
+  /** public.kk_update_group: the keys present. */
+  kkUpdateGroup(groupId: number, patch: KkGroupFields): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      const f = this.cleanGroup(patch);
+      const { leaders, ...rest } = f;
+      Object.assign(g, rest);
+      if (leaders !== undefined) this.writeLeaders(g.id, leaders);
+    });
+  }
+
+  /** public.kk_delete_group: nobody signed up (`group_has_signups`); a track left empty goes too. */
+  kkDeleteGroup(groupId: number): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      const k = this.shared.kk;
+      if (k.signups.some((x) => x.group_id === g.id)) fail("group_has_signups");
+      k.groups = k.groups.filter((x) => x.id !== g.id);
+      k.leaders = k.leaders.filter((x) => x.group_id !== g.id);
+      k.orders = k.orders.filter((x) => x.group_id !== g.id);
+      if (!k.groups.some((x) => x.track_id === g.track_id)) k.tracks = k.tracks.filter((t) => t.id !== g.track_id);
+    });
+  }
+
+  /** public.kk_place: the staff put a trainee in a group — new, or moved within the track; no capacity, no window. */
+  kkPlace(groupId: number, rosterId: number): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      if (rosterId == null || !this.week.roster.some((r) => r.id === rosterId)) fail("bad_trainee");
+      const k = this.shared.kk;
+      const s = k.signups.find((x) => x.track_id === g.track_id && x.roster_id === rosterId);
+      if (!s) k.signups.push({ id: this.nextId(k.signups), edition_id: g.edition_id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "staff", created_at: this.now() });
+      else if (s.group_id !== g.id) Object.assign(s, { group_id: g.id, via: "staff" });
+    });
+  }
+
+  /** public.kk_unplace. */
+  kkUnplace(trackId: number, rosterId: number): void {
+    this.tx(() => {
+      const k = this.shared.kk;
+      if (!k.tracks.some((t) => t.id === trackId && t.edition_id === this.week.edition.id)) fail("stale");
+      this.requireEditionAdmin();
+      k.signups = k.signups.filter((x) => !(x.track_id === trackId && x.roster_id === rosterId));
+    });
+  }
+
+  /** public.kk_set_window: both bounds, opening first — or neither (closed). The sign-up link's expiry follows. */
+  kkSetWindow(opensAt: string | null, closesAt: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      if ((opensAt == null) !== (closesAt == null)) fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      if (opensAt == null || closesAt == null) delete settings.kk_window;
+      else {
+        const [o, c] = [Date.parse(opensAt), Date.parse(closesAt)];
+        if (Number.isNaN(o) || Number.isNaN(c) || o >= c) fail("bad_value");
+        settings.kk_window = { opens_at: new Date(o).toISOString(), closes_at: new Date(c).toISOString() };
+      }
+      this.week.edition.settings = settings;
+      this.refreshLinkExpiry();
+    });
+  }
+
+  /** public.set_book_order: logistics or an admin; copies 0–1000 (null removes it); ordered — the first time kept. */
+  setBookOrder(groupId: number, copies: number | null, ordered: boolean): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireLogistics();
+      if (typeof ordered !== "boolean" || (copies == null && ordered) || (copies != null && (!Number.isInteger(copies) || copies < 0 || copies > 1000))) fail("bad_value");
+      const k = this.shared.kk;
+      const o = k.orders.find((x) => x.group_id === g.id);
+      if (copies == null) {
+        k.orders = k.orders.filter((x) => x.group_id !== g.id);
+        return;
+      }
+      const at = ordered ? (o?.ordered_at ?? this.now()) : null;
+      if (o) Object.assign(o, { copies, ordered_at: at });
+      else k.orders.push({ group_id: g.id, copies, ordered_at: at });
+    });
+  }
+
+  // ---------------------------------------------------------------- links and kk: helpers
+
+  /**
+   * app.link_for: the link a token opens — refused, always `link_invalid`, when unknown, of another scope, revoked,
+   * expired, of another or an archived edition — then counted against its rate limit (an escort's link as one, a
+   * class link per caller's address) and refused, the same way, past it. (Inside tx(): a refusal rolls the count
+   * back, as the database's does.) A counted call clears the link's other counts whose window has passed.
+   */
+  private linkFor(token: unknown, scope: LinkScope): DemoLink {
+    if (!tokenShape(token)) fail("link_invalid");
+    const l = this.shared.links.find((x) => x.token === token) ?? fail("link_invalid");
+    const now = this.now();
+    if (l.scope !== scope || l.revoked_at != null || Date.parse(l.expires_at) <= Date.parse(now)) fail("link_invalid");
+    const e = this.week.edition;
+    if (l.edition_id !== e.id || e.kind === "archive" || e.status === "archived") fail("link_invalid");
+    const key = `${l.token} ${linkClient(l.scope, this.actor.address)}`;
+    const passed = (h: { window_start: string }) => Date.parse(h.window_start) <= Date.parse(now) - RATE_WINDOW_MS;
+    for (const [k, h] of Object.entries(this.shared.linkHits)) if (k !== key && k.startsWith(`${l.token} `) && passed(h)) delete this.shared.linkHits[k];
+    const h = this.shared.linkHits[key];
+    if (!h || passed(h)) this.shared.linkHits[key] = { window_start: now, hits: 1 };
+    else h.hits++;
+    if (this.shared.linkHits[key].hits > linkRate(l.scope)) fail("link_invalid");
+    return l;
+  }
+
+  /** app.escort_lesson: closed, of this edition, escorted by the link's trainee — else `link_invalid` (no oracle). */
+  private escortLesson(link: DemoLink, lessonId: number): Lesson {
+    const l = this.week.lessons.find((x) => x.id === lessonId);
+    if (!l || l.escort_roster_id !== link.subject_id || l.state !== "closed") fail("link_invalid");
+    return l!;
+  }
+
+  private ticksOf(lessonId: number): EscortTicks {
+    const at = (item: TickItem) => this.week.escortTicks.find((t) => t.lesson_id === lessonId && t.item === item)?.at ?? null;
+    return { reminded: at("reminded"), met: at("met"), introduced: at("introduced"), gift: at("gift") };
+  }
+
+  /** app.teach_end. */
+  private teachEnd(l: Lesson): number {
+    return l.kind === "memorial" ? l.end_min : l.start_min + teachMinutes(l, this.week.edition.settings?.lesson_minutes);
+  }
+
+  /** app.kk_track_on_grid: the track's kk row is still active that day (the first or last day's hours may have moved). */
+  private kkTrackOnGrid(t: { day: Day; start_min: number }): boolean {
+    return this.week.rows.some((r) => r.kind === "kk" && rowActive(r, t.day, this.week.edition) && r.start_min === t.start_min);
+  }
+
+  /** app.kk_open: inside the sign-up window now. */
+  private kkOpen(): boolean {
+    const w = this.week.edition.settings?.kk_window;
+    const now = Date.parse(this.now());
+    return !!w && Date.parse(w.opens_at) <= now && now < Date.parse(w.closes_at);
+  }
+
+  private kkGroup(id: number): KkGroup & { edition_id: number } {
+    return this.shared.kk.groups.find((g) => g.id === id && g.edition_id === this.week.edition.id) ?? fail("stale");
+  }
+
+  private cleanGroup(fields: unknown) {
+    return cleanGroupFields(fields, (id) => this.week.rooms.some((r) => r.id === id), (id) => this.week.roster.some((r) => r.id === id));
+  }
+
+  /** app.kk_write_leaders: replace the group's leaders, in order. */
+  private writeLeaders(groupId: number, leaders: CleanLeader[]) {
+    const k = this.shared.kk;
+    k.leaders = k.leaders.filter((x) => x.group_id !== groupId);
+    leaders.forEach((x, i) => k.leaders.push({ id: this.nextId(k.leaders), group_id: groupId, ...x, sort: i + 1 }));
+  }
+
   // ---------------------------------------------------------------- helpers
 
-  /** Restores IN PLACE on failure, so `engine.week` stays the same object (its rows are the snapshot's). */
+  /** Restores IN PLACE on failure, so `engine.week` and `engine.shared` stay the same objects (their rows are the snapshot's). */
   private tx<T>(fn: () => T): T {
-    const snapshot = structuredClone(this.week);
+    const snapshot = structuredClone({ week: this.week, shared: this.shared });
     try {
-      return fn();
+      const out = fn();
+      this.reconfirm(snapshot.week.lessons);
+      this.dropStaleTicks(snapshot.week.lessons);
+      return out;
     } catch (e) {
-      Object.assign(this.week, snapshot);
+      Object.assign(this.week, snapshot.week);
+      Object.assign(this.shared, snapshot.shared);
       throw e;
     }
+  }
+
+  /**
+   * app.lessons_reconfirm, for every command at once: a closed lesson that already had its message sent and
+   * whose confirmed details changed (moved, retitled, a new teaching time or amount, or closed again with its
+   * message still marked — reopenLesson clears it) needs the speaker told again. A new confirm_sent_at (the
+   * message re-sent) is the one exception.
+   */
+  private reconfirm(before: Lesson[]) {
+    const old = new Map(before.map((l) => [l.id, l]));
+    for (const l of this.week.lessons) {
+      const o = old.get(l.id);
+      if (!o || l.state !== "closed" || l.confirm_sent_at == null || l.confirm_sent_at !== o.confirm_sent_at) continue;
+      if (o.state !== "closed" || RECONFIRM_FIELDS.some((k) => o[k] !== l[k])) l.needs_reconfirm = true;
+    }
+  }
+
+  /** app.lessons_escort_ticks: a lesson whose escort changed (or that is gone) loses the last escort's ticks. */
+  private dropStaleTicks(before: Lesson[]) {
+    const now = new Map(this.week.lessons.map((l) => [l.id, l.escort_roster_id]));
+    const old = new Map(before.map((l) => [l.id, l.escort_roster_id]));
+    this.week.escortTicks = this.week.escortTicks.filter((t) => now.has(t.lesson_id) && now.get(t.lesson_id) === old.get(t.lesson_id));
+  }
+
+  /** app.contacts_edition: the newest real, non-archived edition in which the actor handles the speaker. */
+  private contactsEdition(speakerId: number): number | null {
+    if (this.actor.role === "logistics") return null;
+    let found: number | null = null;
+    for (const w of [this.week, ...this.elsewhere().filter((x) => x !== this.week)]) {
+      const e = w.edition;
+      if (e.kind !== "real" || e.status === "archived") continue;
+      if (!w.approaches.some((a) => a.speaker_id === speakerId && a.owner_member_id === this.actor.memberId)) continue;
+      if (found == null || e.id > found) found = e.id;
+    }
+    return found;
+  }
+
+  /**
+   * app.may_edit_speaker: the speaker's own record is one row across the years, so a global admin
+   * — or, in a real edition that is not archived, its admin or the speaker's handler there.
+   * A practice/demo edition (anyone may claim any pool speaker there) or an archived one gives no such right.
+   */
+  mayEditSpeaker(speakerId: number): boolean {
+    if (this.actor.global) return true;
+    const e = this.week.edition;
+    if (e.kind !== "real" || e.status === "archived") return false;
+    return this.isAdmin() || this.week.approaches.some((a) => a.speaker_id === speakerId && a.owner_member_id === this.actor.memberId);
+  }
+
+  /** app.has_live_closed: a closed lesson in a real edition that is not archived (a sandbox never pins a speaker). */
+  private hasLiveClosed(speakerId: number): boolean {
+    return [this.week, ...this.elsewhere().filter((x) => x !== this.week)].some(
+      (w) =>
+        w.edition.kind === "real" &&
+        w.edition.status !== "archived" &&
+        w.lessonSpeakers.some((x) => x.speaker_id === speakerId && w.lessons.some((l) => l.id === x.lesson_id && l.state === "closed")),
+    );
+  }
+
+  private closedHere(speakerId: number): boolean {
+    return this.week.lessonSpeakers.some((x) => x.speaker_id === speakerId && this.week.lessons.some((l) => l.id === x.lesson_id && l.state === "closed"));
+  }
+
+  /** app.can_handle: an active content member or admin of this edition (the team holds the active ones). */
+  private canHandle(memberId: number): boolean {
+    return this.week.team.some((t) => t.id === memberId && (t.role === "content" || t.role === "admin"));
+  }
+
+  private log(editionId: number | null, entity: string, entityId: number, kind: string, detail: Record<string, unknown>) {
+    this.shared.log.push({ id: this.nextId(this.shared.log), at: this.now(), actor: this.actor.memberId, edition_id: editionId, entity, entity_id: entityId, kind, detail });
+  }
+
+  /** As the approaches trigger logs a row (app.log_activity). */
+  private logApproach(a: Approach, kind: "insert" | "update", note: string | null) {
+    this.log(this.week.edition.id, "approaches", a.id, kind, {
+      status: a.status,
+      owner: a.owner_member_id,
+      speaker: a.speaker_id,
+      ...(a.offered_to != null ? { offered_to: a.offered_to } : {}),
+      ...(note != null ? { note } : {}),
+    });
   }
 
   private isAdmin() {
@@ -268,6 +1400,41 @@ export class Engine {
     if (this.actor.role === "logistics") fail("forbidden");
     const e = this.week.edition;
     if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+  }
+
+  /** app.stage_lesson: the lesson a stage command is about; gone (or cancelled) is `stale`. */
+  private stageLesson(id: number): Lesson {
+    const l = this.week.lessons.find((x) => x.id === id);
+    if (!l || l.state === "cancelled") fail("stale");
+    return l!;
+  }
+
+  /** app.lesson_handler: the owner of the lead speaker's approach (a closed lesson has one). */
+  private handlerOf(l: Lesson): number | null {
+    const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
+    return (lead && this.week.approaches.find((a) => a.speaker_id === lead.speaker_id)?.owner_member_id) ?? null;
+  }
+
+  /** app.require_handler: a closed lesson (`not_closed`), and its handler or an admin (`not_handler`). */
+  private requireHandler(l: Lesson) {
+    if (l.state !== "closed") fail("not_closed");
+    if (!this.isAdmin() && this.handlerOf(l) !== this.actor.memberId) fail("not_handler");
+  }
+
+  /** app.require_logistics: logistics or an admin; content `forbidden`; an archive is an admin's only. */
+  private requireLogistics() {
+    if (this.actor.role === "content") fail("forbidden");
+    const e = this.week.edition;
+    if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+  }
+
+  /** app.require_edition_admin. */
+  private requireEditionAdmin() {
+    if (!this.isAdmin()) fail("forbidden");
+  }
+
+  private transportKey(lessonId: number): string {
+    return `${this.week.edition.id}:${lessonId}`;
   }
 
   private requireOwner(a: Approach) {
@@ -347,6 +1514,7 @@ export class Engine {
     const { day, start_min, end_min } = target;
     this.checkBounds(day, start_min, end_min);
     if (!this.lessonRows(day).some((r) => r.start_min <= start_min && end_min <= r.end_min)) fail("outside_grid");
+    if (target.room_id != null && !this.week.rooms.some((r) => r.id === target.room_id)) fail("bad_shape"); // a room of this edition only
     const room = target.room_id ?? this.defaultRoom();
     const existing = this.live().find((l) => l.kind === "lesson" && l.state === "draft" && l.day === day && l.start_min === start_min && l.end_min === end_min && l.room_id === room);
     if (existing) return existing;
@@ -357,9 +1525,8 @@ export class Engine {
   private newDraft(day: Day, start: number, end: number, room: number, extra: Partial<Lesson> = {}): Lesson {
     const l: Lesson = {
       id: this.nextId(this.week.lessons), kind: "lesson", state: "draft", day, start_min: start, end_min: end, room_id: room,
-      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, pay_amount: null,
-      transport: "none", approval: "none", confirm_sent_at: null, needs_reconfirm: false, escort_roster_id: null,
-      self_intro: false, sources_kind: "pending", in_reader: false, version: 1, updated_by: this.actor.memberId, ...extra,
+      title: null, category_id: null, audience: null, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS,
+      version: 1, updated_by: this.actor.memberId, ...extra,
     };
     this.week.lessons.push(l);
     return l;
@@ -374,6 +1541,8 @@ export class Engine {
 
   /** Delete a lesson with its pitches and speakers (callers take the live pitches first, via livePitchesOf). */
   private deleteLesson(id: number) {
+    delete this.shared.transport[this.transportKey(id)]; // on delete cascade
+    for (const f of this.week.sourceFiles) if (f.lesson_id === id) f.lesson_id = null; // on delete set null: the files stay, for removal
     this.week.lessons = this.week.lessons.filter((l) => l.id !== id);
     this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== id);
     this.week.pitches = this.week.pitches.filter((p) => p.lesson_id !== id);
