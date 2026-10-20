@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 7 $$;
+  as $$ select 8 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1198,15 +1198,17 @@ create or replace function public.start_edition(p_label text, p_start_date date,
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v      bigint;
-    v_prev jsonb;
+    v       bigint;
+    v_prev  jsonb;
+    v_from  bigint;
   begin
     if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
     -- v7: the confirmation template and the escorts' duty phrases are the
     -- instructor's own wording — the live real edition's (the one archived
     -- below; else the newest) carry over. Never a text of ours: the first
-    -- edition starts without them.
-    select settings into v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
+    -- edition starts without them. v8: so do its milestones (title and W−n,
+    -- none of them done yet) — public.milestones is created further down.
+    select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
     update public.editions set status = 'archived' where kind = 'real' and status <> 'archived';
     insert into public.editions (label, kind, start_date, first_day_from, settings)
     values (p_label, 'real', p_start_date, p_first_day_from,
@@ -1216,6 +1218,8 @@ create or replace function public.start_edition(p_label text, p_start_date date,
     insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
     select v, start_min, end_min, kind, label, days from public.grid_template;
     insert into public.rooms (edition_id, name, sort, is_default) values (v, p_room, 1, true);
+    insert into public.milestones (edition_id, title, days_before)
+    select v, m.title, m.days_before from public.milestones m where m.edition_id = v_from order by m.days_before desc, m.id;
     return v;
   end
   $$;
@@ -1246,16 +1250,22 @@ create or replace function public.start_edition(p_label text, p_start_date date,
 create index if not exists activity_actor on public.activity (actor);
 
 -- Has this member done anything in the system? Every grid change is logged
--- with its actor; the columns below name a member directly.
+-- with its actor; the columns below name a member directly. (plpgsql, so it may
+-- read the v8 tables created further down: notes, milestones, export_snapshots.)
 create or replace function app.member_has_history(p_member bigint) returns boolean
-  language sql stable security definer set search_path = ''
+  language plpgsql stable security definer set search_path = ''
   as $$
-    select exists (select 1 from public.activity where actor = p_member)
+  begin
+    return exists (select 1 from public.activity where actor = p_member)
         or exists (select 1 from public.approaches where owner_member_id = p_member)
         or exists (select 1 from public.pitches where proposed_by = p_member)
         or exists (select 1 from public.lessons
                     where updated_by = p_member or approved_by = p_member or confirm_sent_by = p_member)
         or exists (select 1 from public.speakers where created_by = p_member or vetted_by = p_member)
+        or exists (select 1 from public.notes where created_by = p_member or updated_by = p_member)
+        or exists (select 1 from public.milestones where created_by = p_member or done_by = p_member)
+        or exists (select 1 from public.export_snapshots where created_by = p_member);
+  end
   $$;
 
 create or replace function app.members_guard() returns trigger
@@ -2595,6 +2605,219 @@ create or replace function public.set_duty_phrases(p_edition bigint, p_phrases j
   end
   $$;
 
+-- =============================================================================
+-- Milestone 4 (v8) — outputs and knowledge. The outputs themselves (the tracking
+-- table, the escorts' list, the designer's export, the archive) are made in the
+-- browser from the loaded Week (src/exports/); nothing is uploaded. The
+-- database adds:
+--   export_snapshots   what each export for the designer held — the public
+--                      schedule only (a guard trigger lets no other key in) —
+--                      so the next one shows what changed since. An edition's
+--                      admins read and insert; never updated, never in Realtime.
+--   notes              the knowledge base, by section: cross-year (edition_id
+--                      NULL — a global admin writes) or one edition's (its
+--                      admins write); every member who sees the edition reads.
+--   milestones         relative to the week (W−days_before, «הצעה»), per
+--                      edition; its admins write, its members read.
+--                      start_edition carries the last real edition's over.
+--   get_contacts_for   the phones of some lessons' speakers in one call, through
+--                      the contacts policy (invoker) — never more than
+--                      get_speaker_contacts shows, one speaker at a time.
+-- Nothing here is seeded: notes and milestones are the instructor's own.
+-- Writes are direct under RLS, like «הגדרות» (DECISIONS, אבן דרך 4): plain
+-- rows, column grants, and a guard trigger that stamps who and when and keeps
+-- what one statement cannot (a snapshot's keys, a version, done_at's clock).
+-- =============================================================================
+
+-- ------------------------------------------------------------- export snapshots
+
+create table if not exists public.export_snapshots (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  kind       text not null check (kind in ('designer')),
+  payload    jsonb not null,
+  created_by bigint,
+  created_at timestamptz not null default now()
+);
+create index if not exists export_snapshots_edition on public.export_snapshots (edition_id, kind, created_at desc);
+alter table public.export_snapshots enable row level security;
+
+-- A snapshot is the public schedule and nothing else: an array of rows, each
+-- with only the keys of a designer row (src/exports/designer.ts, DesignerRow) —
+-- a phone, an amount or a note has no key to travel in. Who and when are the
+-- database's, never the browser's.
+create or replace function app.export_snapshots_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if jsonb_typeof(new.payload) is distinct from 'array' then perform app.refuse('bad_value'); end if;
+    if jsonb_array_length(new.payload) > 2000 or pg_column_size(new.payload) > 1000000 then perform app.refuse('bad_value'); end if;
+    if exists (select 1 from jsonb_array_elements(new.payload) r where jsonb_typeof(r) <> 'object') then perform app.refuse('bad_value'); end if;
+    if exists (select 1 from jsonb_array_elements(new.payload) r, jsonb_each(r) k
+                where k.key <> all (array['lesson_id', 'kind', 'day', 'date', 'time', 'speaker', 'title', 'category', 'room', 'parallel'])
+                   or jsonb_typeof(k.value) not in ('string', 'number', 'boolean', 'null')) then
+      perform app.refuse('bad_value');
+    end if;
+    new.created_by := app.my_member_id(new.edition_id);
+    new.created_at := now();
+    return new;
+  end
+  $$;
+drop trigger if exists export_snapshots_guard on public.export_snapshots;
+create trigger export_snapshots_guard before insert on public.export_snapshots
+  for each row execute function app.export_snapshots_guard();
+
+drop policy if exists export_snapshots_read on public.export_snapshots;
+create policy export_snapshots_read on public.export_snapshots for select to authenticated using (app.my_role(edition_id) = 'admin');
+drop policy if exists export_snapshots_insert on public.export_snapshots;
+create policy export_snapshots_insert on public.export_snapshots for insert to authenticated with check (app.my_role(edition_id) = 'admin');
+
+-- ------------------------------------------------------------- notes (the knowledge base)
+
+create table if not exists public.notes (
+  id         bigint generated always as identity primary key,
+  edition_id bigint references public.editions (id) on delete cascade,   -- NULL = every year
+  section    text not null check (section in ('process', 'lessons_learned', 'challenges', 'templates')),
+  title      text not null check (btrim(title) <> '' and char_length(title) <= 120),
+  body_md    text not null default '' check (char_length(body_md) <= 20000),
+  version    integer not null default 1,
+  created_by bigint,
+  updated_by bigint,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists notes_edition on public.notes (edition_id);
+alter table public.notes enable row level security;
+
+-- The title one line, the body a block (the pool's own cleaning rules); who and
+-- when stamped; the version moves on every update (the screen sends the one it
+-- saw: a note someone else saved meanwhile is not overwritten unseen).
+create or replace function app.notes_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    new.title := app.clean_line(new.title, 120);
+    if new.title is null then perform app.refuse('title_required'); end if;
+    new.body_md := coalesce(app.clean_block(new.body_md, 20000), '');
+    new.updated_by := app.my_member_id(new.edition_id);
+    new.updated_at := now();
+    if tg_op = 'INSERT' then
+      new.version := 1;
+      new.created_by := new.updated_by;
+      new.created_at := new.updated_at;
+    else
+      new.edition_id := old.edition_id;
+      new.version := old.version + 1;
+      new.created_by := old.created_by;
+      new.created_at := old.created_at;
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists notes_guard on public.notes;
+create trigger notes_guard before insert or update on public.notes
+  for each row execute function app.notes_guard();
+
+-- Read: a cross-year note by every member, an edition's by whoever sees it.
+-- Write: a cross-year note by a global admin (like the categories), an
+-- edition's by its admins.
+drop policy if exists notes_read on public.notes;
+create policy notes_read on public.notes for select to authenticated
+  using (case when edition_id is null then (select app.is_member()) else app.can_see_edition(edition_id) end);
+drop policy if exists notes_insert on public.notes;
+create policy notes_insert on public.notes for insert to authenticated
+  with check (case when edition_id is null then (select app.is_global_admin()) else app.my_role(edition_id) = 'admin' end);
+drop policy if exists notes_update on public.notes;
+create policy notes_update on public.notes for update to authenticated
+  using (case when edition_id is null then (select app.is_global_admin()) else app.my_role(edition_id) = 'admin' end)
+  with check (case when edition_id is null then (select app.is_global_admin()) else app.my_role(edition_id) = 'admin' end);
+drop policy if exists notes_delete on public.notes;
+create policy notes_delete on public.notes for delete to authenticated
+  using (case when edition_id is null then (select app.is_global_admin()) else app.my_role(edition_id) = 'admin' end);
+
+-- ------------------------------------------------------------- milestones
+
+-- What should be done by when, counted back from the week's opening Sunday:
+-- days_before 42 is W−42 (a negative one is after the week, W+n). The numbers
+-- are the instructor's «הצעה»; the screen shows the real date once the week
+-- has one.
+create table if not exists public.milestones (
+  id          bigint generated always as identity primary key,
+  edition_id  bigint not null references public.editions (id) on delete cascade,
+  title       text not null check (btrim(title) <> '' and char_length(title) <= 120),
+  days_before integer not null check (days_before between -90 and 365),
+  done_at     timestamptz,
+  done_by     bigint,
+  created_by  bigint,
+  created_at  timestamptz not null default now()
+);
+create index if not exists milestones_edition on public.milestones (edition_id);
+alter table public.milestones enable row level security;
+
+-- done_at is a toggle: whatever time the browser sends, «done» is the
+-- database's now() and the member who marked it; clearing it clears both.
+create or replace function app.milestones_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    new.title := app.clean_line(new.title, 120);
+    if new.title is null then perform app.refuse('title_required'); end if;
+    if tg_op = 'INSERT' then
+      new.done_at := null;
+      new.done_by := null;
+      new.created_by := app.my_member_id(new.edition_id);
+      new.created_at := now();
+    else
+      new.edition_id := old.edition_id;
+      new.created_by := old.created_by;
+      new.created_at := old.created_at;
+      if new.done_at is null then
+        new.done_by := null;
+      elsif old.done_at is null then
+        new.done_at := now();
+        new.done_by := app.my_member_id(new.edition_id);
+      else
+        new.done_at := old.done_at;
+        new.done_by := old.done_by;
+      end if;
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists milestones_guard on public.milestones;
+create trigger milestones_guard before insert or update on public.milestones
+  for each row execute function app.milestones_guard();
+
+drop policy if exists milestones_read on public.milestones;
+create policy milestones_read on public.milestones for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists milestones_insert on public.milestones;
+create policy milestones_insert on public.milestones for insert to authenticated with check (app.my_role(edition_id) = 'admin');
+drop policy if exists milestones_update on public.milestones;
+create policy milestones_update on public.milestones for update to authenticated
+  using (app.my_role(edition_id) = 'admin') with check (app.my_role(edition_id) = 'admin');
+drop policy if exists milestones_delete on public.milestones;
+create policy milestones_delete on public.milestones for delete to authenticated using (app.my_role(edition_id) = 'admin');
+
+-- ------------------------------------------------------------- phones for the outputs
+
+-- «כולל טלפונים» in the tracking table and the escorts' list: the phones of
+-- these lessons' speakers, in one call. Invoker — lesson_speakers and
+-- speaker_contacts are read through their policies, and each row also passes
+-- app.may_see_contacts, the very predicate of get_speaker_contacts: a global
+-- admin sees every one, a handler only their own speakers', anyone else none.
+-- Phones only (no e-mail, no notes); at most 1000 lessons a call.
+create or replace function public.get_contacts_for(p_lessons bigint[]) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select coalesce(jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'phone', c.phone)
+                              order by x.lesson_id, x.speaker_id), '[]'::jsonb)
+      from public.lesson_speakers x
+      join public.speaker_contacts c on c.speaker_id = x.speaker_id
+     where x.lesson_id = any ((coalesce(p_lessons, '{}'))[1:1000])
+       and c.phone is not null
+       and app.may_see_contacts(x.speaker_id)
+  $$;
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -2694,6 +2917,17 @@ grant execute on function public.set_paid(bigint, boolean) to authenticated;
 grant execute on function public.set_confirm_template(bigint, text) to authenticated;
 grant execute on function public.set_duty_phrases(bigint, jsonb) to authenticated;
 
+-- Outputs and knowledge (v8): direct writes under RLS, by column — a browser
+-- never picks an id, an author, a time or a version (the guard triggers stamp
+-- them), and a snapshot is never changed or deleted. Phones through one
+-- invoker function, under the contacts policy.
+grant select on public.export_snapshots to authenticated;
+grant insert (edition_id, kind, payload) on public.export_snapshots to authenticated;
+grant select, delete on public.notes, public.milestones to authenticated;
+grant insert (edition_id, section, title, body_md), update (section, title, body_md) on public.notes to authenticated;
+grant insert (edition_id, title, days_before), update (title, days_before, done_at) on public.milestones to authenticated;
+grant execute on function public.get_contacts_for(bigint[]) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -2703,7 +2937,8 @@ grant execute on function public.set_duty_phrases(bigint, jsonb) to authenticate
 -- to every signed-in subscriber of the table, carrying the primary key only —
 -- so a table with personal data (speaker_contacts, members, activity,
 -- editions, roster, transport_details) is never published, and is taken out if
--- someone added it by hand.
+-- someone added it by hand. v8 adds the knowledge base and the export
+-- snapshots to that list (notes are free text; nobody needs them live).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -2719,7 +2954,7 @@ begin
     raise warning 'supabase_realtime publishes whole schemas, personal-data tables included — recreate it empty (create publication supabase_realtime;) and run this file again';
     return;
   end if;
-  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details'] loop
+  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

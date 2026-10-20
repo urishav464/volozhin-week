@@ -17,7 +17,7 @@ const ROOM_COLUMNS = "id,name,sort,is_default";
  * this table. 42501 is RLS or a missing column grant: the screen offers only
  * what the caller may do, so reaching it means someone else's admin row.
  */
-function refusal(error: PostgrestError, unique = "duplicate"): Error {
+export function refusal(error: PostgrestError, unique = "duplicate"): Error {
   switch (error.code) {
     case "P0001":
       return new CommandError(error.message);

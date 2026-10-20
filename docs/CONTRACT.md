@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), and from placement to arrival (milestone 3)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), and outputs and knowledge (milestone 4)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -482,3 +482,49 @@ no_transport transport_hidden payment_not_approved paid_locked bad_phone bad_val
 lesson's stage columns (`pay_amount transport approval approval_note approved_by approved_at
 paid_at confirm_sent_at confirm_sent_by needs_reconfirm escort_roster_id self_intro escort_note
 sources_kind print_when sources_note presentation_url in_reader`) — never a transport detail.
+
+# Outputs and knowledge (milestone 4, schema v8)
+
+The outputs — the tracking table, the escorts' list, the designer's export, the archive — are made
+in the browser from a loaded Week (`src/exports/`, pure and unit-tested); nothing is uploaded but a
+designer export's snapshot. The database adds three tables and one function (`supabase/schema.sql`
+«Milestone 4»), reached as `port.outputs` (`src/data/outputs.ts`) and `port.knowledge`
+(`src/data/knowledge.ts`), each with a Supabase and a Demo implementation. Unlike the grid, these
+are **direct writes under RLS** (as «הגדרות»): column grants, and a guard trigger that stamps who and
+when and keeps what one statement cannot. A refusal is a code of `src/errors.ts`.
+
+## Reads and writes
+
+| What | Read | Write | Rules |
+|---|---|---|---|
+| `export_snapshots(id, edition_id, kind 'designer', payload jsonb, created_by, created_at)` | the edition's admins (`app.my_role = 'admin'`, a global admin included) | INSERT `(edition_id, kind, payload)` by the same; never UPDATE or DELETE | `payload` an array (≤ 2000 rows, ≤ 1 MB) of objects whose keys are only `lesson_id kind day date time speaker title category room parallel` with scalar values, else `bad_value`; `created_by`/`created_at` the database's |
+| `notes(id, edition_id NULL, section, title, body_md, version, created_by, updated_by, created_at, updated_at)` | cross-year (`edition_id` null): every member; an edition's: whoever sees it | cross-year: a global admin; an edition's: its admins — INSERT `(edition_id, section, title, body_md)`, UPDATE `(section, title, body_md)`, DELETE | `section ∈ process lessons_learned challenges templates` (`23514`); title one line ≤ 120, required (`title_required`); body a block ≤ 20000 (`bad_value`); `version + 1` on every update (the browser updates `where version = <seen>`: no row → `stale`); `edition_id`, authors and times never the browser's |
+| `milestones(id, edition_id, title, days_before, done_at, done_by, created_by, created_at)` | the edition's members | its admins — INSERT `(edition_id, title, days_before)`, UPDATE `(title, days_before, done_at)`, DELETE | `days_before` −90…365 (`23514`; negative = after the week, W+n); title as a note's; `done_at` set → the database's `now()` and the marker as `done_by` (a second «done» keeps the first time), null → both null |
+
+`start_edition` copies the milestones (title, days_before — none done) of the edition whose settings it
+carries over (the live real one, else the newest real). `app.member_has_history` counts notes,
+milestones and snapshots. None of the three tables is ever published to Realtime.
+
+## `phones(lessons)` — `get_contacts_for(p_lessons bigint[])` → `jsonb[]`
+
+`SECURITY INVOKER`: `lesson_speakers` and `speaker_contacts` are read through their policies, and every
+row also passes `app.may_see_contacts(speaker)` — the predicate of `get_speaker_contacts`. Rows
+`{lesson_id, speaker_id, phone}` for the given lessons' speakers (at most the first 1000 ids) whose phone
+is set; phones only. Never more than `get_speaker_contacts` would show one speaker at a time
+(`tests/sql/outputs.test.ts` holds the two equal for every member and lesson); `[]` for a null or empty list.
+
+## The archive's reads
+
+A global admin's archive reads `activity` (the edition's rows, in pages of 1000), `speaker_contacts`
+(the speakers the edition touched) and `transport_details` (its lessons) **directly, through their
+policies** — the grants were already SELECT; what comes back is exactly what the caller may see.
+
+## Errors (milestone 4)
+
+`title_required` — plus `bad_value forbidden stale`.
+
+## RPC signatures (milestone 4)
+
+| RPC | Parameters | Returns |
+|---|---|---|
+| `get_contacts_for` | `p_lessons bigint[]` (invoker) | `jsonb` |

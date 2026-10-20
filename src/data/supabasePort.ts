@@ -4,6 +4,7 @@ import type { WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
+import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
 import { SupabaseSettings } from "./supabaseSettings";
 import { SupabaseSpeakers } from "./supabaseSpeakers";
 import { PortError, type WhoAmI } from "./types";
@@ -12,6 +13,8 @@ export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
   readonly settings: SupabaseSettings;
   readonly speakers: SupabaseSpeakers;
+  readonly outputs: SupabaseOutputs;
+  readonly knowledge: SupabaseKnowledge;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -21,6 +24,8 @@ export class SupabasePort implements DataPort {
     this.sb = createClient(url, key, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
     this.settings = new SupabaseSettings(this.sb);
     this.speakers = new SupabaseSpeakers(this.sb);
+    this.outputs = new SupabaseOutputs(this.sb);
+    this.knowledge = new SupabaseKnowledge(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {

@@ -3,6 +3,7 @@
 // when it changed after the message went out), or a memorial slot. The
 // progress lens paints a closed card by its sources, last year's colours.
 import { displayName } from "../domain/names";
+import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
 import { stagesOf } from "../domain/stages";
 import { fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
@@ -10,6 +11,7 @@ import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
 import { type GridModel, pitchSpeaker } from "./model";
 
 export type Lens = "diversity" | "progress" | "owner";
+export { PROGRESS_TONE };
 
 interface Props {
   model: GridModel;
@@ -133,29 +135,5 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   );
 }
 
-/** The progress lens, last year's colours (DESIGN «עדשות»): sources received, a presentation, still waiting — and a cell not closed yet; «none needed» has a colour of its own. */
-export type ProgressTone = "received" | "presentation" | "pending" | "none" | "draft";
-
-export function progressOf(kind: Lesson["sources_kind"]): Exclude<ProgressTone, "draft"> {
-  if (kind === "presentation") return "presentation";
-  if (kind === "pending") return "pending";
-  if (kind === "none") return "none";
-  return "received";
-}
-
-export const PROGRESS_TONE: Record<ProgressTone, string> = {
-  received: "bg-cyan-100",
-  presentation: "bg-orange-100",
-  pending: "bg-card",
-  none: "bg-violet-100", // a colour of its own: «nothing to receive» never reads as «still missing» (white)
-  draft: "bg-line/70",
-};
-
-/** The legend under the toolbar while the progress lens is on. */
-export const PROGRESS_LEGEND: [ProgressTone, string][] = [
-  ["received", "תכלת: מקורות התקבלו"],
-  ["presentation", "כתום: מצגת"],
-  ["pending", "לבן: מקורות טרם התקבלו"],
-  ["none", "סגול: בלי מקורות (אין מה לקבל)"],
-  ["draft", "אפור: טרם נסגר"],
-];
+/** The legend under the toolbar while the progress lens is on (memorial slots keep their own yellow card). */
+export const PROGRESS_LEGEND: [ProgressTone, string][] = (["received", "presentation", "pending", "none", "draft"] as const).map((t) => [t, PROGRESS_LABEL[t]]);

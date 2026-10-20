@@ -2,10 +2,13 @@ import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Category, Edition, Room, Week } from "../domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "../lib/schema";
 import type { CellTarget, EscortPatch, LessonPatch, PaymentItem, ReshapeOp, SourcesPatch, WeekCommands } from "./commands";
+import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, DemoOutputs } from "./demoOutputs";
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek } from "./demoWeek";
 import { type Actor, Engine, type PoolShared } from "./engine";
+import type { Milestone, Note } from "./knowledge";
+import type { ExportSnapshot } from "./outputs";
 import type { DataPort } from "./port";
 import type { HistoryLesson } from "./speakers";
 import type { MemberRow, RosterEntry } from "./settings";
@@ -20,17 +23,23 @@ const DEMO_EMAIL = "demo@example.org";
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
 // the database. The demo user is the global admin (member 1).
-export class DemoPort implements DataPort, DemoStore, DemoPool {
+export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
   readonly settings: DemoSettings;
   readonly speakers: DemoSpeakers;
+  readonly outputs: DemoOutputs;
+  readonly knowledge: DemoKnowledge;
   readonly shared: PoolShared;
   readonly history: Record<number, HistoryLesson[]> = demoHistory();
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[] = [];
   categories: Category[];
+  /** The knowledge base and the milestones (synthetic, «לדוגמה»), and the designer exports' snapshots. */
+  notes: Note[];
+  milestones: Milestone[];
+  snapshots: (ExportSnapshot & { edition_id: number })[] = [];
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
@@ -46,8 +55,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
       edition_id: t.role === "admin" ? null : week.edition.id,
       active: true,
     }));
+    ({ notes: this.notes, milestones: this.milestones } = demoKnowledge(week.edition.id));
     this.settings = new DemoSettings(this);
     this.speakers = new DemoSpeakers(this);
+    this.outputs = new DemoOutputs(this);
+    this.knowledge = new DemoKnowledge(this);
   }
 
   private newEngine(week: Week): Engine {
@@ -111,6 +123,38 @@ export class DemoPort implements DataPort, DemoStore, DemoPool {
 
   canSee(editionId: number): boolean {
     return this.members.some((m) => m.active && m.email === DEMO_EMAIL && (m.edition_id == null || m.edition_id === editionId));
+  }
+
+  private mine() {
+    return this.members.filter((m) => m.active && m.email === DEMO_EMAIL);
+  }
+
+  isMember(): boolean {
+    return this.mine().length > 0;
+  }
+
+  isGlobalAdmin(): boolean {
+    return this.mine().some((m) => m.role === "admin" && m.edition_id == null);
+  }
+
+  /** app.my_role(edition) = 'admin'. */
+  adminOf(editionId: number): boolean {
+    return this.isGlobalAdmin() || this.mine().some((m) => m.role === "admin" && m.edition_id === editionId);
+  }
+
+  /** app.my_member_id: the edition's own row first. */
+  memberIdFor(editionId: number | null): number | null {
+    const mine = this.mine().filter((m) => m.edition_id == null || m.edition_id === editionId);
+    return (mine.find((m) => m.edition_id != null) ?? mine[0])?.id ?? null;
+  }
+
+  /** The knowledge base and the snapshots in app.member_has_history. */
+  authored(memberId: number): boolean {
+    return (
+      this.notes.some((n) => n.created_by === memberId || n.updated_by === memberId) ||
+      this.milestones.some((m) => m.done_by === memberId) ||
+      this.snapshots.some((x) => x.created_by === memberId)
+    );
   }
 
   async sessionEmail(): Promise<string | null> {

@@ -62,6 +62,8 @@ export const ERRORS: Record<string, string> = {
   bad_color: "צריך לבחור צבע מהרשימה.",
   category_in_use: "יש שיעורים בקטגוריה הזו, ולכן אי אפשר למחוק אותה. אפשר להשבית אותה במקום.",
   duplicate: "זה כבר קיים ברשימה.",
+  // knowledge and milestones (milestone 4)
+  title_required: "צריך לכתוב כותרת.",
   in_use: "זה בשימוש במקום אחר, ולכן אי אפשר למחוק.",
 };
 

@@ -7,6 +7,7 @@ import { nameKey } from "../domain/nameKey";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
 import type { Engine, PoolShared } from "./engine";
+import type { Milestone } from "./knowledge";
 import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
 
 const fail = (code: string): never => {
@@ -22,6 +23,10 @@ export interface DemoStore {
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[];
   categories: Category[];
+  /** The editions' milestones (start_edition carries the last real edition's over). */
+  milestones: Milestone[];
+  /** Has this member written a note, marked a milestone or saved a snapshot (app.member_has_history, v8)? */
+  authored(memberId: number): boolean;
   /** A new edition's week: the 2026 grid, one default room, the shared pool. */
   addEngine(edition: Edition, room: Room): void;
   /** Pushes the shared lists into every engine and tells open screens. */
@@ -67,9 +72,10 @@ export class DemoSettings implements SettingsPort {
     const weeks = this.weeks();
     if (weeks.some((w) => w.edition.label === v.label)) fail("edition_exists");
     // the live real edition's template and duty phrases (else the newest's) carry over (start_edition, v7)
-    const prev = weeks
+    const prevEdition = weeks
       .filter((w) => w.edition.kind === "real")
-      .sort((a, b) => Number(b.edition.status !== "archived") - Number(a.edition.status !== "archived") || b.edition.id - a.edition.id)[0]?.edition.settings;
+      .sort((a, b) => Number(b.edition.status !== "archived") - Number(a.edition.status !== "archived") || b.edition.id - a.edition.id)[0]?.edition;
+    const prev = prevEdition?.settings;
     for (const w of weeks) if (w.edition.kind === "real" && w.edition.status !== "archived") w.edition.status = "archived";
     const edition: Edition = {
       id: nextId(weeks.map((w) => w.edition)),
@@ -87,6 +93,9 @@ export class DemoSettings implements SettingsPort {
       },
     };
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
+    // v8: and its milestones — titles and W−n, none of them done
+    const carried = this.s.milestones.filter((m) => prevEdition && m.edition_id === prevEdition.id).sort((a, b) => b.days_before - a.days_before || a.id - b.id);
+    for (const m of carried) this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: edition.id, title: m.title, days_before: m.days_before, done_at: null, done_by: null });
     return this.done(edition.id);
   }
 
@@ -162,7 +171,8 @@ export class DemoSettings implements SettingsPort {
           w.pitches.some((p) => p.proposed_by === id) ||
           w.lessons.some((l) => l.updated_by === id || l.approved_by === id || l.confirm_sent_by === id) ||
           w.speakers.some((s) => s.vetted_by === id),
-      );
+      ) ||
+      this.s.authored(id);
     if (used) fail("member_has_history");
     this.s.members = this.s.members.filter((x) => x.id !== id);
     this.done(null);

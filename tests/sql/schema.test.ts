@@ -22,9 +22,11 @@ const PEER_ADMIN = "peer.admin@example.org";
 // mark_confirm_sent, set_confirm_template, set_duty_phrases, set_escort,
 // set_paid, set_payment, set_sources and set_transport_details, and
 // may_see_transport — the transport details policy's predicate.
+// v8 (outputs and knowledge) added get_contacts_for — the outputs' phones, in
+// one invoker call under the contacts policy.
 const ANON_FUNCTIONS = ["ping"];
 const AUTH_PUBLIC_FUNCTIONS = [
-  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "get_speaker_contacts",
+  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "get_contacts_for", "get_speaker_contacts",
   "get_transport_details", "hand_over", "load_week", "mark_confirm_sent", "move_lesson", "ping", "propose",
   "reopen_lesson", "reshape", "schema_version", "set_approach_status", "set_availability", "set_confirm_template",
   "set_default_room", "set_duty_phrases", "set_escort", "set_my_profile", "set_paid", "set_payment", "set_pitch",
@@ -95,7 +97,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(await exec("authenticated", "app")).toEqual(AUTH_APP_FUNCTIONS);
     });
 
-    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members, log or transport details", async () => {
+    it("publishes to Realtime exactly the tables the grid listens to — no contacts, members, log, transport details, notes or snapshots", async () => {
       const rows = (
         await db.query(
           "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
@@ -105,7 +107,9 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     });
 
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
-      await db.query("alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details");
+      await db.query(
+        "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones",
+      );
       await db.query(SCHEMA);
       const rows = (
         await db.query(
@@ -165,7 +169,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(7);
+        expect(w.schema_version).toBe(8);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -243,22 +247,31 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     // and UPDATE only on the columns below — never an id, never rooms.is_default,
     // and a member's address and edition never change once written.
     // Everything else: SELECT only (the grid writes through functions).
+    // v8: notes and milestones (admins, under RLS) like the settings tables;
+    // export_snapshots INSERT by column only — never UPDATE or DELETE: a
+    // snapshot is what an export held. No author, time, version or done_by is
+    // ever a browser's to write (the guard triggers stamp them).
     const TABLE_WRITES: Record<string, string> = {
       editions: "DELETE,INSERT,SELECT,UPDATE",
       members: "DELETE,SELECT",
       roster: "DELETE,SELECT",
       rooms: "DELETE,SELECT",
       categories: "DELETE,SELECT",
+      notes: "DELETE,SELECT",
+      milestones: "DELETE,SELECT",
     };
     const COLUMN_WRITES = [
       "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
+      "export_snapshots.edition_id:INSERT", "export_snapshots.kind:INSERT", "export_snapshots.payload:INSERT",
       "members.active:INSERT,UPDATE", "members.display_name:INSERT,UPDATE", "members.edition_id:INSERT", "members.email:INSERT",
       "members.gender:INSERT,UPDATE", "members.role:INSERT,UPDATE",
+      "milestones.days_before:INSERT,UPDATE", "milestones.done_at:UPDATE", "milestones.edition_id:INSERT", "milestones.title:INSERT,UPDATE",
+      "notes.body_md:INSERT,UPDATE", "notes.edition_id:INSERT", "notes.section:INSERT,UPDATE", "notes.title:INSERT,UPDATE",
       "rooms.edition_id:INSERT", "rooms.name:INSERT,UPDATE", "rooms.sort:INSERT,UPDATE",
       "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
     ];
 
-    it("are SELECT everywhere it reads, row writes only on editions, column writes on the settings tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
+    it("are SELECT everywhere it reads, row writes only on editions, column writes on the settings, knowledge and snapshot tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {
       const grants = (
         await db.query(`
           select table_name, string_agg(privilege_type, ',' order by privilege_type) as p
