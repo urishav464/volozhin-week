@@ -433,7 +433,9 @@ test.describe("mock build", () => {
     expect(contacts.query.get("speaker_id")).toMatch(/^in\.\(/);
 
     expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 1 }, { p_fallen: 2 }, { p_fallen: 3 }]);
-    expect(sb.rpc.get("load_reviews")).toEqual([{ p_edition: 7 }]);
+    const reviewsAsked = sb.rpc.get("load_reviews") ?? []; // the archive's read, and the «מעבר לשנה הבאה» checklist's on the same tab
+    expect(reviewsAsked.length).toBeGreaterThan(0);
+    for (const a of reviewsAsked) expect(a).toEqual({ p_edition: 7 });
     for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen", "/rest/v1/rpc/get_fallen_contacts", "/rest/v1/rpc/load_reviews"]) {
       authed(sb, p, session.access_token);
     }
