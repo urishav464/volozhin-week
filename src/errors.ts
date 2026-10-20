@@ -87,7 +87,7 @@ export const ERRORS: Record<string, string> = {
   memorial_taken: "בזמן הזיכרון הזה כבר משובץ/ת חלל/ה אחר/ת.",
   memorial_placed: "יש כאן תוכנית זיכרון משובצת. קודם מוציאים אותה מהמשבצת (במסך «זמני זיכרון»), ואז מוחקים.",
   archive_cancelled: "הייצוא בוטל. שום דבר לא ירד.",
-  memorial_slot: "זמן זיכרון לא זז ברשת: מוסיפים זמן זיכרון במקום הרצוי במסך «זמני זיכרון» ומעבירים אליו את התוכנית.",
+  memorial_slot: "זמן זיכרון לא זז ולא נערך ברשת: מוסיפים זמן זיכרון במקום הרצוי במסך «זמני זיכרון» ומעבירים אליו את התוכנית.",
 };
 
 export function errorMessage(code: string | null | undefined): string {

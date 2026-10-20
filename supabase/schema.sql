@@ -1174,6 +1174,9 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
     select * into v_l from public.lessons where id = p_lesson for update;
     if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_l.edition_id);
+    -- v11: a memorial slot's title, category and minutes are not the team's to write
+    -- (its title reaches the anon links: schedule_view, escort_view) — no screen edits one
+    if v_l.kind = 'memorial' then perform app.refuse('memorial_slot'); end if;
     if v_l.version <> p_version then perform app.refuse('stale'); end if;
     if p_patch ? 'teach_min' and p_patch ->> 'teach_min' is not null then
       v_t := (p_patch ->> 'teach_min')::integer;
@@ -4223,17 +4226,25 @@ create or replace function app.may_see_fallen(p_fallen bigint) returns boolean
         or exists (select 1 from public.memorial_plans p where p.fallen_id = p_fallen and app.can_see_edition(p.edition_id))
   $$;
 
+-- The real, non-archived edition with a plan for this fallen in which I am an
+-- admin, if any — the newest (the twin of app.contacts_edition). A change to
+-- the family's contact is logged there, as the caller's member row of it.
+create or replace function app.fallen_contacts_edition(p_fallen bigint) returns bigint
+  language sql stable security definer set search_path = ''
+  as $$
+    select p.edition_id from public.memorial_plans p join public.editions e on e.id = p.edition_id
+     where p.fallen_id = p_fallen and e.kind = 'real' and e.status <> 'archived' and app.my_role(p.edition_id) = 'admin'
+     order by p.edition_id desc
+     limit 1
+  $$;
+
 -- The family's contact person: admins only — a global admin, or an admin of a
 -- real edition that is not archived and has a plan for this fallen (the rule
 -- of app.may_see_contacts: a practice or demo week, or last year, gives no
 -- access). public/privacy.html says exactly this.
 create or replace function app.may_see_fallen_contacts(p_fallen bigint) returns boolean
   language sql stable security definer set search_path = ''
-  as $$
-    select app.is_global_admin() or exists (
-      select 1 from public.memorial_plans p join public.editions e on e.id = p.edition_id
-       where p.fallen_id = p_fallen and e.kind = 'real' and e.status <> 'archived' and app.my_role(p.edition_id) = 'admin')
-  $$;
+  as $$ select app.is_global_admin() or app.fallen_contacts_edition(p_fallen) is not null $$;
 
 drop policy if exists fallen_read on public.fallen;
 create policy fallen_read on public.fallen for select to authenticated using (app.may_see_fallen(fallen.id));
@@ -4391,7 +4402,10 @@ create or replace function public.set_fallen_contacts(
     on conflict (fallen_id) do update
       set contact_name = excluded.contact_name, relation = excluded.relation, phone = excluded.phone,
           email = excluded.email, note = excluded.note;
-    perform app.log_event(null, 'fallen', p_fallen, 'contacts', jsonb_build_object('fields', to_jsonb(v_fields)));
+    -- in the edition whose plan gives the caller access, as their member row there
+    -- (app.my_member_id(NULL) finds only an every-edition row, and activity_read
+    -- hides a row with no edition); a global admin with no such plan: no edition
+    perform app.log_event(app.fallen_contacts_edition(p_fallen), 'fallen', p_fallen, 'contacts', jsonb_build_object('fields', to_jsonb(v_fields)));
   end
   $$;
 
@@ -4446,7 +4460,8 @@ create or replace function public.remove_memorial_slot(p_lesson bigint) returns 
 
 -- ------------------------------------------------------------- memorial plans (an edition's admins)
 
--- A plan for one of the active fallen (`bad_value`), one per fallen per edition (`duplicate`).
+-- A plan for one of the active fallen (`bad_value`), one per fallen per edition
+-- (`duplicate`). Adding and deleting one is logged (who, the fallen's id).
 create or replace function public.add_memorial_plan(p_edition bigint, p_fallen bigint) returns bigint
   language plpgsql security definer set search_path = ''
   as $$
@@ -4458,6 +4473,8 @@ create or replace function public.add_memorial_plan(p_edition bigint, p_fallen b
     on conflict (edition_id, fallen_id) do nothing
     returning id into v_id;
     if v_id is null then perform app.refuse('duplicate'); end if;
+    -- a plan opens the family's contact to the edition's admins: who opened it, and when, is logged
+    perform app.log_event(p_edition, 'memorial_plans', v_id, 'insert', jsonb_build_object('fallen', p_fallen));
     return v_id;
   end
   $$;
@@ -4553,6 +4570,7 @@ create or replace function public.delete_memorial_plan(p_plan bigint) returns vo
   begin
     if v_p.lesson_id is not null then perform app.refuse('memorial_placed'); end if;
     delete from public.memorial_plans where id = v_p.id;
+    perform app.log_event(v_p.edition_id, 'memorial_plans', v_p.id, 'delete', jsonb_build_object('fallen', v_p.fallen_id));
   end
   $$;
 

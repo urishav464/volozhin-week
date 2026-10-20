@@ -830,6 +830,12 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", addSlot: [0, 780, 790] }, // the room is taken
     { as: "E", addSlot: [0, 780, 790, "כיתה"] },
     { as: "E", addSlot: [1, 855, 870] },
+    // as the edition's window allows the rows: Sunday opening at 14:00 takes its 13:00 memorial row off the grid
+    { firstDayFrom: 840 },
+    { as: "E", addSlot: [0, 790, 795, "כיתה"] }, // outside the grid now
+    { as: "E", addSlot: [0, 855, 860] }, // the 14:15 row is still there
+    { as: "E", removeSlot: [0, 855] },
+    { firstDayFrom: 510 },
     // plans
     { as: "A", addPlan: "חלל/ה לבדיקה א" },
     { as: "E", addPlan: "חלל/ה לבדיקה ג" }, // not active
@@ -867,6 +873,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "L", store: [1, 855], file: "bylogistics" },
     // a slot stays a slot
     { as: "E", move: [1, 855], to: [1, 870, 960] },
+    { as: "A", update: [1, 855], patch: { title: "כותרת לבדיקה" } }, // its title would reach the anon links
+    { as: "E", update: [1, 855], patch: { teach_min: 5 } },
     { as: "A", reshape: [1, 690], op: { op: "merge_next" } }, // 11:30 into 14:30 would swallow it
     { as: "E", removeSlot: [1, 855] }, // a plan on it
     { as: "E", deletePlan: "חלל/ה לבדיקה א" }, // placed
@@ -919,7 +927,11 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
     { as: "B", pay: [1, 600], amount: null, transport: "one_way" },
     { as: "A", pay: [2, 510], amount: null, transport: "one_way" }, // stays pending
-    { as: "admin", decide: [[1, 510], [1, 600]], decision: "approved" },
+    // B's second lesson: an amount, no transport — approved, a payment and never a logistics transport
+    { as: "B", propose: "זין", cell: [3, 600, 690] },
+    { as: "B", close: "זין", at: [3, 600] },
+    { as: "B", pay: [3, 600], amount: 300, transport: "none" },
+    { as: "admin", decide: [[1, 510], [1, 600], [3, 600]], decision: "approved" },
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
     { as: "A", setTransport: [2, 510], address: "כתובת לדוגמה" },
     { as: "A", readTransports: true }, // the pending one is not a logistics item

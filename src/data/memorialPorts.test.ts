@@ -97,6 +97,26 @@ describe("memorial times in the demo", () => {
     expect(JSON.stringify(w)).not.toContain("טלפון לדוגמה"); // a family's contact is never in a Week
   });
 
+  it("logs a family's contact change in the edition whose plan gave access, as the admin who made it (the archive has it)", async () => {
+    // an admin of this edition only (not of every edition), in a real, live week with a plan for fallen 1
+    const port = new DemoPort({ memberId: 2, role: "admin", global: false });
+    port.engine(1).week.edition.kind = "real";
+    await port.memorial.setContacts(1, { contact_name: "איש/אשת קשר לדוגמה", relation: null, phone: null, email: null, note: null });
+    expect(port.shared.log.at(-1)).toMatchObject({ actor: 2, edition_id: 1, entity: "fallen", entity_id: 1, kind: "contacts" });
+    expect((await port.outputs.archiveExtras(1, [], [])).activity.filter((r) => r.entity === "fallen").map((r) => r.entity_id)).toEqual([1]);
+    // a global admin, for a fallen no live edition plans for: no edition, their own id
+    const admin = new DemoPort();
+    await admin.memorial.setContacts(9, { contact_name: "איש/אשת קשר לדוגמה", relation: null, phone: null, email: null, note: null });
+    expect(admin.shared.log.at(-1)).toMatchObject({ actor: 1, edition_id: null, entity: "fallen", entity_id: 9 });
+    // adding and deleting a plan (the key to a family's contact) is logged too
+    const id = await admin.commands(1).addMemorialPlan(9);
+    await admin.commands(1).deleteMemorialPlan(id);
+    expect(admin.shared.log.slice(-2)).toMatchObject([
+      { actor: 1, edition_id: 1, entity: "memorial_plans", entity_id: id, kind: "insert", detail: { fallen: 9 } },
+      { actor: 1, edition_id: 1, entity: "memorial_plans", entity_id: id, kind: "delete", detail: { fallen: 9 } },
+    ]);
+  });
+
   it("refuses what the database refuses: a second plan on a slot, a placed plan's removal", async () => {
     const port = new DemoPort();
     const [ed] = await port.editions();

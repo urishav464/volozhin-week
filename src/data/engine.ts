@@ -336,6 +336,7 @@ export class Engine {
       this.requireEditor();
       const l = this.lesson(lessonId);
       if (l.state === "cancelled") fail("cell_closed");
+      if (l.kind === "memorial") fail("memorial_slot"); // its title reaches the anon links; no screen edits one
       if (l.version !== version) fail("stale");
       if (patch.teach_min != null && (patch.teach_min <= 0 || patch.teach_min > l.end_min - l.start_min)) fail("bad_shape");
       if (patch.category_id != null && !this.week.categories.some((c) => c.id === patch.category_id)) fail("bad_shape");
@@ -961,9 +962,23 @@ export class Engine {
 
   /** app.may_see_fallen_contacts: a global admin, or an admin of a real, live edition with a plan for that fallen. */
   mayFallenContacts(fallenId: number): boolean {
-    if (this.actor.global) return true;
-    const e = this.week.edition;
-    return this.isAdmin() && e.kind === "real" && e.status !== "archived" && (this.week.memorialPlans ?? []).some((p) => p.fallen_id === fallenId);
+    return this.actor.global || this.fallenContactsEdition(fallenId) != null;
+  }
+
+  /**
+   * app.fallen_contacts_edition: the newest real, live edition with a plan for that fallen in which the actor is an
+   * admin — where a change to the family's contact is logged (null: a global admin with no such plan).
+   */
+  private fallenContactsEdition(fallenId: number): number | null {
+    const weeks = this.actor.global ? [this.week, ...this.elsewhere().filter((x) => x !== this.week)] : this.isAdmin() ? [this.week] : [];
+    let found: number | null = null;
+    for (const w of weeks) {
+      const e = w.edition;
+      if (e.kind !== "real" || e.status === "archived") continue;
+      if (!(w.memorialPlans ?? []).some((p) => p.fallen_id === fallenId)) continue;
+      if (found == null || e.id > found) found = e.id;
+    }
+    return found;
   }
 
   /** public.get_fallen_contacts: null when it is not the caller's to see; no row yet → five nulls. */
@@ -982,7 +997,7 @@ export class Engine {
       const fields = (["contact_name", "relation", "phone", "email", "note"] as const).filter((k) => old[k] !== next[k]);
       if (fields.length === 0) return;
       this.shared.fallenContacts[fallenId] = next;
-      this.log(null, "fallen", fallenId, "contacts", { fields });
+      this.log(this.fallenContactsEdition(fallenId), "fallen", fallenId, "contacts", { fields });
     });
   }
 
@@ -1021,6 +1036,7 @@ export class Engine {
         planned_minutes: null, hard_stop: false, materials_note: null, version: 1,
       };
       this.week.memorialPlans.push(p);
+      this.log(this.week.edition.id, "memorial_plans", p.id, "insert", { fallen: fallenId }); // a plan opens the family's contact to the edition's admins
       return p.id;
     });
   }
@@ -1066,6 +1082,7 @@ export class Engine {
       const p = this.memorialPlan(planId);
       if (p.lesson_id != null) fail("memorial_placed");
       this.week.memorialPlans = this.week.memorialPlans.filter((x) => x.id !== p.id);
+      this.log(this.week.edition.id, "memorial_plans", p.id, "delete", { fallen: p.fallen_id });
     });
   }
 

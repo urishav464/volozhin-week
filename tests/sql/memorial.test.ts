@@ -158,7 +158,10 @@ describe("memorial times and the logistics screen's transports", () => {
     for (const [who, l] of [[A, transport.a], [B, transport.b], [A, transport.pending], [SANDBOX, transport.sandbox]] as const) {
       await commitAs(who, "select public.set_payment($1, $2, null, 'round_trip')", [l, await version("lessons", l)]);
     }
-    for (const l of [transport.a, transport.b, transport.sandbox]) {
+    // B's second lesson: an amount approved, no transport — a payment, never a logistics transport
+    transport.payOnly = await closedLesson(B, ed, 3, 600, 690);
+    await commitAs(B, "select public.set_payment($1, $2, 300, 'none')", [transport.payOnly, await version("lessons", transport.payOnly)]);
+    for (const l of [transport.a, transport.b, transport.sandbox, transport.payOnly]) {
       await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [l, await version("lessons", l)]);
     }
     await commitAs(A, "select public.set_transport_details($1, $2, '07:15', 'נהג/ת לבדיקה', $3, true)", [transport.a, ADDRESS, PHONE_T]);
@@ -246,6 +249,25 @@ describe("memorial times and the logistics screen's transports", () => {
         expect(log).toEqual([{ fields: ["contact_name", "phone"] }]);
       });
     });
+
+    it("is logged in the edition whose plan gave access, as the admin who changed it — readable there, in the archive's rows", async () => {
+      await inTx(async (run) => {
+        const edAdminId = Number(await val(run, "owner", "select id from public.members where email = $1", [ED_ADMIN]));
+        const adminId = Number(await val(run, "owner", "select id from public.members where email = $1", [ADMIN]));
+        expect(await code(run(ED_ADMIN, "select public.set_fallen_contacts($1, $2, null, $3, null, null)", [fallen[1], FAMILY_NAME, FAMILY_PHONE]))).toBe("ok");
+        const rows = async (f: number) =>
+          (await run("owner", "select actor, edition_id from public.activity where entity = 'fallen' and entity_id = $1 order by id", [f])).rows.map((r) => [Number(r.actor), r.edition_id == null ? null : Number(r.edition_id)]);
+        expect(await rows(fallen[1])).toEqual([[edAdminId, ed]]);
+        // what the archive reads (activity where edition_id = ed), through activity_read
+        for (const who of [ED_ADMIN, ADMIN]) {
+          expect((await run(who, "select entity_id from public.activity where entity = 'fallen' and edition_id = $1", [ed])).rows.map((r) => Number(r.entity_id)), who).toEqual([fallen[1]]);
+        }
+        // a global admin's change for a fallen no live edition plans for (only the practice week): no edition, their own id
+        expect(await rows(fallen[2])).toEqual([[adminId, null]]);
+        // the helper is not the browser's to call
+        expect(await sqlstate(run(ED_ADMIN, "select app.fallen_contacts_edition($1)", [fallen[0]]))).toBe("42501");
+      });
+    });
   });
 
   describe("memorial plans", () => {
@@ -289,6 +311,20 @@ describe("memorial times and the logistics screen's transports", () => {
       });
     });
 
+    it("are logged when added and deleted — a plan is what opens a family's contact to the edition's admins", async () => {
+      await inTx(async (run) => {
+        const edAdminId = Number(await val(run, "owner", "select id from public.members where email = $1", [ED_ADMIN]));
+        const id = Number(await val(run, ED_ADMIN, "select public.add_memorial_plan($1, $2)", [ed, fallen[3]]));
+        expect(await code(run(ED_ADMIN, "select public.get_fallen_contacts($1)", [fallen[3]]))).toBe("ok");
+        expect(await code(run(ED_ADMIN, "select public.delete_memorial_plan($1)", [id]))).toBe("ok");
+        const log = (await run(ED_ADMIN, "select actor, edition_id, kind, detail from public.activity where entity = 'memorial_plans' and entity_id = $1 order by id", [id])).rows;
+        expect(log.map((r) => [Number(r.actor), Number(r.edition_id), r.kind, r.detail])).toEqual([
+          [edAdminId, ed, "insert", { fallen: fallen[3] }],
+          [edAdminId, ed, "delete", { fallen: fallen[3] }],
+        ]);
+      });
+    });
+
     it("change at the version on screen, the keys present, each checked", async () => {
       await inTx(async (run) => {
         const upd = (patch: unknown, v = 1) => code(run(ED_ADMIN, "select public.update_memorial_plan($1, $2, $3)", [plan.f2, v, JSON.stringify(patch)]));
@@ -328,12 +364,27 @@ describe("memorial times and the logistics screen's transports", () => {
       });
     });
 
+    it("are made only in the memorial rows the edition's window leaves on the grid (app.memorial_rows)", async () => {
+      await inTx(async (run) => {
+        // Sunday opens at 14:00: its 13:00 row is off the grid, the 14:15 one is not; Thursday closes at 13:20: the reverse
+        await run("owner", "update public.editions set first_day_from = 840, last_day_until = 800 where id = $1", [ed]);
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 0, 785, 790, null)", [ed]))).toBe("outside_grid");
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 0, 855, 860, null)", [ed]))).toBe("ok");
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 4, 855, 860, null)", [ed]))).toBe("outside_grid");
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 4, 780, 785, null)", [ed]))).toBe("ok");
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 2, 780, 785, null)", [ed]))).toBe("ok"); // a middle day: both rows
+        expect(await code(run(ED_ADMIN, "select public.add_memorial_slot($1, 2, 855, 860, null)", [ed]))).toBe("ok");
+      });
+    });
+
     it("are removed without a plan on them only (memorial_placed), and never moved by drag", async () => {
       await inTx(async (run) => {
         expect(await code(run(A, "select public.remove_memorial_slot($1)", [slot.mon]))).toBe("forbidden");
         expect(await code(run(ED_ADMIN, "select public.remove_memorial_slot($1)", [slot.sun]))).toBe("memorial_placed");
         expect(await code(run(ED_ADMIN, "select public.remove_memorial_slot($1)", [transport.a]))).toBe("stale"); // a lesson is not a slot
         for (const who of [ED_ADMIN, A]) {
+          // its title would reach the anon links (schedule_view, escort_view): not written through update_lesson either
+          expect(await code(run(who, "select public.update_lesson($1, (select version from public.lessons where id = $1), $2)", [slot.mon, JSON.stringify({ title: "כותרת לבדיקה" })])), who).toBe("memorial_slot");
           expect(await code(run(who, "select public.move_lesson($1, 1, 510, 525, (select room_id from public.lessons where id = $1))", [slot.mon])), who).toBe("memorial_slot");
         }
         expect(await code(run(ED_ADMIN, "select public.remove_memorial_slot($1)", [slot.mon]))).toBe("ok");
@@ -463,9 +514,11 @@ describe("memorial times and the logistics screen's transports", () => {
     it("lists each person's approved transports with exactly what get_transport_details shows them", async () => {
       const ids = (who: string, edition: number) =>
         inTx(async (run) => ((await val(run, who, "select public.get_transports_for($1)", [edition])) as { lesson_id: number }[]).map((r) => Number(r.lesson_id)));
-      expect(await ids(ADMIN, ed)).toEqual([transport.a, transport.b]); // the pending one is not a logistics item
+      // the pending one is not a logistics item, nor B's approved amount with no transport
+      expect(await ids(ADMIN, ed)).toEqual([transport.a, transport.b]);
       expect(await ids(A, ed)).toEqual([transport.a]);
       expect(await ids(B, ed)).toEqual([transport.b]);
+      await inTx(async (run) => expect((await run("owner", "select state, transport, approval, pay_amount from public.lessons where id = $1", [transport.payOnly])).rows[0]).toEqual({ state: "closed", transport: "none", approval: "approved", pay_amount: 300 }));
       expect(await ids(L, ed)).toEqual([transport.a, transport.b]);
       expect(await ids(ADMIN, sandbox)).toEqual([transport.sandbox]); // a global admin sees all
       for (const who of [ED_ADMIN, OTHER, STRANGER]) expect(await ids(who, ed), who).toEqual([]); // the edition's admin who handles none
@@ -478,7 +531,7 @@ describe("memorial times and the logistics screen's transports", () => {
     });
 
     it("never returns more than get_transport_details would, for anyone, any lesson, any edition — and leaves out none it shows", async () => {
-      const all = [transport.a, transport.b, transport.pending, transport.sandbox];
+      const all = [transport.a, transport.b, transport.pending, transport.sandbox, transport.payOnly];
       for (const who of [ADMIN, ED_ADMIN, A, B, L, OTHER, SANDBOX, SANDBOX_ADMIN, STRANGER]) {
         await inTx(async (run) => {
           for (const edition of [ed, sandbox, other]) {
@@ -491,8 +544,8 @@ describe("memorial times and the logistics screen's transports", () => {
             for (const l of all) {
               const one = await val(run, who, "select public.get_transport_details($1)", [l]);
               const listed = got.some((r) => Number(r.lesson_id) === l);
-              const approved = (await run("owner", "select edition_id, approval from public.lessons where id = $1", [l])).rows[0];
-              const due = one != null && Number(approved.edition_id) === edition && approved.approval === "approved";
+              const approved = (await run("owner", "select edition_id, approval, transport from public.lessons where id = $1", [l])).rows[0];
+              const due = one != null && Number(approved.edition_id) === edition && approved.approval === "approved" && approved.transport !== "none";
               expect(listed, `${who} ${edition} ${l}`).toBe(due);
             }
           }

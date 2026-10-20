@@ -136,7 +136,8 @@ Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
 
 ### `update_lesson(lesson, version, patch)`
 
-`patch ⊆ { title, category_id, audience, teach_min }`. Content or admin. Version must match
+`patch ⊆ { title, category_id, audience, teach_min }`. Content or admin. A memorial slot →
+`memorial_slot` (v11). Version must match
 (`stale`). `title` and `audience` are trimmed; an empty one becomes null. `teach_min` must be > 0 and ≤ the lesson's length → `bad_shape`. Increments
 `version`. A new title or teaching time after the message was sent → the reconfirm rule.
 
@@ -1024,14 +1025,18 @@ day's memorial rows as the edition's window allows it (`app.memorial_rows`, rowA
 An admin. Not a memorial slot → `stale`; a plan placed on it → `memorial_placed`. Its files' rows
 stay (lesson_id null) for removal.
 
-A slot never moves by drag (`move_lesson` → `memorial_slot`), and a merge that would swallow one is
+A slot never moves by drag (`move_lesson` → `memorial_slot`), its title, category and minutes are
+not written (`update_lesson` → `memorial_slot`, for everyone: its title reaches the anon links, and no
+screen edits one), and a merge that would swallow one is
 refused (`reshape` `merge_next` → `merge_blocked`; `split_time`/`reset` treat it as a closed cell).
 
 ## Plans
 
 ### `addMemorialPlan(fallen)` — `add_memorial_plan(p_edition, p_fallen)` → `bigint`
 An admin. The fallen is not active (or does not exist) → `bad_value`; already planned in this
-edition → `duplicate`. In the tray (`lesson_id` null), `not_contacted`.
+edition → `duplicate`. In the tray (`lesson_id` null), `not_contacted`. Logged in the edition's activity
+(`memorial_plans`, `insert`, `{fallen}`, the caller's member id): a plan is what opens the family's
+contact to the edition's admins.
 
 ### `updateMemorialPlan(plan, version, patch)` — `update_memorial_plan(p_plan, p_version, p_patch jsonb)` → `void`
 An admin (`app.memorial_plan`: no plan → `stale`). Another version → `stale`; not an object →
@@ -1047,13 +1052,17 @@ liaison goes with the plan**: the slot it leaves loses `escort_roster_id` and `e
 it comes to takes them (both versions + 1; the escorts' ticks of both start over).
 
 ### `deleteMemorialPlan(plan)` — `delete_memorial_plan(p_plan)` → `void`
-An admin. Placed → `memorial_placed`.
+An admin. Placed → `memorial_placed`. Logged like the insert (`delete`, `{fallen}`).
 
 ### The liaison
 DESIGN «בזמני זיכרון, המלווה הוא איש הקשר של המשפחה»: the slot's escort, through `setEscort` —
 on a memorial slot only an admin of the edition (`forbidden`), only once a plan is placed
 (`no_plan`), never a self-introduction (`bad_value`). The escort's link and the escorts' list show
 the slot (the fallen's name in the list; the link shows «זמן זיכרון») — never a family's contact.
+Neither shows the speaker's four ticks for it (`ticksApply`, `src/domain/escorts.ts`: a lesson's
+only): the link says the liaison's role in their gender instead, and counts lessons and memorial times
+apart. `escort_tick` itself still accepts a memorial slot (nothing calls it there); a tick set for the
+liaison is the instructor's to decide, if ever.
 
 ### Materials
 `app.source_refusal`: a memorial slot with a plan placed on it takes uploads from content and admins
@@ -1068,8 +1077,10 @@ An admin. `settings.memorial = {placement?, max_minutes?, warn_adjacent_meal?}` 
 staff meeting decides it. `max_minutes` 1–180 or null (`bad_value`), `placement` a block ≤ 500; only
 the parts given are kept; all three empty removes it. Warnings (`src/rules/warnings.ts`): a plan
 longer than its slot always (`memorial_over_slot`); longer than `max_minutes` (`memorial_too_long`)
-and a slot next to a meal row (`memorial_near_meal`) only once the policy sets them. A memorial slot
-is never in the gender balance or the category load.
+and a slot next to a meal row (`memorial_near_meal`, a slot a plan is placed on: the grid's memorial
+rows sit next to lunch by design) only once the policy sets them. A memorial slot is never in the
+gender balance or the category load. Every warning keeps its time range left to right inside the
+Hebrew (`dayRange`: an LRM before it).
 
 ## The fallen and their families (`port.memorial`, `src/data/memorial.ts`)
 
@@ -1082,7 +1093,11 @@ is never in the gender balance or the category load.
 | `setContacts(fallen, c)` | `set_fallen_contacts(p_fallen, p_contact_name, p_relation, p_phone, p_email, p_note)` | the same | `stale contacts_hidden bad_phone bad_contact_email` |
 
 All five contact fields are replaced (null clears one); the activity log records which fields
-changed, never their values.
+changed, never their values. The row goes in the edition whose plan gives the caller access
+(`app.fallen_contacts_edition` / `Engine.fallenContactsEdition`: the newest real, non-archived edition
+with a plan for that fallen in which the caller is an admin), as the caller's member row there — so
+it is in that edition's log and archive. A global admin with no such plan: no edition, their own id
+(the row is then only in the database, not in an edition's log).
 
 ## The logistics screen's transports — `transports()` — `get_transports_for(p_edition)` → `jsonb`
 Invoker. The edition's closed lessons with `transport <> 'none'` and `approval = 'approved'`, each
