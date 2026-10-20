@@ -243,11 +243,11 @@ test.describe("demo build", () => {
     const zip = await downloaded(page, () => page.getByRole("button", { name: "הורדת הארכיון של הדגמה" }).click());
     expect(zip.d.suggestedFilename()).toMatch(/^volozhin-archive-edition-1-\d{4}-\d{2}-\d{2}\.zip$/);
     const files = unzipSync(new Uint8Array(zip.bytes));
-    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "speakers.json", "tracking.xlsx"]);
+    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "kk.json", "memorial.json", "sources.json", "speakers.json", "tracking.xlsx"]);
     const edition = JSON.parse(strFromU8(files["edition.json"]));
     expect(edition.lessons.length).toBe(demoWeek().lessons.length);
     expect(edition.milestones.length).toBeGreaterThan(0);
-    for (const f of ["edition.json", "speakers.json"]) {
+    for (const f of ["edition.json", "speakers.json", "kk.json", "memorial.json", "sources.json"]) {
       expect(strFromU8(files[f]), f).not.toContain("טלפון לדוגמה");
       expect(strFromU8(files[f]), f).not.toContain("כתובת לדוגמה");
     }
@@ -304,9 +304,9 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
-    // the instructor's eight sections: every one inside the screen, none cut off or behind a sideways scroll
+    // the instructor's ten sections: every one inside the screen, none cut off or behind a sideways scroll
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
+    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
     const width = page.viewportSize()!.width;
     for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
       expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
@@ -400,6 +400,7 @@ test.describe("mock build", () => {
     sb.tables.set("activity", []);
     sb.tables.set("speaker_contacts", [{ speaker_id: 1, phone: "טלפון לדוגמה", email: null, secretary_note: null, notes: null }]);
     sb.tables.set("transport_details", []);
+    sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
     await nav(page).getByRole("link", { name: "הגדרות" }).click();
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());
@@ -409,7 +410,7 @@ test.describe("mock build", () => {
     const contacts = sb.calls.find((c) => c.path === "/rest/v1/speaker_contacts")!;
     expect(contacts.query.get("speaker_id")).toMatch(/^in\.\(/);
 
-    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details"]) {
+    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen"]) {
       authed(sb, p, session.access_token);
     }
   });
@@ -432,7 +433,7 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
     await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים"]);

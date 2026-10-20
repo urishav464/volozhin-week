@@ -2,6 +2,7 @@
 // lesson (category stripe + five stage dots, and a red dot «לעדכן את המרצה"
 // when it changed after the message went out), or a memorial slot. The
 // progress lens paints a closed card by its sources, last year's colours.
+import { memorialCard } from "../domain/memorial";
 import { displayName } from "../domain/names";
 import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
 import { readerFilesOf, stagesOf } from "../domain/stages";
@@ -42,9 +43,18 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   } as const;
 
   if (lesson.kind === "memorial") {
+    // the yellow card (DESIGN «זיכרון»): the fallen's name, the family's status, the planned minutes — never a contact
+    const card = memorialCard(model.week, lesson);
     return (
-      <button type="button" {...common} className={`${common.className} bg-amber-100 border border-amber-300 px-2 py-0.5`}>
-        <span className="block truncate text-xs font-semibold text-amber-950">{lesson.title || "זמן זיכרון"}</span>
+      <button
+        type="button"
+        {...common}
+        data-memorial-card={card.plan?.id ?? ""}
+        aria-label={`${card.title}, ${fmtRange(lesson.start_min, lesson.end_min)}: ${card.line}`}
+        className={`${common.className} bg-amber-100 border border-amber-300 px-2 py-0.5 leading-tight`}
+      >
+        <span className="block truncate text-xs font-semibold text-amber-950">{card.title}</span>
+        {!tiny && <span className="block truncate text-[10px] text-amber-900">{card.line}</span>}
       </button>
     );
   }

@@ -149,7 +149,7 @@ export function KkScreen({ port, me }: { port: DataPort; me: Me }) {
   );
 }
 
-type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
+export type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
 
 // ------------------------------------------------------------------ the window
 
@@ -516,7 +516,7 @@ function SignupItem({
 }
 
 /** Copies to order for the group, and whether they were ordered — logistics' and the admins'. Nothing is filled in for them. */
-function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }: { g: KkGroup; kk: KkData; signed: number; leaders: number; editable: boolean; busy: string | null; act: Act; port: DataPort }) {
+export function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }: { g: KkGroup; kk: KkData; signed: number; leaders: number; editable: boolean; busy: string | null; act: Act; port: DataPort }) {
   const id = useId();
   const order = kk.orders.find((o) => o.group_id === g.id) ?? null;
   const [copies, setCopies] = useState(order ? String(order.copies) : "");

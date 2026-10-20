@@ -8,13 +8,16 @@
 // files are listed apart, «מהמרצה הקודם», for removal. The whole team sees the
 // list (logistics print from it); the edition's content members and admins
 // upload to a closed lesson — the database decides (app.source_refusal), the
-// screen only offers.
+// screen only offers. A memorial slot's materials (5ב-2) are the files that
+// came for the fallen of the plan placed on it, wherever they were uploaded
+// (src/reader/model.ts memorialFiles); they go up to a slot with a plan only.
 import { type DragEvent, type ReactNode, useId, useRef, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
 import { checkPicked, DOCX, fromPreviousSpeaker, SOURCE_ACCEPT, sizeText } from "../../data/sourceRules";
 import type { Lesson, SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
+import { memorialFiles, memorialLeftovers, planOn } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
 import { Button, Confirm } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
@@ -144,11 +147,12 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
   const input = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [over, setOver] = useState(false);
+  const memorial = l.kind === "memorial";
   const lead = l.state === "closed" ? (week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id ?? null) : null;
   const all = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id).sort((a, b) => a.id - b.id);
-  const current = all.filter((f) => !fromPreviousSpeaker(f, lead));
-  const previous = all.filter((f) => fromPreviousSpeaker(f, lead));
-  const mayUpload = actor.canEdit && l.state === "closed" && l.kind === "lesson";
+  const current = memorial ? memorialFiles(week, l) : all.filter((f) => !fromPreviousSpeaker(f, lead));
+  const previous = memorial ? memorialLeftovers(week, l) : all.filter((f) => fromPreviousSpeaker(f, lead));
+  const mayUpload = actor.canEdit && (memorial ? planOn(week, l.id) != null : l.state === "closed");
   const busy = uploads.some((u) => u.progress < 1 && !u.error);
 
   const send = async (files: File[]) => {
@@ -188,7 +192,15 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
     <div className="space-y-2" aria-label="קבצי המקורות" role="group">
       <p className="text-sm font-semibold">הקבצים</p>
       {current.length === 0 ? (
-        <p className="text-sm text-ink-soft">{l.state === "closed" ? "עוד לא הועלו קבצים לשיעור הזה." : "אין קבצים של המרצה הנוכחי/ת."}</p>
+        <p className="text-sm text-ink-soft">
+          {memorial
+            ? planOn(week, l.id)
+              ? "עוד לא הועלו חומרים לזמן הזיכרון הזה."
+              : "עוד לא שובץ/ה כאן חלל/ה: את החומרים מעלים אחרי השיבוץ, במסך «זמני זיכרון»."
+            : l.state === "closed"
+              ? "עוד לא הועלו קבצים לשיעור הזה."
+              : "אין קבצים של המרצה הנוכחי/ת."}
+        </p>
       ) : (
         <ul aria-label="קבצים שהועלו" className="divide-y divide-line">
           {current.map((f) => (
@@ -229,7 +241,8 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
           </label>
           <span className="ms-2 text-ink-soft pointer-coarse:hidden">או לגרור לכאן</span>
           <p className="mt-1 text-xs text-ink-soft">
-            PDF, ‏Word ‏(docx) או תמונה (PNG/JPG), עד 25MB לקובץ. Word נשמר, אבל למקראה צריך PDF. רק דפי המקורות — בלי קבצים עם טלפונים או פרטים אישיים.
+            PDF, ‏Word ‏(docx) או תמונה (PNG/JPG), עד 25MB לקובץ. Word נשמר, אבל למקראה צריך PDF.{" "}
+            {memorial ? "רק החומרים למקראה — בלי טלפונים או פרטי קשר של המשפחה." : "רק דפי המקורות — בלי קבצים עם טלפונים או פרטים אישיים."}
           </p>
         </div>
       )}
@@ -251,18 +264,22 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
           ))}
         </ul>
       )}
-      {previous.length > 0 && <PreviousFiles port={port} week={week} files={previous} actor={actor} notify={notify} reload={reload} />}
+      {previous.length > 0 && <PreviousFiles port={port} week={week} files={previous} actor={actor} notify={notify} reload={reload} memorial={memorial} />}
     </div>
   );
 }
 
 /** Files that came for a speaker who is not this lesson's lead any more (reopen_lesson keeps them): for removal, never in the reader. */
-export function PreviousFiles({ port, week, files, actor, notify, reload }: Omit<SourceFilesProps, "lesson" | "clear"> & { files: SourceFile[] }) {
+export function PreviousFiles({ port, week, files, actor, notify, reload, memorial = false }: Omit<SourceFilesProps, "lesson" | "clear"> & { files: SourceFile[]; memorial?: boolean }) {
   return (
     <div className="rounded-lg bg-amber-50 p-2">
-      <p className="text-sm font-semibold text-amber-900">מהמרצה הקודם</p>
-      <p className="text-xs text-amber-900">השיעור נפתח מחדש אחרי שהקבצים האלה הועלו. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם.</p>
-      <ul aria-label="קבצים מהמרצה הקודם" className="divide-y divide-amber-200">
+      <p className="text-sm font-semibold text-amber-900">{memorial ? "מתוכנית שכבר לא כאן" : "מהמרצה הקודם"}</p>
+      <p className="text-xs text-amber-900">
+        {memorial
+          ? "הקבצים האלה הועלו לתוכנית זיכרון שכבר לא משובצת כאן. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."
+          : "השיעור נפתח מחדש אחרי שהקבצים האלה הועלו. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."}
+      </p>
+      <ul aria-label={memorial ? "קבצים מתוכנית קודמת" : "קבצים מהמרצה הקודם"} className="divide-y divide-amber-200">
         {files.map((f) => (
           <FileRow key={f.id} port={port} week={week} file={f} actor={actor} notify={notify} reload={reload} previous />
         ))}

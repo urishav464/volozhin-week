@@ -148,7 +148,7 @@ export function memorialFiles(week: Week, lesson: Lesson): SourceFile[] {
  * plan is on the slot now — for removal, never in the reader. A file whose fallen is placed on another slot is that
  * slot's (memorialFiles), never listed twice.
  */
-function memorialLeftovers(week: Week, lesson: Lesson): SourceFile[] {
+export function memorialLeftovers(week: Week, lesson: Lesson): SourceFile[] {
   const placed = new Set((week.memorialPlans ?? []).filter((p) => p.lesson_id != null).map((p) => p.fallen_id));
   return [...(week.sourceFiles ?? [])].filter((f) => f.lesson_id === lesson.id && (f.fallen_id == null || !placed.has(f.fallen_id))).sort((a, b) => a.id - b.id);
 }

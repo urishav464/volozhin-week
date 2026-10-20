@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
-import { gateFor, gateForError, handlesSpeakers, isSettingsAdmin, type Gate } from "./data/gate";
+import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, type Gate } from "./data/gate";
 import { makePort } from "./data";
 import type { Me } from "./data/types";
 import { waitingForApproval } from "./domain/mine";
@@ -25,6 +25,8 @@ const KnowledgeScreen = lazy(() => import("./screens/knowledge/KnowledgeScreen")
 const HelpScreen = lazy(() => import("./screens/HelpScreen").then((m) => ({ default: m.HelpScreen })));
 const KkScreen = lazy(() => import("./screens/kk/KkScreen").then((m) => ({ default: m.KkScreen })));
 const ReaderScreen = lazy(() => import("./screens/reader/ReaderScreen").then((m) => ({ default: m.ReaderScreen })));
+const MemorialScreen = lazy(() => import("./screens/memorial/MemorialScreen").then((m) => ({ default: m.MemorialScreen })));
+const LogisticsScreen = lazy(() => import("./screens/logistics/LogisticsScreen").then((m) => ({ default: m.LogisticsScreen })));
 
 type State = { kind: "loading" } | { kind: "gate"; gate: Gate; email: string | null } | { kind: "error"; message: string };
 
@@ -123,6 +125,10 @@ function navFor(me: Me, week: Week | null): NavItem[] {
   if (handlesSpeakers(me)) items.push({ to: "/mine", label: "המרצים שלי" });
   // the outputs (milestone 4): the tracking table, the escorts' list, the designer's export — one section
   items.push({ to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/", "/reader"] });
+  // the logistics team's lists (5ב-2): transports, payments, books, prints — logistics and admins
+  if (handlesLogistics(me)) items.push({ to: "/logistics", label: "לוגיסטיקה" });
+  // memorial times (5ב-2): every member reads them; admins plan and place
+  items.push({ to: "/memorial", label: "זמני זיכרון" });
   // מכריכה לכריכה (milestone 5a): every member reads it; admins write, logistics the book orders
   items.push({ to: "/kk", label: "מכריכה לכריכה" });
   items.push({ to: "/knowledge", label: "ידע" });
@@ -182,8 +188,9 @@ function GateScreen(props: {
       // The gate above stays in front of every route. «הגדרות» is for admins
       // only, the approvals queue for a global admin, «המרצים שלי» for whoever
       // handles speakers; anyone else who opens one lands on the week. The
-      // outputs, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
-      // admin's, the reader content's and admins' (the screens also check the edition on screen).
+      // outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
+      // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
+      // edition on screen).
       return (
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
@@ -195,6 +202,8 @@ function GateScreen(props: {
           <Route path="/export/designer" element={isSettingsAdmin(gate.me) ? <DesignerScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
           <Route path="/reader" element={<ReaderScreen port={props.port} me={gate.me} />} />
           <Route path="/kk" element={<KkScreen port={props.port} me={gate.me} />} />
+          <Route path="/memorial" element={<MemorialScreen port={props.port} me={gate.me} />} />
+          <Route path="/logistics/:tab?" element={handlesLogistics(gate.me) ? <LogisticsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
           <Route path="/help" element={<HelpScreen />} />
           <Route
