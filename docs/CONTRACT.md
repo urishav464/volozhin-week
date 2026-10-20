@@ -1178,6 +1178,22 @@ The digits; a leading `972` or `00972` becomes a `0`, and **one** `0` written af
 digits with no leading `0` get it back (a number cell ate it — «הצעה»); fewer than 6 digits → null. The two are held
 equal value for value (`tests/sql/import.test.ts`).
 
+## A contact inside text — `app.has_contact(text)` ≡ `hasContact` (`src/import/phone.ts`) — `contact_in_text`
+A phone or an e-mail is kept in `speaker_contacts`' `phone` and `email` only — **never** in any other text of the
+payload. One definition, written the same on both sides (the function's expressions are the browser's `PHONE_RUN`,
+`EMAIL_RUN`, `NOT_A_PHONE`, `CONTACT_MARKS`, character for character) and held equal string for string
+(`tests/sql/import.test.ts`, fixed cases and 4,000 seeded ones): an **e-mail** — no space, `@`, `<`, `>`, `(` or `)`
+around one `@`, a dot after it; or a **phone** — a run from a digit (a `+` before it) to a digit of digits, white
+space, the marks a copy carries (bidi controls, zero widths, the soft hyphen), dashes of every kind, brackets and dots,
+with **7 digits or more**, unless the run without its marks is a date («12.3.2026», an hour after it allowed), a range
+of years («1948-1967») or a range of times written with dots («8.30-10.00»). White space is written out (JavaScript's
+`\s`), never `[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
+space, which the definition reads alike): a row's → `import_bad_row` «row:contact_in_text»; the payload's `label` or
+`source` → `contact_in_text` (no row). The wizard never sends one: it takes every contact out of every non-contact
+field first (`stripContacts`; a note's are replaced — `scrubContacts`), attaching one to the row's phone or e-mail
+only when that is unambiguous, else dropping it with a warning beside the row; `src/import/privacy.property.test.ts`
+holds it on thousands of random tables, and that the backstop never refuses what the wizard sends.
+
 ## `commit(kind, payload)` — `import_commit(p_kind text, p_payload jsonb)` → `jsonb`
 One transaction: **every row or none.** In this order: `p_kind` one of `candidates tracking escorts` and `p_payload`
 an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons) or more than 1,000,000 bytes →
@@ -1190,7 +1206,8 @@ Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): 
 `titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and exactly what the
 title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null) → else `bad_value`;
 `affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
-`email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000.
+`email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000; **no phone or e-mail
+in the name, the title, the affiliation, a tag or the notes** (`app.has_contact`, above) → else `contact_in_text`.
 
 Resolved:
 - `merge`: the speaker `speaker_id` (locked) — gone → `stale`.
@@ -1211,16 +1228,19 @@ Resolved:
   whose own record got a field: `version + 1`.
 
 ### `candidates` — `{source, titles_from, rows: SpeakerRow[]}`
-`rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`. Each row as above.
+`rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`, with no phone or e-mail → else
+`contact_in_text`. Each row as above.
 
 ### `tracking` — `{label, start_date, source, titles_from, speakers: SpeakerRow[], lessons: ArchiveLessonRow[]}`
 In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`,
-taken in its key's form (`app.label_key` ≡ `labelKey`: ״ “ ” ″ as `"`, ׳ ‘ ’ as `'`, spaces single — stored so);
+taken in its key's form (`app.label_key` ≡ `labelKey`: ״ “ ” ″ as `"`, ׳ ‘ ’ as `'`, spaces single — stored so),
+with no phone or e-mail → else `contact_in_text`;
 `start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; the editions
 are found **by that key** — two that answer to it (made before it) → `label_ambiguous`; one that is not of kind
 `archive` → `edition_exists`; an archive edition with this label that has a
 `lesson_reviews` row (an admin wrote «איך עבר» on one of its lessons — after the week, below) → `archive_reviewed`: the
-replace would delete it with its lesson, so nothing is replaced; `source` as above. Then the speakers (as above), then:
+replace would delete it with its lesson, so nothing is replaced; `source` as above (`contact_in_text` too). Then the
+speakers (as above), then:
 - **No edition with this label:** a new one — `kind='archive'`, `status='archived'`, `start_date` only as given; its
   grid rows copied from `grid_template` (as `start_edition` makes them), one default room «בית מדרש» (the same label
   made a moment ago by another import → `stale`).
@@ -1233,7 +1253,8 @@ replace would delete it with its lesson, so nothing is replaced; `source` as abo
   `room` 0–9 → else `bad_value` (0 the default room; k «מקביל k+1», made when first
   needed); `title` ≤ 200; `category_id` null or a category → else `bad_value`; `audience` ≤ 120; `sources_kind` one of
   the kinds, `print_when` one of `none before same_day` → else `bad_value`; `sources_note` ≤ 500; `pay_amount` null or
-  a whole 1–100000 → else `bad_amount`; `import_note` a block ≤ 1000; `speakers` a non-empty array of distinct
+  a whole 1–100000 → else `bad_amount`; `import_note` a block ≤ 1000; **no phone or e-mail in the title, the
+  audience, the sources note or the import note** → else `contact_in_text`; `speakers` a non-empty array of distinct
   indexes into the payload's `speakers` → else `bad_value`.
 - Inserted `kind='lesson'`, `state='closed'`, `updated_by` the caller; its speakers — the first `lead`, the rest `co`;
   two rows that resolved to one pool speaker are one speaker here. The room invariant → `room_taken`, the speaker
@@ -1254,8 +1275,8 @@ replace would delete it with its lesson, so nothing is replaced; `source` as abo
 
 ### `escorts` — `{rows: PrefsRow[]}`
 `rows` an array → else `bad_value`. Each row: an object; `speaker_id` a pool speaker → else `stale`; `contact_pref`
-null or a channel (`app.pick_contact_pref`) → else `bad_value`; `secretary_note` a block ≤ 300. **Fill only what is
-empty:** `speakers.contact_pref` (`version + 1`), `speaker_contacts.secretary_note`. No speaker is added.
+null or a channel (`app.pick_contact_pref`) → else `bad_value`; `secretary_note` a block ≤ 300 with no phone or
+e-mail — the note says how, never a number → else `contact_in_text`. **Fill only what is empty:** `speakers.contact_pref` (`version + 1`), `speaker_contacts.secretary_note`. No speaker is added.
 
 ### The result and the log
 `{created, merged, filled, contacts, notes, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}`
