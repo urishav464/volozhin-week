@@ -32,7 +32,7 @@ describe("(a) the candidates", () => {
   m[7] = "note";
 
   it("reads each row: title split, gender «הצעה» from it, tags, the phone apart, statuses and notes as lines", () => {
-    const read = readCandidates(grid, m, { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
+    const read = readCandidates(grid, m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(read[0]).toEqual({
       row: 2, skip: null, warnings: [],
       data: { title: "הרב", name: "דוגמה אלף", key: "דוגמה אלף", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך", "פילוסופיה"], phone: "0000000001", phoneKey: "0000000001", email: null, notes: "טווח ימים: א-ב" },
@@ -44,15 +44,15 @@ describe("(a) the candidates", () => {
     expect(read[5]).toMatchObject({ skip: "כפול בטבלה (כמו שורה 2)" });
     expect(read[6]).toMatchObject({ warnings: ["הטלפון לא נשמר: לא נראה כמו מספר"], data: { phone: null } });
     // the «הצעה» off: no gender at all
-    expect(readCandidates(grid, m, { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: false })[0].data!.gender).toBeNull();
+    expect(readCandidates(grid, m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: false })[0].data!.gender).toBeNull();
   });
 
   it("previews «חדש · תואם · עמום · מדולג», says what a match fills, and waits for every «עמום» before a payload", () => {
-    const read = readCandidates(grid, m, { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
+    const read = readCandidates(grid, m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(lookupFor(read, POOL)).toEqual({ speakerIds: [1], phoneKeys: ["0000000001"] });
     const preview = previewCandidates(read, contextOf(POOL, { phones: [], contacts: [{ speaker_id: 1, phone: false, email: false, secretary_note: false, notes: true }] }));
     expect(preview.map((r) => r.status)).toEqual(["new", "new", "match", "ambiguous", "skip", "skip", "new"]);
-    expect(preview[2].fills).toEqual(["תואר"]); // its affiliation is there already: never overwritten
+    expect(preview[2].fills).toEqual(["תואר: ד״ר"]); // its affiliation is there already: never overwritten
     expect(candidatesPayload(preview, new Map(), "brainstorm-5786", null)).toBeNull();
     expect(undecided(preview, new Map()).map((r) => r.row)).toEqual([5]);
     const choices = new Map<number, Choice>([[5, { action: "merge", target: 1 }], [8, { action: "skip" }]]);
@@ -67,7 +67,7 @@ describe("(a) the candidates", () => {
   });
 
   it("a phone the pool has makes a row «תואם», whatever the name", () => {
-    const read = readCandidates([["מרצה", "טלפון"], ["שם אחר לגמרי", "0000000002"]], ["name", "phone"], { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
+    const read = readCandidates([["מרצה", "טלפון"], ["שם אחר לגמרי", "0000000002"]], ["name", "phone"], { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(previewCandidates(read, contextOf(POOL, { phones: [{ key: "0000000002", speaker_id: 2 }], contacts: [] }))[0]).toMatchObject({ status: "match", match: { target: 2, via: "phone" } });
   });
 
@@ -93,7 +93,7 @@ describe("(b) the tracking sheet", () => {
     ["דוגמה חית", "רביעי 9:15", "", "", "", "", "", ""],
   ];
   const m = defaultMapping("tracking", H, H.length);
-  const opts = { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true };
+  const opts = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true };
   const cats: Category[] = [
     { id: 1, name: "תנ\"ך", color: "#000000", sort: 1, active: true },
     { id: 5, name: "פילוסופיה", color: "#000000", sort: 5, active: true },
@@ -190,7 +190,7 @@ describe("(c) the escorts' file", () => {
 
   it("phrases: split, grouped, pre-ticked when about the channel («הצעה»), payment and transport dropped", () => {
     expect(splitPhrases("דרך המזכירה. תשלום בהעברה בנקאית")).toEqual(["דרך המזכירה", "תשלום בהעברה בנקאית"]);
-    const phrases = phrasesOf(readEscorts(grid, m, { headerRow: true, titles: DEFAULT_TITLES }));
+    const phrases = phrasesOf(readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES }));
     expect(phrases.map((p) => [p.text, p.count, p.channel, p.contact, p.money])).toEqual([
       ["דרך המזכירה", 2, "secretary", true, false],
       ["תשלום בהעברה בנקאית", 1, null, false, true],
@@ -205,7 +205,7 @@ describe("(c) the escorts' file", () => {
   });
 
   it("previews per speaker: ticked phrases as the note, one channel as contact_pref, not in the pool → «מדולג»", () => {
-    const rows = readEscorts(grid, m, { headerRow: true, titles: DEFAULT_TITLES });
+    const rows = readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES });
     const ticked = new Set(["דרך המזכירה", "רק בוואטסאפ", "אוהב/ת קפה", "תשלום בהעברה בנקאית"]);
     const preview = previewEscorts(rows, ticked, NO_LOOKUP);
     const of = (k: string) => preview.find((p) => p.key === k)!;

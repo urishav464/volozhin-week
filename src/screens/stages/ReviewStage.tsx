@@ -59,6 +59,9 @@ export function ReviewSection({
   const overranWord = byGender(speaker?.gender, "חרג מהזמן", "חרגה מהזמן", "חרג/ה מהזמן");
   const mayWrite = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId && win.state === "open"));
 
+  // an imported archive (last year's, from its tracking sheet): no one there handled a speaker in this app — its
+  // reviews are the instructor's to write, with or without a date
+  const imported = week.edition.kind === "archive";
   const state = review ? "done" : win.state === "open" ? "open" : "na";
   const note =
     review === undefined
@@ -67,11 +70,13 @@ export function ReviewSection({
         : "טוען…"
       : review
         ? reviewLine(review, overranWord)
-        : win.state === "open"
-          ? "עוד לא נכתב"
-          : win.state === "before"
-            ? `נפתח ב-${dateText(win.opensOn)}`
-            : "נפתח אחרי השבוע (תאריך השבוע עוד TBD)";
+        : imported
+          ? "מחזור שיובא — המדריך/ה כותב/ת"
+          : win.state === "open"
+            ? "עוד לא נכתב"
+            : win.state === "before"
+              ? `נפתח ב-${dateText(win.opensOn)}`
+              : "נפתח אחרי השבוע (תאריך השבוע עוד TBD)";
 
   return (
     <StageSection stage={{ key: "review", label: "איך עבר", state, note }} open={open} onToggle={onToggle}>
@@ -92,6 +97,7 @@ export function ReviewSection({
           mayWrite={mayWrite}
           win={win}
           isAdmin={actor.isAdmin}
+          imported={imported}
           handlerHere={handler != null && handler === actor.memberId}
           overranWord={overranWord}
           speakerChanged={!!review && review.speaker_id != null && review.speaker_id !== (lead?.speaker_id ?? null)}
@@ -105,7 +111,7 @@ export function ReviewSection({
 }
 
 function ReviewBody({
-  port, week, lesson: l, review, mayWrite, win, isAdmin, handlerHere, overranWord, speakerChanged, notify, clear, reload,
+  port, week, lesson: l, review, mayWrite, win, isAdmin, imported, handlerHere, overranWord, speakerChanged, notify, clear, reload,
 }: {
   port: DataPort;
   week: Week;
@@ -114,6 +120,8 @@ function ReviewBody({
   mayWrite: boolean;
   win: ReturnType<typeof reviewWindow>;
   isAdmin: boolean;
+  /** An imported archive: the instructor writes its reviews. */
+  imported: boolean;
   handlerHere: boolean;
   overranWord: string;
   speakerChanged: boolean;
@@ -150,8 +158,9 @@ function ReviewBody({
   );
 
   if (!mayWrite) {
-    const why =
-      !handlerHere && !isAdmin
+    const why = imported
+      ? "מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה."
+      : !handlerHere && !isAdmin
         ? "כותבים מי שמטפל/ת במרצה והמדריך/ה."
         : win.state === "before"
           ? `אפשר לכתוב מ-${dateText(win.opensOn)}, היום שאחרי השיעור (לפי שעון ישראל). המדריך/ה יכול/ה תמיד.`
@@ -201,8 +210,10 @@ function ReviewBody({
   return (
     <form onSubmit={(e) => void submit(e)} aria-label="איך עבר" className="space-y-3" noValidate>
       <p className="text-xs text-ink-soft">
-        {isAdmin && win.state !== "open"
-          ? "המדריך/ה יכול/ה לכתוב בכל זמן. מי שמטפל/ת במרצה — מהיום שאחרי השיעור."
+        {imported
+          ? "מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה. לצוות התוכן ולמדריך/ה בלבד — בלי מספרי טלפון."
+          : isAdmin && win.state !== "open"
+            ? "המדריך/ה יכול/ה לכתוב בכל זמן. מי שמטפל/ת במרצה — מהיום שאחרי השיעור."
           : "לצוות התוכן ולמדריך/ה בלבד: לא לצוות הלוגיסטי, לא בקישורים ולא בייצוא למעצבת. בלי מספרי טלפון."}
       </p>
       <Field id={`${id}-well`} label="מה עבד (לא חובה)">

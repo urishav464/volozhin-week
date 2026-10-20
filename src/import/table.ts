@@ -25,10 +25,21 @@ export function cleanCell(s: string): string {
 /**
  * Every cell cleaned; rows with nothing in them dropped, and columns empty in every row; every row as wide as the
  * widest. Refused (import_too_big) past the limits — a cell longer than IMPORT_LIMITS.cellChars too: a cell that
- * long is a document pasted into the wrong place, never one value.
+ * long is a document pasted into the wrong place, never one value. What is too long or too wide AS READ is refused
+ * before a single cell is cleaned.
  */
 export function cleanGrid(rows: readonly (readonly string[])[]): Grid {
   if (rows.length > IMPORT_LIMITS.rows * 4) tooBig(); // before any work: far past what blank rows could explain
+  let raw = 0;
+  for (const r of rows) {
+    if (r.length > IMPORT_LIMITS.rowCells) tooBig();
+    for (const c of r) {
+      const n = c?.length ?? 0;
+      if (n > IMPORT_LIMITS.rawCellChars) tooBig();
+      raw += n;
+    }
+  }
+  if (raw > IMPORT_LIMITS.gridChars) tooBig();
   const kept = rows.map((r) => r.map((c) => cleanCell(c ?? ""))).filter((r) => r.some((c) => c !== ""));
   const width = Math.max(0, ...kept.map((r) => r.length));
   const used = Array.from({ length: width }, (_, i) => kept.some((r) => (r[i] ?? "") !== ""));

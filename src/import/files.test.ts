@@ -276,3 +276,83 @@ describe("readDocx — paragraphs and table cells as text", () => {
     expect(code(() => readDocx(big))).toBe("import_too_big");
   });
 });
+
+describe("סבב שני: a small file that multiplies a long cell or a row's width is refused at once — never read for seconds first", () => {
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const docx = (body: string) => zipSync({ "word/document.xml": strToU8(`<w:document ${W}><w:body>${body}</w:body></w:document>`) });
+  /** The refusal (or "ok") and how long it took. */
+  const timed = (fn: () => unknown) => {
+    const t0 = performance.now();
+    const c = code(fn);
+    return { code: c, ms: performance.now() - t0 };
+  };
+  /** A sheet of `cells` cells (60 a row), each pointing to the one shared string of `chars` characters. */
+  const shared = (cells: number, chars: number) => {
+    const col = (c: number) => (c < 26 ? String.fromCharCode(65 + c) : `A${String.fromCharCode(65 + c - 26)}`);
+    let rows = "";
+    for (let r = 0; r * 60 < cells; r++) {
+      let cs = "";
+      for (let c = 0; c < 60 && r * 60 + c < cells; c++) cs += `<c r="${col(c)}${r + 1}" t="s"><v>0</v></c>`;
+      rows += `<row r="${r + 1}">${cs}</row>`;
+    }
+    return workbook([["s", `<sheetData>${rows}</sheetData>`]], { shared: `<si><t>${"א".repeat(chars)}</t></si>` });
+  };
+
+  it("an .xlsx of 3,000 cells pointing to one 5,000,000-character string: refused at the first cell (it took 40 s)", () => {
+    const r = timed(() => readXlsx(shared(3000, 5_000_000)).read(0));
+    expect(r.code).toBe("import_too_big");
+    expect(r.ms).toBeLessThan(3000);
+  });
+
+  it("every cell within its limit, together past the table's text: refused as the cells are put", () => {
+    expect(code(() => readXlsx(shared(1200, 4_999)).read(0))).toBe("import_too_big");
+    expect(readXlsx(shared(120, 4_999)).read(0)).toHaveLength(2); // a long cell, a few times: read
+  });
+
+  it("a .docx row of gridSpan cells, a paragraph of tabs, tables nested deep: refused as they come (they read as an empty table)", () => {
+    expect(code(() => readDocx(docx(`<w:tbl><w:tr>${'<w:tc><w:tcPr><w:gridSpan w:val="60"/></w:tcPr><w:p/></w:tc>'.repeat(5000)}</w:tr></w:tbl>`)))).toBe("import_too_big");
+    expect(code(() => readDocx(docx(`<w:p><w:r>${"<w:tab/>".repeat(100_000)}</w:r></w:p>`)))).toBe("import_too_big");
+    expect(code(() => readDocx(docx("<w:tbl>".repeat(1000))))).toBe("import_too_big");
+    // a cell's text, and all of a document's, counted as read
+    expect(code(() => documentGrid(`<w:document ${W}><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>${"א".repeat(IMPORT_LIMITS.rawCellChars + 1)}</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`))).toBe("import_too_big");
+    // within: a row of 4 cells spanning 60, three tables deep, a paragraph of 10 tabs — read
+    expect(code(() => documentGrid(`<w:document ${W}><w:body><w:tbl><w:tr>${'<w:tc><w:tcPr><w:gridSpan w:val="60"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>'.repeat(4)}</w:tr></w:tbl></w:body></w:document>`))).toBe("ok");
+    expect(documentGrid(`<w:document ${W}><w:body><w:p><w:r><w:t>a</w:t>${"<w:tab/>".repeat(10)}<w:t>b</w:t></w:r></w:p></w:body></w:document>`)).toEqual([["a", "b"]]);
+  });
+
+  it("the gridSpan file the review built (524,288 cells of 60): refused within a second or so (it took 12 s and 0.8 GB, then read as empty)", () => {
+    const r = timed(() => readDocx(docx(`<w:tbl><w:tr>${'<w:tc><w:tcPr><w:gridSpan w:val="60"/></w:tcPr><w:p/></w:tc>'.repeat(524_288)}</w:tr></w:tbl>`)));
+    expect(r.code).toBe("import_too_big");
+    expect(r.ms).toBeLessThan(3000);
+  }, 60_000);
+
+  it("refused AS IT READS — the rest of the file is never reached (a broken tag after the excess is never seen)", () => {
+    const broken = "<w:p><w:r"; // read to the end, this is import_bad_file
+    const body = (x: string) => `<w:document ${W}><w:body>${x}${broken}`;
+    const span = '<w:tc><w:tcPr><w:gridSpan w:val="60"/></w:tcPr><w:p/></w:tc>';
+    expect(code(() => documentGrid(body(`<w:tbl><w:tr>${span.repeat(5)}`)))).toBe("import_too_big"); // a row's width
+    expect(code(() => documentGrid(body(`<w:tbl><w:tr>${span.repeat(4)}</w:tr></w:tbl>`)))).toBe("import_bad_file"); // within it: read on
+    expect(code(() => documentGrid(body(`<w:p><w:r>${"<w:tab/>".repeat(IMPORT_LIMITS.rowCells)}`)))).toBe("import_too_big"); // a paragraph's tabs
+    expect(code(() => documentGrid(body(`<w:p><w:r>${"<w:tab/>".repeat(IMPORT_LIMITS.rowCells - 2)}</w:r></w:p>`)))).toBe("import_bad_file");
+    expect(code(() => documentGrid(body("<w:tbl>".repeat(IMPORT_LIMITS.nesting + 1))))).toBe("import_too_big"); // the nesting
+    expect(code(() => documentGrid(body(`<w:tbl><w:tr><w:tc><w:p><w:r><w:t>${"א".repeat(IMPORT_LIMITS.rawCellChars + 1)}</w:t>`)))).toBe("import_too_big"); // a cell's text
+    const page = `<w:p><w:r><w:t>${"א".repeat(9_000)}</w:t></w:r></w:p>`;
+    expect(code(() => documentGrid(body(page.repeat(Math.ceil(IMPORT_LIMITS.gridChars / 9_000) + 1))))).toBe("import_too_big"); // all the text
+    // the xlsx: a shared string too long for one cell — refused at the first cell that points to it
+    const sheet = `<sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row`; // «<row</worksheet>»: a tag cut short
+    expect(code(() => readXlsx(workbook([["s", sheet]], { shared: `<si><t>${"א".repeat(IMPORT_LIMITS.rawCellChars + 1)}</t></si>` })).read(0))).toBe("import_too_big");
+    expect(code(() => readXlsx(workbook([["s", sheet]], { shared: "<si><t>א</t></si>" })).read(0))).toBe("import_bad_file");
+  });
+
+  it("a tracked move is read once, where it moved to — never its old place (w:moveFrom) as well", () => {
+    const p = (a: string, b: string) => `<w:p><w:r><w:t>${a}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>${b}</w:t></w:r></w:p>`;
+    const g = readDocx(
+      docx(
+        p("שם", "הערה") +
+          '<w:p><w:moveFromRangeStart w:id="0" w:name="m"/><w:moveFrom w:id="1" w:author="x"><w:r><w:t>מרצה מוזז לדוגמה</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="0"/></w:p>' +
+          '<w:p><w:moveTo w:id="2" w:author="x"><w:r><w:t>מרצה מוזז לדוגמה</w:t></w:r></w:moveTo></w:p>',
+      ),
+    );
+    expect(g).toEqual([["שם", "הערה"], ["מרצה מוזז לדוגמה", ""]]);
+  });
+});

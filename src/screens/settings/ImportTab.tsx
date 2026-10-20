@@ -14,20 +14,21 @@ import { errorMessage } from "../../errors";
 import { candidatesPayload, contextOf, lookupFor, type MatchContext, previewCandidates, readCandidates, resolvedRows } from "../../import/candidates";
 import { gridFromClipboard } from "../../import/clipboard";
 import { readDocx } from "../../import/docxRead";
-import { ESCORT_COLUMN, escortsPayload, phrasesOf, previewEscorts, readEscorts } from "../../import/escorts";
-import { defaultMapping, FIELDS, type ImportKind, KIND_LABEL, looksLikeHeader, type Mapping, setMapping } from "../../import/fields";
+import { escortColumns, escortNames, escortsPayload, phrasesOf, previewEscorts, readEscorts } from "../../import/escorts";
+import { defaultMapping, FIELDS, findHeaderRow, HEADER_SEARCH, type ImportKind, KIND_LABEL, type Mapping, setMapping } from "../../import/fields";
 import { IMPORT_LIMITS } from "../../import/limits";
 import type { Choice } from "../../import/match";
-import { columnNames, dataRows } from "../../import/rows";
+import { columnNames, dataRows, type HeaderAt } from "../../import/rows";
 import { sampleGrid } from "../../import/sample";
 import { defaultSourcesRule, type SourcesRule } from "../../import/sources";
 import type { Grid, GridSource } from "../../import/table";
 import {
-  archivePayload, doubleGroups, type GroupDecision, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf, speakerAliases, topicsOf,
+  archivePayload, doubleGroups, type GroupDecision, type LineAs, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf, speakerAliases,
+  topicsOf,
 } from "../../import/tracking";
 import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
-import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, PhrasesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
+import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, LinesTable, PhrasesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
 import { Badge, Button, Confirm, Field, INPUT, Panel, useSettings } from "./kit";
 
 const DEFAULT_SOURCE: Record<ImportKind, string> = { candidates: "brainstorm-5786", tracking: "tracking-5786", escorts: "" };
@@ -53,7 +54,9 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const [table, setTable] = useState<Loaded | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
-  const [headerRow, setHeaderRow] = useState(true);
+  const [headerRow, setHeaderRow] = useState<HeaderAt>(0);
+  /** The escorts' kind with no header row and no escorts' column found: the admin says which column it is (or none). */
+  const [escortAsked, setEscortAsked] = useState<number | "none" | null>(null);
   const [mapping, setMap] = useState<Mapping>([]);
   const [source, setSource] = useState("");
   const [genderFromTitle, setGenderFromTitle] = useState(true);
@@ -66,6 +69,12 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const [topics, setTopics] = useState<Map<string, number | null>>(new Map());
   const [sources, setSources] = useState<Map<string, SourcesRule>>(new Map());
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  /** A phrase's text as the admin edited it (phrase key → text) — to keep the channel without an escort's name. */
+  const [edits, setEdits] = useState<Map<string, string>>(new Map());
+  /** The trainees of the real editions (names only) — read at «בדיקה» for the escorts' file, to keep them out of the phrases. */
+  const [rosterNames, setRosterNames] = useState<string[]>([]);
+  /** A line under a name in the speaker's cell: the admin's «שיוך מוסדי» / «מרצה נוסף/ת». */
+  const [lineAs, setLineAs] = useState<Map<string, LineAs>>(new Map());
   const [confirming, setConfirming] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [commitProblem, setCommitProblem] = useState<string | null>(null);
@@ -83,15 +92,23 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       return n;
     });
 
-  /** A new table, or a new kind: the header row and the mapping start from what the table says. */
+  /** The mapping a header row gives — never an escorts' column (escortColumns, whatever the header row). */
+  const mappingFor = (k: ImportKind, grid: Grid, head: HeaderAt): Mapping => {
+    const guard = escortColumns(grid, head);
+    return defaultMapping(k, head != null ? grid[head] : null, grid[0]?.length ?? 0).map((f, i) => (guard.has(i) ? null : f));
+  };
+  /** A new table, or a new kind: the header row (the first of the first rows that looks like one) and the mapping start from what the table says. */
   const reset = (k: ImportKind | null, t: Loaded | null) => {
     const grid = t?.grid ?? [];
-    const head = !!k && grid.length > 0 && looksLikeHeader(k, grid[0]);
+    const head = k ? findHeaderRow(k, grid) : null;
     setHeaderRow(head);
-    setMap(k ? defaultMapping(k, head ? grid[0] : null, grid[0]?.length ?? 0) : []);
+    setMap(k ? mappingFor(k, grid, head) : []);
+    setEscortAsked(null);
     setCtx(null);
     setChoices(new Map());
     setDecisions(new Map());
+    setEdits(new Map());
+    setLineAs(new Map());
     setConfirming(false);
     setCommitProblem(null);
   };
@@ -165,24 +182,39 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const grid = table?.grid ?? [];
   const names = useMemo(() => columnNames(grid, headerRow), [grid, headerRow]);
   const rows = useMemo(() => dataRows(grid, headerRow), [grid, headerRow]);
+  // the escorts' columns: found (a header in the header row, or one in the first rows), or — in the escorts' file with
+  // no header row and none found — the one the admin names. Never mapped, whatever the mapping says.
+  const foundEscort = useMemo(() => escortColumns(grid, headerRow), [grid, headerRow]);
+  const askEscort = kind === "escorts" && !!table && headerRow == null && foundEscort.size === 0;
+  const escortCols = useMemo(() => (typeof escortAsked === "number" ? new Set([...foundEscort, escortAsked]) : foundEscort), [foundEscort, escortAsked]);
+  const read = useMemo(() => mapping.map((f, i) => (escortCols.has(i) ? null : f)), [mapping, escortCols]);
+  // the escorts' names — as the file writes them and as the rosters have them — only to keep them out of the phrases
+  const escortsNamed = useMemo(() => (kind === "escorts" ? [...escortNames(grid, headerRow, escortCols), ...rosterNames] : []), [kind, grid, headerRow, escortCols, rosterNames]);
 
   // ---- what each kind reads (pure, in memory)
   const readOpts = { headerRow, titles, genderFromTitle };
-  const cand = useMemo(() => (kind === "candidates" && table ? readCandidates(grid, mapping, readOpts) : null), [kind, table, grid, mapping, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
-  const track = useMemo(() => (kind === "tracking" && table ? readTracking(grid, mapping, readOpts) : null), [kind, table, grid, mapping, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
-  const esc = useMemo(() => (kind === "escorts" && table ? readEscorts(grid, mapping, { headerRow, titles }) : null), [kind, table, grid, mapping, headerRow, titles]);
-  const phrases = useMemo(() => (esc ? phrasesOf(esc) : []), [esc]);
+  const cand = useMemo(() => (kind === "candidates" && table ? readCandidates(grid, read, readOpts) : null), [kind, table, grid, read, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trackBase = useMemo(() => (kind === "tracking" && table ? readTracking(grid, read, readOpts) : null), [kind, table, grid, read, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
+  const esc = useMemo(() => (kind === "escorts" && table ? readEscorts(grid, read, { headerRow, titles }) : null), [kind, table, grid, read, headerRow, titles]);
+  const phrases = useMemo(() => (esc ? phrasesOf(esc, escortsNamed) : []), [esc, escortsNamed]);
 
   // a change to what is read takes the check (and the choices made on it) away
   useEffect(() => {
     setCtx(null);
     setConfirming(false);
-  }, [cand, track, esc]);
+  }, [cand, trackBase, esc]);
+  // once checked, the speaker cells' second lines are read against the pool too, and as the admin turned them
+  const poolKeys = useMemo(() => (ctx ? new Set(ctx.match.pool.map((s) => s.name_key)) : undefined), [ctx]);
+  const track = useMemo(
+    () => (trackBase && ctx ? readTracking(grid, read, { ...readOpts, known: poolKeys, lineAs }) : trackBase),
+    [trackBase, ctx, poolKeys, lineAs], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const needed = kind ? FIELDS[kind][0] : null; // the speaker's column: nothing is read without it
-  const mappedNeeded = !!needed && mapping.includes(needed.key);
-  const whenMissing = kind === "tracking" && !mapping.includes("when");
-  const phrasesMissing = kind === "escorts" && !mapping.includes("phrases");
+  const mappedNeeded = !!needed && read.includes(needed.key);
+  const whenMissing = kind === "tracking" && !read.includes("when");
+  const phrasesMissing = kind === "escorts" && !read.includes("phrases");
+  const escortUnanswered = askEscort && escortAsked == null;
 
   const check = async () => {
     setChecking(true);
@@ -192,14 +224,31 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       const categories = kind === "tracking" ? (await data.settings.categories()).filter((c) => c.active) : [];
       const asked =
         kind === "candidates" ? lookupFor(cand ?? [], pool)
-        : kind === "tracking" ? lookupFor((track?.speakers ?? []).map((s) => ({ data: { key: s.key, phoneKey: s.phoneKey } })), pool)
+        : kind === "tracking"
+          ? lookupFor(
+              [
+                ...(trackBase?.speakers ?? []).map((s) => ({ data: { key: s.key, phoneKey: s.phoneKey } })),
+                // every row's phone: one that goes to its speaker only after the admin's choices is asked about too
+                ...(trackBase?.rows ?? []).flatMap((r) => (r.phone?.key ? [{ data: { key: "", phoneKey: r.phone.key } }] : [])),
+              ],
+              pool,
+            )
         : lookupFor((esc ?? []).filter((r) => !r.skip).map((r) => ({ data: { key: r.key, phoneKey: null } })), pool);
       const lookup = await data.imports.lookup(asked.speakerIds, asked.phoneKeys);
-      if (track) {
-        setTopics(new Map(topicsOf(track).map((t) => [t.key, proposedCategory(t.text, categories)])));
-        setSources(new Map(sourcesValuesOf(track).map((v) => [v.key, { kind: defaultSourcesRule(v.text).kind, print: defaultSourcesRule(v.text).print }])));
+      if (trackBase) {
+        setTopics(new Map(topicsOf(trackBase).map((t) => [t.key, proposedCategory(t.text, categories)])));
+        setSources(new Map(sourcesValuesOf(trackBase).map((v) => [v.key, { kind: defaultSourcesRule(v.text).kind, print: defaultSourcesRule(v.text).print }])));
+        setLineAs(new Map());
       }
-      if (kind === "escorts") setTicked(new Set(phrases.filter((p) => p.contact && !p.money).map((p) => p.key)));
+      if (kind === "escorts") {
+        // the trainees of the real editions (names only): a phrase that names one is never ticked by itself
+        const rosters = await Promise.all(editions.filter((e) => e.kind === "real").map((e) => data.settings.roster(e.id)));
+        const roster = rosters.flat().map((r) => r.full_name);
+        setRosterNames(roster);
+        const all = phrasesOf(esc ?? [], [...escortNames(grid, headerRow, escortCols), ...roster]);
+        setTicked(new Set(all.filter((p) => p.contact && !p.money).map((p) => p.key)));
+        setEdits(new Map());
+      }
       setChoices(new Map());
       setCtx({ match: contextOf(pool, lookup), categories });
     } catch (err) {
@@ -214,13 +263,21 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   // the sheet's speakers first (the pool, then each other), «כמו …» as the lessons' own speakers, then the lessons
   const allTrackSpeakers = useMemo(() => (track && ctx ? previewTrackingSpeakers(track, ctx.match) : null), [track, ctx]);
   const alias = useMemo(() => (allTrackSpeakers ? speakerAliases(allTrackSpeakers, choices) : new Map<string, string>()), [allTrackSpeakers, choices]);
-  const plans = useMemo(() => (track && ctx ? planLessons(track, { decisions, categories: topics, sources, alias }) : null), [track, ctx, decisions, topics, sources, alias]);
+  // the speakers left out: a row's phone goes to the one left (planLessons) — decided after the choices
+  const skippedKeys = useMemo(
+    () => new Set([...(allTrackSpeakers ? resolvedSpeakers(allTrackSpeakers, choices) : new Map())].filter(([, r]) => r?.action === "skip").map(([k]) => k as string)),
+    [allTrackSpeakers, choices],
+  );
+  const plans = useMemo(
+    () => (track && ctx ? planLessons(track, { decisions, categories: topics, sources, alias, skipped: skippedKeys }) : null),
+    [track, ctx, decisions, topics, sources, alias, skippedKeys],
+  );
   const usedKeys = useMemo(() => new Set((plans ?? []).filter((p) => !p.skip).flatMap((p) => p.speakerKeys)), [plans]);
   const trackSpeakers = useMemo(
     () => allTrackSpeakers?.filter((s) => !plans || usedKeys.has(alias.get(s.speaker.key) ?? s.speaker.key)) ?? null,
     [allTrackSpeakers, plans, usedKeys, alias],
   );
-  const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ticked, ctx.match) : null), [esc, ctx, ticked]);
+  const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ticked, ctx.match, edits, escortsNamed) : null), [esc, ctx, ticked, edits, escortsNamed]);
   const groups = useMemo(() => (track ? doubleGroups(track) : []), [track]);
 
   const labelTrim = labelKey(label);
@@ -374,33 +431,81 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
 
       {kind && table && (
         <Panel title="אילו עמודות הן מה">
-          <label className="mb-3 inline-flex min-h-11 cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={headerRow}
+          <div className="mb-3 max-w-xl">
+            <label htmlFor={`${id}-header`} className="mb-1 block text-sm font-semibold">
+              שורת הכותרות
+            </label>
+            <select
+              id={`${id}-header`}
+              value={headerRow ?? ""}
               onChange={(e) => {
-                setHeaderRow(e.target.checked);
-                setMap(defaultMapping(kind, e.target.checked ? grid[0] : null, grid[0]?.length ?? 0));
+                const head = e.target.value === "" ? null : Number(e.target.value);
+                setHeaderRow(head);
+                setEscortAsked(null);
+                setMap(mappingFor(kind, grid, head));
               }}
-              className="size-5 accent-ink"
-            />
-            השורה הראשונה היא כותרות
-          </label>
+              aria-describedby={`${id}-header-hint`}
+              className={INPUT}
+            >
+              <option value="">אין שורת כותרות — כל השורות הן נתונים</option>
+              {grid.slice(0, HEADER_SEARCH).map((r, i) => (
+                <option key={i} value={i}>
+                  {`שורה ${i + 1}: ${r.filter(Boolean).slice(0, 4).join(" · ").slice(0, 70)}`}
+                </option>
+              ))}
+            </select>
+            <p id={`${id}-header-hint`} className="mt-1 text-xs text-ink-soft">
+              {headerRow == null
+                ? "כל השורות נקראות כנתונים. אם יש שורת כותרות (בחמש השורות הראשונות) — בוחרים אותה כאן."
+                : headerRow > 0
+                  ? `השורות שמעליה (${headerRow === 1 ? "שורה 1" : `שורות 1–${headerRow}`}: כותרת או הסבר) לא נקראות.`
+                  : "אפשר לבחור שורה אחרת, אם מעל הכותרות יש כותרת או הסבר."}
+            </p>
+          </div>
+          {askEscort && (
+            <div data-undecided={escortAsked == null || undefined} className="mb-3 max-w-xl rounded-lg border border-accent/40 bg-accent-soft p-2.5">
+              <label htmlFor={`${id}-escort`} className="mb-1 block text-sm font-semibold">
+                באיזו עמודה שמות המלווים?
+              </label>
+              <select
+                id={`${id}-escort`}
+                value={escortAsked ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value === "" ? null : e.target.value === "none" ? "none" : Number(e.target.value);
+                  setEscortAsked(v);
+                  if (typeof v === "number") setMap((cur) => cur.map((f, i) => (i === v ? null : f)));
+                }}
+                aria-describedby={`${id}-escort-hint`}
+                className={INPUT}
+              >
+                <option value="">צריך לבחור</option>
+                <option value="none">אין בקובץ עמודה של מלווים</option>
+                {names.map((n, i) => (
+                  <option key={i} value={i}>
+                    {`${n}: ${rows.map((r) => r.cells[i]).filter(Boolean).slice(0, 2).join(" · ").slice(0, 60) || "ריקה"}`}
+                  </option>
+                ))}
+              </select>
+              <p id={`${id}-escort-hint`} className="mt-1 text-xs text-ink-soft">
+                בלי שורת כותרות אי אפשר לדעת לבד. העמודה שנבחרת לא נקראת, והשמות שבה לא נכנסים לשום ניסוח.
+              </p>
+            </div>
+          )}
           <ul aria-label="העמודות" className="grid gap-2 sm:grid-cols-2">
             {names.map((n, i) => {
-              const escortCol = kind === "escorts" && headerRow && ESCORT_COLUMN.test(grid[0][i] ?? "");
-              const samples = rows.map((r) => r.cells[i]).filter(Boolean).slice(0, 2);
+              const escortCol = escortCols.has(i);
+              const samples = escortCol ? [] : rows.map((r) => r.cells[i]).filter(Boolean).slice(0, 2);
               return (
                 <li key={i} className="min-w-0 rounded-lg border border-line bg-paper p-2.5">
                   <label htmlFor={`${id}-col-${i}`} className="block text-sm font-semibold break-words">
                     {n}
                   </label>
                   <p className="mb-1 truncate text-xs text-ink-soft" title={samples.join(" · ")}>
-                    {samples.length ? `לדוגמה: ${samples.join(" · ")}` : "ריקה"}
+                    {escortCol ? "שמות המלווים" : samples.length ? `לדוגמה: ${samples.join(" · ")}` : "ריקה"}
                   </p>
                   <select
                     id={`${id}-col-${i}`}
-                    value={mapping[i] ?? ""}
+                    value={read[i] ?? ""}
                     disabled={escortCol}
                     onChange={(e) => setMap(setMapping(kind, mapping, i, e.target.value || null))}
                     className={INPUT}
@@ -465,9 +570,10 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing} onClick={() => void check()}>
+            <Button kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing || escortUnanswered} onClick={() => void check()}>
               בדיקה מול המאגר
             </Button>
+            {escortUnanswered && <span className="text-sm text-ink-soft">צריך לומר באיזו עמודה שמות המלווים (או שאין).</span>}
             {!mappedNeeded && needed && <span className="text-sm text-ink-soft">צריך לבחור את העמודה של «{needed.label}».</span>}
             {whenMissing && <span className="text-sm text-ink-soft">צריך לבחור את העמודה של «יום ושעה».</span>}
             {phrasesMissing && <span className="text-sm text-ink-soft">צריך לבחור עמודה של ניסוחים.</span>}
@@ -482,9 +588,21 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           <SourcesTable read={track} value={sources} onChange={(k, v) => setSources(new Map(sources).set(k, v))} />
         </>
       )}
-      {kind === "escorts" && ctx && <PhrasesTable phrases={phrases} ticked={ticked} onToggle={(k) => setTicked((cur) => { const n = new Set(cur); if (!n.delete(k)) n.add(k); return n; })} />}
+      {kind === "escorts" && ctx && (
+        <PhrasesTable
+          phrases={phrases}
+          ticked={ticked}
+          edits={edits}
+          names={escortsNamed}
+          onToggle={(k) => setTicked((cur) => { const n = new Set(cur); if (!n.delete(k)) n.add(k); return n; })}
+          onEdit={(k, text) => setEdits((cur) => new Map(cur).set(k, text))}
+        />
+      )}
 
       {ctx && kind === "candidates" && candPreview && candResolved && <CandidatesPreview rows={candPreview} pool={ctx.match} choices={choices} resolved={candResolved} onChoose={choose} />}
+      {ctx && kind === "tracking" && track && track.lines.length > 0 && (
+        <LinesTable lines={track.lines} onChoose={(lineId, as) => setLineAs((cur) => new Map(cur).set(lineId, as))} />
+      )}
       {ctx && kind === "tracking" && trackSpeakers && (
         <>
           <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} resolved={trackResolved ?? new Map()} onChoose={choose} />

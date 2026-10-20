@@ -64,6 +64,15 @@ export function looksLikeHeader(kind: ImportKind, row: readonly string[]): boole
   return row.some((c) => known.has(headerKey(c)));
 }
 
+/** How many of a table's first rows are looked at for its header row — a title above the table (a Word paragraph, a merged Excel row). */
+export const HEADER_SEARCH = 5;
+
+/** The header row the wizard proposes: the first of the table's first rows that looksLikeHeader — null when none does. */
+export function findHeaderRow(kind: ImportKind, grid: readonly (readonly string[])[]): number | null {
+  for (let i = 0; i < Math.min(HEADER_SEARCH, grid.length); i++) if (looksLikeHeader(kind, grid[i])) return i;
+  return null;
+}
+
 /** The mapping the wizard starts with: each known header to its field (a single field only once, the first). */
 export function defaultMapping(kind: ImportKind, header: readonly string[] | null, width: number): Mapping {
   const out: Mapping = Array.from({ length: width }, () => null);

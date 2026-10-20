@@ -146,7 +146,7 @@ describe("gridFromNodes — a pasted table's cells, text only", () => {
     );
     const grid = gridFromNodes(doc(h("body", null, t)));
     expect(grid.slice(1).map((row) => row[0])).toEqual(["הרב בדיקה בתבליט", "הרבנית בדיקה ממוספרת"]);
-    const read = readTracking(grid, defaultMapping("tracking", grid[0], grid[0].length), { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
+    const read = readTracking(grid, defaultMapping("tracking", grid[0], grid[0].length), { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(read.speakers.map((x) => [x.name, x.title])).toEqual([
       ["בדיקה בתבליט", "הרב"],
       ["בדיקה ממוספרת", "הרבנית"],
@@ -163,6 +163,41 @@ describe("gridFromNodes — a pasted table's cells, text only", () => {
     expect(parsed).toBe(false);
     const wide = h("table", null, h("tr", null, h("td", { colspan: "999999" }, "x"), h("td", { colspan: "999999" }, "y"), h("td", { colspan: "999999" }, "z"), h("td", { colspan: "999999" }, "w"), h("td", { colspan: "999999" }, "v")));
     expect(code(() => gridFromNodes(doc(h("body", null, wide))))).toBe("import_too_big");
+  });
+});
+
+describe("סבב שני: what is too long or too wide AS READ is refused before any cleaning, and a long cell before it is carried", () => {
+  it("cleanGrid: a raw cell past twice a cell's limit, a row past 240 cells, the text past 5,000,000 — refused before cleaning", () => {
+    expect(code(() => cleanGrid([[" ".repeat(IMPORT_LIMITS.rawCellChars + 1)]]))).toBe("import_too_big"); // all spaces: refused unread
+    expect(code(() => cleanGrid([Array.from({ length: IMPORT_LIMITS.rowCells + 1 }, () => "")]))).toBe("import_too_big");
+    expect(code(() => cleanGrid(Array.from({ length: 1001 }, () => ["א".repeat(4999)])))).toBe("import_too_big");
+    expect(cleanGrid([[` ${"א".repeat(IMPORT_LIMITS.cellChars)} `]])).toEqual([["א".repeat(IMPORT_LIMITS.cellChars)]]); // spaces around: cleaned, read
+  });
+
+  it("a 4,900,000-character cell with rowspan=2999: refused before it is carried down (it took 38 s)", () => {
+    const big = "א".repeat(4_900_000);
+    const t0 = performance.now();
+    const rows = [h("tr", null, h("td", { rowspan: "2999" }, big), h("td", null, "x")), ...Array.from({ length: 2998 }, () => h("tr", null, h("td", null, "x")))];
+    expect(code(() => gridFromNodes(doc(h("body", null, h("table", null, ...rows)))))).toBe("import_too_big");
+    expect(performance.now() - t0).toBeLessThan(3000);
+  });
+
+  it("refused as the walk goes — a node past the excess is never reached", () => {
+    const poison: MiniNode = { nodeType: 1, nodeName: "TR", nodeValue: null, get childNodes(): ArrayLike<MiniNode> { throw new Error("read past the limit"); } };
+    const long = "א".repeat(IMPORT_LIMITS.rawCellChars + 1);
+    expect(code(() => gridFromNodes(doc(h("body", null, h("table", null, h("tr", null, h("td", { rowspan: "3" }, long)), poison)))))).toBe("import_too_big");
+    const cell = "א".repeat(4_999);
+    const rows = [h("tr", null, h("td", { rowspan: "1100" }, cell), h("td", null, "x")), ...Array.from({ length: 1099 }, () => h("tr", null, h("td", null, "x"))), poison];
+    expect(code(() => gridFromNodes(doc(h("body", null, h("table", null, ...rows)))))).toBe("import_too_big");
+    expect(code(() => gridFromNodes(doc(h("body", null, h("table", null, h("tr", null, h("td", null, "x")), poison)))))).toBe("raw:read past the limit"); // within: read on
+  });
+
+  it("a cell within its limit carried past the table's text: refused as it is carried", () => {
+    const cell = "א".repeat(4_999);
+    const rows = [h("tr", null, h("td", { rowspan: "1100" }, cell), h("td", null, "x")), ...Array.from({ length: 1099 }, () => h("tr", null, h("td", null, "x")))];
+    expect(code(() => gridFromNodes(doc(h("body", null, h("table", null, ...rows)))))).toBe("import_too_big");
+    const few = [h("tr", null, h("td", { rowspan: "3" }, cell), h("td", null, "x")), h("tr", null, h("td", null, "y")), h("tr", null, h("td", null, "z"))];
+    expect(gridFromNodes(doc(h("body", null, h("table", null, ...few))))).toHaveLength(3);
   });
 });
 

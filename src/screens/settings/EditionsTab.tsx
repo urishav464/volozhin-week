@@ -197,7 +197,8 @@ function StartEdition({
   const [label, setLabel] = useState(() => hebrewYearLabel());
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [confirming, setConfirming] = useState(false);
+  /** The confirm, open — with the dry run's count of who would be deactivated (start_edition_preview), when asked for. */
+  const [confirming, setConfirming] = useState<{ deactivate: number | null } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const id = useId();
@@ -214,7 +215,7 @@ function StartEdition({
 
   const start = async () => {
     setProblem(null);
-    setConfirming(false);
+    setConfirming(null);
     const name = label.trim();
     let newId = 0;
     const ok = await run(
@@ -239,8 +240,17 @@ function StartEdition({
   };
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
-    if (current) setConfirming(true);
-    else void start();
+    if (!current) {
+      void start();
+      return;
+    }
+    setProblem(null);
+    if (!deactivate) {
+      setConfirming({ deactivate: null });
+      return;
+    }
+    // the confirm says how many will be deactivated: the dry run's count (the same predicate as start_edition)
+    void run("preview", async () => setConfirming({ deactivate: (await port.previewStart(true)).deactivate }), null);
   };
 
   if (opened) {
@@ -287,13 +297,21 @@ function StartEdition({
         <div className="hidden sm:block" />
         <DateFields id={id} date={date} setDate={setDate} time={time} setTime={setTime} />
         {current && (
-          <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm sm:col-span-2">
-            שימו לב: פתיחת מחזור חדש מעבירה את <b>{current.label}</b> לארכיון. הצוות שלו יוכל רק לצפות בו, והמרצים והקטגוריות נשארים לשנה הבאה.
+          <p data-start-warning className="rounded-lg bg-accent-soft px-3 py-2 text-sm sm:col-span-2">
+            שימו לב: פתיחת מחזור חדש מעבירה את <b>{current.label}</b> לארכיון.{" "}
+            {deactivate ? "חברי התוכן והלוגיסטיקה שלו לא ייכנסו עוד (האדמינים נשארים)" : "הצוות שלו יוכל רק לצפות בו"}, והמרצים והקטגוריות נשארים לשנה הבאה.
           </p>
         )}
         {current && (
           <div className="sm:col-span-2">
-            <DeactivateOption value={deactivate} onChange={setDeactivate} current={current.label} />
+            <DeactivateOption
+              value={deactivate}
+              onChange={(v) => {
+                setDeactivate(v);
+                setConfirming(null);
+              }}
+              current={current.label}
+            />
           </div>
         )}
         {problem && (
@@ -303,22 +321,32 @@ function StartEdition({
         )}
         <div className="sm:col-span-2">
           {confirming && current ? (
+            // the year archived and (the option on) the team deactivated in one go: a danger confirm, its focus on «ביטול»
             <Confirm
               text={
                 <>
-                  לפתוח את <b>{label.trim()}</b> ולהעביר את <b>{current.label}</b> לארכיון?
-                  {deactivate ? " חברי התוכן והלוגיסטיקה שלו יושבתו." : " הצוות שלו יישאר פעיל."}
+                  לפתוח את <b>{label.trim()}</b>? <b>{current.label}</b> עובר לארכיון.{" "}
+                  <span data-deactivate-count>
+                    {confirming.deactivate == null
+                      ? "הצוות שלו יישאר פעיל ויוכל לצפות בו."
+                      : confirming.deactivate === 0
+                        ? "אין בו חברי תוכן או לוגיסטיקה — אף אחד לא מושבת."
+                        : confirming.deactivate === 1
+                          ? "חבר/ת צוות אחד/ת שלו (תוכן או לוגיסטיקה) יושבת/ת — לא ייכנס/תיכנס עוד."
+                          : `${confirming.deactivate} חברי צוות שלו (תוכן ולוגיסטיקה) יושבתו — לא ייכנסו עוד.`}
+                  </span>
+                  {confirming.deactivate != null && " האדמינים נשארים, ואף אחד לא נמחק."} אין ביטול.
                 </>
               }
-              confirm="כן, לפתוח"
-              danger={false}
+              confirm="כן, לפתוח ולהעביר לארכיון"
+              danger
               busy={busy === "start"}
               onConfirm={() => void start()}
-              onCancel={() => setConfirming(false)}
+              onCancel={() => setConfirming(null)}
             />
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button kind="primary" type="submit" busy={busy === "start"} busyLabel="פותח…" disabled={!label.trim()}>
+              <Button kind="primary" type="submit" busy={busy === "start" || busy === "preview"} busyLabel={busy === "preview" ? "בודק…" : "פותח…"} disabled={!label.trim()}>
                 פתיחת המחזור
               </Button>
               {current && (

@@ -4,7 +4,7 @@
 // shows it, by the cell's number format), booleans — the first sheet or a chosen one. Formulas are never evaluated:
 // the value Excel last saved is the cell. Merged cells: the top-left value is given to each row of the merge's first
 // column (a day merged down its rows), as a pasted table's rowspan is. Hard limits: src/import/limits.ts.
-import { badFile, IMPORT_LIMITS, tooBig } from "./limits";
+import { badFile, IMPORT_LIMITS, readBudget, tooBig } from "./limits";
 import { cleanGrid, type Grid } from "./table";
 import { attr, local, xmlEvents } from "./xml";
 import { type Budget, newBudget, readText, type ZipEntry, zipEntries } from "./zip";
@@ -145,9 +145,13 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
   let inIs = false;
   let inT = false;
   let phonetic = 0; // inside <rPh>: a reading aid, never the value
+  // every cell counted as it is put: one shared string (or a merge) given to many cells is refused at the first too
+  // long, and at the total — never copied into thousands of cells first
+  const budget = readBudget();
   const put = (r: number, c: number, text: string) => {
     if (text === "") return;
     if (r >= IMPORT_LIMITS.rows || c >= IMPORT_LIMITS.cols) tooBig();
+    budget.cell(text);
     let row = cells.get(r);
     if (!row) cells.set(r, (row = new Map()));
     if (!row.has(c) && ++filled > IMPORT_LIMITS.cells) tooBig();

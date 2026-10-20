@@ -290,12 +290,15 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
           ) : null}
           {(allowed || e.purged_at) && (
             <>
-              <p className="rounded-lg border border-bad/40 bg-bad/5 px-3 py-2">
-                <b>קודם מייצאים את הארכיון</b> (למטה, «ייצוא ארכיון»): אחרי המחיקה פרטי ההסעה כבר לא יהיו בשום מקום.{" "}
-                <button type="button" className="inline-flex min-h-11 items-center underline" onClick={() => scrollTo("archive-panel")}>
-                  לייצוא הארכיון
-                </button>
-              </p>
+              {/* the reminder is for before the purge: once it ran, what it warned of is gone — the line above says so */}
+              {!e.purged_at && (
+                <p data-export-first className="rounded-lg border border-bad/40 bg-bad/5 px-3 py-2">
+                  <b>קודם מייצאים את הארכיון</b> (למטה, «ייצוא ארכיון»): אחרי המחיקה פרטי ההסעה כבר לא יהיו בשום מקום.{" "}
+                  <button type="button" className="inline-flex min-h-11 items-center underline" onClick={() => scrollTo("archive-panel")}>
+                    לייצוא הארכיון
+                  </button>
+                </p>
+              )}
               <div className="max-w-sm">
                 <label htmlFor={`${id}-confirm`} className="mb-1 block font-semibold">
                   כדי למחוק, מקלידים את שם המחזור: <bdi className="font-mono">{e.label}</bdi>

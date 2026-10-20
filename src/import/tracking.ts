@@ -3,7 +3,11 @@
 //   * when: «שיעור ב» read by parseWhen; unreadable → the row is «מדולג» with the reason. Only a start written: the
 //     end of the grid's lesson row that starts then — else «מדולג».
 //   * speakers: one or more names per row, each matched to the pool as the candidates are (one choice per speaker,
-//     not per row); the row's phone goes to its speaker's contacts — only when the row has one speaker.
+//     not per row). A line of one name under another in the cell may be its affiliation («(ישיבת דוגמה)»: ExtraLine,
+//     «הצעה», the admin turns it). The row's phone goes to its speaker's contacts — decided after the admin's choices:
+//     to the one speaker of the row still imported (planLessons), never when two are.
+//   * «כפולה» where the sheet writes it — «שיעור ב», beside the name, or a cell that says only it; never a word of a
+//     title («זהות כפולה»: the title whole, the row not double). «שיעור להורים» where a cell begins with it.
 //   * «כפולה» rows: consecutive rows marked so are one group; the admin decides per group — parallel lessons (each
 //     its own room) or one merged lesson (the speakers together; its range from the first start to the last end,
 //     and when every row is the same slot, that slot and the next one: «הצעה», shown).
@@ -45,9 +49,12 @@ export const WHEN_PROBLEM: Record<WhenProblem, string> = {
 const DOUBLE = /(?<![א-ת])כפולה(?![א-ת])/;
 /** The marker with the dash, comma or brackets around it, on one line («הרב פלוני - כפולה», «(כפולה)»). */
 const DOUBLE_MARK = /[ \t\-–—־,]*\(?[ \t]*(?<![א-ת])כפולה(?![א-ת])[ \t]*\)?[ \t\-–—־,]*/g;
-const PARENTS = /שיעור להורים/;
+/** «שיעור להורים» where it marks the lesson: a cell (or the rest of «שיעור ב») that BEGINS with it — never a title that mentions it. */
+const PARENTS = /^[\s\-–—־,.:()]*שיעור\s+להורים/;
 /** A memorial row: a speaker, title or time cell that BEGINS with «זמן זיכרון» («זמן זיכרון א», «זמן זיכרון – …»). */
 const MEMORIAL = /^\s*זמן\s*זיכרון/;
+/** A line wholly in brackets: «(ישיבת דוגמה)». */
+const BRACKETED = /^\((.+)\)$/;
 const chars = (s: string) => [...s].length;
 const oneLine = (s: string) => s.replace(/\n/g, " ").trim();
 
@@ -71,6 +78,8 @@ export interface TrackingRow {
   audience: string | null;
   /** «כותרת: ערך» lines for the import note (not yet cleared of phones). */
   notes: string[];
+  /** The row's phone, read (it goes to the row's speaker — the one still imported after the admin's choices). */
+  phone: { value: string; key: string | null } | null;
 }
 
 export interface TrackingSpeaker {
@@ -78,26 +87,60 @@ export interface TrackingSpeaker {
   title: string | null;
   name: string;
   gender: Gender | null;
+  /** «שיוך מוסדי»: a line under the name in its cell («(ישיבת דוגמה)»), when it was read as one. */
+  affiliation: string | null;
   phone: string | null;
   phoneKey: string | null;
   /** The rows it teaches in. */
   rows: number[];
 }
 
+export type LineAs = "affiliation" | "speaker";
+
+/**
+ * A line under a name in the speaker's cell (a Word cell's second paragraph, a Sheets cell's Alt+Enter) that holds one
+ * name-like text: the affiliation of the name above it, or a speaker of its own — the read's «הצעה», which the admin
+ * may turn. A line wholly in brackets, or one with no title that is no name of the sheet or the pool, is an
+ * affiliation; a title, or a name the sheet or the pool has, is a speaker.
+ */
+export interface ExtraLine {
+  /** «row:index» — the admin's choice is kept by it. */
+  id: string;
+  row: number;
+  /** The line as written. */
+  text: string;
+  /** The speaker above it (its key): whose affiliation it would be. */
+  of: string;
+  ofName: string;
+  /** What it is read as — the read's own («הצעה») or the admin's. */
+  as: LineAs;
+  /** The admin turned it. */
+  chosen: boolean;
+  /** Why the read made it what it is. */
+  why: string;
+}
+
 export interface TrackingRead {
   rows: TrackingRow[];
   speakers: TrackingSpeaker[];
+  /** The speaker cells' lines that may be an affiliation (in the sheet's order). */
+  lines: ExtraLine[];
 }
 
 export interface TrackingOptions {
-  headerRow: boolean;
+  headerRow: number | null;
   titles: readonly string[];
   genderFromTitle: boolean;
+  /** The pool's name keys (once checked): a line that is one of them is a speaker. */
+  known?: ReadonlySet<string>;
+  /** The admin's choice for a line (ExtraLine.id → what it is). */
+  lineAs?: ReadonlyMap<string, LineAs>;
 }
 
 /** A cell that only says «כפולה» marks the row; it is not a value. */
-const value = (s: string) => (DOUBLE.test(s) && s.replace(DOUBLE, "").replace(/[\s()'"-]/g, "") === "" ? "" : s);
-/** A name or a title with the «כפולה» marker beside it: the marker out, the lines kept. */
+const markOnly = (s: string) => DOUBLE.test(s) && s.replace(DOUBLE, "").replace(/[\s()'"\-–—־,.]/g, "") === "";
+const value = (s: string) => (markOnly(s) ? "" : s);
+/** A name with the «כפולה» marker beside it: the marker out, the lines kept. */
 export const withoutMark = (s: string) =>
   s
     .split("\n")
@@ -105,63 +148,114 @@ export const withoutMark = (s: string) =>
     .filter(Boolean)
     .join("\n");
 
+/** A speaker cell as lines of names: «פלוני + פלמוני» on one line are two speakers, each line apart. */
+const cellLines = (cell: string) => withoutMark(cell).split("\n").map((line) => splitSpeakers(line));
+
 export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): TrackingRead {
   const names = columnNames(grid, o.headerRow);
+  const data = dataRows(grid, o.headerRow);
+  // the sheet's own names: every name on a first line, or beside another on its line — a line under a name that is
+  // one of them is a speaker, not an institution
+  const sheetKeys = new Set<string>();
+  for (const { cells } of data) {
+    cellLines(cellOf(cells, m, "speaker")).forEach((line, i) => {
+      if (i === 0 || line.length > 1) for (const raw of line) sheetKeys.add(nameKey(splitTitle(raw, o.titles).name));
+    });
+  }
   const speakers = new Map<string, TrackingSpeaker>();
-  const rows = dataRows(grid, o.headerRow).map(({ row, cells }): TrackingRow => {
+  const lines: ExtraLine[] = [];
+  const rows = data.map(({ row, cells }): TrackingRow => {
     const warnings: string[] = [];
     // the markers are read in the mapped columns only — a column left «לא לייבא» is not read at all
     const mapped = cells.filter((_, i) => m[i] != null);
-    const double = mapped.some((c) => DOUBLE.test(c));
+    const speakerCell = cellOf(cells, m, "speaker");
+    const whenRaw = cellOf(cells, m, "when");
+    // «כפולה» where the sheet writes it: in «שיעור ב», beside the name in the speaker's cell, or a cell that says only
+    // it — never a word of a title («זהות כפולה»), and a title is never cut
+    const double = DOUBLE.test(speakerCell) || DOUBLE.test(whenRaw) || mapped.some(markOnly);
     const base: Omit<TrackingRow, "skip"> = {
-      row, warnings, double, when: null, whenProblem: null, speakerKeys: [], title: null, topic: "", sources: "", transport: "", confirmFrom: "", audience: null, notes: [],
+      row, warnings, double, when: null, whenProblem: null, speakerKeys: [], title: null, topic: "", sources: "", transport: "", confirmFrom: "", audience: null, notes: [], phone: null,
     };
     // the title first: a row skipped (a memorial time, its time unread) is still recognized by it in the preview
-    base.title = oneLine(withoutMark(cellOf(cells, m, "title"))) || null;
+    base.title = oneLine(value(cellOf(cells, m, "title"))) || null;
     if (["speaker", "title", "when"].some((f) => MEMORIAL.test(cellOf(cells, m, f)))) return { ...base, skip: "זמן זיכרון — לא מיובא (זמני הזיכרון נבנים במסך «זמני זיכרון»)" };
-    const whenCell = oneLine(cellOf(cells, m, "when"));
+    const whenCell = oneLine(whenRaw);
     const w = whenCell ? parseWhen(whenCell) : "no_time";
     const when = typeof w === "string" ? null : w;
     const whenProblem = typeof w === "string" ? WHEN_PROBLEM[w] : null;
     const notes: string[] = [];
     const rest = when?.rest.replace(new RegExp(DOUBLE, "g"), "").replace(PARENTS, "").replace(/[\s,.()-]+/g, " ").trim();
     if (rest) notes.push(`שיעור ב: ${whenCell}`);
-    // the speakers
+    // the speakers: each line's names; a line of one name under another may be its affiliation (ExtraLine)
     const speakerKeys: string[] = [];
-    const list = splitSpeakers(withoutMark(cellOf(cells, m, "speaker")));
-    for (const raw of list) {
-      const { title, name } = splitTitle(raw, o.titles);
-      const key = nameKey(name);
-      if (!key) continue;
-      if (chars(name) > LIMITS.name) return { ...base, skip: `שם המרצה ארוך מ-${LIMITS.name} תווים` };
-      if (!speakerKeys.includes(key)) speakerKeys.push(key);
-      const s = speakers.get(key) ?? { key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, phone: null, phoneKey: null, rows: [] };
-      if (!s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
-      s.rows.push(row);
-      speakers.set(key, s);
+    const affiliations: { key: string; text: string }[] = [];
+    let above: { key: string; name: string } | null = null;
+    let index = 0;
+    for (const [i, line] of cellLines(speakerCell).entries()) {
+      for (const raw of line) {
+        index++;
+        const { title, name } = splitTitle(raw, o.titles);
+        const key = nameKey(name);
+        if (!key) continue;
+        if (i > 0 && line.length === 1 && above) {
+          const id = `${row}:${index}`;
+          const bracket = BRACKETED.exec(raw.trim());
+          const read: [LineAs, string] = bracket
+            ? ["affiliation", "בסוגריים"]
+            : title
+              ? ["speaker", `בתואר ${title}`]
+              : sheetKeys.has(key)
+                ? ["speaker", "שם שמופיע בגיליון"]
+                : o.known?.has(key)
+                  ? ["speaker", "שם שבמאגר"]
+                  : ["affiliation", "בלי תואר, ולא שם שבגיליון או במאגר"];
+          const chosen = o.lineAs?.get(id);
+          const as = chosen ?? read[0];
+          lines.push({ id, row, text: raw.trim(), of: above.key, ofName: above.name, as, chosen: chosen != null && chosen !== read[0], why: read[1] });
+          if (as === "affiliation") {
+            affiliations.push({ key: above.key, text: (bracket ? bracket[1] : raw).trim() });
+            continue;
+          }
+        }
+        if (chars(name) > LIMITS.name) return { ...base, skip: `שם המרצה ארוך מ-${LIMITS.name} תווים` };
+        if (!speakerKeys.includes(key)) speakerKeys.push(key);
+        const s = speakers.get(key) ?? { key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: null, phone: null, phoneKey: null, rows: [] };
+        if (!s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
+        s.rows.push(row);
+        speakers.set(key, s);
+        above = { key, name };
+      }
+    }
+    // a speaker's affiliation lines, together (the first row that gives one; never past the pool's limit)
+    for (const key of new Set(affiliations.map((a) => a.key))) {
+      const s = speakers.get(key);
+      if (!s || s.affiliation) continue;
+      const text = affiliations.filter((a) => a.key === key).map((a) => a.text).join(", ");
+      if (chars(text) > LIMITS.affiliation) warnings.push(`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`);
+      else s.affiliation = text;
     }
     if (speakerKeys.length === 0 && !double) return { ...base, when, whenProblem, skip: "אין מרצה" };
     base.speakerKeys = speakerKeys;
-    // the phone: to the speaker's contacts, when the row has exactly one
+    // the phone: read here; it goes to the row's speaker — when one is left after the admin's choices (planLessons)
     const phone = normalizePhone(cellOf(cells, m, "phone"));
     if (phone.problem) warnings.push("הטלפון לא נשמר: לא נראה כמו מספר");
-    else if (phone.value && speakerKeys.length === 1) {
-      const s = speakers.get(speakerKeys[0])!;
-      if (!s.phone) Object.assign(s, { phone: phone.value, phoneKey: phone.key });
-    } else if (phone.value) warnings.push("הטלפון לא נשמר: יש בשורה יותר ממרצה אחד/ת");
+    else if (phone.value) {
+      base.phone = { value: phone.value, key: phone.key };
+      if (speakerKeys.length === 1) {
+        const s = speakers.get(speakerKeys[0])!;
+        if (!s.phone) Object.assign(s, { phone: phone.value, phoneKey: phone.key });
+      }
+    }
     const title = base.title;
     if (title && chars(title) > IMPORT_RULES.lesson_title) return { ...base, title: null, skip: `הכותרת ארוכה מ-${IMPORT_RULES.lesson_title} תווים` };
     notes.push(...noteLines(labelledCells(cells, m, "note", names)));
-    const audience = mapped.some((c) => PARENTS.test(c)) ? "שיעור להורים" : null;
+    // «שיעור להורים»: a mapped cell that begins with it (the title «שיעור להורים», a note column), or «שיעור ב» after its time
+    const audience = mapped.some((c) => PARENTS.test(c)) || (when != null && PARENTS.test(when.rest)) ? "שיעור להורים" : null;
     return {
-      row,
+      ...base,
       skip: when || double ? null : whenProblem,
-      warnings,
-      double,
       when,
       whenProblem,
-      speakerKeys,
-      title,
       topic: oneLine(value(cellOf(cells, m, "topic"))),
       sources: value(cellOf(cells, m, "sources")),
       transport: value(cellOf(cells, m, "transport")),
@@ -170,7 +264,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
       notes,
     };
   });
-  return { rows, speakers: [...speakers.values()] };
+  return { rows, speakers: [...speakers.values()], lines };
 }
 
 export interface DoubleGroup {
@@ -276,12 +370,16 @@ export interface LessonPlan {
   pay_amount: number | null;
   import_note: string | null;
   speakerKeys: string[];
+  /** Its rows' phones, each to the row's one speaker still imported after the admin's choices (the speaker's key). */
+  phones: { speaker: string; value: string }[];
 }
 
 export interface PlanInput {
   decisions: ReadonlyMap<number, GroupDecision>;
   /** A speaker the admin said is another row's speaker («אותו/ה מרצה כמו …»): its key → that speaker's key. */
   alias?: ReadonlyMap<string, string>;
+  /** The speakers the admin left out («לא לייבא», «דילוג»): a row's phone goes to the one speaker left, if one is. */
+  skipped?: ReadonlySet<string>;
   /** topic key → category id (null: none). */
   categories: ReadonlyMap<string, number | null>;
   sources: ReadonlyMap<string, SourcesRule>;
@@ -308,7 +406,7 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
     return {
       rows, skip: why, warnings: rs.flatMap((r) => r.warnings), day: (at?.day ?? 0) as Day, start_min: at?.start ?? 0, end_min: at?.end ?? 0, rangeSuggested: false,
       rangeSlots: null, room: 0, title: rs.find((r) => r.title)?.title ?? null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null,
-      pay_amount: null, import_note: null, speakerKeys: keysOf(rs),
+      pay_amount: null, import_note: null, speakerKeys: keysOf(rs), phones: [],
     };
   };
 
@@ -316,6 +414,15 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
   const lessonOf = (rs: TrackingRow[], at: { day: Day; start: number; end: number; suggested: boolean; slots?: number }): LessonPlan => {
     const warnings = rs.flatMap((r) => r.warnings);
     const speakerKeys = keysOf(rs);
+    // a row's phone: to its speaker — a row of one speaker gave it when read; a row of more is decided now, after the
+    // admin's choices: to the one speaker of the row still imported, if one is
+    const phones: { speaker: string; value: string }[] = [];
+    for (const r of rs) {
+      if (!r.phone || r.speakerKeys.length < 2) continue;
+      const left = [...new Set(r.speakerKeys.filter((k) => !input.skipped?.has(k)).map((k) => input.alias?.get(k) ?? k))];
+      if (left.length === 1) phones.push({ speaker: left[0], value: r.phone.value });
+      else if (left.length > 1) warnings.push("הטלפון לא נשמר: יש בשורה יותר ממרצה אחד/ת");
+    }
     const where = { day: at.day, start: at.start, end: at.end, rest: "" };
     if (speakerKeys.length === 0) return skipped(rs.map((r) => r.row), "אין מרצה", where);
     if (at.day === 4 && at.end > THURSDAY_ENDED) return skipped(rs.map((r) => r.row), "השבוע של אשתקד נגמר בחמישי ב-19:00 — לא היה שיעור בשעה הזו", where);
@@ -366,6 +473,7 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
       pay_amount: pay,
       import_note: note,
       speakerKeys,
+      phones,
     };
   };
 
@@ -457,7 +565,7 @@ export function previewTrackingSpeakers(read: TrackingRead, ctx: MatchContext): 
   const out = read.speakers.map((s): TrackingSpeakerPreview => {
     const match = matchSpeaker(s.key, s.phoneKey, ctx.pool, ctx.phones);
     const target = match.status === "match" ? ctx.pool.find((x) => x.id === match.target) : undefined;
-    const d = { title: s.title, gender: s.gender, affiliation: null, topics: [], phone: s.phone, email: null, notes: null };
+    const d = { title: s.title, gender: s.gender, affiliation: s.affiliation, topics: [], phone: s.phone, email: null, notes: null };
     return { speaker: s, status: match.status, match, fills: target ? fillPlan(target, ctx.flags.get(target.id), d) : [] };
   });
   // the speakers new to the pool, against the earlier ones of the sheet: the same phone, or a name 0.6 alike
@@ -509,6 +617,9 @@ export function archivePayload(plans: LessonPlan[], speakers: TrackingSpeakerPre
   if (used.some((k) => action.get(k) == null)) return null;
   if (speakers.some((s) => action.get(s.speaker.key) == null && used.includes(s.speaker.key))) return null;
   const byKey = new Map(speakers.map((s) => [s.speaker.key, s.speaker]));
+  // a row's phone to its one speaker left after the choices (planLessons) — for a speaker the read gave none
+  const rowPhone = new Map<string, string>();
+  for (const p of lessons) for (const ph of p.phones) if (!rowPhone.has(ph.speaker)) rowPhone.set(ph.speaker, ph.value);
   const rows: SpeakerRow[] = [];
   const ref = new Map<string, number>();
   for (const s of speakers) {
@@ -518,7 +629,8 @@ export function archivePayload(plans: LessonPlan[], speakers: TrackingSpeakerPre
     if (!as) ref.set(s.speaker.key, rows.length);
     rows.push({
       row: s.speaker.rows[0], action: a.action, speaker_id: a.action === "merge" ? a.target : null,
-      title: s.speaker.title, name: as ? byKey.get(as)!.name : s.speaker.name, gender: s.speaker.gender, affiliation: null, topics: [], phone: s.speaker.phone, email: null, notes: null,
+      title: s.speaker.title, name: as ? byKey.get(as)!.name : s.speaker.name, gender: s.speaker.gender, affiliation: s.speaker.affiliation, topics: [],
+      phone: s.speaker.phone ?? (as ? null : (rowPhone.get(s.speaker.key) ?? null)), email: null, notes: null,
     });
   }
   const out: ArchiveLessonRow[] = [];

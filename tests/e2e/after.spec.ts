@@ -141,6 +141,7 @@ test.describe("demo build", () => {
     await expect(report).toContainText(/פרטי הסעה של [1-9]\d* שיעורים נמחקו/);
     await expect(report).toContainText(/[1-9]\d* קישורים בוטלו/);
     await expect(purge.locator("[data-purged]")).toContainText("נמחק ב-");
+    await expect(purge.locator("[data-export-first]")).toHaveCount(0); // the «export first» warning is for before — not over the report
     // the checklist's third step is done
     await expect(page.getByRole("list", { name: "מעבר לשנה הבאה" }).locator("[data-step='3']")).toHaveAttribute("data-done", "true");
     // again: nothing more
@@ -193,8 +194,27 @@ test.describe("demo build", () => {
     await page.getByRole("button", { name: "הרצה יבשה" }).click();
     await expect(page.locator("[data-dry=archive]")).toHaveText("מחזור לדוגמה");
     await expect(page.locator("[data-dry=deactivate]")).toContainText("חבר/ת צוות אחד/ת (תוכן או לוגיסטיקה)");
-    // the option off: nobody
+    // the form says what the option does — never «the team can only view it» beside «they will not log in»
+    const warning = option.locator("[data-start-warning]");
+    await expect(warning).toContainText("חברי התוכן והלוגיסטיקה שלו לא ייכנסו עוד (האדמינים נשארים)");
+    await expect(warning).not.toContainText("יוכל רק לצפות");
+    // the confirm: a danger one — what will happen, with the dry run's count; its focus on «ביטול», so Enter opens nothing
+    await option.getByLabel("שם המחזור").fill("מחזור הבא לבדיקה");
+    await option.getByRole("button", { name: "פתיחת המחזור", exact: true }).click();
+    const confirm = option.getByRole("group", { name: "אישור" });
+    await expect(confirm).toContainText("מחזור לדוגמה עובר לארכיון");
+    await expect(confirm.locator("[data-deactivate-count]")).toHaveText("חבר/ת צוות אחד/ת שלו (תוכן או לוגיסטיקה) יושבת/ת — לא ייכנס/תיכנס עוד.");
+    await expect(confirm).toContainText("אין ביטול");
+    await expect(confirm.getByRole("button", { name: "ביטול" })).toBeFocused();
+    await expect(confirm.getByRole("button", { name: "כן, לפתוח ולהעביר לארכיון" })).toHaveClass(/bg-bad/);
+    await noSidewaysScroll(page);
+    await page.keyboard.press("Enter");
+    await expect(confirm).toHaveCount(0);
+    await expect(toast(page, "המחזור מחזור הבא לבדיקה נפתח")).toHaveCount(0);
+    await expect(option.getByRole("button", { name: "פתיחת המחזור", exact: true })).toBeVisible(); // nothing opened
+    // the option off: nobody — and the form says the team stays, able to view
     await page.getByRole("checkbox", { name: /להשבית את חברי הצוות/ }).first().uncheck();
+    await expect(warning).toContainText("הצוות שלו יוכל רק לצפות בו");
     await page.getByRole("button", { name: "הרצה יבשה" }).click();
     await expect(page.locator("[data-dry=deactivate]")).toContainText("אף אחד (האפשרות כבויה)");
     await noSidewaysScroll(page);

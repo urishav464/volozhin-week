@@ -7,9 +7,10 @@ import { describe, expect, it } from "vitest";
 import { labelKey } from "../data/importRules";
 import { DEFAULT_TITLES } from "../data/speakerRules";
 import type { Speaker } from "../domain/types";
-import { candidatesPayload, contextOf, previewCandidates, readCandidates, undecided } from "./candidates";
-import { channelOf } from "./escorts";
-import { defaultMapping, type Mapping } from "./fields";
+import { DemoPort } from "../data/demoPort";
+import { candidatesPayload, contextOf, lookupFor, previewCandidates, readCandidates, undecided } from "./candidates";
+import { channelOf, escortColumns, escortNames, escortsPayload, namedEscort, phrasesOf, previewEscorts, readEscorts } from "./escorts";
+import { defaultMapping, findHeaderRow, type Mapping } from "./fields";
 import { fillPlan, type Choice } from "./match";
 import { normalizePhone, scrubContacts } from "./phone";
 import { archivePayload, doubleGroups, planLessons, previewTrackingSpeakers, readTracking, speakerAliases, WHEN_PROBLEM } from "./tracking";
@@ -21,7 +22,7 @@ const sp = (id: number, name: string, extra: Partial<Speaker> = {}): Speaker => 
 });
 const EMPTY = contextOf([], { phones: [], contacts: [] });
 const H = ["מרצה", "שיעור ב", "כותרת", "מקורות (נשלח?)", "הסעה/תשלום", "טלפון", "קיבל הודעת סיכום מ", "נושא"];
-const opts = { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true };
+const opts = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true };
 const track = (rows: string[][], headers = H, m?: Mapping) => readTracking([headers, ...rows], m ?? defaultMapping("tracking", headers, headers.length), opts);
 /** A tracking row: speaker, when, title — the rest empty. */
 const r = (speaker: string, when: string, title = "", extra: string[] = []) => [speaker, when, title, "", "", "", "", "", ...extra];
@@ -113,18 +114,18 @@ describe("the markers: read in the mapped columns only; «זמן זיכרון» 
   });
 });
 
-describe("«כפולה» beside a name or a title: the marker out, the name as the pool has it", () => {
-  it("«הרב פלוני - כפולה», «(כפולה)», «כפולה - …»: the name, its title and gender; the row is double", () => {
-    for (const cell of ["הרב דוגמה אלף - כפולה", "הרב דוגמה אלף (כפולה)", "כפולה - הרב דוגמה אלף"]) {
+describe("«כפולה» beside a name: the marker out, the name as the pool has it — a title is never cut", () => {
+  it("«הרב פלוני - כפולה», «(כפולה)», «כפולה - …»: the name, its title and gender; the row is double; the title whole", () => {
+    for (const cell of ["הרב דוגמה אלף - כפולה", "הרב דוגמה אלף (כפולה)", "כפולה - הרב דוגמה אלף", "הרב דוגמה אלף כפולה"]) {
       const read = track([r(cell, "שני 10:00", "שיעור (כפולה)")]);
       expect(read.speakers.map((s) => [s.key, s.name, s.title, s.gender]), cell).toEqual([["דוגמה אלף", "דוגמה אלף", "הרב", "m"]]);
-      expect([read.rows[0].double, read.rows[0].title], cell).toEqual([true, "שיעור"]);
+      expect([read.rows[0].double, read.rows[0].title], cell).toEqual([true, "שיעור (כפולה)"]);
     }
   });
 
-  it("«הכפולה» inside a title is a word of the title: kept, and the row is not double; two speakers on two lines stay two", () => {
+  it("«הכפולה» inside a title is a word of the title: kept, and the row is not double; «+» on one line is two speakers", () => {
     expect(track([r("דוגמה אלף", "שני 20:00", "הנאמנות הכפולה")]).rows[0]).toMatchObject({ double: false, title: "הנאמנות הכפולה" });
-    expect(track([r("דוגמה אלף - כפולה\nדוגמה בית", "שני 20:00")]).speakers.map((s) => s.key)).toEqual(["דוגמה אלף", "דוגמה בית"]);
+    expect(track([r("דוגמה אלף - כפולה + דוגמה בית", "שני 20:00")]).speakers.map((s) => s.key)).toEqual(["דוגמה אלף", "דוגמה בית"]);
   });
 
   it("the marked name matches the pool as its plain name — never a second speaker «… כפולה»", () => {
@@ -221,11 +222,36 @@ describe("one table's rows against each other: the same phone, a name 0.6 alike 
   });
 });
 
-describe("a match fills only what does not contradict the pool's own title", () => {
+describe("a match fills only what does not contradict the pool's own title — or its own gender", () => {
   it("«הרבנית» with no gender and a row «הרב»: no gender filled, and the preview says so; «ד״ר» takes the row's", () => {
     const row = { title: "הרב", gender: "m" as const, affiliation: null, topics: [], phone: null, email: null, notes: null };
     expect(fillPlan(sp(1, "x", { title: "הרבנית" }), undefined, row)).toEqual(["מגדר: לא ימולא — במאגר התואר הרבנית"]);
     expect(fillPlan(sp(1, "x", { title: "ד״ר" }), undefined, row)).toEqual(["מגדר: זכר (הצעה, מהתואר)"]);
+  });
+
+  it("the mirror: a pool speaker with a gender and no title is never given a title of the other gender — the preview names it", () => {
+    const rav = { title: "הרב", gender: "m" as const, affiliation: null, topics: [], phone: null, email: null, notes: null };
+    const rabbanit = { ...rav, title: "הרבנית", gender: "f" as const };
+    expect(fillPlan(sp(1, "x", { gender: "f" }), undefined, rav)).toEqual(["תואר: לא ימולא — במאגר המגדר נקבה"]);
+    expect(fillPlan(sp(1, "x", { gender: "m" }), undefined, rabbanit)).toEqual(["תואר: לא ימולא — במאגר המגדר זכר"]);
+    // the same gender, a title that says none, or no gender in the pool: the title it fills, named
+    expect(fillPlan(sp(1, "x", { gender: "m" }), undefined, rav)).toEqual(["תואר: הרב"]);
+    expect(fillPlan(sp(1, "x", { gender: "f" }), undefined, { ...rav, title: "ד״ר", gender: null })).toEqual(["תואר: ד״ר"]);
+    expect(fillPlan(sp(1, "x"), undefined, rabbanit)).toEqual(["תואר: הרבנית", "מגדר: נקבה (הצעה, מהתואר)"]);
+  });
+
+  it("the demo's commit holds the same rule: «הרבנית מרצה 07» matched to the pool's man keeps him without a title", async () => {
+    const d = new DemoPort();
+    const pool = await d.imports.pool();
+    const t = pool.find((s) => s.title == null && s.gender === "m")!;
+    const grid = [["מרצה", "מוסד"], [`הרבנית ${t.name}`, "מוסד לבדיקה"]];
+    const read = readCandidates(grid, defaultMapping("candidates", grid[0], 2), opts);
+    const ask = lookupFor(read, pool);
+    const pv = previewCandidates(read, contextOf(pool, await d.imports.lookup(ask.speakerIds, ask.phoneKeys)));
+    expect(pv.map((p) => [p.status, p.fills])).toEqual([["match", ["תואר: לא ימולא — במאגר המגדר זכר", ...(t.affiliation == null ? ["מוסד"] : [])]]]);
+    await d.imports.commit({ kind: "candidates", payload: candidatesPayload(pv, new Map(), "p", null)! });
+    const after = (await d.imports.pool()).find((s) => s.id === t.id)!;
+    expect([after.title, after.gender]).toEqual([null, "m"]);
   });
 });
 
@@ -239,5 +265,174 @@ describe("the escorts' file and the label", () => {
   it("an archive's label by its key: the quote marks as ASCII, spaces single", () => {
     expect(["תשפ\"ו", "תשפ״ו", "תשפ”ו", " תשפ“ו ", "תשפ″ו"].map(labelKey)).toEqual(Array(5).fill("תשפ\"ו"));
     expect(labelKey("  שנה   ‘א’ ")).toBe("שנה 'א'");
+  });
+});
+
+describe("סבב שני: «כפולה» as a word of a title, «שיעור להורים» where it marks the lesson", () => {
+  it("«זהות כפולה», «נאמנות כפולה»: a title — the row is not double, no group, and the title is never cut", () => {
+    const read = track([r("דוגמה אלף", "רביעי 10:00", "זהות כפולה"), r("דוגמה בית", "רביעי 11:30", "נאמנות כפולה בעם ישראל")]);
+    expect(read.rows.map((x) => [x.double, x.title])).toEqual([
+      [false, "זהות כפולה"],
+      [false, "נאמנות כפולה בעם ישראל"],
+    ]);
+    expect(doubleGroups(read)).toEqual([]);
+    expect(plan(read).map((p) => [p.title, p.start_min, p.end_min])).toEqual([
+      ["זהות כפולה", 600, 690],
+      ["נאמנות כפולה בעם ישראל", 690, 780],
+    ]);
+  });
+
+  it("the marker where the sheet writes it: «שיעור ב», beside the name, or a cell that says only it", () => {
+    const headers = [...H, "הערות"];
+    const m = defaultMapping("tracking", headers, headers.length);
+    m[8] = "note";
+    const read = track(
+      [r("דוגמה אלף", "שני 10:00 כפולה", "שיעור א"), r("דוגמה בית", "שני 10:00", "שיעור ב", ["כפולה"]), r("דוגמה גימל", "שני 11:30", "כפולה"), r("דוגמה דלת", "שני 13:00", "שיעור ד", ["אולי כפולה"])],
+      headers,
+      m,
+    );
+    expect(read.rows.map((x) => [x.double, x.title])).toEqual([
+      [true, "שיעור א"],
+      [true, "שיעור ב"],
+      [true, null], // a title cell that is only the marker holds no title
+      [false, "שיעור ד"], // a word in a note, not the marker
+    ]);
+  });
+
+  it("«שיעור להורים»: a cell that begins with it, or «שיעור ב» after its time — never a title that only mentions it", () => {
+    const read = track([
+      r("דוגמה אלף", "חמישי 17:30", "שיעור להורים"),
+      r("דוגמה בית", "חמישי 16:00", "שיעור להורים: הורים וילדים"),
+      r("דוגמה גימל", "רביעי 17:30 - שיעור להורים", "שיעור ג"),
+      r("דוגמה דלת", "רביעי 10:00", "על שיעור להורים"),
+      r("דוגמה הא", "רביעי 11:30", "מה ראינו בשיעור להורים אשתקד"),
+    ]);
+    expect(read.rows.map((x) => [x.audience, x.title])).toEqual([
+      ["שיעור להורים", "שיעור להורים"],
+      ["שיעור להורים", "שיעור להורים: הורים וילדים"],
+      ["שיעור להורים", "שיעור ג"],
+      [null, "על שיעור להורים"],
+      [null, "מה ראינו בשיעור להורים אשתקד"],
+    ]);
+    expect(read.rows[2].notes).toEqual([]); // the marker is no note of «שיעור ב»
+  });
+});
+
+describe("סבב שני: a second line in the speaker's cell — an affiliation or a speaker; the phone after the choices", () => {
+  const withPhone = (speaker: string, when: string, phone: string) => [speaker, when, "", "", "", phone, "", ""];
+
+  it("a line in brackets is the affiliation of the name above — one speaker, the row's phone theirs, the payload's «מוסד»", () => {
+    const read = track([withPhone("הרב אלפא דוגמני\n(ישיבת דוגמה)", "ראשון 8:30", "000-000-0011")]);
+    expect(read.speakers.map((s) => [s.key, s.title, s.affiliation, s.phone])).toEqual([["אלפא דוגמני", "הרב", "ישיבת דוגמה", "0000000011"]]);
+    expect(read.lines).toEqual([{ id: "2:2", row: 2, text: "(ישיבת דוגמה)", of: "אלפא דוגמני", ofName: "אלפא דוגמני", as: "affiliation", chosen: false, why: "בסוגריים" }]);
+    const plans = plan(read);
+    expect(plans[0].warnings).toEqual([]);
+    const p = archivePayload(plans, previewTrackingSpeakers(read, EMPTY), new Map(), { label: "x", start_date: null, source: "x", titles_from: null })!;
+    expect(p.speakers.map((x) => [x.name, x.affiliation, x.phone])).toEqual([["אלפא דוגמני", "ישיבת דוגמה", "0000000011"]]);
+  });
+
+  it("a line with a title, or a name the sheet or the pool has, is a speaker; one with neither is an affiliation («הצעה»)", () => {
+    const read = () =>
+      track([r("דוגמה אלף\nהרבנית דוגמה בית", "ראשון 8:30"), r("דוגמה גימל\nדוגמה אלף", "ראשון 10:00"), r("דוגמה דלת\nמכון לדוגמה", "ראשון 11:30"), r("דוגמה הא\nשם מהמאגר", "ראשון 13:00")]);
+    const plain = read();
+    expect(plain.lines.map((l) => [l.text, l.as, l.why])).toEqual([
+      ["הרבנית דוגמה בית", "speaker", "בתואר הרבנית"],
+      ["דוגמה אלף", "speaker", "שם שמופיע בגיליון"],
+      ["מכון לדוגמה", "affiliation", "בלי תואר, ולא שם שבגיליון או במאגר"],
+      ["שם מהמאגר", "affiliation", "בלי תואר, ולא שם שבגיליון או במאגר"],
+    ]);
+    const pooled = readTracking(
+      [H, r("דוגמה הא\nשם מהמאגר", "ראשון 13:00")],
+      defaultMapping("tracking", H, H.length),
+      { ...opts, known: new Set(["שם מהמאגר"]) },
+    );
+    expect(pooled.lines.map((l) => [l.as, l.why])).toEqual([["speaker", "שם שבמאגר"]]);
+    expect(pooled.speakers.map((x) => x.key)).toEqual(["דוגמה הא", "שם מהמאגר"]);
+  });
+
+  it("the admin turns a line; the phone goes to the one speaker left after the choices — never while two are", () => {
+    const rows = [withPhone("דוגמה אלף\nדוגמה בית", "ראשון 8:30", "000-000-0012")];
+    // the read: «דוגמה בית» an affiliation — one speaker, the phone theirs
+    expect(track(rows).speakers.map((x) => [x.key, x.affiliation, x.phone])).toEqual([["דוגמה אלף", "דוגמה בית", "0000000012"]]);
+    // turned into a speaker: two — the phone waits, and the lesson says why
+    const two = readTracking([H, ...rows], defaultMapping("tracking", H, H.length), { ...opts, lineAs: new Map([["2:2", "speaker" as const]]) });
+    expect(two.lines[0]).toMatchObject({ as: "speaker", chosen: true });
+    expect(two.speakers.map((x) => [x.key, x.affiliation, x.phone])).toEqual([
+      ["דוגמה אלף", null, null],
+      ["דוגמה בית", null, null],
+    ]);
+    expect(plan(two)[0].warnings).toEqual(["הטלפון לא נשמר: יש בשורה יותר ממרצה אחד/ת"]);
+    // the second skipped («דילוג»): the phone goes to the one left — in the preview and in the payload
+    const speakers = previewTrackingSpeakers(two, EMPTY);
+    const choices = new Map<string, Choice>([["דוגמה בית", { action: "skip" }]]);
+    const plans = planLessons(two, { decisions: new Map(), categories: new Map(), sources: new Map(), skipped: new Set(["דוגמה בית"]) })!;
+    expect(plans[0]).toMatchObject({ warnings: [], phones: [{ speaker: "דוגמה אלף", value: "0000000012" }] });
+    const p = archivePayload(plans, speakers, choices, { label: "x", start_date: null, source: "x", titles_from: null })!;
+    expect(p.speakers.map((x) => [x.name, x.phone])).toEqual([["דוגמה אלף", "0000000012"]]);
+  });
+});
+
+describe("סבב שני: the header row in the first rows; the escorts' column never mappable, whatever the header", () => {
+  it("a title above the table (a Word paragraph, a merged Excel row): the header row found below it, the rows above left out", () => {
+    const docx = [["מלווים — לדוגמה"], ["מרצה", "מלווה", "הערות"], ["מרצה 07", "חניך/ה לדוגמה 1", "דרך המזכירה"]];
+    expect(findHeaderRow("escorts", docx)).toBe(1);
+    const xlsx = [["רשימת מועמדים לדוגמה — סיעור", "", ""], ["מרצה", "מוסד", "טלפון"], ["הרב קפא שורתי", "", "000-000-0031"]];
+    expect(findHeaderRow("candidates", xlsx)).toBe(1);
+    const read = readCandidates(xlsx, defaultMapping("candidates", xlsx[1], 3), { ...opts, headerRow: 1 });
+    expect(read.map((x) => [x.row, x.data?.name])).toEqual([[3, "קפא שורתי"]]); // the sheet's own row number
+    // nothing like a header in the first five rows: none
+    expect(findHeaderRow("candidates", [["א"], ["ב"], ["ג"], ["ד"], ["ה"], ["מרצה"]])).toBeNull();
+  });
+
+  it("the escorts' column: by the header row, or by a cell of the first rows that reads as its header — with or without a header row", () => {
+    const grid = [["מלווים — לדוגמה", "", ""], ["מרצה", "מלווה/ת", "הערות"], ["מרצה 07", "חניך/ה לדוגמה 1", "המלווה חניך/ה לדוגמה 1 יתאם דרך המזכירה"]];
+    expect([...escortColumns(grid, 1)]).toEqual([1]);
+    expect([...escortColumns(grid, null)]).toEqual([1]); // the header row not chosen
+    expect([...escortColumns(grid, 0)]).toEqual([0, 1]); // the title row chosen as the header: still blocked — and, on the safe side, the title's column too
+    // a phrase that speaks of the escort is no header: the phrases' column stays mappable
+    expect([...escortColumns([["מרצה", "הערות"], ["מרצה 07", "המלווה יתאם"]], null)]).toEqual([]);
+    expect(escortNames(grid, null, new Set([1]))).toEqual(["חניך/ה לדוגמה 1"]); // the header cell is no name
+  });
+});
+
+describe("סבב שני: a phrase that names an escort is never ticked by itself, and is kept only once the name is edited out", () => {
+  const grid = [
+    ["מרצה", "מלווה", "הערות"],
+    ["מרצה 07", "חניכה לדוגמה", "המלווה חניכה לדוגמה תתאם דרך המזכירה"],
+    ["מרצה 07", "חניכה לדוגמה", "לתאם עם חניך לדוגמה בוואטסאפ"],
+    ["מרצה 12", "חניך לדוגמה", "רק בוואטסאפ"],
+  ];
+  const m: Mapping = ["speaker", null, "phrases"];
+  const rows = readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES });
+  const names = escortNames(grid, 0, escortColumns(grid, 0));
+  const pool = [sp(7, "מרצה 07"), sp(12, "מרצה 12")];
+  const ctx = contextOf(pool, { phones: [], contacts: [] });
+
+  it("not pre-ticked: a name of the escorts' column, a roster's name, or a phrase about «המלווה»", () => {
+    expect(names).toEqual(["חניכה לדוגמה", "חניך לדוגמה"]);
+    const ps = phrasesOf(rows, names);
+    expect(ps.map((p) => [p.text, p.contact, p.escort, p.mentions])).toEqual([
+      ["המלווה חניכה לדוגמה תתאם דרך המזכירה", false, "חניכה לדוגמה", true],
+      ["לתאם עם חניך לדוגמה בוואטסאפ", false, "חניך לדוגמה", false],
+      ["רק בוואטסאפ", true, null, false],
+    ]);
+    // a name only a roster has
+    expect(phrasesOf(rows, ["חניכה לדוגמה"]).map((p) => p.escort)).toEqual(["חניכה לדוגמה", null, null]);
+    // a phrase about the escort with no name the file or a roster knows: still not pre-ticked (a name may be in it)
+    expect(phrasesOf(readEscorts([["מרצה", "הערות"], ["מרצה 07", "המלווה יתאם דרך המזכירה"]], ["speaker", "phrases"], { headerRow: 0, titles: DEFAULT_TITLES }), []).map((p) => [p.contact, p.mentions])).toEqual([[false, true]]);
+    expect(namedEscort("דרך המזכירה", names)).toBeNull();
+    expect(namedEscort("לחניך לדוגמה בוואטסאפ", names)).toBe("חניך לדוגמה"); // a prefix letter
+    expect(namedEscort("חניך לדוגמה2", names)).toBeNull(); // another word
+  });
+
+  it("ticked anyway, a phrase with the name is not kept; edited to drop the name, the channel is kept without it", () => {
+    const all = new Set(phrasesOf(rows, names).map((p) => p.key));
+    const raw = previewEscorts(rows, all, ctx, new Map(), names);
+    expect(raw.find((x) => x.key === "מרצה 07")).toMatchObject({ status: "skip", reason: "אין ניסוח מסומן על ערוץ הקשר" });
+    const edits = new Map([["המלווה חניכה לדוגמה תתאם דרך המזכירה", "דרך המזכירה"]]);
+    const edited = previewEscorts(rows, all, ctx, edits, names);
+    expect(edited.find((x) => x.key === "מרצה 07")).toMatchObject({ status: "match", contact_pref: "secretary", secretary_note: "דרך המזכירה" });
+    const payload = escortsPayload(edited, new Map())!;
+    expect(JSON.stringify(payload)).not.toMatch(/חניכה? לדוגמה/);
   });
 });

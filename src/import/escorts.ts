@@ -2,21 +2,77 @@
 // המזכירה», «רק בוואטסאפ») go to speaker_contacts.secretary_note, and the channel itself to speakers.contact_pref when
 // the ticked phrases name exactly one. The admin ticks which phrases are about the channel — a heuristic pre-ticks
 // («הצעה»); phrases about payment or transport are dropped (they are derived from the lesson), and so is every other
-// phrase left unticked. The escorts' names are never imported: no field takes them, and a column headed «מלווה»
-// cannot be mapped at all. A speaker not in the pool is «מדולג» (the escorts' file adds no one).
+// phrase left unticked. The escorts' names are never imported: no field takes them; a column headed «מלווה» — in the
+// header row chosen, or anywhere in the table's first rows — cannot be mapped at all, in any kind (escortColumns);
+// and their names, as the file writes them and as an edition's roster has them, are read in the page only to keep them
+// OUT of a phrase: a phrase that names one is never pre-ticked, and cannot be ticked until the admin edits the name out
+// (a phrase's text is editable before it is ticked). A speaker not in the pool is «מדולג» (the escorts' file adds no one).
 import type { ContactFlags, EscortsPayload, PrefsRow } from "../data/imports";
 import { LIMITS } from "../data/speakerRules";
 import { nameKey } from "../domain/nameKey";
 import type { ContactPref } from "../domain/types";
 import type { MatchContext } from "./candidates";
-import { columnsOf, type Mapping } from "./fields";
+import { columnsOf, HEADER_SEARCH, headerKey, type Mapping } from "./fields";
 import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
-import { cellOf, dataRows } from "./rows";
+import { cellOf, dataRows, type HeaderAt } from "./rows";
 import { splitSpeakers, splitTitle } from "./speakerName";
 import type { Grid } from "./table";
 
-/** A column the escorts' names are in: never read. */
+/** A column the escorts' names are in — its header in the header row chosen: never read. */
 export const ESCORT_COLUMN = /מלוו/;
+/** A cell that reads as that column's header wherever it stands («מלווה», «מלווה/ת», «המלווה», «שם המלווה», «מלווים», «מלווה 2»). */
+const ESCORT_HEADER = /^(?:שם)?ה?מלוו(?:ה|ת|ים|ות|הת)?[0-9]*$/;
+export const looksLikeEscortHeader = (cell: string) => ESCORT_HEADER.test(headerKey(cell));
+
+/**
+ * The columns the escorts' names are in — never mappable, in any kind: the header row's cell says so, or a cell of the
+ * table's first rows reads as that header (the header row not chosen, or a title row above it). The guard does not
+ * depend on the header row being right.
+ */
+export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
+  const out = new Set<number>();
+  const width = grid[0]?.length ?? 0;
+  for (let i = 0; i < width; i++) {
+    if (headerRow != null && ESCORT_COLUMN.test(grid[headerRow]?.[i] ?? "")) out.add(i);
+    else if (grid.slice(0, HEADER_SEARCH).some((r) => looksLikeEscortHeader(r[i] ?? ""))) out.add(i);
+  }
+  return out;
+}
+
+/**
+ * The escorts' names as the file writes them — the data cells of their columns, by line, comma or «+» — read only to
+ * keep them out of the phrases (namedEscort); never imported, never kept.
+ */
+export function escortNames(grid: Grid, headerRow: HeaderAt, columns: ReadonlySet<number>): string[] {
+  const out = new Set<string>();
+  for (const { cells } of dataRows(grid, headerRow)) {
+    for (const i of columns) {
+      for (const n of (cells[i] ?? "").split(/\n|[,;+]|\s\/\s/)) {
+        const name = n.replace(/\s+/g, " ").trim();
+        if ([...name].length >= 2 && !looksLikeEscortHeader(name)) out.add(name);
+      }
+    }
+  }
+  return [...out];
+}
+
+const LETTER = "A-Za-z0-9\u05D0-\u05EA";
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const loose = (s: string) => s.replace(/["'״׳]/g, "").replace(/\s+/g, " ").trim();
+
+/** The escort's name a phrase holds (a whole word sequence, a Hebrew prefix letter allowed) — null when none. */
+export function namedEscort(phrase: string, names: readonly string[]): string | null {
+  const p = loose(phrase);
+  for (const n of names) {
+    const k = loose(n);
+    if ([...k].length < 2) continue;
+    if (new RegExp(`(?<![${LETTER}])[והבכלמש]{0,2}${escapeRe(k)}(?![${LETTER}])`).test(p)) return n;
+  }
+  return null;
+}
+
+/** It speaks of the escort («המלווה יתאם…»): not pre-ticked — the channel is the speaker's, and a name may be beside it. */
+export const mentionsEscort = (phrase: string) => ESCORT_COLUMN.test(phrase);
 
 const CHANNELS: [RegExp, ContactPref][] = [
   [/מזכיר/, "secretary"],
@@ -37,8 +93,9 @@ export function channelOf(phrase: string): ContactPref | null {
 /** About payment or transport: dropped, never ticked (derived from the lesson). */
 export const isMoneyOrTransport = (phrase: string) => MONEY_OR_TRANSPORT.test(phrase);
 
-/** About the contact channel — the heuristic that pre-ticks a phrase («הצעה»). */
-export const isContactPhrase = (phrase: string) => !isMoneyOrTransport(phrase) && (CHANNELS.some(([re]) => re.test(phrase)) || CONTACT_WORDS.test(phrase));
+/** About the contact channel — the heuristic that pre-ticks a phrase («הצעה»); never one that speaks of the escort. */
+export const isContactPhrase = (phrase: string) =>
+  !isMoneyOrTransport(phrase) && !mentionsEscort(phrase) && (CHANNELS.some(([re]) => re.test(phrase)) || CONTACT_WORDS.test(phrase));
 
 /** A cell's phrases: split at lines, semicolons, bullets and sentence ends. */
 export function splitPhrases(cell: string): string[] {
@@ -60,7 +117,7 @@ export interface EscortsRow {
   phrases: string[];
 }
 
-export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: boolean; titles: readonly string[] }): EscortsRow[] {
+export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: number | null; titles: readonly string[] }): EscortsRow[] {
   return dataRows(grid, o.headerRow).map(({ row, cells }) => {
     const [first] = splitSpeakers(cellOf(cells, m, "speaker"));
     const { name } = splitTitle(first ?? "", o.titles);
@@ -77,19 +134,26 @@ export interface Phrase {
   text: string;
   count: number;
   channel: ContactPref | null;
-  /** The heuristic's tick («הצעה»). */
+  /** The heuristic's tick («הצעה») — never on a phrase that names an escort or speaks of one. */
   contact: boolean;
   /** About payment or transport: dropped. */
   money: boolean;
+  /** The escort's name it holds (namedEscort): not tickable until edited out. */
+  escort: string | null;
+  /** It speaks of the escort («המלווה…»). */
+  mentions: boolean;
 }
 
-export function phrasesOf(rows: EscortsRow[]): Phrase[] {
+/** The phrases, grouped; `names`: the escorts' (escortNames, and an edition's roster) — a phrase holding one is never pre-ticked. */
+export function phrasesOf(rows: EscortsRow[], names: readonly string[] = []): Phrase[] {
   const m = new Map<string, Phrase>();
   for (const r of rows) {
     if (r.skip) continue;
     for (const p of r.phrases) {
       const k = phraseKey(p);
-      const e = m.get(k) ?? { key: k, text: p, count: 0, channel: channelOf(p), contact: isContactPhrase(p), money: isMoneyOrTransport(p) };
+      const escort = namedEscort(p, names);
+      const mentions = mentionsEscort(p);
+      const e = m.get(k) ?? { key: k, text: p, count: 0, channel: channelOf(p), contact: isContactPhrase(p) && !escort, money: isMoneyOrTransport(p), escort, mentions };
       e.count++;
       m.set(k, e);
     }
@@ -110,8 +174,14 @@ export interface EscortsPreview {
   fills: string[];
 }
 
-/** One line per speaker: their ticked phrases, the one channel those name, and what would be filled. */
-export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, ctx: MatchContext): EscortsPreview[] {
+/** A phrase's text as the admin edited it (spaces single) — its own text when not edited. */
+export const editedText = (p: string, edits: ReadonlyMap<string, string> | undefined) => (edits?.get(phraseKey(p)) ?? p).replace(/\s+/g, " ").trim();
+
+/**
+ * One line per speaker: their ticked phrases (as edited), the one channel those name, and what would be filled. A
+ * phrase about payment or transport, or one that still holds an escort's name, is never kept — ticked or not.
+ */
+export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, ctx: MatchContext, edits?: ReadonlyMap<string, string>, names: readonly string[] = []): EscortsPreview[] {
   const by = new Map<string, EscortsRow[]>();
   for (const r of rows) if (!r.skip) by.set(r.key, [...(by.get(r.key) ?? []), r]);
   const out: EscortsPreview[] = [];
@@ -119,7 +189,15 @@ export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, 
     if (r.skip) out.push({ key: r.key, name: r.name, rows: [r.row], status: "skip", reason: r.skip, match: null, contact_pref: null, secretary_note: null, warnings: [], fills: [] });
   }
   for (const [key, rs] of by) {
-    const phrases = [...new Set(rs.flatMap((r) => r.phrases).filter((p) => ticked.has(phraseKey(p)) && !isMoneyOrTransport(p)))];
+    const phrases = [
+      ...new Set(
+        rs
+          .flatMap((r) => r.phrases)
+          .filter((p) => ticked.has(phraseKey(p)))
+          .map((p) => editedText(p, edits))
+          .filter((p) => p !== "" && !isMoneyOrTransport(p) && namedEscort(p, names) == null),
+      ),
+    ];
     const channels = [...new Set(phrases.map(channelOf).filter((c): c is ContactPref => c != null))];
     const warnings: string[] = [];
     let note: string | null = phrases.join(" · ") || null;

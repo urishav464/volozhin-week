@@ -4,19 +4,28 @@ import { columnsOf, type Mapping } from "./fields";
 import type { Grid } from "./table";
 
 export interface DataRow {
-  /** The row number in the table as read (1-based, the header row counted) — «שורה 7». */
+  /** The row number in the table as read (1-based, the header row and the rows above it counted) — «שורה 7». */
   row: number;
   cells: string[];
 }
 
-export function dataRows(grid: Grid, headerRow: boolean): DataRow[] {
-  return grid.slice(headerRow ? 1 : 0).map((cells, i) => ({ row: i + (headerRow ? 2 : 1), cells }));
+/**
+ * Which row holds the headers: its index in the table (0: the first), or null — none, every row is data. The rows
+ * ABOVE it are left out (a title paragraph over a Word table, a merged title row in Excel); the row numbers stay the
+ * table's own.
+ */
+export type HeaderAt = number | null;
+
+export function dataRows(grid: Grid, headerRow: HeaderAt): DataRow[] {
+  const from = headerRow == null ? 0 : headerRow + 1;
+  return grid.slice(from).map((cells, i) => ({ row: i + from + 1, cells }));
 }
 
 /** Each column's name: its header, or «עמודה N». */
-export function columnNames(grid: Grid, headerRow: boolean): string[] {
+export function columnNames(grid: Grid, headerRow: HeaderAt): string[] {
   const width = grid[0]?.length ?? 0;
-  return Array.from({ length: width }, (_, i) => (headerRow && grid[0][i] ? grid[0][i] : `עמודה ${i + 1}`));
+  const head = headerRow == null ? null : grid[headerRow];
+  return Array.from({ length: width }, (_, i) => (head?.[i] ? head[i] : `עמודה ${i + 1}`));
 }
 
 /** The text of a single-column field ('' when unmapped). */

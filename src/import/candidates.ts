@@ -38,7 +38,8 @@ export interface CandidateRead {
 }
 
 export interface ReadOptions {
-  headerRow: boolean;
+  /** The header row's index (null: none) — src/import/rows.ts HeaderAt. */
+  headerRow: number | null;
   titles: readonly string[];
   /** «הצעה»: gender from the title הרב / הרבנית. */
   genderFromTitle: boolean;

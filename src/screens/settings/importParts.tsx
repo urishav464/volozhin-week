@@ -8,12 +8,12 @@ import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
 import type { Category, PrintWhen, SourcesKind } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import type { CandidatePreview, MatchContext } from "../../import/candidates";
-import type { EscortsPreview as EscortsRowPreview, Phrase } from "../../import/escorts";
+import { editedText, type EscortsPreview as EscortsRowPreview, isMoneyOrTransport, namedEscort, type Phrase } from "../../import/escorts";
 import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
 import { DESIGN_SOURCES, sourcesKey, type SourcesRule, SUGGESTED_SOURCES } from "../../import/sources";
 import { ARCHIVE_ROOM, parallelRoomName } from "../../data/importRules";
 import { scrubContacts } from "../../import/phone";
-import type { DoubleGroup, GroupDecision, LessonPlan, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
+import type { DoubleGroup, ExtraLine, GroupDecision, LessonPlan, LineAs, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
 import { Badge, INPUT, Panel } from "./kit";
 
@@ -250,7 +250,7 @@ export function TopicsTable({ read, categories, value, onChange }: { read: Track
   const topics = topicsOf(read);
   if (topics.length === 0) return null;
   return (
-    <Panel title="נושא → קטגוריה" aside="קטגוריה באותו שם מוצעת; אחרת בלי קטגוריה">
+    <Panel title="נושא ← קטגוריה" aside="קטגוריה באותו שם מוצעת; אחרת בלי קטגוריה">
       <ul aria-label="נושאים" className="grid gap-2 sm:grid-cols-2">
         {topics.map((t) => (
           <li key={t.key} className="min-w-0">
@@ -277,7 +277,7 @@ export function SourcesTable({ read, value, onChange }: { read: TrackingRead; va
   const values = sourcesValuesOf(read);
   if (values.length === 0) return null;
   return (
-    <Panel title="«מקורות (נשלח?)» → מקורות השיעור" aside="כל תרגום ניתן לשינוי">
+    <Panel title="«מקורות (נשלח?)» ← מקורות השיעור" aside="כל תרגום ניתן לשינוי">
       <ul aria-label="ערכי המקורות" className="space-y-2">
         {values.map((v) => {
           const rule = value.get(v.key) ?? { kind: "pending" as const, print: "none" as const };
@@ -355,12 +355,12 @@ export function SpeakersPreview({
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
-              <Facts items={[genderSaid(s.gender), s.phone && "יש טלפון"]} />
+              <Facts items={[genderSaid(s.gender), s.affiliation && `שיוך מוסדי: ${s.affiliation}`, s.phone && "יש טלפון"]} />
               <SpeakerDecision
                 name={name}
                 status={r.status}
                 match={r.match}
-                fill={{ title: s.title, gender: s.gender, affiliation: null, topics: [], phone: s.phone, email: null, notes: null }}
+                fill={{ title: s.title, gender: s.gender, affiliation: s.affiliation, topics: [], phone: s.phone, email: null, notes: null }}
                 pool={pool}
                 choice={c}
                 onChoose={(x) => onChoose(s.key, x)}
@@ -441,27 +441,83 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
 
 // ------------------------------------------------------------------ (c) the escorts' file
 
-export function PhrasesTable({ phrases, ticked, onToggle }: { phrases: Phrase[]; ticked: Set<string>; onToggle: (k: string) => void }) {
+export function PhrasesTable({
+  phrases,
+  ticked,
+  edits,
+  names,
+  onToggle,
+  onEdit,
+}: {
+  phrases: Phrase[];
+  ticked: Set<string>;
+  /** A phrase's text as edited (its key → text). */
+  edits: Map<string, string>;
+  /** The escorts' names (the file's escorts' column, the rosters): a phrase holding one cannot be ticked. */
+  names: readonly string[];
+  onToggle: (k: string) => void;
+  onEdit: (k: string, text: string) => void;
+}) {
+  const id = useId();
   const money = phrases.filter((p) => p.money);
   const rest = phrases.filter((p) => !p.money);
   return (
     <Panel title="ניסוחים" aside="נשמרים רק הניסוחים המסומנים — על ערוץ הקשר">
       <p className="mb-2 text-sm text-ink-soft">
-        הסימון הראשון הוא <Badge tone="accent">הצעה</Badge>: ניסוח שמזכיר מזכירות, וואטסאפ, מייל או טלפון. ניסוחים על תשלום והסעה לא נשמרים — הם נגזרים מהשיעור.
+        הסימון הראשון הוא <Badge tone="accent">הצעה</Badge>: ניסוח שמזכיר מזכירות, וואטסאפ, מייל או טלפון — ולא מלווה. ניסוחים על תשלום והסעה לא נשמרים — הם נגזרים
+        מהשיעור. אפשר לערוך ניסוח לפני הסימון: נשמר הנוסח הערוך. ניסוח שיש בו שם של מלווה לא נשמר עד שהשם נמחק ממנו.
       </p>
       <ul aria-label="ניסוחים" className="divide-y divide-line border-y border-line">
-        {rest.map((p) => (
-          <li key={p.key} className="py-1">
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={ticked.has(p.key)} onChange={() => onToggle(p.key)} className="size-5 accent-ink" />
-              <span className="break-words">{p.text}</span>
-              <span className="text-sm text-ink-soft">
-                ({p.count}
-                {p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})
-              </span>
-            </label>
-          </li>
-        ))}
+        {rest.map((p, i) => {
+          const text = editedText(p.text, edits);
+          const escort = namedEscort(text, names);
+          const blocked = !!escort || text === "" || isMoneyOrTransport(text);
+          const on = ticked.has(p.key) && !blocked;
+          return (
+            <li key={p.key} data-phrase={p.key} className="py-1.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {/* a 44px target around the box; its name is the phrase as the file wrote it */}
+                <span className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                  <input
+                    id={`${id}-t-${i}`}
+                    type="checkbox"
+                    checked={on}
+                    disabled={blocked}
+                    onChange={() => onToggle(p.key)}
+                    aria-label={`${p.text} (${p.count}${p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})`}
+                    aria-describedby={escort || p.mentions ? `${id}-w-${i}` : undefined}
+                    className="size-5 cursor-pointer accent-ink disabled:cursor-not-allowed"
+                  />
+                </span>
+                <label htmlFor={`${id}-e-${i}`} className="sr-only">
+                  הנוסח שיישמר במקום «{p.text}»
+                </label>
+                <input
+                  id={`${id}-e-${i}`}
+                  value={edits.get(p.key) ?? p.text}
+                  maxLength={300}
+                  onChange={(e) => onEdit(p.key, e.target.value)}
+                  className={`${INPUT} min-w-0 flex-1 basis-48`}
+                />
+                <span className="text-sm text-ink-soft">
+                  ({p.count}
+                  {p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})
+                </span>
+              </div>
+              {escort ? (
+                <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
+                  יש כאן שם של מלווה («{escort}») — לא נשמר. מוחקים את השם מהנוסח, ואז אפשר לסמן.
+                </p>
+              ) : (
+                p.mentions && (
+                  <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-ink-soft">
+                    מדבר על המלווה — לא מסומן מראש. אם יש כאן שם, מוחקים אותו לפני הסימון.
+                  </p>
+                )
+              )}
+            </li>
+          );
+        })}
       </ul>
       {money.length > 0 && (
         <>
@@ -475,6 +531,42 @@ export function PhrasesTable({ phrases, ticked, onToggle }: { phrases: Phrase[];
           </ul>
         </>
       )}
+    </Panel>
+  );
+}
+
+/** The speaker cells' second lines: «שיוך מוסדי» of the name above, or a speaker of its own — the read's «הצעה», the admin's choice. */
+export function LinesTable({ lines, onChoose }: { lines: ExtraLine[]; onChoose: (id: string, as: LineAs) => void }) {
+  const id = useId();
+  return (
+    <Panel title="שורה נוספת בתא של המרצה" aside="שיוך מוסדי או מרצה נוסף/ת">
+      <p className="mb-2 text-sm text-ink-soft">
+        שורה בסוגריים, או בלי תואר ולא שם שכבר בגיליון או במאגר, נקראת כשיוך המוסדי של השם שמעליה <Badge tone="accent">הצעה</Badge>. השיוך משלים את «מוסד» של
+        המרצה, רק אם הוא ריק.
+      </p>
+      <ul aria-label="שורות נוספות בתא המרצה" className="space-y-2">
+        {lines.map((l) => (
+          <li key={l.id} data-line={l.id} className="rounded-lg border border-line bg-paper p-2.5">
+            <p className="text-sm break-words">
+              <span className="text-ink-soft">שורה {l.row}:</span> <b>{l.ofName}</b> / <b>{l.text}</b>{" "}
+              {!l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>}
+            </p>
+            <fieldset className="mt-1 min-w-0">
+              <legend className="sr-only">
+                «{l.text}» — מה זה?
+              </legend>
+              <div className="flex flex-wrap gap-1.5">
+                {(["affiliation", "speaker"] as const).map((as) => (
+                  <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
+                    <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(l.id, as)} className="accent-ink" />
+                    {as === "affiliation" ? `שיוך מוסדי של ${l.ofName}` : "מרצה נוסף/ת"}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </li>
+        ))}
+      </ul>
     </Panel>
   );
 }

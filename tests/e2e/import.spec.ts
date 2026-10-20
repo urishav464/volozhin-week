@@ -4,6 +4,7 @@
 // becoming an archive edition — and «אישור באצווה» of who taught in it; the escorts' file's phrases; a file that is
 // not one. Nothing of the paste stays in the browser's storage. Synthetic people and numbers only.
 import { expect, type Page, test } from "@playwright/test";
+import { strToU8, zipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
@@ -26,6 +27,17 @@ async function paste(page: Page, html: string, text: string) {
     [html, text] as const,
   );
 }
+
+/** A .docx made here: a title paragraph (when given) above a table — each line of a cell its own paragraph, as Word writes it. */
+function docx(rows: string[][], title: string | null): Buffer {
+  const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const para = (x: string) => `<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:t xml:space="preserve">${esc(x)}</w:t></w:r></w:p>`;
+  const table = `<w:tbl>${rows.map((r) => `<w:tr>${r.map((c) => `<w:tc>${c.split("\n").map(para).join("")}</w:tc>`).join("")}</w:tr>`).join("")}</w:tbl>`;
+  const doc = `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${title ? para(title) : ""}${table}</w:body></w:document>`;
+  return Buffer.from(zipSync({ "word/document.xml": strToU8(doc) }));
+}
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 const CANDIDATES_HTML = `<html><head><style>td{color:red}</style><script>window.__pwned = 1</script></head><body>
 <google-sheets-html-origin><table>
@@ -223,6 +235,151 @@ test.describe("demo build — the import of 5786", () => {
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
     await expect(page.getByText("מרצה אחד/ת כבר במאגר · מרצה אחד/ת הושלם/ה בפרטים שהיו חסרים · מרצה אחד/ת קיבל/ה «איך פונים»")).toBeVisible();
     await noSidewaysScroll(page);
+  });
+
+  test("סבב שני — the escorts' .docx with a title above its table: the header row found; «מלווה» never mappable; a phrase with an escort's name edited, then kept", async ({ page }, info) => {
+    test.skip(info.project.name === "tablet", "two widths are enough for this flow");
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "קובץ המלווים" }).check();
+    const rows = [
+      ["מרצה", "מלווה", "הערות"],
+      ["מרצה 07", "חניכה לבדיקה", "דרך המזכירה"],
+      ["מרצה 12", "חניך לבדיקה", "המלווה חניך לבדיקה יתאם בוואטסאפ"],
+    ];
+    await page.locator('input[type="file"]').setInputFiles({ name: "מלווים לבדיקה.docx", mimeType: DOCX, buffer: docx(rows, "מלווים — לבדיקה") });
+    // the title paragraph is row 1: the header row is found below it, and the rows above are not read
+    await expect(page.getByLabel("שורת הכותרות")).toHaveValue("1");
+    await expect(page.getByText(/השורות שמעליה \(שורה 1: כותרת או הסבר\) לא נקראות/)).toBeVisible();
+    await expect(page.getByLabel("מלווה", { exact: true })).toBeDisabled();
+    // no header row at all: the escorts' column is still found by its header among the first rows — never mappable
+    await page.getByLabel("שורת הכותרות").selectOption("");
+    await expect(page.getByLabel("עמודה 2", { exact: true })).toBeDisabled();
+    await expect(page.getByLabel("עמודה 1", { exact: true })).toBeEnabled();
+    await page.getByLabel("שורת הכותרות").selectOption("1");
+    await page.getByLabel("הערות", { exact: true }).selectOption("phrases");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+
+    const phrases = page.getByRole("list", { name: "ניסוחים" });
+    await expect(phrases.getByRole("checkbox", { name: /דרך המזכירה/ })).toBeChecked();
+    const named = phrases.getByRole("checkbox", { name: /המלווה חניך לבדיקה יתאם בוואטסאפ/ });
+    await expect(named).not.toBeChecked(); // never ticked by itself
+    await expect(named).toBeDisabled(); // nor at all, while the name is in it
+    await expect(phrases).toContainText("יש כאן שם של מלווה («חניך לבדיקה»)");
+    await noSidewaysScroll(page);
+    // edited: the channel kept, the name gone
+    await phrases.getByLabel("הנוסח שיישמר במקום «המלווה חניך לבדיקה יתאם בוואטסאפ»").fill("לתאם בוואטסאפ");
+    await expect(named).toBeEnabled();
+    await named.check();
+    const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
+    const m12 = preview.getByRole("listitem").filter({ hasText: "מרצה 12" });
+    await expect(m12).toContainText("ערוץ: WhatsApp");
+    await expect(m12).toContainText("«לתאם בוואטסאפ»");
+    await expect(preview).not.toContainText("לבדיקה");
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(toast(page, "הייבוא נשמר")).toBeVisible();
+    await noSidewaysScroll(page);
+  });
+
+  test("סבב שני — no header row and no escorts' header: the wizard asks which column holds the escorts, and never reads it", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough");
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "קובץ המלווים" }).check();
+    await page.getByLabel("הדבקת טבלה").fill("מרצה 07\tחניכה לבדיקה\tדרך המזכירה\nמרצה 12\tחניך לבדיקה\tרק בוואטסאפ");
+    await page.getByRole("button", { name: "קריאת הטקסט שהוקלד" }).click();
+    await expect(page.getByLabel("שורת הכותרות")).toHaveValue("");
+    const ask = page.getByLabel("באיזו עמודה שמות המלווים?");
+    await expect(ask).toBeVisible();
+    await page.getByLabel("עמודה 1", { exact: true }).selectOption("speaker");
+    await page.getByLabel("עמודה 3", { exact: true }).selectOption("phrases");
+    await expect(page.getByRole("button", { name: "בדיקה מול המאגר" })).toBeDisabled();
+    await ask.selectOption("1"); // «עמודה 2: חניכה לבדיקה · חניך לבדיקה»
+    await expect(page.getByLabel("עמודה 2", { exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    await expect(page.getByRole("list", { name: "ניסוחים" })).not.toContainText("לבדיקה");
+  });
+
+  test("סבב שני — an .xlsx with a title row above its headers: the header row found, the title read as no speaker", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough");
+    const bytes = toXlsx([
+      {
+        name: "מועמדים",
+        headers: ["רשימת מועמדים לבדיקה — סיעור", "", ""],
+        rows: [
+          ["מרצה", "טלפון", "טווח ימים"],
+          ["הרב קפא בדיקתי", "000-000-0031", "א-ב"],
+          ["הרבנית למדא בדיקתית", "", "נסגר"],
+        ],
+      },
+    ]);
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
+    await page.locator('input[type="file"]').setInputFiles({ name: "מועמדים לבדיקה.xlsx", mimeType: XLSX, buffer: Buffer.from(bytes) });
+    await expect(page.getByLabel("שורת הכותרות")).toHaveValue("1");
+    await expect(page.getByLabel("מרצה", { exact: true })).toHaveValue("name");
+    await expect(page.getByLabel("טווח ימים", { exact: true })).toHaveValue("status");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
+    await expect(preview.getByRole("listitem")).toHaveCount(2);
+    await expect(preview.locator('li[data-row="3"]')).toContainText("הרב קפא בדיקתי");
+    await expect(preview).not.toContainText("רשימת מועמדים");
+  });
+
+  test("סבב שני — the tracking sheet: «זהות כפולה» is a title, whole; a line in brackets under a name is its affiliation; the phone after the choices", async ({ page }, info) => {
+    test.skip(info.project.name === "tablet", "two widths are enough for this flow");
+    const td = (x: string) => `<td>${x.split("\n").map((l) => `<p class=MsoNormal>${l}</p>`).join("")}</td>`;
+    const tr = (...cells: string[]) => `<tr>${cells.map(td).join("")}</tr>`;
+    const html = `<table class=MsoTableGrid>${tr("מרצה", "שיעור ב", "כותרת", "טלפון", "נושא")}${tr("הרב אלפא דוגמני\n(ישיבת דוגמה)", "ראשון 8:30", "כותרת אלף", "000-000-0011", "")}${tr(
+      "זטא בדיקתי\nקפא רחוקה",
+      "רביעי 10:00",
+      "זהות כפולה",
+      "000-000-0012",
+      "תנ\"ך",
+    )}</table>`;
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
+    await paste(page, html, "");
+    await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב שני");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+
+    // «זהות כפולה»: no «כפולה» group, the title whole
+    await expect(page.getByRole("list", { name: "קבוצות כפולה" })).toHaveCount(0);
+    const lessons = page.getByRole("list", { name: "השיעורים" });
+    await expect(lessons.locator("li").filter({ hasText: "זהות כפולה" })).toContainText("רביעי");
+    await expect(page.getByRole("heading", { name: "נושא ← קטגוריה" })).toBeVisible(); // the arrow as the rest of the app writes it
+    // the second lines: «(ישיבת דוגמה)» the affiliation of the name above («הצעה: בסוגריים»); «קפא רחוקה» too, until turned
+    const lines = page.getByRole("list", { name: "שורות נוספות בתא המרצה" });
+    const brackets = lines.locator('li[data-line="2:2"]');
+    await expect(brackets.getByRole("radio", { name: "שיוך מוסדי של אלפא דוגמני" })).toBeChecked();
+    await expect(brackets).toContainText("הצעה: בסוגריים");
+    const speakers = page.getByRole("list", { name: "המרצים בגיליון" });
+    await expect(speakers.getByRole("listitem").filter({ hasText: "הרב אלפא דוגמני" })).toContainText("שיוך מוסדי: ישיבת דוגמה");
+    await expect(speakers).not.toContainText("(ישיבת דוגמה)");
+    await expect(lessons).not.toContainText("הטלפון לא נשמר");
+    await noSidewaysScroll(page);
+
+    // «קפא רחוקה» is a speaker: two in the row — the phone waits; «קפא רחוקה» left out: the phone goes to the one left
+    await lines.locator('li[data-line="3:2"]').getByRole("radio", { name: "מרצה נוסף/ת" }).check();
+    const row3 = lessons.locator("li").filter({ hasText: "זהות כפולה" });
+    await expect(row3).toContainText("הטלפון לא נשמר: יש בשורה יותר ממרצה אחד/ת");
+    await speakers.getByRole("listitem").filter({ hasText: "קפא רחוקה" }).getByRole("checkbox", { name: "לא לייבא" }).check();
+    await expect(row3).not.toContainText("הטלפון לא נשמר");
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(page.getByText(/2 קיבלו טלפון או מייל/)).toBeVisible();
+
+    // «איך עבר» on an imported archive with no date: the instructor writes it — said plainly, never «TBD»
+    if (info.project.name === "desktop") {
+      await page.getByRole("banner").getByRole("link", { name: "השבוע" }).click();
+      await page.getByLabel("מחזור", { exact: true }).selectOption({ label: "ארכיון סבב שני (ארכיון)" });
+      await page.locator("[data-lesson-id]").filter({ hasText: "אלפא דוגמני" }).first().click();
+      const review = page.getByRole("dialog", { name: "שיעור סגור" }).getByRole("region", { name: "איך עבר", exact: true });
+      const head = review.getByRole("button", { name: /^איך עבר/ });
+      await expect(head).toContainText("מחזור שיובא — המדריך/ה כותב/ת");
+      await expect(head).not.toContainText("TBD");
+      await head.click();
+      await expect(review).toContainText("מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה");
+    }
   });
 
   test("a file that is not an Office file is refused in Hebrew; nothing is read", async ({ page }, info) => {

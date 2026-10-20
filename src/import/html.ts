@@ -2,7 +2,7 @@
 // plain text. It is parsed by the browser's DOMParser into an inert document (no script runs in it, nothing it names
 // is fetched) and only the TEXT of its cells is read: the HTML is never inserted anywhere, never kept, never shown.
 // The walk itself (gridFromNodes) takes any tree of the shape below, so its rules are unit tests without a browser.
-import { IMPORT_LIMITS, tooBig } from "./limits";
+import { IMPORT_LIMITS, readBudget, tooBig } from "./limits";
 import { cleanGrid, type Grid } from "./table";
 
 /** The part of a DOM node the walk reads. */
@@ -86,6 +86,8 @@ export function gridFromNodes(root: MiniNode): Grid {
   }
 
   const grid: string[][] = [];
+  // every cell counted as it is placed, a rowspan's copies too: a long cell is refused BEFORE it is carried down
+  const budget = readBudget();
   for (const t of tables) {
     const rows: MiniNode[] = [];
     const findRows = (n: MiniNode) => {
@@ -102,6 +104,8 @@ export function gridFromNodes(root: MiniNode): Grid {
       let col = 0;
       const fillCarried = () => {
         for (let c = carry.get(col); c; c = carry.get(col)) {
+          budget.cell(c.text);
+          if (col >= IMPORT_LIMITS.rowCells) tooBig();
           row[col] = c.text;
           if (--c.left === 0) carry.delete(col);
           col++;
@@ -113,12 +117,13 @@ export function gridFromNodes(root: MiniNode): Grid {
         const text = cellText(cell);
         const cs = span(cell, "colspan", IMPORT_LIMITS.cols);
         const rs = span(cell, "rowspan", IMPORT_LIMITS.rows);
+        budget.cell(text, cs - 1);
+        if (col + cs > IMPORT_LIMITS.rowCells) tooBig();
         for (let k = 0; k < cs; k++) {
           row[col + k] = k === 0 ? text : "";
           if (rs > 1) carry.set(col + k, { text: k === 0 ? text : "", left: rs - 1 });
         }
         col += cs;
-        if (col > IMPORT_LIMITS.cols * 4) tooBig();
       }
       fillCarried();
       grid.push(Array.from({ length: row.length }, (_, i) => row[i] ?? ""));

@@ -7,7 +7,7 @@
 //   0.6 alike (sheetMatches): then «עמום» too, the admin choosing «אותו/ה מרצה כמו שורה N», a new speaker (a couple
 //   on one line are two people), or skip.
 // A match only FILLS what the pool speaker lacks — never overwrites, never a gender the speaker's own title
-// contradicts — and the preview says what it would fill.
+// contradicts, never a title that contradicts the speaker's gender — and the preview says what it would fill.
 import { SIMILAR_THRESHOLD } from "../data/speakerRules";
 import type { ContactFlags } from "../data/imports";
 import { displayName } from "../domain/names";
@@ -153,7 +153,12 @@ export interface SpeakerFill {
 export function fillPlan(existing: Speaker, flags: ContactFlags | undefined, d: SpeakerFill): string[] {
   const c = flags ?? { phone: false, email: false, secretary_note: false, notes: false };
   const out: string[] = [];
-  if (existing.title == null && d.title) out.push("תואר");
+  if (existing.title == null && d.title) {
+    // a title that says the other gender than the pool's: never filled (app.import_speaker) — «הרבנית» onto a man
+    const said = titleGender(d.title);
+    if (said != null && existing.gender != null && said !== existing.gender) out.push(`תואר: לא ימולא — במאגר המגדר ${existing.gender === "m" ? "זכר" : "נקבה"}`);
+    else out.push(`תואר: ${d.title}`);
+  }
   if (existing.gender == null && d.gender) {
     // the pool's own title says the other gender: never filled (app.import_speaker)
     const own = titleGender(existing.title);
