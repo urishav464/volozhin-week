@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), and links and מכריכה לכריכה (milestone 5a)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), and sources and the reader (milestone 5ב-1)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -740,3 +740,171 @@ Authorization header**, the token in the body — no session read or refreshed, 
 `anon`. A public page gets it from `loadPublicPort()` (`src/data/publicEntry.ts`), which in production
 never loads supabase-js or `SupabasePort` at all; the pages call nothing else (`tests/e2e/links.spec.ts`
 checks every request on the wire).
+
+# Sources and the reader (milestone 5ב-1, schema v10)
+
+A closed lesson's source files, and the reader built from them (DESIGN «תוצרים» 5). The same two
+implementations: the SQL of `supabase/schema.sql` «Milestone 5ב-1» with the Storage policies, and
+`src/data/engine.ts` (an in-memory bucket, `PoolShared.objects`, behind `DemoSources`);
+`tests/parity` runs the same scenario on both — the uploads, the registrations, the refusals, the
+cover and the headers included. The reader itself (`src/reader/`) is pure browser code over a loaded
+Week: nothing of it is in the database but two settings.
+
+## The bucket
+
+Supabase Storage, bucket `sources`, created by `schema.sql`: **private** (a re-run makes it private
+again, with a warning, and never rewrites its size or types), `file_size_limit` 25 MB (26214400),
+`allowed_mime_types` `application/pdf image/png image/jpeg` and DOCX
+(`application/vnd.openxmlformats-officedocument.wordprocessingml.document`). If the policies cannot
+be created (no privilege on `storage`), the block warns and the rest of the file applies: no policy,
+no upload.
+
+**The path** (`app.source_path_re()` ≡ `SOURCE_PATH_RE` in `src/data/sourceRules.ts`, a unit test
+compares the two): `<edition id>/<lesson id | cover>/<uuid>-<safe name>.<ext>` — ids without leading
+zeros; the uuid lower-case hex; the safe name `[A-Za-z0-9][A-Za-z0-9_-]{0,59}` (`safeName`: the
+original's base, anything else → `-`, "file" when nothing is left); `ext` one of `pdf png jpg jpeg
+docx`. The original name is never in the path; it is the row's `display_name`.
+
+| Who (policies on `storage.objects`, `bucket_id = 'sources'`) | Rule | Function |
+|---|---|---|
+| upload (INSERT, `authenticated`) | `app.source_refusal(name)` is null — below | `app.may_upload_source` |
+| read (SELECT, `authenticated`) | a member of the path's edition, any role (logistics print) | `app.may_read_source` |
+| delete (DELETE, `authenticated`) | an admin of the edition; else (not an archive) its uploader — the row's `uploaded_by` is the caller's member row, or, for an object never registered, its `owner_id` is the caller's JWT `sub` | `app.may_delete_source` |
+| update | nobody — a replacement is a delete and an upload | — |
+| `anon` | nothing | — |
+
+Every one of them is also a **restrictive** policy (`sources_cap_read/upload/update/delete`, and
+`sources_cap_anon` for every command of `anon`), ANDed with every permissive policy on
+`storage.objects`: a policy someone adds later cannot widen this bucket.
+
+**`app.source_refusal(path)`** — in this order: not the convention → `bad_path`; the caller is no
+member of the path's edition (or it does not exist) → `not_member`; logistics → `forbidden`; an
+archive-kind or archived edition and not an admin → `archived`; `cover`: not an admin → `forbidden`,
+a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `bad_path`; a lesson not
+`closed`, or not of kind `lesson` (memorial slots: 5ב-2) → `not_closed`. It is the rule of
+`set_sources` (content or admin, a closed lesson). Engine: `Engine.sourceRefusal`.
+
+The Storage API's own answers, as the browser maps them (`SupabaseSources`; `Engine.storeObject`):
+a type or size the bucket refuses (413/415) → `bad_file`; a policy refusal (401/403) →
+`upload_refused`; anything else, or an object already at the path → `upload_failed`.
+
+## `source_files`
+
+`source_files(id, edition_id, lesson_id null — the poster or a lesson deleted since (on delete set
+null), cover, speaker_id — the lesson's lead speaker when the file arrived (on delete set null),
+storage_path unique, display_name, mime, size_bytes ≤ 26214400, page_count 1–5000 | null,
+uploaded_by → members (on delete set null), uploaded_at)`. Read under RLS by every member of the
+edition, in `load_week` as `sourceFiles` (`uploaded_at` as `toISOString` writes it). No browser
+writes it but through the functions below. **Never published to Realtime** (the never-publish list):
+the week reloads after an upload. `member_has_history` counts `uploaded_by`.
+
+**A file of the previous speaker:** `speaker_id` is not the lesson's lead any more — after
+`reopen_lesson` (which keeps every file) or a lead replaced. Listed «מהמרצה הקודם», for removal; never
+in the reader; `register_source_file`'s "first file" counts only the current speaker's.
+
+## Commands
+
+### `upload(edition, lesson | null, file, {pages})` — Storage, then `register_source_file` → the row
+
+The browser checks the pick (`checkPicked`: a type we take, ≤ 25 MB, never Word for a poster —
+`bad_file`), counts a PDF's pages (pdf-lib; null when it cannot), POSTs the bytes to
+`/storage/v1/object/sources/<path>` with the member's own access token (never a service key), then
+calls:
+
+`register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages)` — in this order:
+- the caller not a member of `p_edition` → `not_member`;
+- `p_path` not the convention for exactly this edition and this lesson (`cover` when `p_lesson` is
+  null) → `bad_path`;
+- `app.source_refusal(p_path)` → its code;
+- (the lesson row locked) a row already at `p_path` → that row again (a retry), unless it is another
+  edition's or lesson's (`bad_path`);
+- no live object at `p_path`, or not uploaded by the caller (`owner_id` ≠ the JWT `sub`) → `no_file`;
+- the object's `metadata.mimetype` not one of the four or not matching the extension, or its
+  `metadata.size` missing or over 25 MB → `bad_file` — the Storage API's word, not the browser's;
+- `display_name` one line ≤ 200, required; `p_pages` null or 1–5000 → else `bad_value`.
+
+Then the row: `page_count` = `p_pages` for a PDF, 1 for an image, null for Word; `speaker_id` = the
+lesson's lead; `uploaded_by` = the caller's member row. **A lesson's file:** `sources_kind`
+`pending` → `sheet` (a file arrived); and when it is the current speaker's first file and the kind
+prints something (not `pending none presentation`), `in_reader` := true — only then, so a lesson
+someone unmarked stays unmarked. `version + 1` when either changed. **A poster:** the edition's first
+becomes the cover (`settings.reader_cover`). Engine: `Engine.registerSourceFile` (`arrived`,
+`pagesFor`).
+
+A registration the database refuses removes the uploaded object again (the browser, under the delete
+policy), and the refusal is shown.
+
+### `remove(file)` — Storage, then `remove_source_file(p_file)` → `void`
+
+The stored object first, through the Storage API under the delete policy (a refusal →
+`remove_failed`), then: no such row → nothing; not a member → `not_member`; an archive and not an
+admin → `archived`; not an admin and not its uploader → `not_uploader`; **the object still in the
+bucket → `file_present`**; else the row goes, and `settings.reader_cover` with it when it named the
+file. So a failure half-way leaves a row whose file is gone — visible, removed again with one tap —
+never an object nobody can see.
+
+### `urls(edition, paths)` — signed URLs
+
+`createSignedUrls` for 600 seconds (`SIGNED_URL_SECONDS`), at most 20 per call when the reader is
+built; the bucket has no public URL. The demo: object URLs of its in-memory blobs.
+
+### `setHeaders(edition, left, right)` — `set_reader_headers` → `void`
+
+`app.require_edition_admin`; each one line ≤ 120 (`clean_line`); both empty removes
+`settings.reader_headers`, else it is `[left ?? '', right ?? '']`. **Never seeded:** absent, the
+reader has no running headers.
+
+### `setCover(edition, file | null)` — `set_reader_cover` → `void`
+
+`app.require_edition_admin`; a file must be a poster (`cover`) of this edition and not Word, else
+`bad_value`; null removes `settings.reader_cover` (the reader opens with a schedule page).
+
+## The reader (browser only — `src/reader/`)
+
+`readerManifest(week)` (`model.ts`): one row per `scheduleEntries` entry — every closed lesson and
+memorial slot, not cancelled, in grid order — with its status:
+
+| Status | When |
+|---|---|
+| `no_sources` | `sources_kind = none` |
+| `presentation_only` | `sources_kind = presentation` (whatever `in_reader` says) |
+| `included` | `in_reader`, and a PDF or an image of the current speaker |
+| `needs_pdf` | `in_reader`, and only Word files |
+| `missing` | `in_reader` and no file; or not marked, not pending, and no file |
+| `pending` | not marked, `sources_kind = pending` |
+| `not_marked` | not marked, files arrived |
+| `memorial` | a memorial slot: always in, its header page (its materials: `memorialFiles`, 5ב-2) |
+
+The PDF (`layout.ts`, `assemble.ts`, in a module worker): first the cover — the marked poster's
+pages, else schedule pages made from the designer's rows; the table of contents (each day, each
+entry with the page it starts on); then each day: every `included` row — a header strip «מרצה –
+כותרת» (TBD for a missing name or title) with its day and teaching time on its first page, then its
+files' pages, each scaled to fit A4 with its aspect and rotation kept — and every memorial slot; a
+«סיכום יום» page closes every day. Running headers `[left, right]` alternate (an odd page the left
+one); page numbers count from the cover's first page as 1; the cover carries neither. Hebrew is drawn on an OffscreenCanvas and
+embedded as PNG. A file that cannot be read is left out and named. The result is downloaded — never
+uploaded.
+
+The Word skeleton (`docx.ts`, docx 9.8.1): a TOC field updated on open, a heading per day, every
+lesson marked `in_reader` (not `presentation_only`, not `no_sources` — whatever its files) and every
+memorial slot as a heading on its own page, a ruled «סיכום יום» page per day, right to left, A4, the
+same running headers and a page number.
+
+## Errors (milestone 5ב-1)
+
+`bad_path no_file bad_file not_uploader file_present not_closed` from the database; `upload_refused
+upload_failed remove_failed read_failed` from the Storage API as the browser maps it — plus
+`not_member forbidden archived bad_value`.
+
+## RPC signatures (milestone 5ב-1)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `register_source_file` | `p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer` | `jsonb` (the row) | authenticated |
+| `remove_source_file` | `p_file bigint` | `void` | authenticated |
+| `set_reader_headers` | `p_edition bigint, p_left text, p_right text` | `void` | authenticated |
+| `set_reader_cover` | `p_edition bigint, p_file bigint` | `void` | authenticated |
+
+`authenticated` may also execute `app.may_upload_source`, `app.may_read_source` and
+`app.may_delete_source` — the policies run as the browser's role (`tests/sql/schema.test.ts` pins
+them).
