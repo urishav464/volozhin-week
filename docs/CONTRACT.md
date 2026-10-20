@@ -539,7 +539,9 @@ Links without an account (DESIGN «גישה בלי חשבון»): an escort's li
 `supabase/schema.sql` «Milestone 5a» and `src/data/engine.ts` (behind `DemoPort`, through
 `src/data/demoLinks.ts`); `tests/parity` runs the same scenarios on both — the public pages' answers
 included. This is the first surface for `anon`: it may execute `ping` and the six functions of «The
-anon functions» below, and nothing else — no table, no other function.
+anon functions» below, and nothing else — no table, no other function. Since v12 `ping` runs as the caller
+(`SECURITY INVOKER`: it reads nothing), so anon's `SECURITY DEFINER` functions are exactly the six, and every
+function in `public` and `app` pins its `search_path` (`tests/sql/schema.test.ts`; SETUP «Security Advisor»).
 
 ## Links
 
@@ -1192,21 +1194,27 @@ title says** (`app.title_gender`: הרב → m, הרבנית → f, any other ti
 
 Resolved:
 - `merge`: the speaker `speaker_id` (locked) — gone → `stale`.
-- `new`: the one pool speaker with this name key (two → `disambiguator_required`); else the one speaker whose stored
-  phone has this phone's key; else a **new** speaker: `vetted='pending'`, `source` the payload's, `created_by` the
+- `new`: the one pool speaker with this name key (two → `disambiguator_required`) — including one an earlier row of
+  the same payload just added; else a **new** speaker: `vetted='pending'`, `source` the payload's, `created_by` the
   caller, the title and gender as given (a name taken a moment ago by another connection → `speaker_exists`).
-  So a re-run, or a row the browser thought new, **completes** — never a second copy.
+  So a re-run **completes** — never a second copy. **A phone alone never resolves a `new` row** (review of v12): two
+  names on one line (a couple, an office) are two people. A phone the pool has is the preview's «אותו טלפון כמו …»,
+  and the browser sends that row as an explicit `merge`; two rows of one table that share a phone, or whose names
+  are 0.6 alike, are «עמום» in the preview, and «אותו/ה מרצה כמו שורה N» travels as a `new` row under row N's name.
 - Completing **fills only what is empty**: the speaker's `title`, `gender`, `affiliation`, `topics` (an empty array is
-  empty), and `speaker_contacts`' `phone`, `email`, `notes`. A field with a value is never overwritten. A speaker
-  whose own record got a field: `version + 1`.
+  empty), and `speaker_contacts`' `phone`, `email`, `notes`. A field with a value is never overwritten. **A gender
+  the speaker's own title contradicts is never filled** (the pool's «הרבנית» with no gender and a row «הרב»: no
+  gender; a title that says none — «ד״ר» — takes the row's). A speaker whose own record got a field: `version + 1`.
 
 ### `candidates` — `{source, titles_from, rows: SpeakerRow[]}`
 `rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`. Each row as above.
 
 ### `tracking` — `{label, start_date, source, titles_from, speakers: SpeakerRow[], lessons: ArchiveLessonRow[]}`
-In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`;
-`start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; an edition with
-this label that is not of kind `archive` → `edition_exists`; an archive edition with this label that has a
+In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`,
+taken in its key's form (`app.label_key` ≡ `labelKey`: ״ “ ” ″ as `"`, ׳ ‘ ’ as `'`, spaces single — stored so);
+`start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; the editions
+are found **by that key** — two that answer to it (made before it) → `label_ambiguous`; one that is not of kind
+`archive` → `edition_exists`; an archive edition with this label that has a
 `lesson_reviews` row (an admin wrote «איך עבר» on one of its lessons — after the week, below) → `archive_reviewed`: the
 replace would delete it with its lesson, so nothing is replaced; `source` as above. Then the speakers (as above), then:
 - **No edition with this label:** a new one — `kind='archive'`, `status='archived'`, `start_date` only as given; its
@@ -1224,10 +1232,16 @@ replace would delete it with its lesson, so nothing is replaced; `source` as abo
   two rows that resolved to one pool speaker are one speaker here. The room invariant → `room_taken`, the speaker
   invariant → `speaker_busy` (the row named). **The closing invariant is not applied**: an archive's lesson is a
   record of what was, its speakers may be pending, their gender unknown.
-- `lessons.import_note` (v12): what the sheet said that has no field of its own («הסעה/תשלום» words, «קיבל הודעת
-  סיכום מ» — a note, never a member), cleared of phones and e-mails in the browser. Written by this import only;
-  `load_week` carries it; the lesson panel shows it («מגיליון המעקב של אשתקד»). `purge_edition_private` clears it
-  (after the week, «The purge»).
+- `import_note` (v12) goes to **`lesson_import_notes`** (`lesson_id` → its own row, `edition_id`, `note`), never to
+  the lesson: what the sheet said that has no field of its own («הסעה/תשלום» words — pickup places, drivers — and
+  «קיבל הודעת סיכום מ», a note, never a member), cleared of phones and e-mails in the browser. Transport words are
+  personal data, so the table has **the transport details' rule**: read under `app.may_see_transport` (for an
+  archive, a global admin only), one lesson at a time — `get_import_note(p_lesson)` (invoker; null when there is
+  none or it is not the caller's); never in `load_week`, Realtime or the device's offline copy (`import_note` is a
+  `PERSONAL_KEYS` key). Written by this import only (a replace deletes the old ones with their lessons);
+  `purge_edition_private` deletes them (after the week, «The purge»). In the engine: `shared.importNotes`, by
+  `<edition>:<lesson>`, read by `importNoteOf`; the lesson panel shows it («מגיליון המעקב של אשתקד», a global
+  admin's). The browser also clears phones and e-mails from an «אחר» sources note (`sources_note`), with a warning.
 - The archive's lessons are in `speaker_history` like any edition's; after the week, the archive is a past year for
   `edition_returning` and `speaker_reviews` (its kind is `archive`).
 
@@ -1237,9 +1251,10 @@ null or a channel (`app.pick_contact_pref`) → else `bad_value`; `secretary_not
 empty:** `speakers.contact_pref` (`version + 1`), `speaker_contacts.secretary_note`. No speaker is added.
 
 ### The result and the log
-`{created, merged, filled, contacts, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}` —
-`merged` counts every speaker row that completed one (`escorts`: every row), `filled` those whose record got a
-field, `contacts` those whose contacts did; `lessons` and `replaced` the archive's; `edition_id` null but for
+`{created, merged, filled, contacts, notes, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}`
+— `merged` counts every speaker row that completed one (`escorts`: every row), `filled` those whose record got a
+field, `contacts` those that got a phone or an e-mail (`escorts`: the secretary note), `notes` those whose private
+note was filled — a note is never counted as a contact detail; `lessons` and `replaced` the archive's; `edition_id` null but for
 `tracking`; `speakers` each speaker row as resolved, in order.
 The activity log: per speaker `insert` (`{vetted, source}`), `update` and `contacts` (`{fields: […]}` — field names);
 per call one `import` entry (entity `import`, the archive's edition and id for `tracking`, kind = the call's kind)
@@ -1249,7 +1264,8 @@ with the counts and the source. **Never a name, a phone, an e-mail or a note.**
 
 `not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `name_required bad_phone
 bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amount room_taken speaker_busy`; for
-`tracking`, `label_required not_sunday edition_exists archive_reviewed stale`. The browser's own, before anything is sent:
+`tracking`, `label_required not_sunday label_ambiguous edition_exists archive_reviewed stale`. The payload's size is
+the bytes of its jsonb text (`p_payload::text`; the engine writes the same text, `jsonbText`). The browser's own, before anything is sent:
 `import_too_big` (a file or a table past `IMPORT_LIMITS`), `import_bad_file`, `import_encrypted`.
 
 ## RPC signatures (the import)
@@ -1258,6 +1274,7 @@ bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amou
 |---|---|---|---|
 | `import_lookup` | `p_speakers bigint[], p_phone_keys text[]` | `jsonb` | authenticated (a global admin's; definer) |
 | `import_commit` | `p_kind text, p_payload jsonb` | `jsonb` | authenticated (a global admin's; definer) |
+| `get_import_note` | `p_lesson bigint` | `text` | authenticated (invoker: `lesson_import_notes` under `app.may_see_transport`) |
 
 The helpers (`app.phone_key`, `app.title_gender`, `app.jint`, `app.jlen`, `app.require_global_admin`,
 `app.refuse_row`, `app.import_speaker`, `app.import_speakers`, `app.import_room`) are no API role's
@@ -1348,8 +1365,8 @@ and its week is not over → `week_not_over` («over»: the Israel date ≥ `sta
 the escort and schedule links expire; never while the date is TBD). Then:
 
 - deletes the edition's `transport_details` (pickup addresses and times, drivers' names and phones);
-- clears its lessons' `import_note` (the import of 5786: what last year's sheet said — its transport and payment
-  words among it — on an archive's lessons; always null elsewhere), the lessons' `version` unchanged;
+- deletes its lessons' `lesson_import_notes` (the import of 5786: what last year's sheet said — its transport and
+  payment words among it — on an archive's lessons; none elsewhere), the lessons untouched;
 - deletes the `share_link_hits` of the edition's links (the hashed callers' addresses);
 - revokes every live `share_links` row of the edition (`revoked_at` = now) — the anon functions answer
   `link_invalid` for them from then on, and nothing un-revokes a link;
@@ -1360,7 +1377,7 @@ the escort and schedule links expire; never while the date is TBD). Then:
 and returns `{transport_details, import_notes, links_revoked, link_hits, purged_at}`. Idempotent: a second run deletes
 nothing more, returns zeros and the first `purged_at`, and is logged again. Everything else stays
 (DECISIONS «אבן דרך 6» has each table and why; «איחוד גרסה 12» the import note). In the engine: `shared.transport`
-keys `<edition>:…`, `week.lessons[].import_note`, `shared.linkHits` of the edition's tokens, `shared.links`,
+keys `<edition>:…`, `shared.importNotes` keys `<edition>:…`, `shared.linkHits` of the edition's tokens, `shared.links`,
 `week.edition.purged_at`, the pool's log.
 
 ## Moving to next year

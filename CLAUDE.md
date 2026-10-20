@@ -49,7 +49,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `supabase/schema.sql`: it REVOKEs everything from `anon`/`authenticated` and grants back an
   explicit list at the end of the file. `tests/sql/schema.test.ts` pins the exact set of
   functions each role may execute — a new browser-callable function means updating that list
-  on purpose. Helpers live in schema `app` (not exposed); browser RPCs in `public`.
+  on purpose — that every function in `public` and `app` pins its `search_path`, and that anon's
+  SECURITY DEFINER functions are exactly the six link functions (SETUP «Security Advisor» says which
+  advisor warnings remain, and why). Helpers live in schema `app` (not exposed); browser RPCs in `public`.
 - **Schema changes:** edit `supabase/schema.sql` (it must stay idempotent — the owner re-runs the
   whole file in the SQL Editor), bump `public.schema_version()` **and**
   `src/lib/schema.ts → EXPECTED_SCHEMA_VERSION` in the same commit, and tell the user to re-run it.
@@ -116,7 +118,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **Links without an account and מכריכה לכריכה (milestone 5a, schema v9):** `share_links` (a token's sha256
   only; issued, replaced, revoked by an edition's admins — `port.links`, `src/data/links.ts`), the escorts'
   ticks (`escortTicks` in the Week) and the kk tables (`port.kk`, `src/data/kk.ts`: all writes are functions).
-  **anon's whole reach is `ping` and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
+  **anon's whole reach is `ping` (invoker since v12) and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
   kk_form kk_signup schedule_view`), keyed by a token alone; every link problem is the one refusal
   `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its one accepted
   residual: «full» after a sign-up — CONTRACT). The rate limit: an escort's link one count; a class link one per
@@ -216,8 +218,13 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   «row:reason»), fill-empty only, re-runnable (schema.sql «Import 5786»; CONTRACT «The import of 5786»; the engine's
   `importCommit` behind DemoPort). The wizard is «הגדרות ← ייבוא» (`src/screens/settings/ImportTab.tsx`,
   `importParts.tsx`); **nothing raw is stored** — not in the database, not in the browser (the e2e checks the
-  storage). The archive's `lessons.import_note` shows in the lesson panel; «אישור באצווה: מי שלימד/ה ב-…» is
-  `pendingWhoTaught` (`src/domain/mine.ts`) in `/approvals` (DECISIONS «ייבוא תשפ"ו»).
+  storage). A `new` row is never resolved by a phone alone (two names on one line are two people): the preview's
+  `sheetMatches` makes rows of one table that share a phone or a name 0.6 alike «עמום» («כמו שורה N»,
+  `resolveChoice`; the tracking sheet's `speakerAliases`). An archive's label is compared by `app.label_key` ≡
+  `labelKey`. The sheet's notes are `lesson_import_notes` — the transport details' rule (`app.may_see_transport`),
+  one lesson at a time (`get_import_note`, `cmds.importNote`; `shared.importNotes` in the engine), never in a Week,
+  Realtime or the offline copy (`import_note` is a `PERSONAL_KEYS` key); «אישור באצווה: מי שלימד/ה ב-…» is
+  `pendingWhoTaught` (`src/domain/mine.ts`) in `/approvals` (DECISIONS «ייבוא תשפ"ו», «ביקורת: ייבוא ואבן דרך 6»).
 - **After the week (milestone 6, schema v12):** `lesson_reviews` — «איך עבר», one per closed lesson, written only
   through `save_lesson_review` by the lesson's handler (once the day the lesson ENDS on has passed in Israel time:
   `app.review_opens_on` ≡ `reviewOpensOn` in `src/domain/reviews.ts`; never while the date is TBD) or an edition admin
@@ -230,7 +237,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
   `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
   Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
-  every link, clears the lessons' `import_note`, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
+  every link, deletes the edition's `lesson_import_notes`, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
