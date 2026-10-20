@@ -55,8 +55,14 @@ describe("the manifest", () => {
 
   it("puts in the reader only what has printable pages, and the memorial slots — never a presentation alone, never Word alone", () => {
     const w = demo();
-    // even marked for the reader by hand, a presentation stays out (in_reader's own rule, and the manifest's)
-    at(w, 0, 600).in_reader = true;
+    // even marked for the reader by hand, and with a PDF of its slides uploaded, a presentation stays out (in_reader's own rule, and the manifest's)
+    const slides = at(w, 0, 600);
+    slides.in_reader = true;
+    w.sourceFiles.push({
+      id: 99, lesson_id: slides.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === slides.id && x.role === "lead")!.speaker_id,
+      storage_path: `1/${slides.id}/x`, display_name: "שקפים.pdf", mime: "application/pdf", size_bytes: 1, page_count: 12, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    expect(readerManifest(w).rows.find((r) => r.lesson.id === slides.id)).toMatchObject({ status: "presentation_only", pages: 0 });
     const rows = readerRows(readerManifest(w));
     expect(rows.map((r) => r.status)).not.toContain("presentation_only");
     expect(rows.map((r) => r.status)).not.toContain("needs_pdf");
