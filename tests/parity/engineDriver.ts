@@ -9,7 +9,7 @@ import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vet
 import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE,
+  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fileLine, filePath, FOREIGN_ROOM, FOREIGN_TRAINEE,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -33,6 +33,7 @@ export function engineDriver(): Driver {
     team: MEMBERS.map((m, i) => ({ id: i + 1, display_name: m.name, gender: null, role: m.role })),
     roster: ROSTER.map((r, i) => ({ id: i + 1, full_name: r.name, gender: r.gender })),
     escortTicks: [],
+    sourceFiles: [],
   };
   const speakerId = (label: string) => week.speakers.find((s) => speakerLabel(s) === label)?.id ?? -1;
   for (const [i, a] of APPROACHES.entries()) {
@@ -59,6 +60,11 @@ export function engineDriver(): Driver {
     const l = lessonAt(place);
     return { id: l?.id ?? -1, version: (l?.version ?? 0) - staleBy };
   };
+
+  // ---- the sources' files: each label's stored path, and the target it was stored for
+  const files: Record<string, { path: string; target: At | "cover" }> = {};
+  const targetId = (t: At | "cover") => (t === "cover" ? null : (lessonAt(t)?.id ?? -1));
+  const pathOf = (label: string, target?: At | "cover") => files[label]?.path ?? filePath(week.edition.id, targetId(target ?? "cover"), label, "application/pdf");
 
   // ---- links and מכריכה לכריכה
   const tokens: Record<string, string> = {};
@@ -238,6 +244,20 @@ export function engineDriver(): Driver {
         else if ("kkUnplace" in step) e.kkUnplace(trackId(step.kkUnplace), traineeId(step.trainee) ?? -1);
         else if ("kkWindow" in step) e.kkSetWindow(step.kkWindow[0], step.kkWindow[1]);
         else if ("bookOrder" in step) e.setBookOrder(groupId(step.bookOrder), step.copies, step.ordered as boolean);
+        // ---- the sources' files
+        else if ("store" in step) {
+          const mime = step.mime ?? "application/pdf";
+          const path = filePath(week.edition.id, targetId(step.store), step.file, mime);
+          e.storeObject(path, mime, step.size ?? 1000);
+          files[step.file] = { path, target: step.store };
+        } else if ("register" in step) {
+          const f = files[step.register];
+          const target = step.for ?? f?.target ?? "cover";
+          e.registerSourceFile(targetId(target), pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages);
+        } else if ("unstore" in step) return e.deleteObject(pathOf(step.unstore)) ? "deleted" : "kept";
+        else if ("unregister" in step) e.removeSourceFile(week.sourceFiles.find((f) => f.storage_path === pathOf(step.unregister))?.id ?? -1);
+        else if ("readerHeaders" in step) e.setReaderHeaders(step.readerHeaders[0], step.readerHeaders[1]);
+        else if ("readerCover" in step) e.setReaderCover(step.readerCover == null ? null : (week.sourceFiles.find((f) => f.storage_path === pathOf(step.readerCover!))?.id ?? -1));
         return "ok";
       } catch (err) {
         if (err instanceof CommandError) return err.code;
@@ -248,6 +268,8 @@ export function engineDriver(): Driver {
     },
 
     async state(): Promise<Normal> {
+      const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
+      const labelOfFile = (id: number | undefined) => (id == null ? "-" : labelOf(week.sourceFiles.find((f) => f.id === id)?.storage_path ?? `#${id}`));
       const room = (id: number) => week.rooms.find((r) => r.id === id)!.name;
       const key = (id: number) => {
         const l = week.lessons.find((x) => x.id === id)!;
@@ -271,7 +293,7 @@ export function engineDriver(): Driver {
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
         availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
-        edition: editionLines(week.edition.settings),
+        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover)),
         links: shared.links
           .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -290,6 +312,10 @@ export function engineDriver(): Driver {
           ...shared.kk.orders.map((o) => `order|${names.group(o.group_id)}|${o.copies}|ord=${o.ordered_at == null ? "-" : "y"}`),
         ].sort(),
         ticks: week.escortTicks.map((t) => `${key(t.lesson_id)}|${t.item}`).sort(),
+        files: week.sourceFiles
+          .map((f) => fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : key(f.lesson_id), f, f.speaker_id == null ? "-" : sp(f.speaker_id), member(f.uploaded_by)))
+          .sort(),
+        objects: Object.entries(shared.objects).map(([path, o]) => `${labelOf(path)}|${o.mime}|${o.size}|owner=${member(Number(o.owner.split(":")[1]))}`).sort(),
       };
     },
 

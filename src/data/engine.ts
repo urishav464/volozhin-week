@@ -1,6 +1,10 @@
 // docs/CONTRACT.md, in memory. DemoPort runs on this, so the demo and the
 // decision gate behave exactly like production; tests/parity runs the same
 // scenarios here and against the SQL and compares the results.
+// So do the sources' files (CONTRACT.md «Sources and the reader», milestone
+// 5ב-1): `shared.objects` is the Storage bucket (what the policies on
+// storage.objects allow, by the same predicates), a Week's sourceFiles the
+// table, and register/remove the two functions.
 //
 // Every command is all-or-nothing: the state is snapshotted first and restored
 // if the command refuses, like a database transaction.
@@ -21,7 +25,8 @@ import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
 import { similarity } from "../domain/trigram";
 import type {
-  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, Speaker, SpeakerContacts, Transport, TransportDetails, Vetting, Week,
+  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts, Transport, TransportDetails,
+  Vetting, Week,
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
@@ -35,6 +40,7 @@ import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type K
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
+import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
 import {
   cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
 } from "./stageRules";
@@ -76,9 +82,19 @@ export interface PoolShared {
   linkHits: Record<string, { window_start: string; hits: number }>;
   /** kk_tracks, kk_groups, kk_leaders, kk_signups, book_orders (v9). */
   kk: KkStore;
+  /** The «sources» bucket (v10), by object path: what Storage keeps of each — its type, size and uploader. The bytes are DemoPort's. */
+  objects: Record<string, StoredObject>;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk() });
+/** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
+export interface StoredObject {
+  mime: string;
+  size: number;
+  /** Who uploaded it (the API writes the session's sub; here, the member). */
+  owner: string;
+}
+
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {} });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -726,6 +742,162 @@ export class Engine {
     });
   }
 
+  // ---------------------------------------------------------------- sources (CONTRACT.md «Sources and the reader», milestone 5ב-1)
+
+  /**
+   * app.source_refusal: why the actor may not upload to this path — null when they may. The rule of set_sources:
+   * content or admin of the path's edition (an archive: its admins), a closed lesson of kind 'lesson' there;
+   * the poster (…/cover/…, never Word) for the edition's admins.
+   */
+  sourceRefusal(path: string): string | null {
+    const p = parseSourcePath(path);
+    if (!p) return "bad_path";
+    const at = this.editionAt(p.edition);
+    if (!at) return "not_member";
+    const { week, role } = at;
+    if (role === "logistics") return "forbidden";
+    const e = week.edition;
+    if ((e.kind === "archive" || e.status === "archived") && role !== "admin") return "archived";
+    if (p.lesson == null) return role !== "admin" ? "forbidden" : p.ext === "docx" ? "bad_file" : null;
+    const l = week.lessons.find((x) => x.id === p.lesson);
+    if (!l) return "bad_path";
+    if (l.state !== "closed" || l.kind !== "lesson") return "not_closed";
+    return null;
+  }
+
+  /** The sources_read policy (app.may_read_source): the whole team of the path's edition, logistics included. */
+  maySeeSource(path: string): boolean {
+    const p = parseSourcePath(path);
+    return !!p && !!this.editionAt(p.edition) && !!this.shared.objects[path];
+  }
+
+  /** The sources_delete policy (app.may_delete_source): an admin of the edition, else its uploader (the row's, or an unregistered object's owner). */
+  mayDeleteSource(path: string): boolean {
+    const p = parseSourcePath(path);
+    const at = p && this.editionAt(p.edition);
+    if (!at) return false;
+    if (at.role === "admin") return true;
+    const e = at.week.edition;
+    if (e.kind === "archive" || e.status === "archived") return false;
+    const row = at.week.sourceFiles.find((f) => f.storage_path === path);
+    if (row) return row.uploaded_by != null && row.uploaded_by === this.actor.memberId;
+    return this.shared.objects[path]?.owner === this.ownerKey();
+  }
+
+  /**
+   * An upload through the Storage API: the bucket takes the four types up to 25 MB (bad_file — the API's 415/413),
+   * then the INSERT policy decides (upload_refused — the API's 403). Never replaces an object.
+   */
+  storeObject(path: string, mime: string, size: number): void {
+    this.tx(() => {
+      if (!(SOURCE_MIMES as readonly string[]).includes(mime) || !(size >= 0) || size > MAX_SOURCE_BYTES) fail("bad_file");
+      if (this.sourceRefusal(path) != null) fail("upload_refused");
+      if (this.shared.objects[path]) fail("upload_failed");
+      this.shared.objects[path] = { mime, size, owner: this.ownerKey() };
+    });
+  }
+
+  /** A delete through the Storage API: as the caller — nothing happens when the policies do not allow it. True when the object went. */
+  deleteObject(path: string): boolean {
+    if (!this.shared.objects[path] || !this.mayDeleteSource(path)) return false;
+    delete this.shared.objects[path];
+    return true;
+  }
+
+  /** public.register_source_file: the uploaded object becomes the lesson's file (lessonId null: the edition's poster). */
+  registerSourceFile(lessonId: number | null, path: string, displayName: string, pages: number | null): SourceFile {
+    return this.tx(() => {
+      const p = parseSourcePath(path);
+      if (!p || p.edition !== this.week.edition.id || p.lesson !== lessonId) fail("bad_path");
+      const code = this.sourceRefusal(path);
+      if (code) fail(code);
+      const existing = this.week.sourceFiles.find((f) => f.storage_path === path);
+      if (existing) {
+        if (existing.lesson_id !== lessonId) fail("bad_path");
+        return { ...existing };
+      }
+      const obj = this.shared.objects[path];
+      if (!obj || obj.owner !== this.ownerKey()) fail("no_file");
+      if (!mimeMatches(obj!.mime, p!.ext) || obj!.size > MAX_SOURCE_BYTES) fail("bad_file");
+      const mime = obj!.mime as SourceMime;
+      const name = cleanDisplayName(displayName);
+      const pageCount = pagesFor(mime, pages);
+      const lesson = lessonId == null ? null : this.week.lessons.find((l) => l.id === lessonId)!;
+      const lead = lesson ? (this.week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead")?.speaker_id ?? null) : null;
+      const first = lesson != null && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead);
+      const row: SourceFile = {
+        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null, speaker_id: lead, storage_path: path, display_name: name,
+        mime, size_bytes: obj!.size, page_count: pageCount, uploaded_by: this.actor.memberId, uploaded_at: this.now(),
+      };
+      this.week.sourceFiles.push(row);
+      if (lesson) {
+        const next = arrived(lesson, first);
+        if (next.sources_kind !== lesson.sources_kind || next.in_reader !== lesson.in_reader) {
+          Object.assign(lesson, next, { version: lesson.version + 1, updated_by: this.actor.memberId });
+        }
+      } else if (this.week.edition.settings.reader_cover == null) {
+        this.week.edition.settings = { ...this.week.edition.settings, reader_cover: row.id };
+      }
+      return { ...row };
+    });
+  }
+
+  /** public.remove_source_file: the uploader or an admin, once the stored object is gone (file_present). A row already gone: nothing. */
+  removeSourceFile(fileId: number): void {
+    this.tx(() => {
+      const f = this.week.sourceFiles.find((x) => x.id === fileId);
+      if (!f) return;
+      const e = this.week.edition;
+      if ((e.kind === "archive" || e.status === "archived") && !this.isAdmin()) fail("archived");
+      if (!this.isAdmin() && (f.uploaded_by == null || f.uploaded_by !== this.actor.memberId)) fail("not_uploader");
+      if (this.shared.objects[f.storage_path]) fail("file_present");
+      this.week.sourceFiles = this.week.sourceFiles.filter((x) => x.id !== f.id);
+      if (this.week.edition.settings.reader_cover === f.id) {
+        const settings = { ...this.week.edition.settings };
+        delete settings.reader_cover;
+        this.week.edition.settings = settings;
+      }
+    });
+  }
+
+  /** public.set_reader_headers: an admin of the edition; one line each (≤ 120); both empty removes them. */
+  setReaderHeaders(left: string | null, right: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const l = cleanLine(left, 120);
+      const r = cleanLine(right, 120);
+      const settings = { ...this.week.edition.settings };
+      if (l == null && r == null) delete settings.reader_headers;
+      else settings.reader_headers = [l ?? "", r ?? ""];
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_reader_cover: an admin of the edition; one of its posters (not Word), or null. */
+  setReaderCover(fileId: number | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.mime !== DOCX)) fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      if (fileId == null) delete settings.reader_cover;
+      else settings.reader_cover = fileId;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** The edition a path names and the actor's role there: this engine's own, or — for an admin of every edition — another one's. */
+  private editionAt(editionId: number): { week: Week; role: Actor["role"] } | null {
+    if (editionId === this.week.edition.id) return { week: this.week, role: this.actor.role };
+    if (!this.actor.global) return null;
+    const week = this.elsewhere().find((w) => w.edition.id === editionId);
+    return week ? { week, role: "admin" } : null;
+  }
+
+  /** Whose object an upload is (the Storage API's owner_id): the member, in the demo. */
+  private ownerKey(): string {
+    return `member:${this.actor.memberId}`;
+  }
+
   // ---------------------------------------------------------------- links (CONTRACT.md «Links and מכריכה לכריכה», milestone 5a)
 
   /** share_links_read: an edition's admins see its links — never a token; anyone else, none. */
@@ -1359,6 +1531,7 @@ export class Engine {
   /** Delete a lesson with its pitches and speakers (callers take the live pitches first, via livePitchesOf). */
   private deleteLesson(id: number) {
     delete this.shared.transport[this.transportKey(id)]; // on delete cascade
+    for (const f of this.week.sourceFiles) if (f.lesson_id === id) f.lesson_id = null; // on delete set null: the files stay, for removal
     this.week.lessons = this.week.lessons.filter((l) => l.id !== id);
     this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== id);
     this.week.pitches = this.week.pitches.filter((p) => p.lesson_id !== id);

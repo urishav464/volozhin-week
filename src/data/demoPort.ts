@@ -6,7 +6,9 @@ import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilesto
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
-import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek } from "./demoWeek";
+import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import type { Sample } from "./demoFiles";
+import { DemoSources, type DemoSourceStore } from "./demoSources";
 import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
 import type { Note } from "./knowledge";
 import type { ExportSnapshot } from "./outputs";
@@ -24,7 +26,7 @@ const DEMO_EMAIL = "demo@example.org";
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
 // the database. The demo user is the global admin (member 1).
-export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore {
+export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
@@ -38,6 +40,10 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly kk: DemoKk;
   /** What a link's public page reads: the anon functions on the engine. */
   readonly public: DemoPublic;
+  /** The sources' files (v10): the engine's bucket, the bytes in this tab. */
+  readonly sources: DemoSources;
+  readonly blobs = new Map<string, Blob>();
+  readonly samples = new Map<string, Sample>();
   readonly shared: PoolShared;
   /** While the constructor seeds the demo's links, their tokens are the fixed ones (demoToken(…, true)). */
   private seeding = false;
@@ -53,7 +59,9 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
 
   constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
     const week = demoWeek();
-    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk() };
+    const seeded = seedDemoSources(week);
+    for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
+    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
@@ -72,6 +80,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.links = new DemoLinks(this);
     this.kk = new DemoKk(this);
     this.public = new DemoPublic(this);
+    this.sources = new DemoSources(this);
     // seeded as the demo's instructor (member 1), whoever the demo user is
     this.seeding = true;
     seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
@@ -105,6 +114,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       team: [],
       roster: [],
       escortTicks: [],
+      sourceFiles: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
     this.syncTeams();

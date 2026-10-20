@@ -721,4 +721,64 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", issue: "kk_signup", name: "k2" },
     { anon: "kkForm", token: "k" }, // replaced
   ],
+
+  // the sources' files (milestone 5ב-1): the bucket's limits and policies, register and remove, the reader's settings
+  "sources' files and the reader": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", cell: [2, 510, 600] }, // a draft
+    { as: "L", store: [1, 510], file: "l1" }, // logistics read and print; they do not upload
+    { as: "A", store: [2, 510], file: "d1" }, // a draft
+    { as: "A", store: [3, 510], file: "n1" }, // no lesson there
+    { as: "A", store: [1, 510], file: "x1", mime: "text/plain" }, // not a type the bucket takes
+    { as: "A", store: [1, 510], file: "big", size: 26_214_401 }, // over 25 MB
+    { as: "A", store: [1, 510], file: "a1", size: 4096 },
+    { as: "B", register: "a1" }, // A's upload, not B's
+    { as: "A", register: "a1", for: [2, 510] }, // the path is another lesson's
+    { as: "A", register: "a1", for: "cover" },
+    { as: "A", register: "a1", display: "   " },
+    { as: "A", register: "a1", pages: 0 },
+    { as: "A", register: "a1", display: "  דף   מקורות.pdf ", pages: 3 }, // «טרם התקבלו» → a sheet, in the reader
+    { as: "A", register: "a1", display: "שוב", pages: 9 }, // a retry: the same row, nothing changes
+    { as: "A", register: "zz", for: [1, 510] }, // nothing stored there
+    { as: "B", store: [1, 510], file: "b1", mime: "image/png", size: 777 }, // any content member
+    { as: "B", register: "b1", pages: 5 }, // an image is one page; not the first file: no change
+    { as: "A", sources: [1, 510], kind: "sheet", print: "none", inReader: false }, // out of the reader on purpose
+    { as: "B", store: [1, 510], file: "b2", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+    { as: "B", register: "b2", pages: 4 }, // Word: no pages; the «off» stays
+    { as: "A", unregister: "b1" }, // not A's
+    { as: "B", unregister: "b1" }, // still stored
+    { as: "A", unstore: "b1" }, // kept: not A's
+    { as: "L", unstore: "b1" }, // kept
+    { as: "B", unstore: "b1" }, // deleted
+    { as: "B", unregister: "b1" },
+    { as: "B", unregister: "b1" }, // gone already: nothing to do
+    { as: "E", unstore: "b2" }, // the edition's admin
+    { as: "E", unregister: "b2" },
+    { as: "A", store: "cover", file: "p1", mime: "image/png" }, // the poster is the admins'
+    { as: "E", store: "cover", file: "p2", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, // never a Word poster
+    { as: "E", store: "cover", file: "p1", mime: "image/png" },
+    { as: "E", register: "p1", pages: 2 }, // the first poster becomes the cover
+    { as: "E", readerCover: "a1" }, // a lesson's file is no poster
+    { as: "A", readerCover: null },
+    { as: "E", readerCover: null },
+    { as: "E", readerCover: "p1" },
+    { as: "A", readerHeaders: ["שמאל", "ימין"] },
+    { as: "E", readerHeaders: ["  כותרת   שמאל ", null] },
+    { as: "E", readerHeaders: [" ", ""] }, // both empty: removed
+    { as: "A", reopen: [1, 510] }, // the files stay — the speaker who left is theirs
+    { as: "A", store: [1, 510], file: "a2" }, // a draft now
+    { as: "A", propose: "גמא", at: [1, 510] },
+    { as: "A", close: "גמא", at: [1, 510] }, // another speaker
+    { as: "A", store: [1, 510], file: "a3", mime: "image/jpeg" },
+    { as: "A", register: "a3" }, // the new speaker's first file: in the reader again
+    { as: "E", unstore: "p1" },
+    { as: "E", unregister: "p1" }, // the cover's file: the mark goes with it
+    { archive: true },
+    { as: "A", store: [1, 510], file: "a4" }, // an archive: its admins only
+    { as: "A", unstore: "a3" }, // kept
+    { as: "A", unregister: "a1" },
+    { as: "E", unstore: "a1" },
+    { as: "E", unregister: "a1" },
+  ],
 };

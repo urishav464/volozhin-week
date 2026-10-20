@@ -24,6 +24,7 @@ export function emptyWeek(): Week {
     team: [],
     roster: [],
     escortTicks: [],
+    sourceFiles: [],
   };
 }
 

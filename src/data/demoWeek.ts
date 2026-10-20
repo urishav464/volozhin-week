@@ -13,9 +13,11 @@
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
 import {
-  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type Speaker, type SpeakerContacts,
-  type TransportDetails, type Week,
+  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SourceFile, type Speaker,
+  type SpeakerContacts, type TransportDetails, type Week,
 } from "../domain/types";
+import type { Sample } from "./demoFiles";
+import type { StoredObject } from "./engine";
 import type { ActivityEntry, HistoryLesson } from "./speakers";
 
 export const DEMO_CATEGORIES: Category[] = [
@@ -192,6 +194,7 @@ export function demoWeek(): Week {
       { lesson_id: 1, item: "reminded", at: at(13) },
       { lesson_id: 1, item: "met", at: at(14) },
     ],
+    sourceFiles: [],
   };
 }
 
@@ -255,4 +258,41 @@ export function demoLog(week: Week, now = Date.now()): ActivityEntry[] {
     row(2, daysAgo(2), "update", { status: "approached", note: "פנייה ראשונה (נתון לדוגמה)" }),
     row(3, daysAgo(1), "update", { status: "approached", offered_to: 1, note: "הצעה להעביר (נתון לדוגמה)" }),
   ];
+}
+
+/**
+ * The demo's sources (milestone 5ב-1): a few lessons with sample files — Sunday's opening (two PDFs: in the
+ * reader), Tuesday's 16:00 in the בית מדרש (a picture, marked for the reader), Tuesday's 08:30 (a Word file only:
+ * «צריך PDF»), and Monday's 15:30 marked with nothing yet («חסר»). The files are made in the browser when first
+ * opened (src/data/demoFiles.ts); here, only their rows and what the bucket would record of them.
+ */
+export function seedDemoSources(week: Week): { samples: Record<string, Sample>; objects: Record<string, StoredObject> } {
+  const at = (day: number, start: number, room = 1) => week.lessons.find((l) => l.day === day && l.start_min === start && l.room_id === room && l.state === "closed")!;
+  const lead = (lessonId: number) => week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id ?? null;
+  const samples: Record<string, Sample> = {};
+  const objects: Record<string, StoredObject> = {};
+  let n = 0;
+  const add = (lessonId: number, display: string, sample: Sample, size: number, by: number) => {
+    n++;
+    const ext = sample.kind === "docx" ? "docx" : sample.kind;
+    const mime = sample.kind === "pdf" ? "application/pdf" : sample.kind === "png" ? "image/png" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const path = `${week.edition.id}/${lessonId}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}-sample-${n}.${ext}`;
+    week.sourceFiles.push({
+      id: n, lesson_id: lessonId, cover: false, speaker_id: lead(lessonId), storage_path: path, display_name: display, mime: mime as SourceFile["mime"],
+      size_bytes: size, page_count: sample.kind === "pdf" ? sample.pages : sample.kind === "png" ? 1 : null, uploaded_by: by, uploaded_at: "2026-11-15T10:00:00Z",
+    });
+    samples[path] = sample;
+    objects[path] = { mime, size, owner: `member:${by}` };
+  };
+  const opening = at(0, 510);
+  add(opening.id, "דף מקורות לדוגמה.pdf", { kind: "pdf", title: "פתיחת השבוע (לדוגמה)", pages: 2, size: [420, 595] }, 48_000, 2);
+  add(opening.id, "מקור נוסף לדוגמה.pdf", { kind: "pdf", title: "פתיחת השבוע (לדוגמה)", pages: 1, size: [612, 792] }, 21_000, 2);
+  const tuesday = at(2, 960, 1);
+  tuesday.in_reader = true;
+  add(tuesday.id, "צילום מקור לדוגמה.png", { kind: "png", title: "שיעור לדוגמה", pages: 1 }, 90_000, 1);
+  const word = at(2, 510);
+  word.in_reader = true;
+  add(word.id, "מקורות לדוגמה.docx", { kind: "docx", title: "שיעור לדוגמה", pages: 1 }, 12_000, 3);
+  at(1, 930).in_reader = true; // marked, nothing arrived: «חסר»
+  return { samples, objects };
 }

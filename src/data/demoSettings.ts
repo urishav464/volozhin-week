@@ -176,7 +176,8 @@ export class DemoSettings implements SettingsPort {
           w.approaches.some((a) => a.owner_member_id === id) ||
           w.pitches.some((p) => p.proposed_by === id) ||
           w.lessons.some((l) => l.updated_by === id || l.approved_by === id || l.confirm_sent_by === id) ||
-          w.speakers.some((s) => s.vetted_by === id),
+          w.speakers.some((s) => s.vetted_by === id) ||
+          w.sourceFiles.some((f) => f.uploaded_by === id),
       ) ||
       this.s.authored(id);
     if (used) fail("member_has_history");

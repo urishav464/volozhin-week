@@ -140,7 +140,17 @@ export type Step =
   /** Ten minutes passed for a link's rate limit (its counts' windows moved back by hand). */
   | { rateWindowPassed: string }
   /** A link's count for one caller (`from`; an escort's link has one count) set by hand, as if that many calls were made now. */
-  | { rateHits: string; from?: string; hits: number };
+  | { rateHits: string; from?: string; hits: number }
+  // the sources' files (milestone 5ב-1) — files by the label a step gave them (an ASCII word: it is the stored name too)
+  /** An upload through the Storage API to the lesson's folder (or the poster's): the bucket's limits, then the INSERT policy. */
+  | { as: ActorKey; store: At | "cover"; file: string; mime?: string; size?: number }
+  /** register_source_file for a stored file — `for` names another target in the call than the file's own folder. */
+  | { as: ActorKey; register: string; display?: string; pages?: number | null; for?: At | "cover" }
+  /** A delete through the Storage API, as the caller: «deleted» or «kept». */
+  | { as: ActorKey; unstore: string }
+  | { as: ActorKey; unregister: string }
+  | { as: ActorKey; readerHeaders: [string | null, string | null] }
+  | { as: ActorKey; readerCover: string | null };
 
 /** A group's fields as steps write them: a room by name, a trainee leader by name. */
 export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
@@ -169,6 +179,22 @@ export interface Normal {
   kk: string[];
   /** escort_ticks */
   ticks: string[];
+  /** source_files, by where they are and their display name */
+  files: string[];
+  /** what the «sources» bucket holds, by file label */
+  objects: string[];
+}
+
+/** A stored file's place: <edition>/<lesson|cover>/<a uuid made from its label>-<label>.<ext>. */
+export function filePath(edition: number, lesson: number | null, label: string, mime: string): string {
+  const n = [...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1e12, 7);
+  const ext = mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : mime === "application/pdf" ? "pdf" : "txt";
+  return `${edition}/${lesson ?? "cover"}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}-${label}.${ext}`;
+}
+
+/** A source_files row as the state compares it. */
+export function fileLine(where: string, f: { display_name: string; mime: string; size_bytes: number | string; page_count: number | null; cover: boolean }, speaker: string, by: string): string {
+  return `${where}|${f.display_name}|${f.mime}|${f.size_bytes}|p=${d(f.page_count)}|cover=${f.cover}|spk=${speaker}|by=${by}`;
 }
 
 const d = (v: unknown) => (v == null ? "-" : String(v));
@@ -234,11 +260,14 @@ export function transportRead(t: Parameters<typeof transportLine>[1] | null): st
 /** The edition's template and phrases, as comparable lines. */
 export function editionLines(settings: {
   confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
-}): string[] {
+  reader_headers?: [string, string] | null;
+}, cover = "-"): string[] {
   return [
     `template=${d(settings.confirm_template)}`,
     `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,
     `window=${settings.kk_window ? `${settings.kk_window.opens_at}..${settings.kk_window.closes_at}` : "-"}`,
+    `headers=${settings.reader_headers ? settings.reader_headers.join("|") : "-"}`,
+    `cover=${cover}`,
   ];
 }
 

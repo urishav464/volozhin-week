@@ -5,6 +5,7 @@ import type { KnowledgePort } from "./knowledge";
 import type { LinksPort } from "./links";
 import type { OutputsPort } from "./outputs";
 import type { SettingsPort } from "./settings";
+import type { SourcesPort } from "./sources";
 import type { SpeakerPort } from "./speakers";
 import type { WhoAmI } from "./types";
 
@@ -48,4 +49,6 @@ export interface DataPort {
   readonly links: LinksPort;
   /** מכריכה לכריכה: groups, leaders, sign-ups, the window, book orders (src/data/kk.ts). */
   readonly kk: KkPort;
+  /** The sources' files (upload, remove, short-lived URLs) and the reader's settings (src/data/sources.ts). */
+  readonly sources: SourcesPort;
 }

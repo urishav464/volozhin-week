@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 9 $$;
+  as $$ select 10 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1252,7 +1252,7 @@ create index if not exists activity_actor on public.activity (actor);
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
 -- read the tables created further down: notes, milestones, export_snapshots (v8),
--- share_links (v9).)
+-- share_links (v9), source_files (v10).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1266,7 +1266,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.notes where created_by = p_member or updated_by = p_member)
         or exists (select 1 from public.milestones where created_by = p_member or done_by = p_member)
         or exists (select 1 from public.export_snapshots where created_by = p_member)
-        or exists (select 1 from public.share_links where created_by = p_member);
+        or exists (select 1 from public.share_links where created_by = p_member)
+        or exists (select 1 from public.source_files where uploaded_by = p_member);
   end
   $$;
 
@@ -3697,10 +3698,363 @@ create or replace function public.set_book_order(p_group bigint, p_copies intege
 
 -- ------------------------------------------------------------- reads
 
+-- =============================================================================
+-- Milestone 5ב-1 (v10) — the sources' files and the reader. Semantics:
+-- docs/CONTRACT.md «Sources and the reader»; the in-memory twin is
+-- src/data/engine.ts (DemoPort's uploads), held to this by tests/parity.
+--
+-- The files live in Supabase Storage, in a PRIVATE bucket «sources» created
+-- below, at <edition>/<lesson>/<uuid>-<safe ascii name> (the poster: at
+-- <edition>/cover/<uuid>-<name>) — never the original name, which may be
+-- Hebrew; that is kept in source_files.display_name. The browser uploads
+-- straight to Storage (the policies on storage.objects decide), then
+-- registers the file (register_source_file), which checks the same rule and
+-- that the object is there, is the caller's, and is a type and size we take.
+-- Removing is the other way round: the stored object first (the Storage API),
+-- then remove_source_file, which refuses while the object is still there — so
+-- a failure half-way leaves a row whose file is gone (visible, removed again
+-- with one tap), never an object nobody can see.
+--
+-- Who (one function each, app.source_refusal / may_*_source, for both the
+-- policies and the functions):
+--   upload   the edition's content members and admins (logistics never; an
+--            archive is its admins' only), to a CLOSED lesson of kind 'lesson'
+--            — the rule of set_sources; the poster: the edition's admins
+--   read     the edition's whole team: content, admins, and logistics (they print)
+--   delete   whoever uploaded it, or an admin of the edition
+--   update   nobody (a replacement is a delete and an upload); anon: nothing
+-- Restrictive policies cap the bucket at exactly that, whatever permissive
+-- policy someone adds to storage.objects later (a dashboard template).
+--
+-- source_files is never published to Realtime (the list at the end). The
+-- merged reader is built and downloaded in the browser and never uploaded.
+-- reopen_lesson keeps a lesson's files: they belonged to the speaker who
+-- leaves, so each row remembers the lead speaker it arrived for (speaker_id);
+-- a file whose speaker is no longer the lesson's lead is «מהמרצה הקודם» —
+-- shown for removal, never put in the reader. A lesson deleted (a draft
+-- reshaped away) leaves its files' rows with lesson_id NULL, for removal too.
+-- =============================================================================
+
+-- ------------------------------------------------------------- the bucket and its policies
+
+-- The path convention, in one place (src/data/sourceRules.ts holds the same):
+-- edition id / lesson id or 'cover' / a uuid, a dash, a safe ASCII name and
+-- one of the accepted extensions.
+create or replace function app.source_path_re() returns text
+  language sql immutable set search_path = ''
+  as $$ select '^([1-9][0-9]{0,17})/([1-9][0-9]{0,17}|cover)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9][A-Za-z0-9_-]{0,59}\.(pdf|png|jpg|jpeg|docx)$' $$;
+
+-- The types the bucket takes (allowed_mime_types below) and the extension each must carry.
+create or replace function app.source_mime_ok(p_mime text, p_ext text) returns boolean
+  language sql immutable set search_path = ''
+  as $$
+    select case p_mime
+      when 'application/pdf' then p_ext = 'pdf'
+      when 'image/png' then p_ext = 'png'
+      when 'image/jpeg' then p_ext in ('jpg', 'jpeg')
+      when 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' then p_ext = 'docx'
+      else false
+    end
+  $$;
+
+-- Why the caller may not upload to this path — NULL when they may. The rule
+-- of set_sources (app.require_editor on a closed lesson): content or admin of
+-- the path's edition, an archive for its admins only; a lesson of that
+-- edition, closed, of kind 'lesson' (memorial slots' materials: 5ב-2); the
+-- poster (…/cover/…, never a Word file) for the edition's admins.
+create or replace function app.source_refusal(p_name text) returns text
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    m      text[] := regexp_match(p_name, app.source_path_re());
+    v_ed   public.editions;
+    v_role text;
+    v_l    public.lessons;
+  begin
+    if m is null then return 'bad_path'; end if;
+    select * into v_ed from public.editions where id = m[1]::bigint;
+    v_role := case when v_ed.id is null then null else app.my_role(v_ed.id) end;
+    if v_role is null then return 'not_member'; end if;
+    if v_role = 'logistics' then return 'forbidden'; end if;
+    if (v_ed.kind = 'archive' or v_ed.status = 'archived') and v_role <> 'admin' then return 'archived'; end if;
+    if m[2] = 'cover' then
+      if v_role <> 'admin' then return 'forbidden'; end if;
+      if m[3] = 'docx' then return 'bad_file'; end if;
+      return null;
+    end if;
+    select * into v_l from public.lessons where id = m[2]::bigint;
+    if v_l.id is null or v_l.edition_id <> v_ed.id then return 'bad_path'; end if;
+    if v_l.state <> 'closed' or v_l.kind <> 'lesson' then return 'not_closed'; end if;
+    return null;
+  end
+  $$;
+
+-- The policies' predicates (they run as the browser's role: granted to authenticated at the end).
+create or replace function app.may_upload_source(p_name text) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$ select app.source_refusal(p_name) is null $$;
+
+create or replace function app.may_read_source(p_name text) returns boolean
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare m text[] := regexp_match(p_name, app.source_path_re());
+  begin
+    if m is null or not exists (select 1 from public.editions where id = m[1]::bigint) then return false; end if;
+    return app.my_role(m[1]::bigint) is not null;
+  end
+  $$;
+
+-- Delete: an admin of the edition; else a member of it (an archive: admins
+-- only) who uploaded it — by the registered row when there is one
+-- (uploaded_by), by the object's owner (the Storage API writes the JWT's sub)
+-- for an object never registered (an upload whose registration failed).
+create or replace function app.may_delete_source(p_name text, p_owner_id text) returns boolean
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    m      text[] := regexp_match(p_name, app.source_path_re());
+    v_ed   public.editions;
+    v_role text;
+    v_by   bigint;
+  begin
+    if m is null then return false; end if;
+    select * into v_ed from public.editions where id = m[1]::bigint;
+    if v_ed.id is null then return false; end if;
+    v_role := app.my_role(v_ed.id);
+    if v_role is null then return false; end if;
+    if v_role = 'admin' then return true; end if;
+    if v_ed.kind = 'archive' or v_ed.status = 'archived' then return false; end if;
+    select f.uploaded_by into v_by from public.source_files f where f.storage_path = p_name;
+    if found then return v_by is not distinct from app.my_member_id(v_ed.id) and v_by is not null; end if;
+    return p_owner_id is not null and p_owner_id = auth.jwt() ->> 'sub';
+  end
+  $$;
+
+-- The live object at a path in the bucket — its metadata and owner — or NULL.
+-- Read through to_jsonb, so a storage schema from before object versioning
+-- (no archived_at / is_delete_marker) reads the same.
+create or replace function app.source_object(p_name text) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    return (select jsonb_build_object('metadata', j -> 'metadata', 'owner_id', j ->> 'owner_id')
+              from (select to_jsonb(o) as j from storage.objects o where o.bucket_id = 'sources' and o.name = p_name) x
+             where (j ->> 'archived_at') is null and coalesce((j ->> 'is_delete_marker')::boolean, false) = false
+             limit 1);
+  end
+  $$;
+
+do $$
+begin
+  -- Private, 25 MB, the four types. A re-run never rewrites the size or the
+  -- types (the owner may have changed them in the dashboard) — but it always
+  -- makes the bucket private again: a public bucket would hand any file to
+  -- whoever guesses its address, policies or not.
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('sources', 'sources', false, 26214400,
+          array['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
+  on conflict (id) do nothing;
+  update storage.buckets set public = false where id = 'sources' and public is distinct from false;
+  if found then raise warning 'the «sources» bucket was public — it is private again'; end if;
+
+  drop policy if exists sources_read on storage.objects;
+  create policy sources_read on storage.objects for select to authenticated
+    using (bucket_id = 'sources' and app.may_read_source(name));
+  drop policy if exists sources_upload on storage.objects;
+  create policy sources_upload on storage.objects for insert to authenticated
+    with check (bucket_id = 'sources' and app.may_upload_source(name));
+  drop policy if exists sources_delete on storage.objects;
+  create policy sources_delete on storage.objects for delete to authenticated
+    using (bucket_id = 'sources' and app.may_delete_source(name, owner_id));
+  -- The ceiling: restrictive policies AND with every permissive one, so no
+  -- other policy on storage.objects can widen what this bucket allows.
+  drop policy if exists sources_cap_read on storage.objects;
+  create policy sources_cap_read on storage.objects as restrictive for select to authenticated
+    using (bucket_id is distinct from 'sources' or app.may_read_source(name));
+  drop policy if exists sources_cap_upload on storage.objects;
+  create policy sources_cap_upload on storage.objects as restrictive for insert to authenticated
+    with check (bucket_id is distinct from 'sources' or app.may_upload_source(name));
+  drop policy if exists sources_cap_update on storage.objects;
+  create policy sources_cap_update on storage.objects as restrictive for update to authenticated
+    using (bucket_id is distinct from 'sources') with check (bucket_id is distinct from 'sources');
+  drop policy if exists sources_cap_delete on storage.objects;
+  create policy sources_cap_delete on storage.objects as restrictive for delete to authenticated
+    using (bucket_id is distinct from 'sources' or app.may_delete_source(name, owner_id));
+  drop policy if exists sources_cap_anon on storage.objects;
+  create policy sources_cap_anon on storage.objects as restrictive for all to anon
+    using (bucket_id is distinct from 'sources') with check (bucket_id is distinct from 'sources');
+exception
+  when insufficient_privilege or undefined_table or invalid_schema_name then
+    -- Uploads stay closed (no policy = nothing allowed), the rest of the file applies.
+    raise warning 'the «sources» bucket or its policies could not be set up (%) — uploads stay closed; docs/SETUP.he.md «אבן דרך 5ב-1» has the steps', sqlerrm;
+end $$;
+
+-- ------------------------------------------------------------- source_files
+
+create table if not exists public.source_files (
+  id           bigint generated always as identity primary key,
+  edition_id   bigint not null references public.editions (id) on delete cascade,
+  lesson_id    bigint references public.lessons (id) on delete set null,   -- NULL: the poster, or a lesson deleted since
+  cover        boolean not null default false,                             -- the reader's poster (…/cover/…)
+  speaker_id   bigint references public.speakers (id) on delete set null,  -- the lesson's lead speaker when it arrived
+  storage_path text not null unique,
+  display_name text not null,
+  mime         text not null check (mime in ('application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')),
+  size_bytes   bigint not null check (size_bytes between 0 and 26214400),
+  page_count   integer check (page_count between 1 and 5000),             -- counted in the browser (PDF); an image is one page; Word: NULL
+  uploaded_by  bigint references public.members (id) on delete set null,
+  uploaded_at  timestamptz not null default now()
+);
+create index if not exists source_files_lesson on public.source_files (lesson_id);
+create index if not exists source_files_edition on public.source_files (edition_id);
+
+alter table public.source_files enable row level security;
+drop policy if exists source_files_read on public.source_files;
+create policy source_files_read on public.source_files for select to authenticated
+  using (app.my_role(source_files.edition_id) is not null);
+
+-- Register an uploaded file. p_lesson NULL = the poster. The path must be the
+-- convention for exactly this edition and lesson (bad_path), the caller may
+-- upload there (app.source_refusal), and the object must be in the bucket,
+-- uploaded by the caller (no_file), of an accepted type matching its
+-- extension and at most 25 MB (bad_file) — the type and size are the Storage
+-- API's (objects.metadata), not the browser's word. The same path again
+-- returns the row it already made (a retry).
+-- A lesson's file: «טרם התקבלו» becomes «דף מקורות» (a file arrived), and the
+-- current speaker's first file puts the lesson in the reader when its kind
+-- has something to print (in_reader's own rule — never a presentation alone).
+-- The poster: the first one becomes the cover (settings.reader_cover).
+create or replace function public.register_source_file(p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer)
+  returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    m        text[] := regexp_match(p_path, app.source_path_re());
+    v_code   text;
+    v_l      public.lessons;
+    v_me     bigint;
+    v_obj    jsonb;
+    v_mime   text;
+    v_size   bigint;
+    v_name   text;
+    v_pages  integer;
+    v_spk    bigint;
+    v_first  boolean;
+    v_kind   text;
+    v_in     boolean;
+    v_row    public.source_files;
+  begin
+    if app.my_role(p_edition) is null or not exists (select 1 from public.editions where id = p_edition) then perform app.refuse('not_member'); end if;
+    if m is null or m[1] <> p_edition::text or m[2] <> coalesce(p_lesson::text, 'cover') then perform app.refuse('bad_path'); end if;
+    v_code := app.source_refusal(p_path);
+    if v_code is not null then perform app.refuse(v_code); end if;
+    v_me := app.my_member_id(p_edition);
+    if p_lesson is not null then
+      select * into v_l from public.lessons where id = p_lesson for update;   -- one registration at a time per lesson (its first file)
+    end if;
+    select * into v_row from public.source_files where storage_path = p_path;
+    if v_row.id is not null then
+      if v_row.edition_id <> p_edition or v_row.lesson_id is distinct from p_lesson then perform app.refuse('bad_path'); end if;
+      return to_jsonb(v_row);
+    end if;
+    v_obj := app.source_object(p_path);
+    if v_obj is null or (v_obj ->> 'owner_id') is distinct from (auth.jwt() ->> 'sub') then perform app.refuse('no_file'); end if;
+    v_mime := v_obj -> 'metadata' ->> 'mimetype';
+    v_size := case when (v_obj -> 'metadata' ->> 'size') ~ '^[0-9]{1,12}$' then (v_obj -> 'metadata' ->> 'size')::bigint end;
+    if v_mime is null or not app.source_mime_ok(v_mime, m[3]) or v_size is null or v_size > 26214400 then perform app.refuse('bad_file'); end if;
+    v_name := app.clean_line(p_display_name, 200);
+    if v_name is null then perform app.refuse('bad_value'); end if;
+    if p_pages is not null and (p_pages < 1 or p_pages > 5000) then perform app.refuse('bad_value'); end if;
+    v_pages := case when v_mime = 'application/pdf' then p_pages when v_mime like 'image/%' then 1 end;
+    if p_lesson is not null then
+      select x.speaker_id into v_spk from public.lesson_speakers x where x.lesson_id = p_lesson and x.role = 'lead';
+      v_first := not exists (select 1 from public.source_files f where f.lesson_id = p_lesson and f.speaker_id is not distinct from v_spk);
+    end if;
+    insert into public.source_files (edition_id, lesson_id, cover, speaker_id, storage_path, display_name, mime, size_bytes, page_count, uploaded_by)
+    values (p_edition, p_lesson, p_lesson is null, v_spk, p_path, v_name, v_mime, v_size, v_pages, v_me)
+    returning * into v_row;
+    if p_lesson is not null then
+      v_kind := case when v_l.sources_kind = 'pending' then 'sheet' else v_l.sources_kind end;
+      v_in := v_l.in_reader or (v_first and v_kind not in ('pending', 'none', 'presentation'));
+      if (v_kind, v_in) is distinct from (v_l.sources_kind, v_l.in_reader) then
+        update public.lessons set sources_kind = v_kind, in_reader = v_in, version = version + 1, updated_by = v_me where id = p_lesson;
+      end if;
+    elsif not ((select settings from public.editions where id = p_edition) ? 'reader_cover') then
+      update public.editions set settings = settings || jsonb_build_object('reader_cover', v_row.id) where id = p_edition;
+    end if;
+    return to_jsonb(v_row);
+  end
+  $$;
+
+-- Forget a file whose stored object is gone. The uploader, or an admin of the
+-- edition (an archive: its admins); refused while the object is still in the
+-- bucket (file_present — the browser deletes it through the Storage API
+-- first, under the same rule). A row already gone: nothing to do. The poster
+-- marked as cover stops being it.
+create or replace function public.remove_source_file(p_file bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_f    public.source_files;
+    v_ed   public.editions;
+    v_role text;
+  begin
+    select * into v_f from public.source_files where id = p_file for update;
+    if v_f.id is null then return; end if;
+    select * into v_ed from public.editions where id = v_f.edition_id;
+    v_role := app.my_role(v_f.edition_id);
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if (v_ed.kind = 'archive' or v_ed.status = 'archived') and v_role <> 'admin' then perform app.refuse('archived'); end if;
+    if v_role <> 'admin' and (v_f.uploaded_by is null or v_f.uploaded_by <> app.my_member_id(v_f.edition_id)) then perform app.refuse('not_uploader'); end if;
+    if app.source_object(v_f.storage_path) is not null then perform app.refuse('file_present'); end if;
+    delete from public.source_files where id = v_f.id;
+    update public.editions set settings = settings - 'reader_cover'
+     where id = v_f.edition_id and settings ->> 'reader_cover' = v_f.id::text;
+  end
+  $$;
+
+-- The reader's two running headers, [left, right] — the instructor's own words
+-- (last year's are an example in the screen's help, never seeded). One line
+-- each, ≤ 120; both empty removes them. An admin of the edition.
+create or replace function public.set_reader_headers(p_edition bigint, p_left text, p_right text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_left  text := app.clean_line(p_left, 120);
+    v_right text := app.clean_line(p_right, 120);
+  begin
+    perform app.require_edition_admin(p_edition);
+    update public.editions
+       set settings = case when v_left is null and v_right is null then settings - 'reader_headers'
+                           else settings || jsonb_build_object('reader_headers', jsonb_build_array(coalesce(v_left, ''), coalesce(v_right, ''))) end
+     where id = p_edition;
+  end
+  $$;
+
+-- The reader's cover: one of the edition's posters (a PDF or an image
+-- uploaded as …/cover/…), or NULL — then the reader opens with a schedule page
+-- made from the week. An admin of the edition.
+create or replace function public.set_reader_cover(p_edition bigint, p_file bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    perform app.require_edition_admin(p_edition);
+    if p_file is not null and not exists (
+         select 1 from public.source_files f
+          where f.id = p_file and f.edition_id = p_edition and f.cover and f.mime <> 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') then
+      perform app.refuse('bad_value');
+    end if;
+    update public.editions
+       set settings = case when p_file is null then settings - 'reader_cover' else settings || jsonb_build_object('reader_cover', p_file) end
+     where id = p_edition;
+  end
+  $$;
+
 -- Everything the grid needs, in one round trip, as the caller's RLS allows —
 -- invoker, so it can never show more than the tables would. Never a contact
 -- detail and never a transport detail (their own tables). v7 adds the
--- edition's roster (names only), for escorts; v9 the escorts' ticks.
+-- edition's roster (names only), for escorts; v9 the escorts' ticks; v10 the
+-- sources' files (their rows — the bytes are in Storage, fetched by signed URL).
 create or replace function public.load_week(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
@@ -3732,7 +4086,11 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
       'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name, 'gender', r.gender) order by r.full_name, r.id)
           from public.roster r where r.edition_id = p_edition), '[]'),
       'escortTicks', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', t.lesson_id, 'item', t.item, 'at', to_char(t.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by t.lesson_id, t.item)
-          from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = p_edition), '[]')
+          from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = p_edition), '[]'),
+      'sourceFiles', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'lesson_id', f.lesson_id, 'cover', f.cover, 'speaker_id', f.speaker_id,
+          'storage_path', f.storage_path, 'display_name', f.display_name, 'mime', f.mime, 'size_bytes', f.size_bytes, 'page_count', f.page_count,
+          'uploaded_by', f.uploaded_by, 'uploaded_at', to_char(f.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by f.id)
+          from public.source_files f where f.edition_id = p_edition), '[]')
     )
     where app.can_see_edition(p_edition)
   $$;
@@ -3872,6 +4230,18 @@ grant execute on function public.kk_unplace(bigint, bigint) to authenticated;
 grant execute on function public.kk_set_window(bigint, timestamptz, timestamptz) to authenticated;
 grant execute on function public.set_book_order(bigint, integer, boolean) to authenticated;
 
+-- Sources and the reader (v10). source_files is read under RLS (the edition's
+-- team) and written only by the functions; the policies on storage.objects
+-- call the three predicates as the browser's role.
+grant select on public.source_files to authenticated;
+grant execute on function app.may_read_source(text) to authenticated;
+grant execute on function app.may_upload_source(text) to authenticated;
+grant execute on function app.may_delete_source(text, text) to authenticated;
+grant execute on function public.register_source_file(bigint, bigint, text, text, integer) to authenticated;
+grant execute on function public.remove_source_file(bigint) to authenticated;
+grant execute on function public.set_reader_headers(bigint, text, text) to authenticated;
+grant execute on function public.set_reader_cover(bigint, bigint) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -3884,7 +4254,8 @@ grant execute on function public.set_book_order(bigint, integer, boolean) to aut
 -- someone added it by hand. v8 adds the knowledge base and the export
 -- snapshots to that list (notes are free text; nobody needs them live); v9 the
 -- links and their counts (token hashes), the escorts' ticks and every kk table
--- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead).
+-- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead);
+-- v10 the sources' files (file names; the week reloads after an upload).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -3901,7 +4272,8 @@ begin
     return;
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
-                           'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders'] loop
+                           'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
+                           'source_files'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

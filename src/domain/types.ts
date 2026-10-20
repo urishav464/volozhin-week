@@ -234,6 +234,10 @@ export interface EditionSettings {
   duty_phrases?: DutyPhrase[];
   /** מכריכה לכריכה's sign-up window (ISO instants, as toISOString writes them); absent = closed. The admin sets it. */
   kk_window?: { opens_at: string; closes_at: string };
+  /** The reader's two running headers, [left, right] — the admin's own words; absent until typed (never seeded). */
+  reader_headers?: [string, string];
+  /** The reader's cover: one of the edition's posters (a SourceFile with `cover`); absent = a schedule page made from the week. */
+  reader_cover?: number;
 }
 
 export interface Edition {
@@ -264,6 +268,31 @@ export interface Week {
   roster: RosterMember[];
   /** The escorts' ticks, written through their links (v9) — the team reads them. */
   escortTicks: EscortTick[];
+  /** The sources' files (v10): their rows — the bytes are in Storage, read through short-lived URLs. */
+  sourceFiles: SourceFile[];
+}
+
+/** The four types the sources bucket takes. */
+export type SourceMime = "application/pdf" | "image/png" | "image/jpeg" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/** One uploaded file (source_files): a lesson's source, or the reader's poster (`cover`). */
+export interface SourceFile {
+  id: number;
+  /** null: the poster, or a lesson deleted since (its file stays for removal). */
+  lesson_id: number | null;
+  cover: boolean;
+  /** The lesson's lead speaker when it arrived — another lead now: «מהמרצה הקודם», never in the reader. */
+  speaker_id: number | null;
+  /** <edition>/<lesson|cover>/<uuid>-<safe ascii name> — never the original name. */
+  storage_path: string;
+  /** The name the file had (Hebrew, usually). */
+  display_name: string;
+  mime: SourceMime;
+  size_bytes: number;
+  /** Counted in the browser on upload (a PDF); an image is 1; Word, or a PDF that could not be read: null. */
+  page_count: number | null;
+  uploaded_by: number | null;
+  uploaded_at: string;
 }
 
 /** The four things an escort ticks off: reminded the speaker, met them at the parking, introduced them, gave the gift. */

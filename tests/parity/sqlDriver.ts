@@ -4,7 +4,7 @@
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
+  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fileLine, filePath, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -65,13 +65,19 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     return { id: l ? Number(l.id) : -1, version: (l?.version ?? 0) - staleBy };
   };
 
+  /** A member's Google session — with a sub of its own (the Storage API writes it as an object's owner_id). */
+  const claimsOf = (actor: string) => {
+    const i = MEMBERS.findIndex((x) => x.key === actor);
+    return { ...google(MEMBERS[i].email), sub: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}` };
+  };
+  const memberOfSub = (sub: unknown) => (typeof sub === "string" ? (MEMBERS[Number(sub.slice(-12)) - 1]?.key ?? sub) : "-");
+
   /** One RPC, as a member, committed — or rolled back with the contract's code. `read` turns its first column into the result. */
   async function call(actor: string, sql: string, params: unknown[], read?: (v: unknown) => string): Promise<string> {
-    const m = MEMBERS.find((x) => x.key === actor)!;
     await db.query("begin");
     try {
       await db.query("set local role authenticated");
-      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(m.email))]);
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(claimsOf(actor))]);
       const r = await db.query(sql, params);
       await db.query("commit");
       return read ? read(Object.values(r.rows[0])[0]) : "ok";
@@ -79,6 +85,44 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       await db.query("rollback");
       const err = e as { code?: string; message: string };
       return err.code === "P0001" ? err.message : `raw:${err.code}:${err.message}`;
+    }
+  }
+
+  // ---- the sources' files: each label's stored path, and the target it was stored for
+  const files: Record<string, { path: string; target: At | "cover" }> = {};
+  const targetId = async (t: At | "cover") => (t === "cover" ? null : ((await lessonAt(t)) ? Number((await lessonAt(t)).id) : -1));
+  const pathOf = async (label: string, target?: At | "cover") => files[label]?.path ?? filePath(ed, await targetId(target ?? "cover"), label, "application/pdf");
+  const fileId = async (label: string) => Number((await one("select id from public.source_files where storage_path = $1", [await pathOf(label)]))?.id ?? -1);
+  /** The Storage API, as the caller: its own checks first (the bucket's types and size), then the INSERT the policies decide. */
+  async function store(actor: string, path: string, mime: string, size: number): Promise<string> {
+    const b = await one("select file_size_limit, allowed_mime_types from storage.buckets where id = 'sources'", []);
+    if (!(b.allowed_mime_types as string[]).includes(mime) || size > Number(b.file_size_limit)) return "bad_file";
+    const c = claimsOf(actor);
+    await db.query("begin");
+    try {
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(c)]);
+      await db.query("insert into storage.objects (bucket_id, name, owner, owner_id, metadata) values ('sources', $1, $2::uuid, $2::text, $3)", [path, c.sub, { mimetype: mime, size }]);
+      await db.query("commit");
+      return "ok";
+    } catch (e) {
+      await db.query("rollback");
+      const err = e as { code?: string; message: string };
+      return err.code === "42501" ? "upload_refused" : err.code === "23505" ? "upload_failed" : `raw:${err.code}:${err.message}`;
+    }
+  }
+  async function unstore(actor: string, path: string): Promise<string> {
+    await db.query("begin");
+    try {
+      await db.query("set local role authenticated");
+      await db.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(claimsOf(actor))]);
+      await db.query("select set_config('storage.allow_delete_query', 'true', true)");
+      const r = await db.query("delete from storage.objects where bucket_id = 'sources' and name = $1 returning name", [path]);
+      await db.query("commit");
+      return (r.rowCount ?? 0) > 0 ? "deleted" : "kept";
+    } catch (e) {
+      await db.query("rollback");
+      return `raw:${(e as { code?: string }).code}`;
     }
   }
 
@@ -319,6 +363,23 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       }
       if ("template" in step) return call(step.as, "select public.set_confirm_template($1, $2)", [ed, step.template]);
       if ("duty" in step) return call(step.as, "select public.set_duty_phrases($1, $2::jsonb)", [ed, step.duty === undefined ? null : JSON.stringify(step.duty)]);
+      // ---- the sources' files
+      if ("store" in step) {
+        const mime = step.mime ?? "application/pdf";
+        const path = filePath(ed, await targetId(step.store), step.file, mime);
+        files[step.file] = { path, target: step.store };
+        return store(step.as, path, mime, step.size ?? 1000);
+      }
+      if ("register" in step) {
+        const target = step.for ?? files[step.register]?.target ?? "cover";
+        return call(step.as, "select public.register_source_file($1, $2, $3, $4, $5)", [
+          ed, await targetId(target), await pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages,
+        ]);
+      }
+      if ("unstore" in step) return unstore(step.as, await pathOf(step.unstore));
+      if ("unregister" in step) return call(step.as, "select public.remove_source_file($1)", [await fileId(step.unregister)]);
+      if ("readerHeaders" in step) return call(step.as, "select public.set_reader_headers($1, $2, $3)", [ed, step.readerHeaders[0], step.readerHeaders[1]]);
+      if ("readerCover" in step) return call(step.as, "select public.set_reader_cover($1, $2)", [ed, step.readerCover == null ? null : await fileId(step.readerCover)]);
       throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
@@ -356,6 +417,11 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const signups = (await db.query("select * from public.kk_signups where edition_id = $1", [ed])).rows;
       const orders = (await db.query("select o.* from public.book_orders o join public.kk_groups g on g.id = o.group_id where g.edition_id = $1", [ed])).rows;
       const ticks = (await db.query("select t.* from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed])).rows;
+      const sourceFiles = (await db.query("select f.*, s.name, s.disambiguator from public.source_files f left join public.speakers s on s.id = f.speaker_id where f.edition_id = $1", [ed])).rows;
+      const objects = (await db.query("select name, owner_id, metadata from storage.objects where bucket_id = 'sources' and name like $1", [`${ed}/%`])).rows;
+      const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
+      const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
+      const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
       return {
         lessons: lessons
           .map((l) => lessonLine(lessonKey(l), l, l.cat ?? "-", member, l.escort_roster_id == null ? "-" : (l.trainee ?? `#${l.escort_roster_id}`)))
@@ -367,7 +433,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
         availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
-        edition: editionLines(settings),
+        edition: editionLines(settings, cover),
         links: links
           .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -378,6 +444,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           ...orders.map((o) => `order|${names.group(Number(o.group_id))}|${o.copies}|ord=${o.ordered_at == null ? "-" : "y"}`),
         ].sort(),
         ticks: ticks.map((t) => `${byId.get(Number(t.lesson_id))}|${t.item}`).sort(),
+        files: sourceFiles
+          .map((f) => fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : byId.get(Number(f.lesson_id))!, f, f.speaker_id == null ? "-" : speakerLabel(f), member(f.uploaded_by)))
+          .sort(),
+        objects: objects.map((o) => `${labelOf(o.name)}|${o.metadata.mimetype}|${o.metadata.size}|owner=${memberOfSub(o.owner_id)}`).sort(),
       };
     },
 
