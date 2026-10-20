@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { jsonbText, labelKey } from "../../src/data/importRules";
-import { phoneKey } from "../../src/import/phone";
+import { CONTACT_MARKS, EMAIL_RUN, hasContact, NOT_A_PHONE, PHONE_RUN, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
 import { SCHEMA, as, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -480,6 +480,61 @@ describe("the import of 5786", () => {
         const pg = Number((await db.query("select octet_length($1::jsonb::text) as n", [JSON.stringify(x)])).rows[0].n);
         expect(Buffer.byteLength(jsonbText(x)), JSON.stringify(x)).toBe(pg);
       }
+    });
+  });
+
+  describe("סבב שלישי: a phone or an e-mail only in phone and e-mail — app.has_contact, the browser's hasContact", () => {
+    it("is written with the browser's very expressions — and answers as it does, string for string (fixed cases and 4,000 seeded ones)", async () => {
+      const def = String((await db.query("select pg_get_functiondef('app.has_contact(text)'::regprocedure) as d")).rows[0].d);
+      for (const part of [PHONE_RUN, EMAIL_RUN, NOT_A_PHONE, `[${CONTACT_MARKS}]`]) expect(def).toContain(part);
+      const fixed = [
+        "", "שלום", "000-000-0001", "+972-00-000-0002", "(000) 000-0003", "000 000 0004", "0000000005", "טל' 000-000-0006", "[000-000-0007]",
+        "000\u200f-\u200f000\u200f-0008", "000\u2011000\u20110009", "000\u00a0000\u00a00010", "000-000\n0011", "000 / 000", "123456", "1234567",
+        "12.3.2026", "12.3.2026 20:00", "12.3.26", "1948-1967", "1948 - 1967", "1948\u200f-\u200f1967", "8.30-10.00", "08.30 – 10.00", "2025-2026",
+        "someone@example.org", "mailto:someone@example.org", "<a@b.c>", "a @ b.c", "a@b", "פלוני@מוסד.ישראל", "(a@b.c)", "@", "x@y.z w",
+        "\ufeff000-000-0012\ufeff", "\u2003000\u2003000\u20030013", "000\u00ad000\u00ad0014", "תש״ח 1948-1967, 12.3.2026", "עמ' 12-15", "300 ₪",
+      ];
+      // seeded strings of digits, separators, marks, letters and @ — the corners where two engines could part
+      const ALPHABET = [..."0123456789 -.()+/:@,ab\n\t\u00a0\u200f\u200b\u2011\u2013\u2003\ufeff\u00ad\u05beאב<>"];
+      let a = 7;
+      const next = () => ((a = (Math.imul(a, 1103515245) + 12345) >>> 0) / 4294967296);
+      const random = Array.from({ length: 4000 }, () => Array.from({ length: Math.floor(next() * 24) }, () => (next() < 0.55 ? String(Math.floor(next() * 10)) : ALPHABET[Math.floor(next() * ALPHABET.length)])).join(""));
+      const sample = [...fixed, ...random];
+      const r = await db.query("select o, app.has_contact(x) as h from unnest($1::text[]) with ordinality as u(x, o) order by o", [sample]);
+      const differ = r.rows.filter((x) => x.h !== hasContact(sample[Number(x.o) - 1])).map((x) => JSON.stringify(sample[Number(x.o) - 1]));
+      expect(differ).toEqual([]);
+      expect(r.rows.filter((x) => x.h).length).toBeGreaterThan(1000); // not vacuous: many hold one
+      expect(r.rows.filter((x) => !x.h).length).toBeGreaterThan(1000);
+      // and what the browser scrubs or strips never holds one
+      for (const x of sample) {
+        expect(hasContact(scrubContacts(x).text), JSON.stringify(x)).toBe(false);
+        expect(hasContact(stripContacts(x).text), JSON.stringify(x)).toBe(false);
+      }
+    });
+
+    it("a contact in any other field of the payload refuses the whole import, naming the row; nothing is written", async () => {
+      const before = async () => [await count("select count(*) as n from public.speakers"), await count("select count(*) as n from public.lessons"), await count("select count(*) as n from public.speaker_contacts")];
+      const was = await before();
+      const cand = (bad: Record<string, unknown>) => commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה תקין/ה לבדיקה"), row(5, "מרצה לבדיקה", bad)] });
+      expect(await refusal(cand({ name: "מרצה לבדיקה 000-000-0071" }))).toBe("import_bad_row 5:contact_in_text");
+      expect(await refusal(cand({ affiliation: "מוסד\n000-000-0072" }))).toBe("import_bad_row 5:contact_in_text");
+      expect(await refusal(cand({ affiliation: "someone@example.org" }))).toBe("import_bad_row 5:contact_in_text");
+      expect(await refusal(cand({ topics: ["תנ״ך", "+972-00-000-0073"] }))).toBe("import_bad_row 5:contact_in_text");
+      expect(await refusal(cand({ notes: "להתקשר: 000\u200f-\u200f000\u200f-0074" }))).toBe("import_bad_row 5:contact_in_text");
+      expect(await refusal(commit("candidates", { source: "a@example.org", titles_from: null, rows: [row(2, "מרצה תקין/ה לבדיקה")] }))).toBe("contact_in_text");
+      const lesson = (extra: Record<string, unknown>) => ({ row: 7, day: 1, start_min: 510, end_min: 600, room: 0, title: null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakers: [0], ...extra });
+      const arch = (extra: Record<string, unknown>, label = "בדיקת מספר בטקסט") => commit("tracking", { label, start_date: null, source: "tracking-5786", titles_from: null, speakers: [row(2, "מרצה תקין/ה לבדיקה")], lessons: [lesson({ row: 6, day: 0 }), lesson(extra)] });
+      for (const bad of [{ title: "שיעור 000-000-0076" }, { audience: "someone@example.org" }, { sources_kind: "other", sources_note: "000-000-0077" }, { import_note: "נהג (000) 000-0078" }]) {
+        expect(await refusal(arch(bad)), JSON.stringify(bad)).toBe("import_bad_row 7:contact_in_text");
+      }
+      expect(await refusal(arch({}, "ארכיון 000-000-0079"))).toBe("contact_in_text");
+      expect(await refusal(commit("escorts", { rows: [{ row: 2, speaker_id: sp.bare, contact_pref: null, secretary_note: "דרך המזכירה" }, { row: 3, speaker_id: sp.bare, contact_pref: null, secretary_note: "דרך המזכירה 000-000-0081" }] }))).toBe(
+        "import_bad_row 3:contact_in_text",
+      );
+      expect(await before()).toEqual(was);
+      expect(await count("select count(*) as n from public.editions where label in ('בדיקת מספר בטקסט', 'ארכיון 000-000-0079')")).toBe(0);
+      // what is no phone is accepted: a date, a range of years or of times
+      expect(await commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה עם תאריכים", { affiliation: "מוסד 1948-1967", notes: "נקבע 12.3.2026 20:00, 8.30-10.00" })] })).toMatchObject({ created: 1 });
     });
   });
 });

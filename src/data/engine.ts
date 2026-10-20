@@ -36,7 +36,7 @@ import type {
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
-import { phoneKey } from "../import/phone";
+import { hasContact, phoneKey } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
@@ -1867,6 +1867,7 @@ export class Engine {
             const s = this.week.speakers.find((x) => x.id === jint(it.speaker_id)) ?? fail("stale");
             const pref = pickContactPref(text(it.contact_pref));
             const sec = cleanBlock(text(it.secretary_note), LIMITS.secretary_note);
+            if (hasContact(sec)) fail("contact_in_text"); // app.has_contact: the note says how, never a number or an address
             const r: SpeakerResult = { speaker_id: s.id, created: false, filled: false, contacts: false, notes: false };
             if (s.contact_pref == null && pref != null) {
               Object.assign(s, { contact_pref: pref, version: s.version + 1 });

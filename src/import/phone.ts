@@ -55,25 +55,117 @@ export function normalizeEmail(raw: string | null | undefined): { value: string 
   return /^[^ @]+@[^ @]+\.[^ @]+$/.test(t) && [...t].length <= 120 ? { value: t, problem: false } : { value: null, problem: true };
 }
 
-/** A run that reads as a phone: 7+ digits with the separators phones are written with. */
-const PHONE_IN_TEXT = /\+?[0-9][0-9\s().\-–־]{5,}[0-9]/g;
-const EMAIL_IN_TEXT = /[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+/g;
+// ---- A phone or an e-mail inside text: ONE definition — the browser's (here) and the database's (app.has_contact in
+// supabase/schema.sql, the import's backstop) are written the same and held equal by tests/sql/import.test.ts. White
+// space is written out (JavaScript's \s; PostgreSQL's [[:space:]] depends on the locale), and so are the marks a copy
+// carries (bidi controls, zero widths) and the dashes: a bidi mark or a non-breaking hyphen between digits is a number's.
+/** White space, as JavaScript's \s. */
+export const CONTACT_WS = " \\t\\n\\r\\f\\v\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff";
+/** Marks that show nothing: the soft hyphen, zero widths, bidi controls. */
+export const CONTACT_MARKS = "\\u00ad\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069";
+/** Dashes beside the ASCII one (which is written last in a class, as itself). */
+const UDASH = "\\u05be\\u2010-\\u2015\\u2212\\ufe58\\ufe63\\uff0d";
+/** A run that may be a phone: a digit (a «+» before it), 5+ of digits, spaces, marks, dashes, brackets and dots, a digit. */
+export const PHONE_RUN = `\\+?[0-9][0-9${CONTACT_WS}${CONTACT_MARKS}${UDASH}().-]{5,}[0-9]`;
+/** An e-mail: no space, @, <, >, ( or ) around one @, and a dot after it. */
+export const EMAIL_RUN = `[^${CONTACT_WS}@<>()]+@[^${CONTACT_WS}@<>()]+\\.[^${CONTACT_WS}@<>()]+`;
+/**
+ * Digits that are no phone (the run without its marks): a date («12.3.2026», and an hour after it), a range of years
+ * («1948-1967»), a range of times written with dots («8.30-10.00»).
+ */
+export const NOT_A_PHONE =
+  `^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})(?:[${CONTACT_WS}]+[0-9]{1,2})?` +
+  `|(?:1[89]|20)[0-9]{2}[${CONTACT_WS}]*[${UDASH}-][${CONTACT_WS}]*(?:1[89]|20)[0-9]{2}` +
+  `|[0-9]{1,2}[.:][0-9]{2}[${CONTACT_WS}]*[${UDASH}-][${CONTACT_WS}]*[0-9]{1,2}[.:][0-9]{2})$`;
 
-/** A date («12.3.2026», «05/03/26») or a range of years («1948-1967») — digits that are no phone. */
-const NOT_A_PHONE = /^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})|(?:1[89]|20)[0-9]{2}\s*[-–־]\s*(?:1[89]|20)[0-9]{2})$/;
+const PHONE_G = new RegExp(PHONE_RUN, "g");
+const EMAIL_1 = new RegExp(EMAIL_RUN);
+const EMAIL_G = new RegExp(EMAIL_RUN, "g");
+const NOT_PHONE = new RegExp(NOT_A_PHONE);
+const MARKS_G = new RegExp(`[${CONTACT_MARKS}]`, "g");
+
+/** A run of PHONE_RUN that is a phone: 7 digits or more, and no date or range. */
+const phoneRun = (m: string) => m.replace(/[^0-9]/g, "").length >= 7 && !NOT_PHONE.test(m.replace(MARKS_G, ""));
+
+/** Does the text hold a phone or an e-mail — app.has_contact, the commit's backstop («contact_in_text»). */
+export function hasContact(text: string | null | undefined): boolean {
+  const t = text ?? "";
+  if (EMAIL_1.test(t)) return true;
+  for (const m of t.matchAll(PHONE_G)) if (phoneRun(m[0])) return true;
+  return false;
+}
 
 /** Free text with every phone and e-mail in it replaced — what the team may read of last year's notes. */
 export function scrubContacts(text: string): { text: string; scrubbed: boolean } {
   let scrubbed = false;
-  const out = text
-    .replace(EMAIL_IN_TEXT, () => {
+  let out = text
+    .replace(EMAIL_G, () => {
       scrubbed = true;
       return "[מייל הוסר]";
     })
-    .replace(PHONE_IN_TEXT, (m) => {
-      if (m.replace(/[^0-9]/g, "").length < 7 || NOT_A_PHONE.test(m.trim())) return m;
+    .replace(PHONE_G, (m) => {
+      if (!phoneRun(m)) return m;
       scrubbed = true;
       return "[טלפון הוסר]";
     });
+  // never left holding one (a replacement that brought two runs of digits together): the whole text goes
+  if (hasContact(out)) out = "[הוסר טלפון או מייל]";
   return { text: out, scrubbed };
+}
+
+/** A label written before a contact («טל'», «טלפון:», «נייד», «מייל:», «email:») — taken out with it. */
+const LABEL = /(?:(?<![A-Za-z\u05D0-\u05EA])[ובל]?(?:טלפון|נייד|פלאפון|סלולרי|מייל|אימייל|דוא["״׳']?ל)['׳.:]?|(?<![A-Za-z\u05D0-\u05EA])[ובל]?(?:טל|פל)['׳.:]|(?<![A-Za-z])(?:e-?mail|phone|mobile|mail|tel|mob)[.:])[ \t]*[:\-–]?[ \t]*$/i;
+const SENT = "\u0001";
+const SEP = "[ \\t,;/|·\\-–—]";
+
+export interface Stripped {
+  /** The text without them (and without the labels and brackets they had); its lines kept, an empty line dropped. */
+  text: string;
+  /** The phones taken out, as written. */
+  phones: string[];
+  /** The e-mails taken out (an address of the usual letters, when the run holds one; else the run as written). */
+  emails: string[];
+}
+
+/**
+ * A field that is not a contact field (a name, a title, an affiliation, a tag, a phrase): every phone and e-mail in it
+ * taken OUT — the caller attaches one to the row's phone or e-mail when that is unambiguous, or drops it and says so.
+ * What is left never holds one (hasContact): taken out again until it does not.
+ */
+export function stripContacts(text: string): Stripped {
+  const phones: string[] = [];
+  const emails: string[] = [];
+  let out = text;
+  for (let pass = 0; pass < 4 && hasContact(out); pass++) {
+    let t = out
+      .replace(EMAIL_G, (m) => {
+        emails.push(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(m)?.[0] ?? m);
+        return SENT;
+      })
+      .replace(PHONE_G, (m) => {
+        if (!phoneRun(m)) return m;
+        phones.push(m);
+        return SENT;
+      });
+    // a label before it; two of them with only «או», «/», «,» between are one
+    t = t
+      .split(SENT)
+      .map((part, i, all) => (i < all.length - 1 ? part.replace(LABEL, "") : part))
+      .join(SENT)
+      .replace(new RegExp(`${SENT}(?:${SEP}*(?:או|or)?${SEP}*${SENT})+`, "g"), SENT)
+      // brackets holding only it
+      .replace(new RegExp(`[(\\[{]${SEP}*${SENT}${SEP}*[)\\]}]`, "g"), SENT);
+    out = t
+      .split("\n")
+      .map((line) =>
+        line
+          .replace(new RegExp(`${SEP}*${SENT}${SEP}*`, "g"), " ")
+          .replace(/[ \t]+/g, " ")
+          .replace(/^[\s,;:/|·\-–—]+|[\s,;:/|·\-–—]+$/g, ""),
+      )
+      .filter((line) => line !== "")
+      .join("\n");
+  }
+  if (hasContact(out)) out = scrubContacts(out).text;
+  return { text: out, phones, emails };
 }

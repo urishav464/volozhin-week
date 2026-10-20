@@ -2,7 +2,7 @@
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
 import { addDays, israelDate } from "../../src/domain/israelTime";
-import { EDITION, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, type ImportLessonStep, type Step } from "./fixture";
+import { EDITION, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, type ImportLessonStep, type ImportSpeakerStep, type Step } from "./fixture";
 
 // Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
 const NOW = Date.now();
@@ -1091,6 +1091,48 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", importPrefs: [{ row: 2, speaker: "דלתא", contact_pref: "email" }, { row: 4, speaker: "אין כזה", contact_pref: "email" }] },
     { as: "admin", importPrefs: [{ row: 5, speaker: "דלתא", contact_pref: "sms" }] },
     { as: "admin", importPrefs: [{ row: 6, speaker: "דלתא", secretary_note: "א".repeat(301) }] },
+  ],
+
+  // סבב שלישי: the backstop of the wizard's stripContacts — a phone or an e-mail only in phone / email (app.has_contact)
+  "the import: a phone or an e-mail in any other field refuses the whole import («contact_in_text»), naming the row": [
+    ...(
+      [
+        { name: "מרצה עם מספר 000-000-0071" },
+        { name: "מרצה עם שורה", affiliation: "מוסד\n000-000-0072" },
+        { name: "מרצה עם מייל", affiliation: "someone@example.org" },
+        { name: "מרצה עם נושא", topics: ["תנ״ך", "טל' +972-00-000-0073"] },
+        { name: "מרצה עם הערה", notes: "להתקשר: 000\u200f-\u200f000\u200f-0074" },
+      ] as Omit<ImportSpeakerStep, "row" | "action">[]
+    ).map((bad): Step => ({ as: "admin", importCandidates: [{ row: 2, action: "new", name: "מרצה תקין/ה" }, { row: 5, action: "new", ...bad }] })),
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מרצה תקין/ה" }], source: "source@example.org" },
+    // what is no phone stays: a date, a range of years, of times — and the contacts themselves in phone and e-mail
+    {
+      as: "admin",
+      importCandidates: [{ row: 2, action: "new", name: "מרצה עם תאריכים", affiliation: "מוסד 1948-1967", notes: "נקבע 12.3.2026 20:00, 8.30-10.00", phone: "000-000-0075", email: "dates@example.org" }],
+    },
+    ...(
+      [
+        { title: "שיעור 000-000-0076" },
+        { audience: "שיעור להורים someone@example.org" },
+        { sources_kind: "other", sources_note: "נשלח ל-000-000-0077" },
+        { import_note: "הסעה: נהג (000) 000-0078" },
+      ] as Partial<ImportLessonStep>[]
+    ).map(
+      (bad): Step => ({
+        as: "admin",
+        importArchive: {
+          label: "בדיקת טלפון בטקסט",
+          speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }],
+          lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0] }, { row: 7, day: 1, start: 510, end: 600, speakers: [0], ...bad }],
+        },
+      }),
+    ),
+    { as: "admin", importArchive: { label: "ארכיון 000-000-0079", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "ארכיון תקין", source: "tracking 000-000-0080", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "בדיקת טלפון בטקסט", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0], title: "תש״ח 1948-1967" }] } },
+    { as: "admin", importPrefs: [{ row: 2, speaker: "אלפא", contact_pref: "secretary" }, { row: 3, speaker: "בטא", secretary_note: "דרך המזכירה 000-000-0081" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", secretary_note: "רק במייל: someone@example.org" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", secretary_note: "דרך המזכירה" }] },
   ],
 
   // after the week (milestone 6)

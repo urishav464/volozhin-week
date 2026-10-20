@@ -3,6 +3,7 @@
 // refuses exactly what production refuses — tests/parity runs the same payloads through both.
 import { nameKey } from "../domain/nameKey";
 import type { ContactPref, Gender, PrintWhen, SourcesKind } from "../domain/types";
+import { hasContact } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { CommandError } from "./commands";
 import type { ArchiveLessonRow, ImportKind, PrefsRow, SpeakerRow } from "./imports";
@@ -63,20 +64,14 @@ export function cleanSpeakerRow(r: SpeakerRow, titles: readonly string[]): Clean
   const gender = pickGender(r.gender);
   // never guessed: only the gender its title says (הרב / הרבנית)
   if (gender != null && gender !== titleGender(title)) fail("bad_value");
-  return {
-    row: r.row,
-    action: r.action,
-    speaker_id: r.action === "merge" ? (r.speaker_id ?? -1) : null,
-    title,
-    name: name!,
-    key,
-    gender,
-    affiliation: cleanLine(r.affiliation, LIMITS.affiliation),
-    topics: cleanTopics(r.topics),
-    phone: cleanPhone(r.phone),
-    email: cleanContactEmail(r.email),
-    notes: cleanBlock(r.notes, IMPORT_RULES.contact_notes),
-  };
+  const affiliation = cleanLine(r.affiliation, LIMITS.affiliation);
+  const topics = cleanTopics(r.topics);
+  const phone = cleanPhone(r.phone);
+  const email = cleanContactEmail(r.email);
+  const notes = cleanBlock(r.notes, IMPORT_RULES.contact_notes);
+  // a phone or an e-mail only in the phone and e-mail (app.has_contact — the backstop of the browser's stripContacts)
+  if ([name, title, affiliation, notes, ...topics].some(hasContact)) fail("contact_in_text");
+  return { row: r.row, action: r.action, speaker_id: r.action === "merge" ? (r.speaker_id ?? -1) : null, title, name: name!, key, gender, affiliation, topics, phone, email, notes };
 }
 
 export interface CleanLessonRow {
@@ -121,6 +116,8 @@ export function cleanLessonRow(l: ArchiveLessonRow, categories: ReadonlySet<numb
   const sources_note = cleanBlock(l.sources_note, STAGE_LIMITS.sources_note);
   const pay_amount = cleanAmount(l.pay_amount ?? null);
   const import_note = cleanBlock(l.import_note, IMPORT_RULES.import_note);
+  // the team reads a lesson: no phone or e-mail in its title, audience or notes
+  if ([title, audience, sources_note, import_note].some(hasContact)) fail("contact_in_text");
   const refs = Array.isArray(l.speakers) ? l.speakers : [];
   if (refs.length === 0 || refs.some((x) => !int(x) || x < 0 || x >= speakers) || new Set(refs).size !== refs.length) fail("bad_value");
   return { row: l.row, day: l.day, start_min: l.start_min, end_min: l.end_min, room: l.room, title, category_id: l.category_id ?? null, audience, sources_kind, print_when, sources_note, pay_amount, import_note, speakers: refs };
@@ -128,7 +125,9 @@ export function cleanLessonRow(l: ArchiveLessonRow, categories: ReadonlySet<numb
 
 /** app.import_prefs_row's checks: a speaker that exists is checked by the caller (stale). */
 export function cleanPrefsRow(p: PrefsRow): { row: number; speaker_id: number; contact_pref: ContactPref | null; secretary_note: string | null } {
-  return { row: p.row, speaker_id: p.speaker_id, contact_pref: pickContactPref(p.contact_pref), secretary_note: cleanBlock(p.secretary_note, LIMITS.secretary_note) };
+  const secretary_note = cleanBlock(p.secretary_note, LIMITS.secretary_note);
+  if (hasContact(secretary_note)) fail("contact_in_text");
+  return { row: p.row, speaker_id: p.speaker_id, contact_pref: pickContactPref(p.contact_pref), secretary_note };
 }
 
 /**
@@ -148,7 +147,9 @@ export function labelKey(v: string | null | undefined): string {
 export function cleanLabel(v: unknown): string {
   const l = cleanLine(typeof v === "string" ? v : null, IMPORT_RULES.label);
   if (l == null) fail("label_required");
-  return labelKey(l);
+  const k = labelKey(l);
+  if (hasContact(k)) fail("contact_in_text");
+  return k;
 }
 
 /** The archive's opening Sunday: yyyy-mm-dd (bad_value), a Sunday (not_sunday) — or null. */
@@ -165,6 +166,7 @@ export function cleanArchiveDate(v: unknown): string | null {
 export function cleanSource(v: unknown): string {
   const s = cleanLine(typeof v === "string" ? v : null, IMPORT_RULES.source);
   if (s == null) fail("bad_value");
+  if (hasContact(s)) fail("contact_in_text");
   return s!;
 }
 

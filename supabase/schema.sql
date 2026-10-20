@@ -4764,6 +4764,23 @@ create or replace function app.phone_key(p text) returns text
               from (select regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) a) b
   $$;
 
+-- A phone or an e-mail inside text (src/import/phone.ts hasContact holds the same — the same expressions, written
+-- out, held equal by tests/sql/import.test.ts): an e-mail (no space, @, <, >, ( or ) around one @, a dot after
+-- it); or a run of digits, spaces, marks, dashes, brackets and dots from a digit to a digit with 7 digits or more —
+-- not a date («12.3.2026»), a range of years («1948-1967») or of times («8.30-10.00»). White space and the marks a
+-- copy carries (bidi controls, zero widths) are written out: [[:space:]] would depend on the locale. The import's
+-- backstop: a contact is kept in speaker_contacts' phone and e-mail only («contact_in_text»).
+create or replace function app.has_contact(p text) returns boolean
+  language sql immutable set search_path = ''
+  as $$
+    select coalesce(p, '') ~ '[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+@[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+\.[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+'
+        or exists (
+             select 1
+               from regexp_matches(coalesce(p, ''), '\+?[0-9][0-9 \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().-]{5,}[0-9]', 'g') as m(x)
+              where char_length(regexp_replace(m.x[1], '[^0-9]', '', 'g')) >= 7
+                and regexp_replace(m.x[1], '[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069]', '', 'g') !~ '^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[0-9]{1,2})?|(?:1[89]|20)[0-9]{2}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:1[89]|20)[0-9]{2}|[0-9]{1,2}[.:][0-9]{2}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{1,2}[.:][0-9]{2})$')
+  $$;
+
 -- The gender a title says, and nothing else (src/import/speakerName.ts titleGender).
 create or replace function app.title_gender(p text) returns text
   language sql immutable set search_path = ''
@@ -4846,6 +4863,12 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
     v_email  := app.clean_line(p ->> 'email', 120);
     if v_email is not null and v_email !~ '^[^ @]+@[^ @]+\.[^ @]+$' then perform app.refuse('bad_contact_email'); end if;
     v_notes  := app.clean_block(p ->> 'notes', 1000);
+    -- a phone or an e-mail only in the phone and e-mail: never in the name, title, affiliation, a tag or the note
+    -- (the browser takes them out — src/import/phone.ts stripContacts; this is the backstop)
+    if app.has_contact(v_name) or app.has_contact(v_title) or app.has_contact(v_aff) or app.has_contact(v_notes)
+       or exists (select 1 from unnest(v_topics) as t(x) where app.has_contact(t.x)) then
+      perform app.refuse('contact_in_text');
+    end if;
 
     if v_action = 'merge' then
       select * into v_s from public.speakers where id = app.jint(p -> 'speaker_id') for update;
@@ -5010,6 +5033,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
       v_source := app.clean_line(p_payload ->> 'source', 60);
       if v_source is null then perform app.refuse('bad_value'); end if;
+      if app.has_contact(v_source) then perform app.refuse('contact_in_text'); end if;
       v_res := app.import_speakers(p_payload -> 'rows', v_titles, v_source, v_me);
 
     elsif p_kind = 'tracking' then
@@ -5018,6 +5042,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       end if;
       v_label := app.label_key(app.clean_line(case when jsonb_typeof(p_payload -> 'label') = 'string' then p_payload ->> 'label' end, 60));
       if v_label = '' then perform app.refuse('label_required'); end if;
+      if app.has_contact(v_label) then perform app.refuse('contact_in_text'); end if;
       if jsonb_typeof(p_payload -> 'start_date') = 'string' and p_payload ->> 'start_date' <> '' then
         if p_payload ->> 'start_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then perform app.refuse('bad_value'); end if;
         begin
@@ -5041,6 +5066,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       end if;
       v_source := app.clean_line(p_payload ->> 'source', 60);
       if v_source is null then perform app.refuse('bad_value'); end if;
+      if app.has_contact(v_source) then perform app.refuse('contact_in_text'); end if;
       v_res := app.import_speakers(p_payload -> 'speakers', v_titles, v_source, v_me);
       foreach v_r in array v_res loop v_ids := v_ids || (v_r ->> 'speaker_id')::bigint; end loop;
 
@@ -5102,6 +5128,10 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
             v_pay := null;
           end if;
           v_inote := app.clean_block(v_item ->> 'import_note', 1000);
+          -- the team reads a lesson: no phone or e-mail in its title, audience or notes
+          if app.has_contact(v_title) or app.has_contact(v_aud) or app.has_contact(v_snote) or app.has_contact(v_inote) then
+            perform app.refuse('contact_in_text');
+          end if;
           v_refs := '{}';
           if jsonb_typeof(v_item -> 'speakers') = 'array' then
             for v_ref in select x from jsonb_array_elements(v_item -> 'speakers') as t(x) loop
@@ -5151,6 +5181,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
           if v_s.id is null then perform app.refuse('stale'); end if;
           v_pref := app.pick_contact_pref(v_item ->> 'contact_pref');
           v_sec := app.clean_block(v_item ->> 'secretary_note', 300);
+          if app.has_contact(v_sec) then perform app.refuse('contact_in_text'); end if;
           v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false, 'notes', false);
           if v_s.contact_pref is null and v_pref is not null then
             update public.speakers set contact_pref = v_pref, version = version + 1 where id = v_s.id;
