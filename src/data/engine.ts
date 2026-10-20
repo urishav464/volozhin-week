@@ -1827,7 +1827,7 @@ export class Engine {
         for (const item of p.lessons as unknown[]) {
           try {
             if (item == null || typeof item !== "object" || Array.isArray(item)) fail("bad_value");
-            const l = cleanLessonRow(item as ArchiveLessonRow, categories, ids.length);
+            const l = cleanLessonRow(item as ArchiveLessonRow, categories, ids.length, draft.edition);
             const room = roomOf(l.room);
             if (draft.lessons.some((x) => x.room_id === room && x.day === l.day && overlaps(x.start_min, x.end_min, l.start_min, l.end_min))) fail("room_taken");
             const lesson: Lesson = {
@@ -1913,7 +1913,8 @@ export class Engine {
 
   /**
    * app.import_speaker: checked in its order, resolved (merge / the name key / new — never a phone alone: two names on
-   * one line are two people), filled where empty — never a gender the speaker's own title contradicts.
+   * one line are two people), filled where empty — never a gender the speaker's own title contradicts, nor a title
+   * that says the other gender than the speaker's.
    */
   private importSpeaker(item: unknown, titles: readonly string[], source: string): SpeakerResult {
     const it = (item != null && typeof item === "object" && !Array.isArray(item) ? item : {}) as Record<string, unknown>;
@@ -1935,6 +1936,10 @@ export class Engine {
     // the pool's own title says the other gender: that gender is never filled from the row's title
     const own = s ? titleGender(s.title) : null;
     if (own != null && r.gender != null && own !== r.gender) r.gender = null;
+    // …and the mirror: a title that says the other gender than the speaker's (its own, or the one filled now) is never filled
+    const said = titleGender(r.title);
+    const has = s ? (s.gender ?? r.gender) : null;
+    if (said != null && has != null && said !== has) r.title = null;
     let created = false;
     let fields: string[] = [];
     if (!s) {

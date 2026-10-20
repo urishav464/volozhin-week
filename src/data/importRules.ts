@@ -96,12 +96,22 @@ export interface CleanLessonRow {
   speakers: number[];
 }
 
-/** app.import_lesson_row's checks, in its order. `categories`: the ids that exist; `speakers`: how many speaker rows. */
-export function cleanLessonRow(l: ArchiveLessonRow, categories: ReadonlySet<number>, speakers: number): CleanLessonRow {
+/** The archive edition's own week: when it opened on Sunday (null: unknown) and when it ended on Thursday. */
+export interface ArchiveWeek {
+  first_day_from: number | null;
+  last_day_until: number;
+}
+
+/**
+ * app.import_lesson_row's checks, in its order. `categories`: the ids that exist; `speakers`: how many speaker rows;
+ * `week`: the archive's own Sunday and Thursday — nothing on Thursday after it ended, nothing on Sunday before it opened.
+ */
+export function cleanLessonRow(l: ArchiveLessonRow, categories: ReadonlySet<number>, speakers: number, week: ArchiveWeek): CleanLessonRow {
   const int = (v: unknown) => typeof v === "number" && Number.isInteger(v);
   if (!int(l.day) || !int(l.start_min) || !int(l.end_min) || l.day < 0 || l.day > 4 || l.start_min < 390 || l.end_min > 1830 || l.start_min >= l.end_min || l.start_min % 5 !== 0 || l.end_min % 5 !== 0) {
     fail("bad_shape");
   }
+  if ((l.day === 4 && l.end_min > week.last_day_until) || (l.day === 0 && week.first_day_from != null && l.start_min < week.first_day_from)) fail("bad_shape");
   if (!int(l.room) || l.room < 0 || l.room >= IMPORT_RULES.rooms) fail("bad_value");
   const title = cleanLine(l.title, IMPORT_RULES.lesson_title);
   if (l.category_id != null && !categories.has(l.category_id)) fail("bad_value");

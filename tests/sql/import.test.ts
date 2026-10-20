@@ -270,6 +270,9 @@ describe("the import of 5786", () => {
       expect(await refusal(one(lesson(10, 2, 510, 600, [3])))).toBe("import_bad_row 10:bad_value"); // no such speaker row
       expect(await refusal(one(lesson(11, 2, 510, 600, [1], { pay_amount: 0 })))).toBe("import_bad_row 11:bad_amount");
       expect(await refusal(one(lesson(12, 2, 510, 600, [1], { category_id: 999999 })))).toBe("import_bad_row 12:bad_value");
+      // the archive's own week (its last_day_until, 19:00): nothing on Thursday after it ended — the server holds it, not only the browser
+      expect(await refusal(one(lesson(13, 4, 1080, 1170, [1])))).toBe("import_bad_row 13:bad_shape");
+      expect(await refusal(one(lesson(14, 4, 1470, 1560, [1])))).toBe("import_bad_row 14:bad_shape");
       expect(
         await refusal(commit("tracking", { ...archive(LESSONS, { label: "בדיקה" }), speakers: [row(2, "מרצה לדוגמה 1"), row(3, "x", { phone: "1" }), row(4, "y")] })),
       ).toBe("import_bad_row 3:bad_phone");
@@ -375,6 +378,32 @@ describe("the import of 5786", () => {
         { title: "הרבנית", gender: null },
         { title: "ד״ר", gender: "m" },
       ]);
+    });
+
+    it("the mirror: never fills a title that says the other gender than the speaker's — by name key and chosen; one of the same gender is", async () => {
+      const id = async (name: string, gender: string) => Number((await db.query("insert into public.speakers (name, gender, vetted) values ($1, $2, 'approved') returning id", [name, gender])).rows[0].id);
+      const f = await id("מרצה ראי בלי תואר א", "f");
+      const m = await id("מרצה ראי בלי תואר ב", "m");
+      const same = await id("מרצה ראי בלי תואר ג", "m");
+      const res = await commit("candidates", {
+        source: "brainstorm-5786",
+        titles_from: null,
+        rows: [
+          row(2, "מרצה ראי בלי תואר א", { title: "הרב", gender: "m" }), // by its name key
+          row(3, "שם אחר לגמרי", { action: "merge", speaker_id: m, title: "הרבנית", gender: "f", phone: "000-000-0099" }), // chosen (a pool phone)
+          row(4, "מרצה ראי בלי תואר ג", { title: "הרב", gender: "m" }),
+        ],
+      });
+      expect(res).toMatchObject({ created: 0, merged: 3, filled: 1, contacts: 1 });
+      const read = async (x: number) => (await db.query("select title, gender from public.speakers where id = $1", [x])).rows[0];
+      expect([await read(f), await read(m), await read(same)]).toEqual([
+        { title: null, gender: "f" },
+        { title: null, gender: "m" },
+        { title: "הרב", gender: "m" },
+      ]);
+      // the log names no field it did not fill
+      const fields = (await db.query("select detail from public.activity where entity = 'speakers' and entity_id = any ($1::bigint[]) and kind = 'update'", [[f, m]])).rows;
+      expect(fields).toEqual([]);
     });
 
     it("a match keeps the speaker's own title and gender while it fills an empty field — never overwrites them", async () => {

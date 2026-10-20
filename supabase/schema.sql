@@ -4710,7 +4710,7 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
 -- and the browser sends that row as an explicit 'merge' — two people who share
 -- a line (a couple, an office) are two speakers. A match only FILLS what is
 -- empty, never overwrites — and never a gender the speaker's own title
--- contradicts. Gender only as the title says (הרב m, הרבנית f). Phones and
+-- contradicts, nor a title that contradicts the speaker's gender. Gender only as the title says (הרב m, הרבנית f). Phones and
 -- e-mails only in speaker_contacts. The log keeps ids, counts and field names —
 -- never a name, a phone or a note. An archive's label is compared by
 -- app.label_key (quote marks and spaces aside) and stored in that form.
@@ -4807,7 +4807,8 @@ create or replace function app.refuse_row(p_item jsonb, p_reason text) returns v
 -- else adds a speaker (vetted pending, source as typed) — never by a phone
 -- alone (two names, one line, are two people; the preview turns a phone the
 -- pool has into an explicit 'merge'). Completing fills ONLY what is empty — the
--- speaker's title, gender (not one its own title contradicts), affiliation,
+-- speaker's title (not one that says the other gender than the speaker's),
+-- gender (not one its own title contradicts), affiliation,
 -- topics, and the contacts' phone, e-mail, notes. 'contacts' says a phone or an
 -- e-mail was filled, 'notes' the private note.
 create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb
@@ -4861,6 +4862,12 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
     if v_s.id is not null and v_gender is not null and app.title_gender(v_s.title) is not null
        and app.title_gender(v_s.title) <> v_gender then
       v_gender := null;
+    end if;
+    -- …and the mirror: a title that says the other gender than the speaker's (its own, or the one filled now) is
+    -- never filled — «הרבנית» is not written onto a man the pool knows, nor «הרב» onto a woman
+    if v_s.id is not null and app.title_gender(v_title) is not null and coalesce(v_s.gender, v_gender) is not null
+       and app.title_gender(v_title) <> coalesce(v_s.gender, v_gender) then
+      v_title := null;
     end if;
 
     if v_s.id is null then
@@ -5065,6 +5072,11 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
           v_end := app.jint(v_item -> 'end_min');
           if v_day is null or v_start is null or v_end is null or v_day not between 0 and 4 or v_start < 390 or v_end > 1830
              or v_start >= v_end or v_start % 5 <> 0 or v_end % 5 <> 0 then
+            perform app.refuse('bad_shape');
+          end if;
+          -- the archive's own week (its grid's rule): nothing on Thursday after it ended (last_day_until — last year's
+          -- ended at 19:00), nothing on Sunday before it opened (first_day_from, when known)
+          if (v_day = 4 and v_end > v_ed.last_day_until) or (v_day = 0 and v_ed.first_day_from is not null and v_start < v_ed.first_day_from) then
             perform app.refuse('bad_shape');
           end if;
           v_room := app.jint(v_item -> 'room');

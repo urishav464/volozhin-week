@@ -988,6 +988,9 @@ export const SCENARIOS: Record<string, Step[]> = {
     // «דלתא» given the title הרבנית and no gender; then a row «הרב דלתא»: the gender its own title contradicts is never filled
     { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "דלתא", name: "דלתא", title: "הרבנית" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "דלתא", title: "הרב", gender: "m" }] },
+    // the mirror: «אלפא» (f, no title) and a row «הרב אלפא» by its name key; «זין» (m, no title) chosen with «הרבנית»:
+    // a title that says the other gender is never filled
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "אלפא", title: "הרב", gender: "m" }, { row: 3, action: "merge", speaker: "זין", name: "זין", title: "הרבנית", gender: "f" }] },
     // all or nothing, the row and the reason named
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 3, action: "new", name: "טלפון שגוי", phone: "12-34" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 7, action: "new", name: "מגדר מנוחש", title: "ד״ר", gender: "f" }] },
@@ -1057,6 +1060,8 @@ export const SCENARIOS: Record<string, Step[]> = {
         { row: 15, day: 2, start: 510, end: 600, speakers: [0], pay_amount: 0 },
         { row: 16, day: 2, start: 510, end: 600, speakers: [0], category: "אין כזו" },
         { row: 17, day: 2, start: 510, end: 600, speakers: [0], sources_kind: "maybe" },
+        { row: 18, day: 4, start: 1080, end: 1170, speakers: [0] }, // past the archive's Thursday (19:00)
+        { row: 19, day: 4, start: 1470, end: 1560, speakers: [0] }, // a Thursday night the week did not have
       ] as ImportLessonStep[]
     ).map(
       (bad): Step => ({
@@ -1068,6 +1073,8 @@ export const SCENARIOS: Record<string, Step[]> = {
         },
       }),
     ),
+    // Thursday until 19:00 is the archive's week
+    { as: "admin", importArchive: { label: "בדיקת חמישי", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 2, day: 4, start: 1050, end: 1140, speakers: [0] }] } },
   ],
 
   "the import: the escorts' file — the channel and the note, only where empty": [
