@@ -1,0 +1,13 @@
+{
+  "name": "שבוע וולוז'ין",
+  "short_name": "וולוז'ין",
+  "description": "מערכת התכנון והשיבוץ של שבוע וולוז'ין",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f3ea",
+  "theme_color": "#1d2a44",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
