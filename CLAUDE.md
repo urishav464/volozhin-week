@@ -182,6 +182,17 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   sources.json and, on request, the files per day (`src/exports/archive.ts`, `archiveGather.ts`).
   `tests/sql/upgrade.test.ts` re-runs the file on a v10 database read from git history (CI checks out the whole
   history) and compares the catalog with a fresh install.
+- **Without internet (milestone 5ב-2, part B; no schema change of its own):** `src/offline/`. A hand-written service worker — `sw.ts`
+  (`shellWorker`, `killWorker`: functions of `self`, inlined into `/sw.js` by the Vite plugin `swBuild.ts`, which lists
+  every emitted file and names the cache by their digest); registered from the team's app in production builds only
+  (`register.ts`, the «גרסה חדשה של האתר זמינה» banner — never a reload by itself). It never answers or caches anything
+  sent to Supabase, or carrying Authorization/apikey (`routeFor`). The kill switch is `OFFLINE_SHELL_ENABLED` in
+  `config.ts`. After every load the Week (only the Week: `assertWeekOnly`, and `WEEK_KEYS` must list every key of
+  `Week` — tsc fails on a new one) and the last whoami go to IndexedDB (`store.ts` `OfflineCopy`); started offline (a
+  `PortError("network")`, `network.ts` — never a refusal) the day view shows it read-only (`src/screens/OfflineWeek.tsx`)
+  only to the device's own user (`DataPort.deviceUserId()`, `snapshot.ts` `offlineDecision`); sign-out clears it. The
+  public pages stay online-only. `playwright.config.ts` blocks workers except in `tests/e2e/offline.spec.ts`
+  (DECISIONS «אבן דרך 5ב-2, חלק ב: בלי רשת»).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
