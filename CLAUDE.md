@@ -218,6 +218,23 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `importParts.tsx`); **nothing raw is stored** — not in the database, not in the browser (the e2e checks the
   storage). The archive's `lessons.import_note` shows in the lesson panel; «אישור באצווה: מי שלימד/ה ב-…» is
   `pendingWhoTaught` (`src/domain/mine.ts`) in `/approvals` (DECISIONS «ייבוא תשפ"ו»).
+- **After the week (milestone 6, schema v12):** `lesson_reviews` — «איך עבר», one per closed lesson, written only
+  through `save_lesson_review` by the lesson's handler (once the day the lesson ENDS on has passed in Israel time:
+  `app.review_opens_on` ≡ `reviewOpensOn` in `src/domain/reviews.ts`; never while the date is TBD) or an edition admin
+  (always); read by the edition's admins and content (`load_reviews`, invoker) — never logistics, a link, the designer's
+  export, `load_week`, Realtime or the offline copy. Across years `speaker_reviews` (`app.may_read_reviews`: a global
+  admin, or admin/content of a live real edition; past years + the reader's own live one; never who wrote it).
+  `port.reviews` (`src/data/reviews.ts`, `supabaseReviews.ts`, `demoReviews.ts`; the engine's `saveReview` /
+  `speakerReviews` / `returning` / `purgePrivate`, parity-tested). Screens: the lesson panel's sixth section
+  (`src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged), the speaker sheet's
+  `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
+  `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
+  Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
+  every link, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
+  keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
+  checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
+  «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v11 (50ff373).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

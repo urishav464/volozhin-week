@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), and the import of 5786
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, and after the week (milestone 6)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -1257,3 +1257,133 @@ bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amou
 The helpers (`app.phone_key`, `app.title_gender`, `app.jint`, `app.jlen`, `app.require_global_admin`,
 `app.refuse_row`, `app.import_speaker`, `app.import_speakers`, `app.import_room`) are no API role's
 (`tests/sql/import.test.ts`).
+
+# After the week (milestone 6, schema v12)
+
+«איך עבר» per lesson, the year's summary, the purge of the edition's private data, and the move to next
+year (DESIGN «שלבים», שלב 4). Two implementations: `supabase/schema.sql` «Milestone 6» and
+`src/data/engine.ts` (reviews, the purge — behind `DemoPort`, `DemoReviews`), with
+`src/data/demoSettings.ts` for start_edition's option and its dry run (settings, like start_edition itself:
+their unit tests hold them to the SQL tests' answers). `tests/parity` runs reviews (who writes, when,
+who reads) and the purge on both and compares results, refusals and state.
+
+## «איך עבר» — `lesson_reviews`
+
+| Column | What |
+|---|---|
+| `lesson_id` | the closed lesson (primary key: one review per lesson; on delete cascade) |
+| `edition_id` | its edition (written by the function; the policy reads it) |
+| `speaker_id` | the lesson's lead speaker **when the review was written** — the review is about them (a lesson reopened and closed with someone else keeps the old review, said so in the panel) |
+| `went_well`, `issues` | blocks of at most 2000 characters (`app.clean_block` / `cleanBlock`), or null |
+| `invite_again` | `yes` / `no` / `maybe`, or null (not said) |
+| `overran` | boolean, default false |
+| `rating` | 1–5, or null — optional |
+| `written_by`, `written_at`, `version` | who saved last (members.id), when (the database's clock), a version |
+
+**Reads.** `lesson_reviews_read`: `app.my_role(edition_id) in ('admin', 'content')` — the edition's admins
+and content members; **never logistics**. Never in `load_week` (so never the offline copy), Realtime, a
+link (`escort_view`, `schedule_view`, `kk_form`), the designer's export or the tracking table. In the admin's
+archive, in `reviews.json`. `member_has_history` counts `written_by`.
+
+### `reviews.ofEdition(edition)` — `load_reviews(p_edition)` → `jsonb[]`
+Invoker, under the policy: `{lesson_id, speaker_id, went_well, issues, invite_again, overran, rating,
+written_by, written_at, version}` by lesson id; an edition the caller may not read → `[]`.
+
+### `reviews.save(edition, lesson, version, fields)` — `save_lesson_review(p_lesson, p_version, p_went_well, p_issues, p_invite_again, p_overran, p_rating)` → `integer` (the version saved)
+Refusals, in this order (engine and SQL alike):
+1. the lesson missing or cancelled → `stale`;
+2. not a member of its edition → `not_member`; logistics → `forbidden`;
+3. an archive (or an archived edition) and not its admin → `archived`;
+4. not a closed lesson of kind `lesson` (a draft, a memorial slot) → `not_closed`;
+5. not an admin of the edition: not the lesson's handler (`app.lesson_handler`) → `not_handler`; the
+   week's date TBD, or the Israel date before `app.review_opens_on(start_date, day, end_min)` → `review_closed`;
+6. `version` ≠ the stored one (0 when there is none) → `stale`;
+7. a text over 2000, an answer other than yes/no/maybe, a rating outside 1–5 → `bad_value`; nothing said
+   at all (both texts empty, no answer, no rating, no overrun) → `review_empty`.
+
+The same answers (and the same lead speaker) again change nothing and return the stored version.
+Otherwise the row is written with `speaker_id` = the current lead, `written_by` = the caller, `written_at`
+= now, `version` + 1.
+
+**When it opens** (`reviewOpensOn`, `src/domain/reviews.ts`; `app.review_opens_on`): the day after the
+calendar day the lesson ends on — `start_date + day + ⌊(end_min − 1) / 1440⌋ + 1`, compared with today's date in
+Israel (`now() at time zone 'Asia/Jerusalem'` / `israelDate`). A lesson ending at 24:00 opens the next
+day; a night lesson in a day's column (00:30–02:00) ends on the next date and opens the day after. An admin of
+the edition writes at any time.
+
+### `reviews.ofSpeaker(speaker)` — `speaker_reviews(p_speaker)` → `jsonb[]`
+Definer. `not_member` for a non-member; `forbidden` unless `app.may_read_reviews()`: a global admin, or an
+admin or content member of a real edition that is not archived (the people the contacts rule counts — a
+practice or demo week, last year's team and logistics never). Returns the reviews whose `speaker_id` is the
+speaker, in `real` and `archive` editions: a past year (`kind = 'archive'` or `status = 'archived'`) to
+anyone allowed, a live edition only to its own admins and content members. Each `{edition_id,
+edition_label, edition_kind, start_date, lesson_id, day, start_min, end_min, title, went_well, issues,
+invite_again, overran, rating, written_at}` — never who wrote it. Newest year first (`start_date desc nulls
+first`, then edition id desc), then day and time. The engine knows the actor's role in its own edition only
+and asks that one.
+
+### `reviews.returning(edition)` — `edition_returning(p_edition)` → `jsonb[]`
+Definer; the edition's admins and content (`forbidden` for logistics, `not_member` for others). The speakers
+of the edition's closed lessons (kind `lesson`, any role) who taught a closed lesson in an **earlier** `real` or
+`archive` edition, each `{speaker_id, editions: [labels]}` (by date, nulls first). Earlier
+(`app.earlier_edition` / `earlierEdition`): by the weeks' dates when both are known; otherwise a past year
+(archive or archived) is before one that is not.
+
+## The summary (browser only — `src/exports/summary.ts`)
+`editionSummary(week, reviews, returning)`: closed lessons held; memorial times with a plan placed; per day
+the closed lessons by their speakers' gender (`dayBalance(…).closed` — a co-taught lesson splits its one,
+memorial times never count); closed lessons per category (+ «בלי קטגוריה»); speakers new vs returning;
+reviews done of the closed lessons, and the missing ones; the `yes` / `no` / `maybe` lists. Counts only — no
+threshold. `summaryTables` writes the same as five sheets through `toXlsx` (`guardCell` on every cell).
+
+## The purge — `settings.purgeEdition(edition, confirm)` — `purge_edition_private(p_edition, p_confirm)` → `jsonb`
+Definer. Refusals, in this order: not a global admin → `forbidden`; no such edition → `stale`; `p_confirm`
+(trimmed of spaces) ≠ the edition's label → `confirm_mismatch`; the edition is not an archive, not archived,
+and its week is not over → `week_not_over` («over»: the Israel date ≥ `start_date + 5` — Friday 00:00, when
+the escort and schedule links expire; never while the date is TBD). Then:
+
+- deletes the edition's `transport_details` (pickup addresses and times, drivers' names and phones);
+- deletes the `share_link_hits` of the edition's links (the hashed callers' addresses);
+- revokes every live `share_links` row of the edition (`revoked_at` = now) — the anon functions answer
+  `link_invalid` for them from then on, and nothing un-revokes a link;
+- sets `editions.purged_at` the first time (a trigger keeps it from any other write);
+- logs `activity (entity 'editions', kind 'purge', detail {transport_details, links_revoked, link_hits})` —
+  counts only;
+
+and returns `{transport_details, links_revoked, link_hits, purged_at}`. Idempotent: a second run deletes
+nothing more, returns zeros and the first `purged_at`, and is logged again. Everything else stays
+(DECISIONS «אבן דרך 6» has each table and why). In the engine: `shared.transport` keys `<edition>:…`,
+`shared.linkHits` of the edition's tokens, `shared.links`, `week.edition.purged_at`, the pool's log.
+
+## Moving to next year
+### `settings.startEdition(e, {deactivateTeam})` — `start_edition(p_label, p_start_date, p_first_day_from, p_room, p_deactivate_team default false)` → `bigint`
+As before, and with `p_deactivate_team`: before the live real editions are archived, their members who are
+not admins (content, logistics) become `active = false` — never deleted; admins of those editions and every
+all-editions member stay. The screen sends it on by default («הצעה»).
+
+### `settings.previewStart(deactivateTeam)` — `start_edition_preview(p_deactivate_team default true)` → `jsonb`
+Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:
+[{id, label}] (the real editions not archived), carry_from: {id, label} | null (where the wording and
+milestones come from: the live real edition, else the newest real), grid_rows (the template's), milestones
+(carry_from's), confirm_template (boolean), duty_phrases (count), deactivate (with the option: the active
+non-admin members of the archived editions; without: 0), admins_stay, stays: {speakers (not retired),
+categories (active), fallen (active), notes (cross-year)}}`.
+
+## Errors (milestone 6)
+
+`review_closed review_empty confirm_mismatch week_not_over`, and `stale not_member forbidden archived
+not_closed not_handler bad_value`.
+
+## RPC signatures (milestone 6)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `save_lesson_review` | `p_lesson bigint, p_version integer, p_went_well text, p_issues text, p_invite_again text, p_overran boolean, p_rating integer` | `integer` | authenticated |
+| `load_reviews` | `p_edition bigint` | `jsonb` | authenticated (invoker) |
+| `speaker_reviews` | `p_speaker bigint` | `jsonb` | authenticated |
+| `edition_returning` | `p_edition bigint` | `jsonb` | authenticated |
+| `purge_edition_private` | `p_edition bigint, p_confirm text` | `jsonb` | authenticated |
+| `start_edition_preview` | `p_deactivate_team boolean default true` | `jsonb` | authenticated |
+| `start_edition` | `p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש', p_deactivate_team boolean default false` | `bigint` | authenticated |
+
+No new `app.*` function is a browser's to run; anon gets nothing new.
