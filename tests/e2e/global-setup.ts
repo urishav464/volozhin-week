@@ -13,16 +13,22 @@
 // `e2e-net=down` has every connection dropped here — the worker's network-first
 // navigation fails as it would with no network, and its cached shell is what the
 // tests see. `e2e-net=hang` takes every request and never answers it: a network
-// that accepts requests and stays silent (tests/e2e/offline.spec.ts).
+// that accepts requests and stays silent; `e2e-net=slow` answers every request,
+// SLOW_NET_MS late — later than the worker waits for a navigation
+// (tests/e2e/offline.spec.ts).
+// A page of the build is served as Cloudflare Pages serves it («pretty URLs»):
+// /privacy.html is a 308 to /privacy, and /privacy is privacy.html.
 import { execFileSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { CACHE_PREFIX } from "../../src/offline/config";
 import { killWorkerScript } from "../../src/offline/sw";
 
 export const MOCK_URL = "https://mock-project.supabase.invalid";
 export const MOCK_KEY = "sb_publishable_mock";
+/** How late `e2e-net=slow` answers: more than NAVIGATE_TIMEOUT_MS (src/offline/config.ts). */
+export const SLOW_NET_MS = 5000;
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -49,20 +55,44 @@ function build(outDir: string, env: Record<string, string>) {
   });
 }
 
-/** What a context's network is: as usual, gone (`down`), or taking requests and never answering (`hang`). */
-export function netFor(cookie: string | undefined): "up" | "down" | "hang" {
-  const v = /(?:^|;\s*)e2e-net=(down|hang)(?:;|$)/.exec(cookie ?? "")?.[1];
-  return v === "down" || v === "hang" ? v : "up";
+/** What a context's network is: as usual, gone (`down`), taking requests and never answering (`hang`), or late (`slow`). */
+export function netFor(cookie: string | undefined): "up" | "down" | "hang" | "slow" {
+  const v = /(?:^|;\s*)e2e-net=(down|hang|slow)(?:;|$)/.exec(cookie ?? "")?.[1];
+  return v === "down" || v === "hang" || v === "slow" ? v : "up";
 }
 
-// A static server with the SPA fallback Cloudflare Pages applies.
+/**
+ * Cloudflare Pages' «pretty URLs» for an HTML page of the build: its .html address is a 308 to the address without the
+ * extension (a folder's index.html: to the folder), the query kept; that address serves the page. Anything else: null.
+ */
+export function prettyUrl(root: string, path: string, search: string): { redirect: string } | { file: string } | null {
+  if (path.endsWith(".html")) {
+    if (!existsSync(join(root, path))) return null;
+    return { redirect: (path.endsWith("/index.html") ? path.slice(0, -"index.html".length) : path.slice(0, -".html".length)) + search };
+  }
+  if (extname(path) === "" && path !== "/" && existsSync(join(root, `${path}.html`))) return { file: join(root, `${path}.html`) };
+  return null;
+}
+
+// A static server with the SPA fallback and the pretty URLs Cloudflare Pages applies.
 function serve(root: string): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     const net = netFor(req.headers.cookie);
     if (net === "down") return void req.socket.destroy();
     if (net === "hang") return void setTimeout(() => req.socket.destroy(), 60_000).unref(); // silent; let go in the end
-    const path = normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
-    let file = join(root, path);
+    if (net === "slow") return void setTimeout(() => answer(req, res), SLOW_NET_MS).unref();
+    answer(req, res);
+  });
+  function answer(req: IncomingMessage, res: ServerResponse) {
+    if (req.socket.destroyed) return;
+    const [rawPath, ...q] = (req.url ?? "/").split("?");
+    const path = normalize(decodeURIComponent(rawPath));
+    const pretty = prettyUrl(root, path, q.length ? `?${q.join("?")}` : "");
+    if (pretty && "redirect" in pretty) {
+      res.writeHead(308, { Location: pretty.redirect }).end();
+      return;
+    }
+    let file = pretty ? pretty.file : join(root, path);
     if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) file = join(root, "index.html");
     res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
     if (path === "/sw.js") {
@@ -71,7 +101,7 @@ function serve(root: string): Promise<{ server: Server; url: string }> {
       return;
     }
     createReadStream(file).pipe(res);
-  });
+  }
   return new Promise((resolve) =>
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();

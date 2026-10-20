@@ -17,6 +17,7 @@ const cfg: ShellConfig = {
   supabaseOrigin: SUPABASE,
   skipWaiting: "skip-waiting",
   navigateTimeoutMs: 3500,
+  pages: ["/privacy", "/privacy.html"],
 };
 
 /** A request as the worker sees it. */
@@ -144,6 +145,12 @@ describe("routeFor: what the worker answers, and what it never touches", () => {
   it("a navigation to a page of its own — /privacy.html, any path with a file extension — is the network's, never the app shell", () => {
     expect(route(`${ORIGIN}/privacy.html`, { mode: "navigate" })).toBe("pass");
     expect(route(`${ORIGIN}/privacy.html?from=signin`, { mode: "navigate" })).toBe("pass");
+    // Cloudflare Pages answers /privacy.html with a 308 to /privacy, which serves the page: that hop is the network's too
+    expect(route(`${ORIGIN}/privacy`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/privacy?from=signin`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/privacy/x`, { mode: "navigate" })).toBe("navigate"); // only the pages the build names
+    expect(route(`${ORIGIN}/privacy`)).toBe("pass"); // not a navigation, not a file of the build: never the worker's
+    expect(routeFor(req(`${ORIGIN}/privacy`, { mode: "navigate" }), ORIGIN, { ...cfg, pages: [] })).toBe("navigate"); // the list is what decides
     expect(route(`${ORIGIN}/favicon.svg`, { mode: "navigate" })).toBe("pass");
     expect(route(`${ORIGIN}/manifest.webmanifest`, { mode: "navigate" })).toBe("pass");
     expect(route(`${ORIGIN}/a.dir/page`, { mode: "navigate" })).toBe("navigate"); // a dot in a folder is not an extension

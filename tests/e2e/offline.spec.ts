@@ -12,8 +12,9 @@ import { demoWeek } from "../../src/data/demoWeek";
 import type { ScheduleView } from "../../src/data/publicPort";
 import { fmtRange, LRM } from "../../src/domain/time";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
+import { NAVIGATE_TIMEOUT_MS } from "../../src/offline/config";
 import { OFFLINE_DB, OFFLINE_STORE } from "../../src/offline/store";
-import { MOCK_URL } from "./global-setup";
+import { MOCK_URL, SLOW_NET_MS } from "./global-setup";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, fakeSession } from "./mock";
 
@@ -642,24 +643,51 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
   });
 
-  test("/privacy.html is never answered with the app shell: online it is the page itself, offline the browser's own «no connection» — never the week", async ({ context, page }, info) => {
+  test("the privacy page, as Cloudflare Pages serves it (/privacy.html a 308 to /privacy), is never answered with the app shell: online the page; on a network slower than the worker waits, the page, late; offline after a visit, the browser's own «no connection» — never the week", async ({ context, page }, info) => {
     test.skip(info.project.name === "tablet", "a phone and a desktop are enough");
-    await page.goto(demoUrl());
-    await expect(lens(page)).toBeVisible();
+    test.setTimeout(90_000);
+    expect(SLOW_NET_MS).toBeGreaterThan(NAVIGATE_TIMEOUT_MS + 1000); // the slow network is slower than the worker waits
+    const thePage = async (p: Page) => {
+      await expect(p.getByRole("heading", { level: 1 })).toHaveText("מדיניות פרטיות");
+      expect(new URL(p.url()).pathname).toBe("/privacy"); // where Cloudflare's 308 leads
+      await expect(lens(p)).toHaveCount(0);
+      await expect(p.getByRole("banner")).toHaveCount(0); // the app did not load
+    };
+    const week = async () => {
+      await page.goto(demoUrl());
+      await expect(lens(page)).toBeVisible();
+    };
+    await week();
     await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.ready).active?.state), { timeout: 15_000 }).toBe("activated");
     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
-    await page.goto(`${demoUrl()}/privacy.html`);
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("מדיניות פרטיות");
-    await page.goto(demoUrl());
-    await expect(lens(page)).toBeVisible();
 
+    // online, under the worker: the link's address (a 308), and the address it leads to
+    for (const address of ["/privacy.html", "/privacy"]) {
+      await week();
+      await page.goto(`${demoUrl()}${address}`);
+      await thePage(page);
+    }
+
+    // a slow network: every answer SLOW_NET_MS late, past the worker's NAVIGATE_TIMEOUT_MS — the page comes, late
+    for (const address of ["/privacy.html", "/privacy"]) {
+      await week();
+      await context.addCookies([{ name: "e2e-net", value: "slow", url: demoUrl() }]);
+      await page.goto(`${demoUrl()}${address}`, { timeout: 30_000 });
+      await thePage(page);
+      await context.clearCookies({ name: "e2e-net" });
+    }
+
+    // offline after those visits — the 308 kept by the browser's own cache, so the hop to /privacy happens offline too
+    await week();
     await noConnection(context, true);
-    const tab = await context.newPage(); // a new tab of this site, the worker in charge of it
-    const failed = await tab.goto(`${demoUrl()}/privacy.html`).then(() => null, (e: Error) => e.message);
-    expect(failed).toMatch(/net::ERR_/); // the network's answer: none — not the cached shell
-    await expect(lens(tab)).toHaveCount(0);
-    await expect(tab.getByRole("banner")).toHaveCount(0);
-    await tab.close();
+    for (const address of ["/privacy.html", "/privacy"]) {
+      const tab = await context.newPage(); // a new tab of this site, the worker in charge of it
+      const failed = await tab.goto(`${demoUrl()}${address}`).then(() => null, (e: Error) => e.message);
+      expect(failed, address).toMatch(/net::ERR_/); // the network's answer: none — not the cached shell
+      await expect(lens(tab)).toHaveCount(0);
+      await expect(tab.getByRole("banner")).toHaveCount(0);
+      await tab.close();
+    }
     await noConnection(context, false);
   });
 });

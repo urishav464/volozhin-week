@@ -4366,7 +4366,11 @@ create or replace function public.delete_fallen(p_fallen bigint) returns void
 
 -- The family's contact person, for the people app.may_see_fallen_contacts names
 -- (the same who read it). All five are replaced; NULL clears one. The log says
--- which fields changed, never to what.
+-- which fields changed, never to what. The fallen's row is locked (FOR KEY
+-- SHARE, the lock the foreign key takes anyway — a rename does not wait) before
+-- the check: a delete_fallen on another connection either finishes first, and
+-- the check finds no row: `stale`, never a raw foreign-key error; or waits for
+-- this write, and then deletes the fallen with their contact.
 create or replace function public.set_fallen_contacts(
   p_fallen bigint, p_contact_name text, p_relation text, p_phone text, p_email text, p_note text default null)
   returns void
@@ -4382,7 +4386,8 @@ create or replace function public.set_fallen_contacts(
     v_fields text[];
   begin
     if not app.is_member() then perform app.refuse('not_member'); end if;
-    if not exists (select 1 from public.fallen where id = p_fallen) then perform app.refuse('stale'); end if;
+    perform 1 from public.fallen where id = p_fallen for key share;
+    if not found then perform app.refuse('stale'); end if;
     if not app.may_see_fallen_contacts(p_fallen) then perform app.refuse('contacts_hidden'); end if;
     v_name  := app.clean_line(p_contact_name, 120);
     v_rel   := app.clean_line(p_relation, 60);

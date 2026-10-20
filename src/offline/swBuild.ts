@@ -3,10 +3,12 @@
 // the reader's worker — computes the build's version from their bytes, and writes /sw.js (unhashed, so the browser
 // finds it at one address) from src/offline/sw.ts with that list and a cache name carrying the version. With the kill
 // switch on (src/offline/config.ts) it writes the self-unregistering worker instead. Before emitting either it runs
-// the script once on a stub scope, so a worker that would throw is a failed build, not a broken site.
+// the script once on a stub scope, so a worker that would throw is a failed build, not a broken site. The static pages
+// of public/ (privacy.html) it reads from the folder itself, in the spellings Cloudflare Pages answers for them, so the
+// worker never answers one of them with the app shell (`staticPages`).
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, sep } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { Plugin } from "vite";
 import { CACHE_PREFIX, FONT_CACHE, FONT_ORIGINS, NAVIGATE_TIMEOUT_MS, OFFLINE_SHELL_ENABLED, SHELL_CACHE_PREFIX, SKIP_WAITING } from "./config";
@@ -34,6 +36,35 @@ export function precacheList(names: readonly string[]): string[] {
   return [...out].sort((a, b) => (a === "/" ? -1 : b === "/" ? 1 : a < b ? -1 : a > b ? 1 : 0));
 }
 
+/**
+ * The static pages Cloudflare Pages serves beside the app, from the names of public/'s files (relative to it, "/"
+ * between folders): every HTML page in each spelling a navigation to it can take — its .html address, which Cloudflare
+ * answers with a 308 to the address without the extension («pretty URLs»), and that address, which serves the page
+ * (privacy.html: /privacy.html and /privacy); a folder's index.html as /d/index.html, /d/ and /d. public/index.html,
+ * were there one, is the app's own page (the build's index.html), not a static page. The worker passes a navigation to
+ * any of them to the network, never the app shell (src/offline/sw.ts routeFor).
+ */
+export function staticPages(names: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const n of names) {
+    if (!n.endsWith(".html") || n === "index.html") continue;
+    out.add(`/${n}`);
+    const bare = n.slice(0, -".html".length);
+    if (bare === "index" || bare.endsWith("/index")) {
+      const folder = bare.slice(0, -"index".length); // "d/"
+      out.add(`/${folder}`);
+      out.add(`/${folder.slice(0, -1)}`);
+    } else out.add(`/${bare}`);
+  }
+  return [...out].sort();
+}
+
+/** Every file under a folder (public/), as paths relative to it with "/" between folders; none when there is no folder. */
+export function filesUnder(dir: string): string[] {
+  if (!dir || !existsSync(dir)) return [];
+  return (readdirSync(dir, { recursive: true }) as string[]).filter((n) => statSync(join(dir, n)).isFile()).map((n) => n.split(sep).join("/"));
+}
+
 /** The build's version: a digest of every precached file's name and bytes, and of the worker's own source. */
 export function buildVersion(files: readonly BuiltFile[], workerSource: string): string {
   const h = createHash("sha256");
@@ -58,7 +89,10 @@ export function supabaseOriginOf(url: string | undefined): string | null {
 }
 
 /** /sw.js for these files: the shell's worker, or — with the switch off — the kill switch's. */
-export function workerScriptFor(files: readonly BuiltFile[], opts: { enabled: boolean; supabaseUrl?: string }): { script: string; config: ShellConfig | null } {
+export function workerScriptFor(
+  files: readonly BuiltFile[],
+  opts: { enabled: boolean; supabaseUrl?: string; pages: readonly string[] },
+): { script: string; config: ShellConfig | null } {
   if (!opts.enabled) return { script: killWorkerScript(CACHE_PREFIX), config: null };
   const precache = precacheList(files.map((f) => f.name));
   const kept = new Set(precache);
@@ -75,6 +109,7 @@ export function workerScriptFor(files: readonly BuiltFile[], opts: { enabled: bo
     supabaseOrigin: supabaseOriginOf(opts.supabaseUrl),
     skipWaiting: SKIP_WAITING,
     navigateTimeoutMs: NAVIGATE_TIMEOUT_MS,
+    pages: [...opts.pages],
   };
   return { script: shellWorkerScript(config), config };
 }
@@ -111,7 +146,7 @@ export function offlineShell(): Plugin {
           if (publicDir && existsSync(path)) files.push({ name, bytes: readFileSync(path) });
         }
         if (!files.some((f) => f.name === "index.html")) this.error("offline shell: the bundle has no index.html");
-        const { script } = workerScriptFor(files, { enabled: OFFLINE_SHELL_ENABLED, supabaseUrl });
+        const { script } = workerScriptFor(files, { enabled: OFFLINE_SHELL_ENABLED, supabaseUrl, pages: staticPages(filesUnder(publicDir)) });
         const want = OFFLINE_SHELL_ENABLED ? ["activate", "fetch", "install", "message"] : ["activate", "install"];
         const got = listenersOf(script);
         if (got.join() !== want.join()) this.error(`offline shell: /sw.js listens to ${got.join()} — expected ${want.join()}`);

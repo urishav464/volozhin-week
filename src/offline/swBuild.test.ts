@@ -1,8 +1,9 @@
 // The build's half: which files the worker keeps, the version their bytes make, and /sw.js with the kill switch on and
 // off. The real build runs it in tests/e2e/global-setup.ts (and its output in the browser).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildVersion, listenersOf, precacheList, PUBLIC_PRECACHE, supabaseOriginOf, workerScriptFor } from "./swBuild";
+import { buildVersion, filesUnder, listenersOf, precacheList, PUBLIC_PRECACHE, staticPages, supabaseOriginOf, workerScriptFor } from "./swBuild";
 
 const files = [
   { name: "index.html", bytes: "<html>" },
@@ -29,6 +30,21 @@ describe("precacheList", () => {
   });
 });
 
+describe("staticPages", () => {
+  it("each HTML page in both spellings Cloudflare Pages answers — the .html (a 308) and the page's own address; a folder's index as the folder", () => {
+    expect(staticPages(["privacy.html", "favicon.svg", "manifest.webmanifest", "_headers", "docs/terms.html", "help/index.html", "index.html"])).toEqual([
+      "/docs/terms",
+      "/docs/terms.html",
+      "/help",
+      "/help/",
+      "/help/index.html",
+      "/privacy",
+      "/privacy.html",
+    ]);
+    expect(staticPages([])).toEqual([]);
+  });
+});
+
 describe("buildVersion", () => {
   const v = buildVersion(files, "worker");
   it("is the same for the same files in any order", () => {
@@ -45,20 +61,21 @@ describe("buildVersion", () => {
 
 describe("workerScriptFor", () => {
   it("the shell: its cache named by the version, the Supabase origin from the build variable, four listeners", () => {
-    const { script, config } = workerScriptFor(files, { enabled: true, supabaseUrl: "https://abcdefgh.supabase.co/" });
+    const { script, config } = workerScriptFor(files, { enabled: true, supabaseUrl: "https://abcdefgh.supabase.co/", pages: ["/privacy", "/privacy.html"] });
     expect(config!.cache).toMatch(/^volozhin-shell-[0-9a-f]{12}$/);
     expect(config!.supabaseOrigin).toBe("https://abcdefgh.supabase.co");
     expect(config!.precache).toContain("/assets/worker-DDDD.js");
+    expect(config!.pages).toEqual(["/privacy", "/privacy.html"]);
     expect(script).toContain(config!.cache);
     expect(listenersOf(script)).toEqual(["activate", "fetch", "install", "message"]);
     // a change to any file is a new cache: the old one goes on activate
-    const next = workerScriptFor(files.map((f) => (f.name === "assets/index-AAAA.js" ? { ...f, bytes: "a2" } : f)), { enabled: true });
+    const next = workerScriptFor(files.map((f) => (f.name === "assets/index-AAAA.js" ? { ...f, bytes: "a2" } : f)), { enabled: true, pages: [] });
     expect(next.config!.cache).not.toBe(config!.cache);
     expect(next.config!.supabaseOrigin).toBeNull(); // a demo build
   });
 
   it("the kill switch: the self-unregistering worker, which answers nothing", () => {
-    const { script, config } = workerScriptFor(files, { enabled: false });
+    const { script, config } = workerScriptFor(files, { enabled: false, pages: ["/privacy", "/privacy.html"] });
     expect(config).toBeNull();
     expect(listenersOf(script)).toEqual(["activate", "install"]);
     expect(script).toContain("unregister");
@@ -106,6 +123,16 @@ describe("the files Cloudflare serves beside the build", () => {
       "x-frame-options": "DENY",
       "permissions-policy": "camera=(), microphone=(), geolocation=()",
     });
+  });
+
+  it("public/'s pages, as the build reads them: privacy.html in both spellings — every .html there, and nothing else", () => {
+    const dir = fileURLToPath(new URL("../../public/", import.meta.url));
+    const pages = staticPages(filesUnder(dir));
+    expect(pages).toEqual(["/privacy", "/privacy.html"]);
+    const html = readdirSync(dir).filter((n) => n.endsWith(".html"));
+    expect(pages).toEqual(html.flatMap((n) => [`/${n.slice(0, -".html".length)}`, `/${n}`]).sort());
+    expect(filesUnder(dir)).toEqual(expect.arrayContaining(["privacy.html", "favicon.svg", "_headers"]));
+    expect(filesUnder("")).toEqual([]);
   });
 
   it("the manifest: Hebrew, right to left, the site's name and its icon; index.html links it", () => {

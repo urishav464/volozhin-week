@@ -1106,7 +1106,10 @@ changed, never their values. The row goes in the edition whose plan gives the ca
 (`app.fallen_contacts_edition` / `Engine.fallenContactsEdition`: the newest real, non-archived edition
 with a plan for that fallen in which the caller is an admin), as the caller's member row there — so
 it is in that edition's log and archive. A global admin with no such plan: no edition, their own id
-(the row is then only in the database, not in an edition's log).
+(the row is then only in the database, not in an edition's log). The fallen's row is locked
+(`for key share` — the lock the foreign key takes anyway) before the `stale` check, so a
+`delete_fallen` on another connection either lands first (→ `stale`, never a raw foreign-key error)
+or waits for the write and then deletes the fallen with their contact; a rename does not wait.
 
 ## The logistics screen's transports — `transports()` — `get_transports_for(p_edition)` → `jsonb`
 Invoker. The edition's closed lessons with `transport <> 'none'` and `approval = 'approved'`, each

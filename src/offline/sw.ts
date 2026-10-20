@@ -8,9 +8,10 @@
 //   - anything sent to the Supabase project (REST, RPC, Auth, Storage, Realtime), anything carrying Authorization or
 //     apikey, anything but GET, and every other origin: NOT touched — no respondWith, the browser sends it as if there
 //     were no worker, and nothing of it is ever cached;
-//   - a navigation to a page of its own — a path with a file extension: /privacy.html, a picture opened in a tab —
-//     NOT touched: the network answers it as if there were no worker (offline: the browser's own «no connection»),
-//     never the app shell in its place, which would send the privacy link to the week;
+//   - a navigation to a page of its own — a static page of public/ in either spelling (cfg.pages: Cloudflare Pages
+//     answers /privacy.html with a 308 to /privacy, which serves the page), or any path with a file extension (a
+//     picture opened in a tab) — NOT touched: the network answers it as if there were no worker (offline: the
+//     browser's own «no connection»), never the app shell in its place, which would send the privacy link to the week;
 //   - any other navigation: the network first, for a few seconds (cfg.navigateTimeoutMs); without one — or with one
 //     that takes the request and never answers — the cached index.html (the app then shows the day from its own snapshot,
 //     src/offline/snapshot.ts). The network's answer is never cached: the cached index.html is always the one whose
@@ -36,6 +37,12 @@ export interface ShellConfig {
   skipWaiting: string;
   /** A navigation waits this long for the network before the cached shell answers. */
   navigateTimeoutMs: number;
+  /**
+   * The static pages beside the app — every HTML page of public/ — in each spelling Cloudflare Pages answers for one
+   * (src/offline/swBuild.ts staticPages): /privacy.html, a 308 to /privacy, and /privacy, the page itself. A navigation
+   * to one is the network's, never the app shell's.
+   */
+  pages: string[];
 }
 
 export type Route = "pass" | "navigate" | "asset" | "font";
@@ -64,8 +71,12 @@ export function routeFor(req: RequestLike, origin: string, cfg: ShellConfig): Ro
   if (/^\/(rest|auth|storage|realtime|functions|graphql)\/v1(\/|$)/.test(u.pathname)) return "pass";
   if (cfg.fontOrigins.indexOf(u.origin) >= 0) return "font";
   if (u.origin !== origin) return "pass";
-  // a page of its own (/privacy.html, a file opened in a tab): never answered with the app shell — the network's
-  if (req.mode === "navigate") return /\.[a-z0-9]+$/i.test(u.pathname.slice(u.pathname.lastIndexOf("/") + 1)) ? "pass" : "navigate";
+  // a page of its own — a static page in either spelling (/privacy.html, 308 → /privacy), a file opened in a tab:
+  // never answered with the app shell — the network's
+  if (req.mode === "navigate") {
+    if (cfg.pages.indexOf(u.pathname) >= 0) return "pass";
+    return /\.[a-z0-9]+$/i.test(u.pathname.slice(u.pathname.lastIndexOf("/") + 1)) ? "pass" : "navigate";
+  }
   if (u.search === "" && (cfg.precache.indexOf(u.pathname) >= 0 || u.pathname.indexOf("/assets/") === 0)) return "asset";
   return "pass";
 }

@@ -191,7 +191,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   every emitted file and names the cache by their digest); registered from the team's app in production builds only
   (`register.ts`, the «גרסה חדשה של האתר זמינה» banner — never a reload by itself). It never answers or caches anything
   sent to Supabase, or carrying Authorization/apikey (`routeFor`); a navigation waits for the network
-  `NAVIGATE_TIMEOUT_MS`, then the cached shell; only this build's own files are ever cached. The kill switch is
+  `NAVIGATE_TIMEOUT_MS`, then the cached shell — but one to a static page of `public/` in either spelling Cloudflare
+  Pages answers (`/privacy.html` is a 308 to `/privacy`; `staticPages`, read from the folder by the build) or to a path
+  with a file extension is the network's alone; only this build's own files are ever cached. The kill switch is
   `OFFLINE_SHELL_ENABLED` in `config.ts` (the app itself then unregisters and deletes the caches, `retireShellWorker`).
   A lazy screen whose file is gone shows «רענון», not a blank page (`src/screens/ScreenBoundary.tsx`). After every load the Week (only the Week: `assertWeekOnly`, and `WEEK_KEYS` must list every key of
   `Week` — tsc fails on a new one) and the last whoami go to IndexedDB (`store.ts` `OfflineCopy`); started offline (a

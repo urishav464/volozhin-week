@@ -626,5 +626,42 @@ describe("memorial times and the logistics screen's transports", () => {
       expect(await owner("select active from public.fallen where id = $1", [f])).toBe(false);
       expect(await plans(f)).toBe(0);
     });
+
+    it("set_fallen_contacts against delete_fallen: `stale`, never PostgreSQL's foreign-key error — and a contact written first goes with the fallen", async () => {
+      const rows = async (f: number) =>
+        owner("select json_build_object('fallen', (select count(*) from public.fallen where id = $1), 'contacts', (select count(*) from public.fallen_contacts where fallen_id = $1))", [f]);
+      const write = (f: number): [string, string, unknown[]] => [ADMIN, "select public.set_fallen_contacts($1, $2, $3, $4, null, null)", [f, FAMILY_NAME, RELATION, FAMILY_PHONE]];
+      // the delete first, the fallen with no contact yet: the write's own row would fail the foreign key
+      const f = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ד', null, null, true)"));
+      expect(await race([ADMIN, "select public.delete_fallen($1)", [f]], write(f), true)).toBe("stale");
+      expect(await rows(f)).toEqual({ fallen: 0, contacts: 0 });
+      // the delete first, a contact already there (the delete's cascade holds its row): the same
+      const g = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ה', null, null, true)"));
+      await commitAs(ADMIN, "select public.set_fallen_contacts($1, $2, null, null, null, null)", [g, FAMILY_NAME]);
+      expect(await race([ADMIN, "select public.delete_fallen($1)", [g]], write(g), true)).toBe("stale");
+      expect(await rows(g)).toEqual({ fallen: 0, contacts: 0 });
+      // the other way round: the write first; the delete waits for it, then deletes the fallen with the contact
+      const h = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ו', null, null, true)"));
+      expect(await race(write(h), [ADMIN, "select public.delete_fallen($1)", [h]], true)).toBe("ok");
+      expect(await rows(h)).toEqual({ fallen: 0, contacts: 0 });
+      // a rename on another connection does not wait for the write (FOR KEY SHARE, not FOR SHARE)
+      const k = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ז', null, null, true)"));
+      const [c1, c2] = await two();
+      try {
+        await begin(c1, ADMIN);
+        await begin(c2, ADMIN);
+        await c1.query(write(k)[1], write(k)[2]);
+        const rename = code(c2.query("select public.save_fallen($1, 'חלל/ה למירוץ ז׳', null, null, true)", [k]));
+        const first = await Promise.race([rename, new Promise((r) => setTimeout(() => r("waiting"), 1000))]);
+        expect(first).toBe("ok");
+        await c2.query("commit");
+        await c1.query("commit");
+      } finally {
+        await c1.end();
+        await c2.end();
+      }
+      expect(await owner("select name from public.fallen where id = $1", [k])).toBe("חלל/ה למירוץ ז׳");
+      expect(await owner("select contact_name from public.fallen_contacts where fallen_id = $1", [k])).toBe(FAMILY_NAME);
+    });
   });
 });

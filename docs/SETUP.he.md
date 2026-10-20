@@ -132,7 +132,7 @@
    - **Redirect URLs:** לוחצים **Add URL**, מוסיפים `https://volozhin-week.pages.dev/**`, ושומרים.
    - **בלי זה,** אחרי הכניסה עם Google הדפדפן מגיע ל-`localhost:3000` ומציג «This site can't be reached». ‏Supabase שולח לשם כברירת מחדל.
 2. חוזרים ללקוח של Google משלב 3.4 (**Clients** → `volozhin-week web`). אם `https://volozhin-week.pages.dev` עוד לא מופיע ב-**Authorized JavaScript origins**, מוסיפים אותו ולוחצים Save.
-3. **פרסום האפליקציה ב-Google: רשות, אפשר לדלג.** גם במצב Testing הכניסה עובדת לכל חבר/ת צוות (ראו שלב 3.3). אם רוצים לפרסם בכל זאת, עושים זאת רק **אחרי שה-PR הראשון מוזג ל-`main`** (ראו תחילת שלב 7) ו-Cloudflare סיים לפרוס אותו. רק אז האתר ודף מדיניות הפרטיות קיימים. לפני שממשיכים, פותחים בדפדפן את `https://volozhin-week.pages.dev/privacy.html` ומוודאים שמופיע «מדיניות פרטיות».
+3. **פרסום האפליקציה ב-Google: רשות, אפשר לדלג.** גם במצב Testing הכניסה עובדת לכל חבר/ת צוות (ראו שלב 3.3). אם רוצים לפרסם בכל זאת, עושים זאת רק **אחרי שה-PR הראשון מוזג ל-`main`** (ראו תחילת שלב 7) ו-Cloudflare סיים לפרוס אותו. רק אז האתר ודף מדיניות הפרטיות קיימים. לפני שממשיכים, פותחים בדפדפן את `https://volozhin-week.pages.dev/privacy.html` ומוודאים שמופיע «מדיניות פרטיות». הכתובת בשורת הכתובת מתקצרת ל-`/privacy`: כך Cloudflare מגיש דפים, וזה תקין.
    1. ב-Google Cloud, **Branding**:
       - **Application home page:** `https://volozhin-week.pages.dev`
       - **Application privacy policy link:** `https://volozhin-week.pages.dev/privacy.html`. הדף הזה הוא חלק מהאתר.
