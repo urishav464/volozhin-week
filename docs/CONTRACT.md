@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), and sources and the reader (milestone 5ב-1)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), and memorial times and logistics (milestone 5ב-2)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -782,8 +782,9 @@ Every one of them is also a **restrictive** policy (`sources_cap_read/upload/upd
 **`app.source_refusal(path)`** — in this order: not the convention → `bad_path`; the caller is no
 member of the path's edition (or it does not exist) → `not_member`; logistics → `forbidden`; an
 archive-kind or archived edition and not an admin → `archived`; `cover`: not an admin → `forbidden`,
-a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `bad_path`; a lesson not
-`closed`, or not of kind `lesson` (memorial slots: 5ב-2) → `not_closed`. It is the rule of
+a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `bad_path`; a memorial
+slot: cancelled or no plan placed on it → `no_plan`, else allowed (5ב-2); a lesson not `closed` →
+`not_closed`. It is the rule of
 `set_sources` (content or admin, a closed lesson). Engine: `Engine.sourceRefusal`; the upload
 policy's whole predicate (with the used path): `Engine.mayUploadSource`.
 
@@ -982,3 +983,142 @@ browser maps it; `bad_file cover_bad_file file_too_big` from the browser's own c
 `authenticated` may also execute `app.may_upload_source`, `app.may_read_source` and
 `app.may_delete_source` — the policies run as the browser's role (`tests/sql/schema.test.ts` pins
 them).
+
+# Memorial times and logistics (milestone 5ב-2, schema v11)
+
+Memorial times (DESIGN «זיכרון», «זמני זיכרון»), and the one read the logistics screen adds. The same
+two implementations: `supabase/schema.sql` «Milestone 5ב-2» and `src/data/engine.ts` (behind
+`DemoPort`, `DemoMemorial`); `tests/parity` runs the fallen, the contacts, slots, plans, placing,
+the policy and the transports on both and compares results, refusals and state. Every write is a
+`SECURITY DEFINER` function in `public`; the reads are invoker, under RLS.
+
+## The tables
+
+| Table | What | Who reads | Who writes |
+|---|---|---|---|
+| `fallen` | one cross-year list: `name` (one line ≤ 120), `gender` (`m`/`f`/null — chosen, never guessed), `note` (≤ 500), `active` | `app.may_see_fallen`: a global admin, any admin, or the team of an edition with a plan for them | a global admin (`save_fallen`, `delete_fallen`) |
+| `fallen_contacts` | the family's contact person: `contact_name`, `relation`, `phone`, `email`, `note` — **personal data of a bereaved family** | `app.may_see_fallen_contacts`: a global admin, or an admin of a **real, non-archived** edition with a plan for that fallen — one fallen at a time (`get_fallen_contacts`) | the same people (`set_fallen_contacts`) |
+| `memorial_plans` | one per fallen per edition: `family_status` (`not_contacted invited confirmed cannot_come other_speaker`), `speaker_text` (≤ 200), `planned_minutes` (1–180 or null), `hard_stop`, `materials_note` (≤ 500), `lesson_id` (the slot it is placed on — one plan per slot), `version` | the edition's whole team (`app.can_see_edition`), in `load_week` | the edition's admins (functions below) |
+
+`fallen_contacts` is **never** in `load_week`, Realtime, a link (`escort_view`, `schedule_view`,
+`kk_form`), the tracking table, the escorts' list, the designer's export or the logistics lists — only
+in the admin's archive, in its personal-data file. None of the three tables is published to Realtime
+(`tests/sql/schema.test.ts`). `source_files.fallen_id` (on delete set null): a memorial slot's file
+remembers the fallen of the plan it was uploaded for.
+
+`load_week` adds `memorialPlans` (every column above) and `fallen` (`id, name, gender` of the fallen
+those plans are for — never the note, never a contact), and `sourceFiles[].fallen_id`.
+
+## Slots
+
+A memorial slot is a lesson of kind `memorial` (a draft, always). DESIGN «בכל מקום ובכל משך»: an
+admin makes one anywhere inside a memorial row of the grid, any part of it, any room.
+
+### `addMemorialSlot(day, start, end, room | null)` — `add_memorial_slot(p_edition, p_day, p_start, p_end, p_room)` → `bigint`
+An admin of the edition. The bounds (`app.check_bounds`: 5-minute steps → `bad_shape`); the day locked; `[start, end)` inside one of the
+day's memorial rows as the edition's window allows it (`app.memorial_rows`, rowActive) →
+`outside_grid`; a room not of the edition → `bad_shape`; null → the default room; the room invariant
+→ `room_taken`. Returns the new lesson's id.
+
+### `removeMemorialSlot(lesson)` — `remove_memorial_slot(p_lesson)` → `void`
+An admin. Not a memorial slot → `stale`; a plan placed on it → `memorial_placed`. Its files' rows
+stay (lesson_id null) for removal.
+
+A slot never moves by drag (`move_lesson` → `memorial_slot`), and a merge that would swallow one is
+refused (`reshape` `merge_next` → `merge_blocked`; `split_time`/`reset` treat it as a closed cell).
+
+## Plans
+
+### `addMemorialPlan(fallen)` — `add_memorial_plan(p_edition, p_fallen)` → `bigint`
+An admin. The fallen is not active (or does not exist) → `bad_value`; already planned in this
+edition → `duplicate`. In the tray (`lesson_id` null), `not_contacted`.
+
+### `updateMemorialPlan(plan, version, patch)` — `update_memorial_plan(p_plan, p_version, p_patch jsonb)` → `void`
+An admin (`app.memorial_plan`: no plan → `stale`). Another version → `stale`; not an object →
+`bad_value`. The keys present, in this order (`cleanPlanPatch`): `family_status` (one of five),
+`speaker_text` (string or null, one line ≤ 200), `planned_minutes` (a whole number 1–180 — a typo
+guard, «הצעה» — or null), `hard_stop` (a boolean), `materials_note` (string or null, block ≤ 500);
+anything else → `bad_value`; unknown keys ignored. Nothing changed → nothing; else version + 1.
+
+### `placeMemorialPlan(plan, version, lesson | null)` — `place_memorial_plan(p_plan, p_version, p_lesson)` → `void`
+An admin, at the version. Onto a memorial slot of the plan's edition, not cancelled (`bad_value`),
+holding no other plan (`memorial_taken`) — or off it (null). The same slot again: nothing. **The
+liaison goes with the plan**: the slot it leaves loses `escort_roster_id` and `escort_note`, the slot
+it comes to takes them (both versions + 1; the escorts' ticks of both start over).
+
+### `deleteMemorialPlan(plan)` — `delete_memorial_plan(p_plan)` → `void`
+An admin. Placed → `memorial_placed`.
+
+### The liaison
+DESIGN «בזמני זיכרון, המלווה הוא איש הקשר של המשפחה»: the slot's escort, through `setEscort` —
+on a memorial slot only an admin of the edition (`forbidden`), only once a plan is placed
+(`no_plan`), never a self-introduction (`bad_value`). The escort's link and the escorts' list show
+the slot (the fallen's name in the list; the link shows «זמן זיכרון») — never a family's contact.
+
+### Materials
+`app.source_refusal`: a memorial slot with a plan placed on it takes uploads from content and admins
+(else `no_plan`); `register_source_file` writes the plan's `fallen_id` on the row and leaves the
+lesson alone. The reader (`memorialFiles`) takes the files of the plan's fallen wherever the plan is
+placed now: `memorial_received` (a printable file), `memorial_missing` (a plan, nothing printable),
+`memorial` (no plan); the header «זמן זיכרון – <name>». Files of another fallen on a slot are listed
+for removal («מתוכנית שכבר לא כאן»), never in the reader.
+
+## The policy — `setMemorialPolicy(policy)` — `set_memorial_policy(p_edition, p_placement, p_max_minutes, p_warn_adjacent_meal)` → `void`
+An admin. `settings.memorial = {placement?, max_minutes?, warn_adjacent_meal?}` — never seeded; the
+staff meeting decides it. `max_minutes` 1–180 or null (`bad_value`), `placement` a block ≤ 500; only
+the parts given are kept; all three empty removes it. Warnings (`src/rules/warnings.ts`): a plan
+longer than its slot always (`memorial_over_slot`); longer than `max_minutes` (`memorial_too_long`)
+and a slot next to a meal row (`memorial_near_meal`) only once the policy sets them. A memorial slot
+is never in the gender balance or the category load.
+
+## The fallen and their families (`port.memorial`, `src/data/memorial.ts`)
+
+| Call | RPC / read | Who | Refusals |
+|---|---|---|---|
+| `fallen()` | `select` on `fallen` (RLS) | as `app.may_see_fallen` | — |
+| `saveFallen(id \| null, fields)` | `save_fallen(p_fallen, p_name, p_gender, p_note, p_active)` → `bigint` | a global admin | `not_member forbidden name_required bad_value stale` |
+| `deleteFallen(id)` | `delete_fallen(p_fallen)` | a global admin | `forbidden stale in_use` (planned somewhere: deactivate instead) |
+| `contacts(fallen)` | `get_fallen_contacts(p_fallen)` (invoker) → `jsonb` or null | `app.may_see_fallen_contacts`; no row yet → five nulls; not theirs → null | — |
+| `setContacts(fallen, c)` | `set_fallen_contacts(p_fallen, p_contact_name, p_relation, p_phone, p_email, p_note)` | the same | `stale contacts_hidden bad_phone bad_contact_email` |
+
+All five contact fields are replaced (null clears one); the activity log records which fields
+changed, never their values.
+
+## The logistics screen's transports — `transports()` — `get_transports_for(p_edition)` → `jsonb`
+Invoker. The edition's closed lessons with `transport <> 'none'` and `approval = 'approved'`, each
+`{lesson_id, pickup_address, pickup_time, driver_name, driver_phone, arranged}` exactly as
+`get_transport_details` shows it (no row yet → nulls and `arranged` false), and **only** the lessons
+`app.may_see_transport` lets the caller see — never more than the one-lesson call. Ordered by lesson
+id. Never in a Week or Realtime. Edited through `setTransport` (`set_transport_details`), as in the
+lesson panel.
+
+The four lists themselves are browser code over a loaded Week (`src/exports/logistics.ts`): הסעות
+(the pickup address and the driver's phone only behind «כולל כתובות וטלפונים»), תשלומים (approved
+amounts, «שולם» through `setPaid`, the totals), ספרים (`port.kk`, `set_book_order`), הדפסות
+(`print_when` before / same_day, the current speaker's files, their pages — no copy count).
+
+## Errors (milestone 5ב-2)
+
+`no_plan memorial_taken memorial_placed memorial_slot contacts_hidden bad_contact_email in_use
+duplicate outside_grid room_taken stale bad_value forbidden name_required merge_blocked`; the
+archive's `archive_cancelled` is the browser's.
+
+## RPC signatures (milestone 5ב-2)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `get_fallen_contacts` | `p_fallen bigint` | `jsonb` | authenticated (invoker) |
+| `get_transports_for` | `p_edition bigint` | `jsonb` | authenticated (invoker) |
+| `save_fallen` | `p_fallen bigint, p_name text, p_gender text, p_note text, p_active boolean default true` | `bigint` | authenticated |
+| `delete_fallen` | `p_fallen bigint` | `void` | authenticated |
+| `set_fallen_contacts` | `p_fallen bigint, p_contact_name text, p_relation text, p_phone text, p_email text, p_note text default null` | `void` | authenticated |
+| `add_memorial_slot` | `p_edition bigint, p_day integer, p_start integer, p_end integer, p_room bigint default null` | `bigint` | authenticated |
+| `remove_memorial_slot` | `p_lesson bigint` | `void` | authenticated |
+| `add_memorial_plan` | `p_edition bigint, p_fallen bigint` | `bigint` | authenticated |
+| `update_memorial_plan` | `p_plan bigint, p_version integer, p_patch jsonb` | `void` | authenticated |
+| `place_memorial_plan` | `p_plan bigint, p_version integer, p_lesson bigint` | `void` | authenticated |
+| `delete_memorial_plan` | `p_plan bigint` | `void` | authenticated |
+| `set_memorial_policy` | `p_edition bigint, p_placement text, p_max_minutes integer, p_warn_adjacent_meal boolean` | `void` | authenticated |
+
+`authenticated` may also execute `app.may_see_fallen` and `app.may_see_fallen_contacts` — the
+policies run as the browser's role (`tests/sql/schema.test.ts` pins them).
