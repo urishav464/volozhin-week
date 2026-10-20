@@ -6,7 +6,7 @@ import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
-  FOREIGN_TRAINEE, type KkStepFields, planLine,
+  FOREIGN_TRAINEE, type KkStepFields, planLine, purgeRead, reviewLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -64,6 +64,14 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     one("select p.id, p.version from public.memorial_plans p join public.fallen f on f.id = p.fallen_id where p.edition_id = $1 and f.name = $2", [ed, name]);
   /** Every lesson's place, read before a call that answers lesson ids (the read runs as the member, in the call). */
   let lessonKeys: [number, string][] = [];
+  const lessonKeyMap = async () =>
+    new Map(
+      (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
+        (r) => [Number(r.id), lessonKey(r)] as [number, string],
+      ),
+    );
+  const speakerLabels = async () => new Map((await db.query("select id, name, disambiguator from public.speakers")).rows.map((r) => [Number(r.id), speakerLabel(r)] as [number, string]));
+  const memberKey = (id: unknown) => (id == null ? "-" : (MEMBERS.find((_m, i) => i + 1 === Number(id))?.key ?? `#${id}`));
   const traineeId = async (name: string | null) =>
     name == null ? null : name === FOREIGN_TRAINEE ? foreignTrainee : Number((await one("select id from public.roster where edition_id = $1 and full_name = $2", [ed, name]))?.id ?? -1);
   /** A lesson by place, and its version less `staleBy`. */
@@ -492,6 +500,40 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           return (v as (Parameters<typeof transportLine>[1] & { lesson_id: number })[]).map((t) => transportLine(keys.get(Number(t.lesson_id)) ?? `#${t.lesson_id}`, t)).sort().join(" ; ") || "none";
         });
       }
+      // ---- after the week
+      if ("review" in step) {
+        const l = await lessonAt(step.review);
+        const old = l ? await one("select version from public.lesson_reviews where lesson_id = $1", [l.id]) : undefined;
+        const f = step.fields;
+        return call(step.as, "select public.save_lesson_review($1, $2, $3, $4, $5, $6, $7)", [
+          l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), f.went_well ?? null, f.issues ?? null, f.invite_again ?? null, f.overran ?? null, f.rating ?? null,
+        ], (v) => `v=${v}`);
+      }
+      if ("readReviews" in step) {
+        const keys = await lessonKeyMap();
+        const spk = await speakerLabels();
+        return call(step.as, "select public.load_reviews($1)", [ed], (v) =>
+          (v as { lesson_id: number; speaker_id: number | null; went_well: string | null; issues: string | null; invite_again: string | null; overran: boolean; rating: number | null; written_by: number | null; version: number }[])
+            .map((r) => reviewLine(keys.get(Number(r.lesson_id)) ?? `#${r.lesson_id}`, { ...r, speaker: r.speaker_id == null ? "-" : (spk.get(Number(r.speaker_id)) ?? "?"), by: memberKey(r.written_by) }))
+            .sort()
+            .join(" ; ") || "none",
+        );
+      }
+      if ("speakerReviews" in step) {
+        const keys = await lessonKeyMap();
+        return call(step.as, "select public.speaker_reviews($1)", [await speakerId(step.speakerReviews)], (v) =>
+          (v as { edition_label: string; lesson_id: number; invite_again: string | null; rating: number | null; went_well: string | null }[])
+            .map((r) => `${r.edition_label}|${keys.get(Number(r.lesson_id)) ?? `#${r.lesson_id}`}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`)
+            .join(" ; ") || "none",
+        );
+      }
+      if ("returning" in step) {
+        const spk = await speakerLabels();
+        return call(step.as, "select public.edition_returning($1)", [ed], (v) =>
+          (v as { speaker_id: number; editions: string[] }[]).map((r) => `${spk.get(Number(r.speaker_id))}:${r.editions.join(",")}`).join(" ; ") || "none",
+        );
+      }
+      if ("purge" in step) return call(step.as, "select public.purge_edition_private($1, $2)", [ed, step.purge], (v) => purgeRead(v as Parameters<typeof purgeRead>[0]));
       throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
@@ -554,6 +596,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const fallenName = (id: unknown) => (id == null ? "-" : (fallen.find((f) => Number(f.id) === Number(id))?.name ?? `#${id}`));
       const fallenContacts = (await db.query("select * from public.fallen_contacts")).rows;
       const plans = (await db.query("select * from public.memorial_plans where edition_id = $1", [ed])).rows;
+      const reviews = (await db.query("select r.*, s.name, s.disambiguator from public.lesson_reviews r left join public.speakers s on s.id = r.speaker_id where r.edition_id = $1", [ed])).rows;
+      const purged = (await one("select purged_at from public.editions where id = $1", [ed])).purged_at != null;
       const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
       const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
       const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
@@ -568,7 +612,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
         availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
-        edition: editionLines(settings, cover),
+        edition: editionLines(settings, cover, purged),
         links: links
           .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -591,6 +635,9 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           ...plans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : byId.get(Number(p.lesson_id))!, p)),
         ].sort(),
         archive: await archiveLines(),
+        reviews: reviews
+          .map((r) => reviewLine(byId.get(Number(r.lesson_id))!, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) }))
+          .sort(),
       };
     },
 

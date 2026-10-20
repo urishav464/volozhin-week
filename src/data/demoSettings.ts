@@ -8,7 +8,11 @@ import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition,
 import { CommandError } from "./commands";
 import type { Engine, PoolShared } from "./engine";
 import type { DemoMilestone } from "./demoOutputs";
-import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
+import {
+  type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type PurgeReport, type RosterEntry, type SettingsPort, type StartPreview, resort,
+} from "./settings";
+import type { Note } from "./knowledge";
+import { TEMPLATE_2026 } from "../domain/template2026";
 
 const fail = (code: string): never => {
   throw new CommandError(code);
@@ -25,6 +29,8 @@ export interface DemoStore {
   categories: Category[];
   /** The editions' milestones (start_edition carries the last real edition's over). */
   milestones: DemoMilestone[];
+  /** The knowledge base's notes (the dry run counts the cross-year ones that stay). */
+  notes: Note[];
   /** Has this member written a note, added or marked a milestone, or saved a snapshot (app.member_has_history, v8)? */
   authored(memberId: number): boolean;
   /** A new edition's week: the 2026 grid, one default room, the shared pool. */
@@ -66,16 +72,34 @@ export class DemoSettings implements SettingsPort {
 
   // ------------------------------------------------------------- מחזור
 
-  async startEdition(e: NewEdition): Promise<number> {
+  /** The real edition the wording and milestones carry over from: the live one, else the newest (start_edition). */
+  private carryFrom(): Edition | undefined {
+    return this.weeks()
+      .filter((w) => w.edition.kind === "real")
+      .sort((a, b) => Number(b.edition.status !== "archived") - Number(a.edition.status !== "archived") || b.edition.id - a.edition.id)[0]?.edition;
+  }
+
+  /** The editions start_edition archives: the real ones not archived yet. */
+  private liveReal(): Edition[] {
+    return this.weeks()
+      .map((w) => w.edition)
+      .filter((e) => e.kind === "real" && e.status !== "archived")
+      .sort((a, b) => a.id - b.id);
+  }
+
+  async startEdition(e: NewEdition, opts: { deactivateTeam?: boolean } = {}): Promise<number> {
     const v = cleanNewEdition(e);
     if (!this.isGlobalAdmin()) fail("forbidden");
     const weeks = this.weeks();
     if (weeks.some((w) => w.edition.label === v.label)) fail("edition_exists");
     // the live real edition's template and duty phrases (else the newest's) carry over (start_edition, v7)
-    const prevEdition = weeks
-      .filter((w) => w.edition.kind === "real")
-      .sort((a, b) => Number(b.edition.status !== "archived") - Number(a.edition.status !== "archived") || b.edition.id - a.edition.id)[0]?.edition;
+    const prevEdition = this.carryFrom();
     const prev = prevEdition?.settings;
+    // v12: the archived editions' members who are not admins, deactivated (never deleted) — when asked
+    const archived = new Set(this.liveReal().map((x) => x.id));
+    if (opts.deactivateTeam === true) {
+      for (const m of this.s.members) if (m.active && m.role !== "admin" && m.edition_id != null && archived.has(m.edition_id)) m.active = false;
+    }
     for (const w of weeks) if (w.edition.kind === "real" && w.edition.status !== "archived") w.edition.status = "archived";
     const edition: Edition = {
       id: nextId(weeks.map((w) => w.edition)),
@@ -101,6 +125,38 @@ export class DemoSettings implements SettingsPort {
       this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: edition.id, title: m.title, days_before: m.days_before, done_at: null, done_by: null, created_by: starter });
     }
     return this.done(edition.id);
+  }
+
+  async previewStart(deactivateTeam: boolean): Promise<StartPreview> {
+    if (!this.isGlobalAdmin()) fail("forbidden");
+    const from = this.carryFrom();
+    const live = this.liveReal();
+    const ids = new Set(live.map((e) => e.id));
+    const of = (admin: boolean) => this.s.members.filter((m) => m.active && (m.role === "admin") === admin && m.edition_id != null && ids.has(m.edition_id)).length;
+    const pool = this.weeks()[0]?.speakers ?? [];
+    return structuredClone({
+      archive: live.map(({ id, label }) => ({ id, label })),
+      carry_from: from ? { id: from.id, label: from.label } : null,
+      grid_rows: TEMPLATE_2026.length,
+      milestones: from ? this.s.milestones.filter((m) => m.edition_id === from.id).length : 0,
+      confirm_template: from?.settings.confirm_template != null,
+      duty_phrases: from?.settings.duty_phrases?.length ?? 0,
+      deactivate: deactivateTeam ? of(false) : 0,
+      admins_stay: of(true),
+      stays: {
+        speakers: pool.filter((x) => !x.retired).length,
+        categories: this.s.categories.filter((c) => c.active).length,
+        fallen: this.s.shared.fallen.filter((f) => f.active).length,
+        notes: this.s.notes.filter((n) => n.edition_id == null).length,
+      },
+    });
+  }
+
+  async purgeEdition(editionId: number, confirm: string): Promise<PurgeReport> {
+    if (!this.isGlobalAdmin()) fail("forbidden");
+    const e = this.s.engines.get(editionId) ?? fail("stale");
+    const out = e!.purgePrivate(confirm);
+    return this.done(out);
   }
 
   async updateEdition(id: number, patch: EditionPatch): Promise<void> {

@@ -25,6 +25,7 @@ import type { Sample } from "./demoFiles";
 import type { StoredObject } from "./engine";
 import type { Fallen, FallenContacts } from "./memorial";
 import type { ActivityEntry, HistoryLesson } from "./speakers";
+import type { LessonReview, SpeakerReview } from "./reviews";
 
 export const DEMO_CATEGORIES: Category[] = [
   ["תנ\"ך", "#8a5a2b"],
@@ -268,6 +269,41 @@ export function demoHistory(): Record<number, HistoryLesson[]> {
     [{ edition_id: -1, edition_label: "מחזור קודם (לדוגמה)", edition_kind: "archive", start_date: null, day, start_min: start, end_min: start + 90, title, category: DEMO_CATEGORIES[speaker % DEMO_CATEGORIES.length].name, role: "lead" }],
   ];
   return Object.fromEntries([past(1, 0, 510, "שיעור לדוגמה"), past(4, 2, 870, null), past(9, 1, 1200, "שיעור לדוגמה"), past(28, 3, 600, "שיעור לדוגמה")]);
+}
+
+/**
+ * «איך עבר» in the demo week (milestone 6): three of its lessons, written by the demo's team — the words say «לדוגמה».
+ * Each written by the lesson's handler, as after the week (the demo's week has no date: in it, only an admin may write
+ * one now).
+ */
+export function demoReviews(week: Week): (LessonReview & { edition_id: number })[] {
+  const at = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed" && l.kind === "lesson")!;
+  const lead = (lessonId: number) => week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id ?? null;
+  const one = (day: number, start: number, r: Pick<LessonReview, "went_well" | "issues" | "invite_again" | "overran" | "rating">) => {
+    const l = at(day, start);
+    const handler = week.approaches.find((x) => x.speaker_id === lead(l.id))?.owner_member_id ?? null;
+    return { lesson_id: l.id, edition_id: week.edition.id, speaker_id: lead(l.id), ...r, written_by: handler, written_at: "2026-11-20T10:00:00.000Z", version: 1 };
+  };
+  return [
+    one(0, 510, { went_well: "נתון לדוגמה: השיעור היה ברור, והחניכים שאלו הרבה.", issues: null, invite_again: "yes", overran: false, rating: 5 }),
+    one(0, 600, { went_well: null, issues: "נתון לדוגמה: התחיל באיחור של כמה דקות.", invite_again: "maybe", overran: true, rating: 3 }),
+    one(2, 510, { went_well: null, issues: "נתון לדוגמה: לא התאים לקהל.", invite_again: "no", overran: false, rating: null }),
+  ];
+}
+
+/** «איך עבר» from the past edition the demo's history names (synthetic, like it): what the speaker sheet shows across the years. */
+export function demoPastReviews(): Record<number, SpeakerReview[]> {
+  const past = (speaker: number, lessonId: number, r: Pick<SpeakerReview, "went_well" | "issues" | "invite_again" | "overran" | "rating">): [number, SpeakerReview[]] => {
+    const h = demoHistory()[speaker][0];
+    return [
+      speaker,
+      [{ edition_id: h.edition_id, edition_label: h.edition_label, edition_kind: "archive", start_date: null, lesson_id: lessonId, day: h.day, start_min: h.start_min, end_min: h.end_min, title: h.title, ...r, written_at: "2026-02-20T10:00:00.000Z" }],
+    ];
+  };
+  return Object.fromEntries([
+    past(1, -1, { went_well: "נתון לדוגמה: שיעור חזק, כדאי להזמין שוב.", issues: null, invite_again: "yes", overran: false, rating: 5 }),
+    past(9, -2, { went_well: null, issues: "נתון לדוגמה: חרג/ה מהזמן.", invite_again: "maybe", overran: true, rating: 3 }),
+  ]);
 }
 
 /** A short timeline for the demo's sheet: the hand-over waiting for the demo user (the grid's own commands are not logged in memory). */

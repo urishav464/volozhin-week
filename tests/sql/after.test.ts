@@ -195,6 +195,20 @@ describe("after the week", () => {
     if (db) await dropDatabase(db, dbName);
   });
 
+  it("exposes the v12 functions with the parameter names the ports send (src/data/supabaseReviews.ts, supabaseSettings.ts)", async () => {
+    const sig = async (fn: string) =>
+      (await db.query("select pg_get_function_arguments(p.oid) as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1", [fn])).rows.map((r) => r.a);
+    expect(await sig("save_lesson_review")).toEqual(["p_lesson bigint, p_version integer, p_went_well text, p_issues text, p_invite_again text, p_overran boolean, p_rating integer"]);
+    expect(await sig("load_reviews")).toEqual(["p_edition bigint"]);
+    expect(await sig("speaker_reviews")).toEqual(["p_speaker bigint"]);
+    expect(await sig("edition_returning")).toEqual(["p_edition bigint"]);
+    expect(await sig("purge_edition_private")).toEqual(["p_edition bigint, p_confirm text"]);
+    expect(await sig("start_edition_preview")).toEqual(["p_deactivate_team boolean DEFAULT true"]);
+    expect(await sig("start_edition")).toEqual([
+      "p_label text, p_start_date date, p_first_day_from integer DEFAULT NULL::integer, p_room text DEFAULT 'בית מדרש'::text, p_deactivate_team boolean DEFAULT false",
+    ]);
+  });
+
   describe("«איך עבר»: who writes", () => {
     it("the handler and the edition's admins — not another content member, logistics or anyone outside the edition", async () => {
       await inTx(async (run) => {

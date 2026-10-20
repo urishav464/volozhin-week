@@ -8,6 +8,7 @@ import { SupabaseImports } from "./supabaseImports";
 import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
 import { SupabaseMemorial } from "./supabaseMemorial";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
+import { SupabaseReviews } from "./supabaseReviews";
 import { SupabaseSettings } from "./supabaseSettings";
 import { SupabaseSources } from "./supabaseSources";
 import { SupabaseSpeakers } from "./supabaseSpeakers";
@@ -43,6 +44,7 @@ export class SupabasePort implements DataPort {
   readonly sources: SupabaseSources;
   readonly memorial: SupabaseMemorial;
   readonly imports: SupabaseImports;
+  readonly reviews: SupabaseReviews;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
   private readonly sessionKey: string;
@@ -72,6 +74,7 @@ export class SupabasePort implements DataPort {
     this.sources = new SupabaseSources(this.sb, url, key);
     this.memorial = new SupabaseMemorial(this.sb);
     this.imports = new SupabaseImports(this.sb);
+    this.reviews = new SupabaseReviews(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {

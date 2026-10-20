@@ -1053,4 +1053,66 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", importPrefs: [{ row: 5, speaker: "דלתא", contact_pref: "sms" }] },
     { as: "admin", importPrefs: [{ row: 6, speaker: "דלתא", secretary_note: "א".repeat(301) }] },
   ],
+
+  // after the week (milestone 6)
+  "«איך עבר»: who writes, when (Israel time), and who reads": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", propose: "בטא", cell: [1, 600, 690] },
+    { as: "B", close: "בטא", at: [1, 600] },
+    { as: "A", propose: "גמא", cell: [3, 870, 960] }, // a draft
+    { as: "A", review: [1, 510], fields: { went_well: "טוב" } }, // the week's date TBD: closed to the handler
+    { as: "E", review: [1, 510], fields: { went_well: "  טוב  ", invite_again: "yes", rating: 4 } }, // an admin, at any time
+    { startDate: dateIn(0) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור" } }, // Monday is tomorrow
+    { startDate: dateIn(-1) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור" } }, // Monday is today: not passed yet
+    { startDate: dateIn(-2) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור קטן" }, staleBy: 1 }, // the version on screen was before E's
+    { as: "A", review: [1, 510], fields: { went_well: "טוב", issues: "איחור קטן", invite_again: "maybe", overran: true, rating: 3 } },
+    { as: "A", review: [1, 510], fields: { went_well: "טוב", issues: "איחור קטן", invite_again: "maybe", overran: true, rating: 3 } }, // the same again
+    { as: "B", review: [1, 510], fields: { went_well: "x" } }, // not B's speaker
+    { as: "L", review: [1, 510], fields: { went_well: "x" } },
+    { as: "B", review: [1, 600], fields: {} },
+    { as: "B", review: [1, 600], fields: { invite_again: "always" } },
+    { as: "B", review: [1, 600], fields: { rating: 6 } },
+    { as: "B", review: [1, 600], fields: { overran: true } }, // an overrun alone is a review
+    { as: "A", review: [3, 870], fields: { went_well: "x" } }, // a draft
+    { as: "A", review: [4, 510], fields: { went_well: "x" } }, // no lesson there
+    { as: "A", readReviews: true },
+    { as: "L", readReviews: true },
+    { as: "A", speakerReviews: "אלפא" },
+    { as: "L", speakerReviews: "אלפא" },
+    { as: "A", returning: true },
+    { as: "L", returning: true },
+    { archive: true },
+    { as: "A", review: [1, 510], fields: { went_well: "שוב" } },
+    { as: "E", review: [1, 510], fields: { went_well: "שוב" } },
+    { as: "A", speakerReviews: "אלפא" }, // last year's team reads no one's across the years
+    { as: "admin", speakerReviews: "אלפא" },
+  ],
+
+  "the purge after the week": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", driver: "נהג/ת לדוגמה", arranged: true },
+    { as: "E", issue: "schedule", name: "s" },
+    { as: "E", issue: "kk_signup", name: "k" },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" },
+    { as: "admin", purge: "בדיקת התאמה" }, // the week's date TBD
+    { startDate: dateIn(-4) },
+    { as: "admin", purge: "בדיקת התאמה" }, // Thursday: not over yet
+    { startDate: dateIn(-6) },
+    { as: "E", purge: "בדיקת התאמה" }, // a global admin's only
+    { as: "admin", purge: "בדיקת" },
+    { as: "admin", purge: null },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" }, // the sign-up link still opens (its 30 days)
+    { as: "admin", purge: " בדיקת התאמה " },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" },
+    { anon: "scheduleView", token: "s" },
+    { as: "A", readTransport: [1, 510] },
+    { as: "admin", purge: "בדיקת התאמה" }, // again: nothing more
+  ],
 };

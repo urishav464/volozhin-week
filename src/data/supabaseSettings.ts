@@ -6,7 +6,9 @@ import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import type { Category, DutyPhrase, Room, TeamMember } from "../domain/types";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
-import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
+import {
+  type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type PurgeReport, type RosterEntry, type SettingsPort, type StartPreview, resort,
+} from "./settings";
 import { PortError } from "./types";
 
 const MEMBER_COLUMNS = "id,email,display_name,gender,role,edition_id,active";
@@ -61,9 +63,34 @@ export class SupabaseSettings implements SettingsPort {
 
   // ------------------------------------------------------------- מחזור
 
-  async startEdition(e: NewEdition): Promise<number> {
+  async startEdition(e: NewEdition, opts: { deactivateTeam?: boolean } = {}): Promise<number> {
     const v = cleanNewEdition(e);
-    return Number(await this.rpc("start_edition", { p_label: v.label, p_start_date: v.start_date, p_first_day_from: v.first_day_from }));
+    return Number(
+      await this.rpc("start_edition", { p_label: v.label, p_start_date: v.start_date, p_first_day_from: v.first_day_from, p_deactivate_team: opts.deactivateTeam === true }),
+    );
+  }
+
+  async previewStart(deactivateTeam: boolean): Promise<StartPreview> {
+    const p = (await this.rpc("start_edition_preview", { p_deactivate_team: deactivateTeam })) as StartPreview;
+    const n = (v: unknown) => Number(v ?? 0);
+    return {
+      archive: (p.archive ?? []).map((e) => ({ id: Number(e.id), label: String(e.label) })),
+      carry_from: p.carry_from ? { id: Number(p.carry_from.id), label: String(p.carry_from.label) } : null,
+      grid_rows: n(p.grid_rows),
+      milestones: n(p.milestones),
+      confirm_template: p.confirm_template === true,
+      duty_phrases: n(p.duty_phrases),
+      deactivate: n(p.deactivate),
+      admins_stay: n(p.admins_stay),
+      stays: { speakers: n(p.stays?.speakers), categories: n(p.stays?.categories), fallen: n(p.stays?.fallen), notes: n(p.stays?.notes) },
+    };
+  }
+
+  async purgeEdition(editionId: number, confirm: string): Promise<PurgeReport> {
+    const r = (await this.rpc("purge_edition_private", { p_edition: editionId, p_confirm: confirm })) as Record<string, unknown>;
+    return {
+      transport_details: Number(r.transport_details ?? 0), links_revoked: Number(r.links_revoked ?? 0), link_hits: Number(r.link_hits ?? 0), purged_at: String(r.purged_at),
+    };
   }
 
   async updateEdition(id: number, patch: EditionPatch): Promise<void> {

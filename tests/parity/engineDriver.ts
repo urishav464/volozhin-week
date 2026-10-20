@@ -12,7 +12,7 @@ import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
-  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, speakerRows,
+  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -59,6 +59,8 @@ export function engineDriver(): Driver {
     return l && a ? week.pitches.find((p) => p.lesson_id === l.id && p.approach_id === a.id) : undefined;
   };
   const approachOf = (label: string) => week.approaches.find((a) => a.speaker_id === speakerId(label));
+  const spLabel = (id: number) => speakerLabel(week.speakers.find((s) => s.id === id)!);
+  const memberKey = (id: number | null) => (id == null ? "-" : MEMBERS[id - 1].key);
   const fallenId = (name: string) => shared.fallen.find((f) => f.name === name)?.id ?? -1;
   const planOf = (name: string) => week.memorialPlans.find((p) => p.fallen_id === fallenId(name));
   const traineeId = (name: string | null) => (name == null ? null : name === FOREIGN_TRAINEE ? 999 : (week.roster.find((r) => r.full_name === name)?.id ?? -1));
@@ -330,6 +332,22 @@ export function engineDriver(): Driver {
           const p = step.policy;
           e.setMemorialPolicy({ placement: p.placement ?? undefined, max_minutes: p.max_minutes ?? undefined, warn_adjacent_meal: p.warn_adjacent_meal ?? undefined });
         } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
+        // ---- after the week
+        else if ("review" in step) {
+          const l = lessonAt(step.review);
+          const old = shared.reviews.find((r) => r.edition_id === week.edition.id && r.lesson_id === l?.id);
+          const f = step.fields;
+          const v = e.saveReview(l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), {
+            went_well: f.went_well ?? null, issues: f.issues ?? null, invite_again: (f.invite_again ?? null) as never, overran: f.overran as boolean, rating: f.rating ?? null,
+          });
+          return `v=${v}`;
+        } else if ("readReviews" in step) {
+          return e.reviewsOf().map((r) => reviewLine(names.lesson(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : spLabel(r.speaker_id), by: memberKey(r.written_by) })).sort().join(" ; ") || "none";
+        } else if ("speakerReviews" in step) {
+          return e.speakerReviews(speakerId(step.speakerReviews)).map((r) => `${r.edition_label}|${names.lesson(r.lesson_id)}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`).join(" ; ") || "none";
+        } else if ("returning" in step) {
+          return e.returning().map((r) => `${spLabel(r.speaker_id)}:${r.editions.join(",")}`).join(" ; ") || "none";
+        } else if ("purge" in step) return purgeRead(e.purgePrivate(step.purge));
         return "ok";
       } catch (err) {
         if (err instanceof ImportRowError) return `${err.code}:${err.row}:${err.reason}`;
@@ -367,7 +385,7 @@ export function engineDriver(): Driver {
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
         availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
-        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover)),
+        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover), week.edition.purged_at != null),
         links: shared.links
           .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -406,6 +424,10 @@ export function engineDriver(): Driver {
               return archiveLessonLine(a.edition.label, l, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
             }),
           ])
+          .sort(),
+        reviews: shared.reviews
+          .filter((r) => r.edition_id === week.edition.id)
+          .map((r) => reviewLine(key(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : sp(r.speaker_id), by: member(r.written_by) }))
           .sort(),
       };
     },

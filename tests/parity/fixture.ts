@@ -177,7 +177,16 @@ export type Step =
   | { as: ActorKey; importPrefs: { row: number; speaker: string; contact_pref?: string | null; secretary_note?: string | null }[] }
   | { as: ActorKey; importLookup: { speakers: string[]; phones: string[] } }
   /** import_commit with a payload as it is (a wrong kind, a wrong shape). */
-  | { as: ActorKey; importRaw: { kind: string; payload: unknown } };
+  | { as: ActorKey; importRaw: { kind: string; payload: unknown } }
+  // after the week (milestone 6) — a review by its lesson's place; the speaker by label
+  | { as: ActorKey; review: At; fields: { went_well?: string | null; issues?: string | null; invite_again?: string | null; overran?: boolean | null; rating?: number | null }; staleBy?: number }
+  /** load_reviews: the edition's reviews the caller reads. */
+  | { as: ActorKey; readReviews: true }
+  | { as: ActorKey; speakerReviews: string }
+  /** edition_returning. */
+  | { as: ActorKey; returning: true }
+  /** purge_edition_private, with the label typed as given (null: none). */
+  | { as: ActorKey; purge: string | null };
 
 /** A speaker row of an import step: as SpeakerRow, the merge target by its label. */
 export interface ImportSpeakerStep {
@@ -297,6 +306,20 @@ export interface Normal {
   memorial: string[];
   /** archive editions (the import of 5786): each edition, its rooms, its lessons with their speakers */
   archive: string[];
+  /** «איך עבר», by lesson */
+  reviews: string[];
+}
+
+/** A review as the state (and a read) compares it: by its lesson's place, its speaker by label, who wrote it by key. */
+export function reviewLine(where: string, r: {
+  speaker: string; went_well: string | null; issues: string | null; invite_again: string | null; overran: boolean; rating: number | null; by: string; version: number;
+}): string {
+  return `review|${where}|spk=${r.speaker}|ww=${d(r.went_well)}|is=${d(r.issues)}|ia=${d(r.invite_again)}|ov=${r.overran}|r=${d(r.rating)}|by=${r.by}|v=${r.version}`;
+}
+
+/** What a purge answers, as one comparable string (the time apart: it is the clock's). */
+export function purgeRead(r: { transport_details: number; links_revoked: number; link_hits: number; purged_at: unknown }): string {
+  return `purged|t=${r.transport_details}|l=${r.links_revoked}|h=${r.link_hits}|at=${r.purged_at == null ? "-" : "y"}`;
 }
 
 /** A fallen as the state compares it. */
@@ -393,8 +416,9 @@ export function editionLines(settings: {
   confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
   reader_headers?: [string, string] | null;
   memorial?: object | null;
-}, cover = "-"): string[] {
+}, cover = "-", purged = false): string[] {
   return [
+    `purged=${purged ? "y" : "-"}`,
     `memorial=${settings.memorial ? stable(settings.memorial) : "-"}`,
     `template=${d(settings.confirm_template)}`,
     `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,

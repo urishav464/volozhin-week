@@ -292,6 +292,11 @@ export interface Edition {
   last_day_until: number;
   status: "planning" | "active" | "archived";
   settings: EditionSettings;
+  /**
+   * When the edition's private data was deleted after the week (v12, public.purge_edition_private — the first time):
+   * its transport details gone, its links revoked. Absent or null: not purged.
+   */
+  purged_at?: string | null;
 }
 
 /** Everything the grid screen needs for one edition, loaded at once (~150 lessons: small). */

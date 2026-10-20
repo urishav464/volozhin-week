@@ -18,10 +18,13 @@
 // details kept in `shared`, never in a Week, as the database keeps them apart.
 // So do memorial times (CONTRACT.md «Memorial times and logistics», milestone
 // 5ב-2): the fallen and their families' contacts are cross-year (`shared`), a
-// Week holds the edition's plans and the names they are for.
+// Week holds the edition's plans and the names they are for. And «איך עבר» and
+// the purge after the week (CONTRACT.md «After the week», milestone 6): the
+// reviews are kept in `shared`, never in a Week, as the database keeps them apart.
 import { dayPart } from "../domain/dayParts";
 import { dutyNotes } from "../domain/escorts";
 import { addDays, israelDate } from "../domain/israelTime";
+import { earlierEdition, purgeAllowed, reviewWindow } from "../domain/reviews";
 import { teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
 import { nameKey } from "../domain/nameKey";
@@ -48,6 +51,8 @@ import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import { type ArchiveLessonRow, type ImportKind, type ImportLookup, type ImportResult, ImportRowError, type SpeakerRow } from "./imports";
 import { ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName } from "./importRules";
+import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
+import type { PurgeReport } from "./settings";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
 import {
   cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
@@ -96,6 +101,8 @@ export interface PoolShared {
   fallen: Fallen[];
   /** fallen_contacts (v11), by fallen id — a bereaved family's contact person: never in a Week. */
   fallenContacts: Record<number, FallenContacts>;
+  /** lesson_reviews (v12), every edition's — «איך עבר», opinions about a person: never in a Week. */
+  reviews: (LessonReview & { edition_id: number })[];
 }
 
 /** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
@@ -106,7 +113,7 @@ export interface StoredObject {
   owner: string;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {} });
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [] });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -1173,6 +1180,150 @@ export class Engine {
   /** Whose object an upload is (the Storage API's owner_id): the member, in the demo. */
   private ownerKey(): string {
     return `member:${this.actor.memberId}`;
+  }
+
+  // ---------------------------------------------------------------- after the week (CONTRACT.md «After the week», milestone 6)
+
+  /** lesson_reviews_read: the edition's admins and content members read its reviews; logistics none. */
+  reviewsOf(): LessonReview[] {
+    if (this.actor.role === "logistics") return [];
+    return this.shared.reviews
+      .filter((r) => r.edition_id === this.week.edition.id)
+      .sort((a, b) => a.lesson_id - b.lesson_id)
+      .map(({ edition_id: _, ...r }) => ({ ...r }));
+  }
+
+  /**
+   * public.save_lesson_review: the lesson (`stale`); not logistics (`forbidden`); an archive its admins' (`archived`); a
+   * closed lesson (`not_closed`); its handler (`not_handler`) once its day has passed in Israel and the week has a date
+   * (`review_closed`) — an admin always; the version on screen, 0 for none (`stale`); the fields as cleanReview keeps
+   * them. The same answers again change nothing. Returns the version saved.
+   */
+  saveReview(lessonId: number, version: number, fields: ReviewFields): number {
+    return this.tx(() => {
+      const l = this.week.lessons.find((x) => x.id === lessonId);
+      if (!l || l.state === "cancelled") fail("stale");
+      this.requireEditor();
+      if (l!.state !== "closed" || l!.kind !== "lesson") fail("not_closed");
+      if (!this.isAdmin()) {
+        if (this.handlerOf(l!) !== this.actor.memberId) fail("not_handler");
+        if (reviewWindow(this.week.edition, l!, this.now()).state !== "open") fail("review_closed");
+      }
+      const ed = this.week.edition.id;
+      const old = this.shared.reviews.find((r) => r.edition_id === ed && r.lesson_id === lessonId);
+      if ((old?.version ?? 0) !== version) fail("stale");
+      const c = cleanReview(fields);
+      const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id ?? null;
+      if (old && old.speaker_id === lead && (Object.keys(c) as (keyof ReviewFields)[]).every((k) => old[k] === c[k])) return old.version;
+      const stamp = { written_by: this.actor.memberId, written_at: this.now() };
+      if (old) {
+        Object.assign(old, c, stamp, { speaker_id: lead, version: old.version + 1 });
+        return old.version;
+      }
+      this.shared.reviews.push({ lesson_id: lessonId, edition_id: ed, speaker_id: lead, ...c, ...stamp, version: 1 });
+      return 1;
+    });
+  }
+
+  /**
+   * app.may_read_reviews: a global admin, or an admin or content member of a real edition that is not archived. (The
+   * engine knows the actor's role in its own edition only: that one is asked.)
+   */
+  mayReadReviews(): boolean {
+    if (this.actor.global) return true;
+    const e = this.week.edition;
+    return e.kind === "real" && e.status !== "archived" && this.actor.role !== "logistics";
+  }
+
+  /**
+   * public.speaker_reviews: the reviews written about this speaker (the lesson's lead when written) in real and archive
+   * editions — a past year to whoever may read reviews, a live edition to its own admins and content. Newest year first
+   * (a date TBD at the top), never who wrote it.
+   */
+  speakerReviews(speakerId: number): SpeakerReview[] {
+    if (!this.mayReadReviews()) fail("forbidden");
+    const weeks = [this.week, ...this.elsewhere().filter((w) => w !== this.week)];
+    const out: (SpeakerReview & { _start: string | null })[] = [];
+    for (const r of this.shared.reviews) {
+      if (r.speaker_id !== speakerId) continue;
+      const w = weeks.find((x) => x.edition.id === r.edition_id);
+      const l = w?.lessons.find((x) => x.id === r.lesson_id);
+      if (!w || !l) continue;
+      const e = w.edition;
+      if (e.kind !== "real" && e.kind !== "archive") continue;
+      const past = e.kind === "archive" || e.status === "archived";
+      const reader = this.actor.global || (w === this.week && this.actor.role !== "logistics");
+      if (!past && !reader) continue;
+      out.push({
+        _start: e.start_date, edition_id: e.id, edition_label: e.label, edition_kind: e.kind, start_date: e.start_date, lesson_id: l.id, day: l.day,
+        start_min: l.start_min, end_min: l.end_min, title: l.title, went_well: r.went_well, issues: r.issues, invite_again: r.invite_again,
+        overran: r.overran, rating: r.rating, written_at: r.written_at,
+      });
+    }
+    const desc = (a: string | null, b: string | null) => (a === b ? 0 : a == null ? -1 : b == null ? 1 : a < b ? 1 : -1);
+    return out
+      .sort((a, b) => desc(a._start, b._start) || b.edition_id - a.edition_id || a.day - b.day || a.start_min - b.start_min || a.lesson_id - b.lesson_id)
+      .map(({ _start: _, ...r }) => r);
+  }
+
+  /**
+   * public.edition_returning: the speakers of this edition's closed lessons who taught a closed lesson in an earlier
+   * real or archive year (earlierEdition), each with those years' labels — the edition's admins and content.
+   */
+  returning(): ReturningSpeaker[] {
+    if (this.actor.role === "logistics") fail("forbidden");
+    const closedSpeakers = (w: Week) =>
+      new Set(w.lessonSpeakers.filter((x) => w.lessons.some((l) => l.id === x.lesson_id && l.state === "closed" && l.kind === "lesson")).map((x) => x.speaker_id));
+    const mine = closedSpeakers(this.week);
+    const before = this.elsewhere()
+      .filter((w) => w !== this.week && w.edition.id !== this.week.edition.id && (w.edition.kind === "real" || w.edition.kind === "archive") && earlierEdition(w.edition, this.week.edition))
+      .sort((a, b) => (a.edition.start_date === b.edition.start_date ? a.edition.id - b.edition.id : a.edition.start_date == null ? -1 : b.edition.start_date == null ? 1 : a.edition.start_date < b.edition.start_date ? -1 : 1));
+    const taught = before.map((w) => ({ label: w.edition.label, speakers: closedSpeakers(w) }));
+    return [...mine]
+      .sort((a, b) => a - b)
+      .map((id) => ({ speaker_id: id, editions: taught.filter((t) => t.speakers.has(id)).map((t) => t.label) }))
+      .filter((x) => x.editions.length > 0);
+  }
+
+  /**
+   * public.purge_edition_private: a global admin (`forbidden`), the edition's label typed (`confirm_mismatch`), once the
+   * week is over or the edition archived (`week_not_over`). Deletes the edition's transport details and its links' rate
+   * counts, revokes every link of it; the first time is kept (purged_at); logged with the counts only.
+   */
+  purgePrivate(confirm: string | null): PurgeReport {
+    return this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      const e = this.week.edition;
+      if (confirm == null || confirm.replace(/^ +| +$/g, "") !== e.label) fail("confirm_mismatch");
+      if (!purgeAllowed(e, this.now())) fail("week_not_over");
+      let transport = 0;
+      for (const k of Object.keys(this.shared.transport)) {
+        if (k.startsWith(`${e.id}:`)) {
+          delete this.shared.transport[k];
+          transport++;
+        }
+      }
+      const links = this.shared.links.filter((l) => l.edition_id === e.id);
+      let hits = 0;
+      for (const k of Object.keys(this.shared.linkHits)) {
+        if (links.some((l) => k.startsWith(`${l.token} `))) {
+          delete this.shared.linkHits[k];
+          hits++;
+        }
+      }
+      const now = this.now();
+      let revoked = 0;
+      for (const l of links) {
+        if (l.revoked_at == null) {
+          l.revoked_at = now;
+          revoked++;
+        }
+      }
+      e.purged_at = e.purged_at ?? now;
+      const counts = { transport_details: transport, links_revoked: revoked, link_hits: hits };
+      this.log(e.id, "editions", e.id, "purge", counts);
+      return { ...counts, purged_at: e.purged_at };
+    });
   }
 
   // ---------------------------------------------------------------- links (CONTRACT.md «Links and מכריכה לכריכה», milestone 5a)
