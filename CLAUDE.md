@@ -122,6 +122,12 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   pages read through `PublicPort` (`src/data/publicPort.ts`, `makePublicPort()`): `SupabasePublic` is a plain
   POST with the `apikey` header and no Authorization; the demo's is `src/data/demoLinks.ts`. Engine ≡ SQL
   by `tests/parity`, the public answers included; `src/domain/israelTime.ts` counts days as Israel does (W−7).
+  **Screens:** `src/Root.tsx` sends `/e`, `/k`, `/s` to the public pages (`src/screens/public/`) — outside the whoami
+  gate, lazy, the token taken from the hash and out of the address bar at once (`history.replaceState`), in memory
+  only; in production they load `SupabasePublic` alone through `src/data/publicEntry.ts` (no supabase-js, no auth
+  client). «קישורים» (`src/screens/settings/LinksTab.tsx`) issues, replaces and revokes, the token shown once;
+  «מכריכה לכריכה» is `/kk` (`src/screens/kk/KkScreen.tsx`, every member reads; the window's fields in Israel time —
+  `israelInstant`); the ticks show in the lesson panel's escort stage and the escorts' list (`EscortTicksLine`).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
@@ -133,3 +139,6 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   Supabase endpoints by route interception.
 - `tests/sql/links.test.ts`, `tests/sql/kk.test.ts` — the anon surface: every bad token refused alike, the
   escort's page by date (W−7) and by key, the sign-up race on two connections.
+- `tests/e2e/links.spec.ts` — the public pages at three widths (the token out of the address bar, the one refusal),
+  issuing and opening a link, the sign-up and the staff's /kk, the schedule in print; on the mock wire, the public
+  pages send the publishable key alone to the six anon functions, even with a member's session in the browser.

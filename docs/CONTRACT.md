@@ -726,4 +726,6 @@ bad_value bad_escort title_required outside_grid no_transport`.
 The public pages call the anon functions through `SupabasePublic` (`src/data/supabaseLinks.ts`): a
 plain POST to `/rest/v1/rpc/<function>` with the publishable key in `apikey` and **no
 Authorization header**, the token in the body — no session read or refreshed, so PostgREST runs it as
-`anon`.
+`anon`. A public page gets it from `loadPublicPort()` (`src/data/publicEntry.ts`), which in production
+never loads supabase-js or `SupabasePort` at all; the pages call nothing else (`tests/e2e/links.spec.ts`
+checks every request on the wire).
