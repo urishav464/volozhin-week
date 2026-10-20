@@ -22,9 +22,21 @@ export function fmt(min: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-/** "14:30–16:00" (start first; the caller wraps it in <bdi> for RTL). */
+/** "14:30–16:00" (start first; the caller wraps it in <bdi> for RTL, or puts LRM before it in a plain string). */
 export function fmtRange(start: number, end: number): string {
   return `${fmt(start)}–${fmt(end)}`;
+}
+
+/**
+ * LEFT-TO-RIGHT MARK before a time range inside a Hebrew string (a cell, an <option>, a warning): a right-to-left
+ * run would otherwise lay «08:30–09:45» out as «09:45–08:30» (the dash between two numbers takes the text's
+ * direction). Invisible. In JSX the range goes in its own <bdi> instead.
+ */
+export const LRM = "\u200E";
+
+/** «ראשון 13:00–13:15» — a day and a range inside a Hebrew string, an LRM before the range (left to right). */
+export function dayRange(day: number, start: number, end: number): string {
+  return `${DAY_NAMES[day as Day]} ${LRM}${fmtRange(start, end)}`;
 }
 
 /**

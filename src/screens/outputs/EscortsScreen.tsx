@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
+import { ticksApply } from "../../domain/escorts";
 import { escortGroups } from "../../exports/escorts";
 import { israelDate } from "../../exports/tracking";
 import { Button } from "../settings/kit";
@@ -108,7 +109,8 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
                   <p className="text-sm">
                     <b>{x.intro}</b> — {x.introDetail}
                   </p>
-                  {g.escort != null && (
+                  {/* a memorial slot's liaison has no speaker's ticks (ticksApply) */}
+                  {g.escort != null && ticksApply(x.lesson) && (
                     <div className="mt-1">
                       <EscortTicksLine week={week} lessonId={x.lesson.id} />
                     </div>

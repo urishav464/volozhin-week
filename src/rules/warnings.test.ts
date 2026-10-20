@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek, pitch } from "../testing/week";
+import { LRM } from "../domain/time";
 import { ESCORT_MIN_GAP, escortClashes, warningsFor, weekGap } from "./warnings";
 
 const kinds = (w: ReturnType<typeof emptyWeek>) => warningsFor(w).map((x) => x.kind).sort();
@@ -10,6 +11,16 @@ describe("warningsFor", () => {
     closeWith(w, addLesson(w, 1, 510, 600, { title: "א", category_id: 1 }), addSpeaker(w, "m"));
     closeWith(w, addLesson(w, 1, 600, 690, { title: "ב", category_id: 2 }), addSpeaker(w, "f"));
     expect(warningsFor(w)).toEqual([]);
+  });
+
+  it("keeps every range left to right inside its Hebrew message (an LRM before it, as the files do)", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600, { category_id: 1 }), addSpeaker(w, "m"));
+    closeWith(w, addLesson(w, 1, 510, 600, { title: "ב", category_id: 2, room_id: 2 }), addSpeaker(w, "f"));
+    const msgs = warningsFor(w).map((x) => x.message);
+    expect(msgs.length).toBeGreaterThan(1);
+    for (const m of msgs.filter((x) => /\d\d:\d\d–/.test(x))) expect(m, m).toMatch(new RegExp(`${LRM}\\d\\d:\\d\\d–\\d\\d:\\d\\d`));
+    expect(msgs).toContain(`2 שיעורים במקביל בשני ${LRM}08:30–10:00`);
   });
 
   it("reports parallel lessons as information", () => {
@@ -111,15 +122,15 @@ describe("warningsFor", () => {
     const morning = lesson(2, 390, 435); // … then 06:30 the next day column: 90 minutes, fine
     const gaps = warningsFor(w).filter((x) => x.kind === "escort_gap");
     expect(gaps.map((g) => [g.lessonIds, g.severity])).toEqual([[[a.id, b.id], "warn"]]);
-    expect(gaps[0].message).toBe("«חניכה לדוגמה» מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (שני 10:00–11:30; הצעה: לפחות 30 דקות)");
+    expect(gaps[0].message).toBe(`«חניכה לדוגמה» מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (שני ${LRM}10:00–11:30; הצעה: לפחות 30 דקות)`);
     expect([night.id, morning.id].some((id) => gaps.some((g) => g.lessonIds.includes(id)))).toBe(false);
 
     lesson(2, 410, 500); // overlaps the 06:30 opening
     lesson(3, 600, 690);
     lesson(3, 710, 780); // 20 minutes
     const more = warningsFor(w).filter((x) => x.kind === "escort_gap").map((g) => g.message);
-    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים חופפים (שלישי 06:50–08:20)");
-    expect(more).toContain("«חניכה לדוגמה» מלווה שני שיעורים עם 20 דקות ביניהם (רביעי 11:50–13:00; הצעה: לפחות 30)");
+    expect(more).toContain(`«חניכה לדוגמה» מלווה שני שיעורים חופפים (שלישי ${LRM}06:50–08:20)`);
+    expect(more).toContain(`«חניכה לדוגמה» מלווה שני שיעורים עם 20 דקות ביניהם (רביעי ${LRM}11:50–13:00; הצעה: לפחות 30)`);
   });
 
   it("compares every pair of an escort's lessons, not only neighbours — the picker's rule exactly", () => {

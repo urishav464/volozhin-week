@@ -47,8 +47,10 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
       <header className="bg-ink text-paper print:hidden">
         {/* Signed in, the header keeps one width on every screen, so a section link stays under the pointer.
             Below 1024px the sections move to a row of their own, under the name and «התנתקות», and wrap
-            onto a second line when they do not fit (an admin's seven on a phone): every entry stays
-            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll. */}
+            onto a second line when they do not fit (an admin's ten on a phone): every entry stays
+            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll.
+            From 1024px the sections keep their whole width (shrink-0) and the member's name gives way
+            (truncated, the whole name on hover): an admin's ten links fit from 1024px on. */}
         <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:flex-nowrap`}>
           <h1 className="flex h-14 shrink-0 items-center font-display font-extrabold text-xl tracking-tight">
             {nav ? (
@@ -60,7 +62,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
             )}
           </h1>
           {nav && nav.length > 0 && (
-            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:flex-nowrap lg:overflow-x-auto lg:pb-0">
+            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:shrink-0 lg:flex-nowrap lg:overflow-x-auto lg:pb-0">
               {nav.map((item) => {
                 const isActive = sectionActive(item, path);
                 return (
@@ -85,7 +87,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
           )}
           <div className="ms-auto flex h-14 min-w-0 items-center gap-2 sm:gap-3">
             {user && (
-              <span className="text-sm truncate">
+              <span className="text-sm truncate" title={`${user.name} · ${user.roleLabel}`}>
                 {user.name} · <span className="opacity-80">{user.roleLabel}</span>
               </span>
             )}

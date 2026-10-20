@@ -21,7 +21,7 @@ import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { telHref } from "../../domain/contactLinks";
 import { fallenName, freeSlots, memorialRowsOf, memorialSlots, minutesText, planOf, slotLabel } from "../../domain/memorial";
-import { DAY_NAMES, DAYS, type Day, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
+import { DAY_NAMES, DAYS, type Day, LRM, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
 import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { warningsFor } from "../../rules/warnings";
@@ -82,8 +82,8 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
         <EditionSelect />
       </div>
       <p className="text-sm text-ink-soft">
-        לכל חלל/ה תוכנית אחת במחזור: מה המשפחה אמרה, מי מדבר/ת, כמה דקות, והחומרים למקראה. משבצים אותה בזמן זיכרון ברשת. המלווה של זמן הזיכרון הוא איש/אשת הקשר של הצוות עם המשפחה.
-        {!ctx.admin && " את התוכניות ואת השיבוץ עושים המדריכים."}
+        לכל חלל/ה תוכנית אחת במחזור: מה המשפחה אמרה, מי מדבר/ת, כמה דקות, והחומרים למקראה. משבצים אותה בזמן זיכרון ברשת. המלווה של זמן הזיכרון הוא/היא איש/אשת הקשר של הצוות עם המשפחה.
+        {!ctx.admin && " את התוכניות ואת השיבוץ עושה המדריך/ה של המחזור."}
       </p>
 
       <PolicyPanel {...ctx} />
@@ -130,18 +130,23 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
 
 // ------------------------------------------------------------------ the policy
 
+/** Each part of the policy is the staff meeting's: until it decides one, that part says so. */
+const PENDING = "ממתין להחלטת ישיבת הצוות";
+/** The 1–180 guard on minutes is ours, against a typo — not the policy («הצעה»). */
+const MINUTES_PROBLEM = `מספר דקות שלם, בין 1 ל-${MEMORIAL_LIMITS.minutes} (הצעה: רק נגד טעות הקלדה), או ריק.`;
+
 function PolicyPanel({ week, admin, cmds, busy, act }: Ctx) {
   const id = useId();
   const policy = week.edition.settings?.memorial ?? null;
   const [editing, setEditing] = useState(false);
   const [placement, setPlacement] = useState("");
   const [max, setMax] = useState("");
-  const [meal, setMeal] = useState(false);
+  const [meal, setMeal] = useState<"" | "warn" | "no">("");
   const [problem, setProblem] = useState<string | null>(null);
   const open = () => {
     setPlacement(policy?.placement ?? "");
     setMax(policy?.max_minutes != null ? String(policy.max_minutes) : "");
-    setMeal(policy?.warn_adjacent_meal === true);
+    setMeal(policy?.warn_adjacent_meal == null ? "" : policy.warn_adjacent_meal ? "warn" : "no");
     setProblem(null);
     setEditing(true);
   };
@@ -150,41 +155,47 @@ function PolicyPanel({ week, admin, cmds, busy, act }: Ctx) {
     setProblem(null);
     const t = max.trim();
     const n = t === "" ? null : Number(t);
-    if (n != null && (!Number.isInteger(n) || n < 1 || n > MEMORIAL_LIMITS.minutes)) return setProblem(`מספר דקות שלם, בין 1 ל-${MEMORIAL_LIMITS.minutes}, או ריק.`);
+    if (n != null && (!Number.isInteger(n) || n < 1 || n > MEMORIAL_LIMITS.minutes)) return setProblem(MINUTES_PROBLEM);
     const next: MemorialPolicy = {};
     if (placement.trim()) next.placement = placement.trim();
     if (n != null) next.max_minutes = n;
-    if (meal) next.warn_adjacent_meal = true;
+    if (meal !== "") next.warn_adjacent_meal = meal === "warn";
     if (await act("policy", () => cmds.setMemorialPolicy(next), Object.keys(next).length ? "המדיניות נשמרה" : "המדיניות נמחקה")) setEditing(false);
   };
-  const set = policy && (policy.placement || policy.max_minutes != null || policy.warn_adjacent_meal != null);
+  const parts = [policy?.placement != null, policy?.max_minutes != null, policy?.warn_adjacent_meal != null];
+  const set = parts.some(Boolean);
+  const badge = parts.every(Boolean) ? <Badge tone="ok">נקבעה בישיבת הצוות</Badge> : <Badge tone="accent">{set ? "חלק ממנה ממתין להחלטת ישיבת הצוות" : PENDING}</Badge>;
+  const pending = <span className="text-ink-soft">{PENDING}</span>;
   return (
-    <Panel title="המדיניות" aside={<Badge tone="accent">ממתין להחלטת ישיבת הצוות</Badge>}>
+    <Panel title="המדיניות" aside={badge}>
       {!set ? (
         <p className="text-sm text-ink-soft">עוד לא נקבעה מדיניות. היא תיקבע בישיבת הצוות; עד אז אין אזהרות על אורך או על סמיכות לארוחה. תוכנית ארוכה מהמשבצת שלה מסומנת תמיד.</p>
       ) : (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
           <dt className="text-ink-soft">איפה</dt>
-          <dd className="min-w-0 break-words whitespace-pre-line">{policy?.placement ?? "לא נקבע"}</dd>
+          <dd className="min-w-0 break-words whitespace-pre-line">{policy?.placement ?? pending}</dd>
           <dt className="text-ink-soft">עד כמה דקות</dt>
-          <dd>{policy?.max_minutes != null ? `${policy.max_minutes} דקות` : "לא נקבע"}</dd>
+          <dd>{policy?.max_minutes != null ? `${policy.max_minutes} דקות` : pending}</dd>
           <dt className="text-ink-soft">ליד ארוחה</dt>
-          <dd>{policy?.warn_adjacent_meal ? "להזהיר על זמן זיכרון צמוד לארוחה" : "בלי אזהרה"}</dd>
+          <dd>{policy?.warn_adjacent_meal == null ? pending : policy.warn_adjacent_meal ? "להזהיר על זמן זיכרון צמוד לארוחה" : "בלי אזהרה"}</dd>
         </dl>
       )}
       {admin &&
         (editing ? (
           <form onSubmit={(e) => void save(e)} aria-label="עריכת המדיניות" className="mt-3 space-y-3" noValidate>
-            <Field id={`${id}-where`} label="איפה ממקמים זמני זיכרון">
-              <textarea id={`${id}-where`} value={placement} maxLength={MEMORIAL_LIMITS.placement} onChange={(e) => setPlacement(e.target.value)} rows={2} className={`${INPUT} py-2`} />
+            <Field id={`${id}-where`} label="איפה ממקמים זמני זיכרון" hint={`מה שהוחלט בישיבת הצוות. ריק: ${PENDING}.`}>
+              <textarea id={`${id}-where`} value={placement} maxLength={MEMORIAL_LIMITS.placement} onChange={(e) => setPlacement(e.target.value)} rows={2} className={`${INPUT} py-2`} aria-describedby={`${id}-where-hint`} />
             </Field>
-            <Field id={`${id}-max`} label="עד כמה דקות (לא חובה)" hint="מה שהוחלט בישיבת הצוות. ריק: בלי אזהרה על אורך.">
+            <Field id={`${id}-max`} label="עד כמה דקות (לא חובה)" hint={`מה שהוחלט בישיבת הצוות. ריק: ${PENDING}, ובינתיים בלי אזהרה על אורך.`}>
               <input id={`${id}-max`} type="number" inputMode="numeric" min={1} max={MEMORIAL_LIMITS.minutes} value={max} onChange={(e) => setMax(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-max-hint`} />
             </Field>
-            <label className="flex min-h-11 cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={meal} onChange={(e) => setMeal(e.target.checked)} className="size-5 accent-ink" />
-              להזהיר על זמן זיכרון צמוד לארוחה
-            </label>
+            <Field id={`${id}-meal`} label="זמן זיכרון צמוד לארוחה">
+              <select id={`${id}-meal`} value={meal} onChange={(e) => setMeal(e.target.value as "" | "warn" | "no")} className={SELECT}>
+                <option value="">{PENDING}</option>
+                <option value="warn">להזהיר על זמן זיכרון צמוד לארוחה</option>
+                <option value="no">בלי אזהרה</option>
+              </select>
+            </Field>
             {problem && <Problem>{problem}</Problem>}
             <div className="flex flex-wrap gap-2">
               <Button kind="primary" type="submit" busy={busy === "policy"} busyLabel="שומר…">
@@ -330,7 +341,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
     const t = parseClock(end);
     if (s == null || t == null || t <= s) return setProblem("צריך שעת התחלה ושעת סיום, למשל 13:00 ו-13:15.");
     if (s % 5 !== 0 || t % 5 !== 0) return setProblem("השעות בקפיצות של 5 דקות, למשל 13:05.");
-    if (s < row.start_min || t > row.end_min) return setProblem(`בתוך השורה: ${fmtRange(row.start_min, row.end_min)}.`);
+    if (s < row.start_min || t > row.end_min) return setProblem(`בתוך השורה: ${LRM}${fmtRange(row.start_min, row.end_min)}.`);
     const done = await act(key, () => cmds.addMemorialSlot(day, s, t, room === "" ? null : room), "זמן הזיכרון נוסף", (code) => {
       if (code !== "room_taken" && code !== "outside_grid" && code !== "bad_shape") return false;
       setProblem(errorMessage(code));
@@ -493,7 +504,7 @@ function PlanForm({
     setProblem(null);
     const t = minutes.trim();
     const n = t === "" ? null : Number(t);
-    if (n != null && (!Number.isInteger(n) || n < 1 || n > MEMORIAL_LIMITS.minutes)) return setProblem(`מספר דקות שלם, בין 1 ל-${MEMORIAL_LIMITS.minutes}, או ריק.`);
+    if (n != null && (!Number.isInteger(n) || n < 1 || n > MEMORIAL_LIMITS.minutes)) return setProblem(MINUTES_PROBLEM);
     const patch: PlanPatch = { family_status: status, speaker_text: speaker.trim() || null, planned_minutes: n, hard_stop: hardStop, materials_note: note.trim() || null };
     const ok = await onSave(patch, (code) => {
       if (code !== "bad_value") return false;
@@ -604,7 +615,7 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
           סגירה
         </Button>
       </div>
-      <p className="text-xs text-ink-soft">מידע אישי של משפחה שכולה: גלוי רק למדריכים. לא נכנס לשבוע, לקישורים, לרשימות או לקבצים — רק לארכיון של האדמין.</p>
+      <p className="text-xs text-ink-soft">מידע אישי של משפחה שכולה: גלוי רק למדריך/ה (אדמין). לא נכנס לשבוע, לקישורים, לרשימות או לקבצים — רק לארכיון של האדמין.</p>
       {failed && c === undefined ? (
         <div role="alert">
           <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
@@ -613,7 +624,7 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
       ) : c === undefined ? (
         <p className="text-sm text-ink-soft">טוען…</p>
       ) : c === null ? (
-        <p className="text-sm text-ink-soft">פרטי הקשר גלויים רק למדריכים של מחזור שיש בו תוכנית ל{name}.</p>
+        <p className="text-sm text-ink-soft">פרטי הקשר גלויים רק למדריך/ה של מחזור שיש בו תוכנית ל{name}.</p>
       ) : editing ? (
         <ContactsForm
           c={c}
@@ -681,7 +692,7 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
           <Button onClick={() => setEditing(true)}>עריכת פרטי הקשר</Button>
         </>
       )}
-      {week.edition.kind !== "real" && <p className="text-xs text-ink-soft">במחזור תרגול או הדגמה פרטי הקשר לא נפתחים, גם למדריכים — רק אדמין של כל המחזורים רואה אותם.</p>}
+      {week.edition.kind !== "real" && <p className="text-xs text-ink-soft">במחזור תרגול או הדגמה פרטי הקשר לא נפתחים, גם למדריך/ה — רק אדמין של כל המחזורים רואה אותם.</p>}
     </div>
   );
 }
@@ -697,7 +708,7 @@ function ContactsForm({ c, name, busy, onSave, onCancel }: { c: FallenContacts; 
     setProblem(null);
     await onSave({ contact_name: text(d.contact_name), relation: text(d.relation), phone: text(d.phone), email: text(d.email), note: text(d.note) }, (code) => {
       if (!code || !["bad_phone", "bad_email", "bad_contact_email", "bad_value", "contacts_hidden"].includes(code)) return false;
-      setProblem(code === "contacts_hidden" ? "פרטי הקשר של המשפחה גלויים רק למדריכים של מחזור אמיתי שיש בו תוכנית לחלל/ה." : errorMessage(code));
+      setProblem(code === "contacts_hidden" ? "פרטי הקשר של המשפחה גלויים רק למדריך/ה של מחזור אמיתי שיש בו תוכנית לחלל/ה." : errorMessage(code));
       return true;
     });
   };
@@ -896,7 +907,7 @@ function FallenForm({ initial, busy, onSave, onCancel }: { initial: Fallen | nul
         <input id={`${id}-n`} value={name} maxLength={MEMORIAL_LIMITS.name} onChange={(e) => setName(e.target.value)} className={INPUT} autoComplete="off" />
       </Field>
       <GenderField name={`${id}-g`} value={gender} onChange={setGender} />
-      <Field id={`${id}-o`} label="הערה (גלויה למדריכים ולצוות של מחזור שיש בו תוכנית)">
+      <Field id={`${id}-o`} label="הערה (גלויה לכל מדריך/ה ולצוות של מחזור שיש בו תוכנית)">
         <textarea id={`${id}-o`} value={note} maxLength={MEMORIAL_LIMITS.note} onChange={(e) => setNote(e.target.value)} rows={2} className={`${INPUT} py-2`} />
       </Field>
       <label className="flex min-h-11 cursor-pointer items-center gap-2">

@@ -104,7 +104,7 @@ export function ArchivePanel({ data, editions }: { data: DataPort; editions: Edi
                 ? "מחשב את הגודל…"
                 : size.count === 0
                   ? "אין קבצים במחזור הזה."
-                  : `${size.count === 1 ? "קובץ אחד" : `${size.count} קבצים`}, כ-${sizeText(size.bytes)}, בתיקייה לכל יום. ההורדה לוקחת זמן; קובץ שלא נקרא יירשם ברשימה.`}
+                  : `${size.count === 1 ? "קובץ אחד" : `${size.count} קבצים`}, כ-${sizeText(size.bytes)}, בתיקייה לכל יום. ההורדה לוקחת זמן; קובץ שלא נקרא יירשם ברשימה. הזיפ נבנה בזיכרון הדפדפן, ולוקח בערך פי 3 מהגודל הזה: עדיף במחשב, לא בטלפון.`}
           </p>
         )}
       </div>

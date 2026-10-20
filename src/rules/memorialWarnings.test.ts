@@ -3,6 +3,7 @@
 // set the policy (settings.memorial — never seeded). Memorial slots never count in the day's balance or loads.
 import { describe, expect, it } from "vitest";
 import { addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
+import { LRM } from "../domain/time";
 import type { MemorialPlan, Week } from "../domain/types";
 import { categoryLoad, dayBalance } from "./balance";
 import { isMealRow, warningsFor } from "./warnings";
@@ -24,7 +25,7 @@ describe("memorial warnings", () => {
     w.memorialPlans[0].planned_minutes = 20;
     const [x] = warningsFor(w).filter((y) => y.kind === "memorial_over_slot");
     expect(x).toMatchObject({ severity: "warn", day: 0, lessonIds: [slot.id] });
-    expect(x.message).toBe("«חלל/ה לבדיקה 1»: 20 דקות מתוכננות, והמשבצת 15 דקות (ראשון 13:00–13:15)");
+    expect(x.message).toBe(`«חלל/ה לבדיקה 1»: 20 דקות מתוכננות, והמשבצת 15 דקות (ראשון ${LRM}13:00–13:15)`);
     // a plan in the tray, or with no minutes yet, says nothing
     withPlan(w, null, 99, 2);
     withPlan(w, addLesson(w, 1, 780, 795, { kind: "memorial" }).id, null, 3);
@@ -40,23 +41,26 @@ describe("memorial warnings", () => {
     expect(memorialKinds(w)).toEqual([]); // a placement alone sets no number
     w.edition.settings.memorial = { max_minutes: 10 };
     expect(memorialKinds(w)).toEqual(["memorial_too_long"]);
-    expect(warningsFor(w).find((x) => x.kind === "memorial_too_long")!.message).toBe("«חלל/ה לבדיקה 1»: 12 דקות מתוכננות, יותר מ-10 שנקבעו במדיניות (ראשון 13:00–13:15)");
+    expect(warningsFor(w).find((x) => x.kind === "memorial_too_long")!.message).toBe(`«חלל/ה לבדיקה 1»: 12 דקות מתוכננות, יותר מ-10 שנקבעו במדיניות (ראשון ${LRM}13:00–13:15)`);
     w.edition.settings.memorial = { max_minutes: 12 };
     expect(memorialKinds(w)).toEqual([]);
   });
 
-  it("say a slot is next to a meal only when the policy asks — any slot, planned or not", () => {
+  it("say a slot is next to a meal only when the policy asks — a slot a plan is placed on", () => {
     const w = emptyWeek();
     const before = addLesson(w, 0, 780, 795, { kind: "memorial" }); // lunch begins at 13:15
     const after = addLesson(w, 1, 855, 870, { kind: "memorial" }); // lunch ends at 14:15
-    addLesson(w, 2, 780, 790, { kind: "memorial" }); // 13:00–13:10: five minutes before lunch, not next to it
+    const early = addLesson(w, 2, 780, 790, { kind: "memorial" }); // 13:00–13:10: five minutes before lunch, not next to it
+    const empty = addLesson(w, 3, 780, 795, { kind: "memorial" }); // next to lunch, but no plan on it
+    for (const [i, l] of [before, after, early].entries()) withPlan(w, l.id, null, i + 1);
     expect(memorialKinds(w)).toEqual([]);
     w.edition.settings.memorial = { warn_adjacent_meal: false };
     expect(memorialKinds(w)).toEqual([]);
     w.edition.settings.memorial = { warn_adjacent_meal: true };
     const near = warningsFor(w).filter((x) => x.kind === "memorial_near_meal");
-    expect(near.map((x) => x.lessonIds[0])).toEqual([before.id, after.id]);
-    expect(near[0].message).toBe("זמן זיכרון צמוד ל«ארוחת צהריים / חבורות» (ראשון 13:00–13:15)");
+    expect(near.map((x) => x.lessonIds[0])).toEqual([before.id, after.id]); // never the empty slot: the rows sit next to lunch by design
+    expect(near.some((x) => x.lessonIds.includes(empty.id))).toBe(false);
+    expect(near[0].message).toBe(`זמן זיכרון צמוד ל«ארוחת צהריים / חבורות» (ראשון ${LRM}13:00–13:15)`);
     // a cancelled slot is no slot
     before.state = "cancelled";
     expect(warningsFor(w).filter((x) => x.kind === "memorial_near_meal").map((x) => x.lessonIds[0])).toEqual([after.id]);

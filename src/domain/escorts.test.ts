@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { addLesson, addTrainee, emptyWeek } from "../testing/week";
-import { DUTY_WHEN_LABEL, dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro } from "./escorts";
+import { DUTY_WHEN_LABEL, dutyNotes, escortCount, escortLoad, liaisonLine, SELF_INTRO_FROM, suggestSelfIntro, ticksApply } from "./escorts";
 import type { DutyPhrase } from "./types";
 
 describe("escorts", () => {
+  it("give a memorial slot's liaison no speaker's ticks — their role instead, in their gender, and count it apart", () => {
+    expect(ticksApply({ kind: "lesson" })).toBe(true);
+    expect(ticksApply({ kind: "memorial" })).toBe(false); // «הזכרתי למרצה», «פגשתי בחניה»: no speaker there
+    expect([liaisonLine("m"), liaisonLine("f"), liaisonLine(null)]).toEqual([
+      "אתה איש הקשר של הצוות עם המשפחה.",
+      "את אשת הקשר של הצוות עם המשפחה.",
+      "את/ה איש/אשת הקשר של הצוות עם המשפחה.",
+    ]);
+    expect(escortCount([])).toBe("");
+    expect(escortCount(["lesson"])).toBe("שיעור אחד");
+    expect(escortCount(["lesson", "lesson"])).toBe("2 שיעורים");
+    expect(escortCount(["lesson", "memorial"])).toBe("שיעור אחד וזמן זיכרון אחד");
+    expect(escortCount(["memorial", "lesson", "lesson", "memorial"])).toBe("2 שיעורים ו-2 זמני זיכרון");
+    expect(escortCount(["memorial"])).toBe("זמן זיכרון אחד");
+  });
+
   it("suggests self-introduction from 22:30 to the morning («הצעה»), never before", () => {
     expect(SELF_INTRO_FROM).toBe(1350);
     expect(suggestSelfIntro({ start_min: 1200 })).toBe(false); // 20:00

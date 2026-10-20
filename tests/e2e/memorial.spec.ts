@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { expect, type Download, type Page, type TestInfo, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
+import { LRM } from "../../src/domain/time";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
@@ -65,10 +66,11 @@ test.describe("demo build", () => {
     await expect(toast(page, "התוכנית נשמרה")).toBeVisible();
     // placed on Monday's 13:00 slot — the picker, by keyboard or tap, no drag
     const picker = plan.getByLabel("שיבוץ");
-    const monday = (await picker.locator("option", { hasText: "שני 13:00–13:15" }).first().textContent())!;
+    // (plain text: an LRM keeps «13:00–13:15» left to right among the Hebrew, in the option and the slot's heading)
+    const monday = (await picker.locator("option", { hasText: `שני ${LRM}13:00–13:15` }).first().textContent())!;
     await picker.selectOption({ label: monday });
     await expect(toast(page, "«חלל/ה לדוגמה 4» שובץ/ה")).toBeVisible();
-    await expect(page.locator('[data-memorial-slot]').filter({ hasText: "חלל/ה לדוגמה 4" })).toContainText("שני 13:00–13:15");
+    await expect(page.locator('[data-memorial-slot]').filter({ hasText: "חלל/ה לדוגמה 4" })).toContainText(`שני ${LRM}13:00–13:15`);
     await noSidewaysScroll(page);
 
     // the family's contact person: only behind its button, an admin's
@@ -80,7 +82,11 @@ test.describe("demo build", () => {
 
     // the week: the yellow card on Monday — the fallen's name, the family's status, the minutes; no contact
     const card = await weekCard(page, info, "שני", "חלל/ה לדוגמה 4");
-    await expect(card).toContainText("זמן זיכרון – חלל/ה לדוגמה 4");
+    // the name first, alone (the yellow says «זמן זיכרון»); the whole title is the card's accessible name and its tooltip
+    await expect(card.locator("[data-memorial-name]")).toHaveText("חלל/ה לדוגמה 4");
+    await expect(card).toHaveAttribute("aria-label", /^זמן זיכרון – חלל\/ה לדוגמה 4, 13:00–13:15: המשפחה הוזמנה · 12 דק׳$/);
+    await expect(card).toHaveAttribute("title", `זמן זיכרון – חלל/ה לדוגמה 4 · ${LRM}13:00–13:15 · המשפחה הוזמנה · 12 דק׳`);
+    await expect(card.locator("[data-memorial-where]")).toHaveCount(0); // the row's only slot, all of it: its time is the row's
     await expect(card).toContainText("המשפחה הוזמנה · 12 דק׳");
     await expect(card).toHaveClass(/bg-amber-100/); // last year's yellow
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
@@ -89,6 +95,87 @@ test.describe("demo build", () => {
     await expect(panel.getByRole("region", { name: "זמן הזיכרון" })).toContainText("המשפחה הוזמנה");
     await expect(panel.getByRole("group", { name: "קבצי המקורות" })).toContainText("עוד לא הועלו חומרים לזמן הזיכרון הזה.");
     await expect(panel.getByText("טלפון לדוגמה")).toHaveCount(0);
+    await noSidewaysScroll(page);
+  });
+
+  test("two slots in one memorial row: told apart by their own time and room in the day view; the fallen's name whole on the desktop grid", async ({ page }, info) => {
+    await page.goto(demoUrl());
+    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    // a second slot in Sunday's row א: 13:05–13:10, in «כיתה ג׳», beside the placed one (13:00–13:15, בית מדרש)
+    await page.getByRole("button", { name: "הוספת זמן זיכרון: ראשון, זמן זיכרון א" }).click();
+    const form = page.getByRole("form", { name: "זמן זיכרון חדש: ראשון, זמן זיכרון א" });
+    await form.getByLabel("מ-").fill("13:05");
+    await form.getByLabel("עד").fill("13:10");
+    await form.getByLabel("חדר").selectOption({ label: "כיתה ג׳" });
+    await form.getByRole("button", { name: "הוספה" }).click();
+    await expect(toast(page, "זמן הזיכרון נוסף")).toBeVisible();
+    // «חלל/ה לדוגמה 2» from the tray onto it
+    const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });
+    await plan.getByLabel("שיבוץ").selectOption({ label: `ראשון ${LRM}13:05–13:10 · כיתה ג׳` });
+    await expect(toast(page, "«חלל/ה לדוגמה 2» שובץ/ה")).toBeVisible();
+
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    const first = page.locator("[data-memorial-card]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    const second = page.locator("[data-memorial-card]").filter({ hasText: "חלל/ה לדוגמה 2" });
+    if (info.project.name !== "desktop") {
+      // the day view (also the only view offline): each slot its own start in the time column, and its range and room
+      await page.getByRole("tab", { name: "ראשון" }).click();
+      await expect(first.locator("[data-memorial-where]")).toHaveText("13:00–13:15 · בית מדרש");
+      await expect(second.locator("[data-memorial-where]")).toHaveText("13:05–13:10 · כיתה ג׳");
+      await expect(first.locator("xpath=../preceding-sibling::bdi")).toHaveText("13:00");
+      await expect(second.locator("xpath=../preceding-sibling::bdi")).toHaveText("13:05");
+      for (const c of [first, second]) expect((await c.boundingBox())!.height).toBeGreaterThanOrEqual(44); // a touch target
+    } else {
+      // two lanes of ~80px: the name alone fits where «זמן זיכרון – <name>» was cut; the whole title on hover
+      const name = first.locator("[data-memorial-name]");
+      await expect(name).toHaveText("חלל/ה לדוגמה 1");
+      expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(first).toHaveAttribute("title", /^זמן זיכרון – חלל\/ה לדוגמה 1 · /);
+      await expect(second).toHaveAttribute("title", /^זמן זיכרון – חלל\/ה לדוגמה 2 · /);
+    }
+    await noSidewaysScroll(page);
+  });
+
+  test("a screen whose file is gone after a deploy (the old name answered with index.html): a notice with «רענון», never a blank page", async ({ page }) => {
+    await page.goto(demoUrl());
+    await expect(nav(page)).toBeVisible();
+    // what Cloudflare Pages answers for a chunk name the new deploy no longer has: index.html, 200, text/html
+    const index = await (await page.request.get(demoUrl())).text();
+    await page.route(/\/assets\/MemorialScreen-[^/]+\.js$/, (route) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: index }));
+    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await expect(page.getByRole("heading", { name: "המסך הזה לא נטען" })).toBeVisible();
+    await expect(page.getByText("כנראה שהאתר התעדכן מאז שהדף נפתח")).toBeVisible();
+    await expect(nav(page)).toBeVisible(); // the header stays: the rest of the site is a click away
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    await expect(page.getByRole("heading", { name: "המסך הזה לא נטען" })).toHaveCount(0);
+    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await page.unroute(/\/assets\/MemorialScreen-[^/]+\.js$/);
+    await page.getByRole("button", { name: "רענון" }).click(); // the new version's files
+    await expect(page.getByRole("heading", { name: "זמני זיכרון", level: 2 })).toBeVisible();
+    await noSidewaysScroll(page);
+  });
+
+  test("the liaison's own link: the memorial time with their role, never a speaker's ticks — and so in the escorts' list", async ({ page }) => {
+    // roster 4 (מלווה לדוגמה ד׳) is Sunday's liaison and escorts one lesson on Wednesday
+    await page.goto(`${demoUrl()}/e#demo-e-1-4-dugma00000`);
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה ד׳" })).toBeVisible();
+    await expect(page.getByText("שיעור אחד וזמן זיכרון אחד", { exact: true })).toBeVisible();
+    const cards = page.getByRole("list", { name: "השיעורים שלי" }).locator("[data-escort-lesson]");
+    const memorial = cards.filter({ hasText: "זמן זיכרון" });
+    await expect(memorial).toHaveCount(1);
+    await expect(memorial.getByRole("checkbox")).toHaveCount(0); // no «הזכרתי למרצה» on a bereaved family's time
+    await expect(memorial).toContainText("אתה איש הקשר של הצוות עם המשפחה.");
+    await expect(memorial).not.toContainText("זמן זיכרון · זמן זיכרון");
+    for (const secret of ["חלל/ה לדוגמה", "טלפון לדוגמה", "family1@example.org"]) await expect(memorial).not.toContainText(secret);
+    await expect(cards.filter({ hasNotText: "זמן זיכרון" }).getByRole("checkbox")).toHaveCount(4); // a lesson keeps its four
+    await noSidewaysScroll(page);
+
+    await page.goto(`${demoUrl()}/print/escorts`);
+    const d = page.getByRole("region", { name: "מלווה לדוגמה ד׳" });
+    const liaison = d.locator("[data-lesson-row]").filter({ hasText: "איש הקשר של המשפחה" });
+    await expect(liaison).toHaveCount(1);
+    await expect(liaison.getByRole("list", { name: "הסימונים של המלווה" })).toHaveCount(0);
+    await expect(d.locator("[data-lesson-row]").filter({ hasNotText: "איש הקשר של המשפחה" }).getByRole("list", { name: "הסימונים של המלווה" })).toHaveCount(1);
     await noSidewaysScroll(page);
   });
 
@@ -153,6 +240,7 @@ test.describe("demo build", () => {
     await expect(ahead.locator("[data-print-row]").first()).toContainText("דף מקורות לדוגמה.pdf");
     await expect(ahead.locator("[data-print-row]").first()).toContainText("עמודים");
     await expect(page.getByRole("region", { name: "להדפיס באותו יום" }).locator("[data-print-row]")).toContainText(["אין קבצים"]);
+    for (const text of await page.locator("[data-print-row]").filter({ hasText: "אין קבצים" }).allTextContents()) expect(text.split("אין קבצים").length - 1, text).toBe(1); // said once
     await expect(page.locator("[data-print-row]").filter({ hasText: /עותקים/ })).toHaveCount(0); // no copy count nobody entered
     await noSidewaysScroll(page);
   });
@@ -162,6 +250,7 @@ test.describe("demo build", () => {
     await expect(page.getByText("פרטי הקשר של המשפחות לא יוצאים מהמערכת בשום ייצוא אחר")).toBeVisible();
     await page.getByRole("checkbox", { name: "כולל קבצי המקורות" }).check();
     await expect(page.getByText(/^\d+ קבצים, כ-[\d.]+(KB|MB), בתיקייה לכל יום/)).toBeVisible();
+    await expect(page.getByText(/בערך פי 3 מהגודל הזה: עדיף במחשב, לא בטלפון\.$/)).toBeVisible(); // the zip is built in memory
     await noSidewaysScroll(page);
     const zip = await downloaded(page, () => page.getByRole("button", { name: "הורדת הארכיון של הדגמה" }).click());
     const files = unzipSync(new Uint8Array(zip.bytes));
@@ -222,7 +311,7 @@ test.describe("mock build", () => {
     await expect(page.getByRole("button", { name: "פרטי הקשר של המשפחה" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^הוספת זמן זיכרון/ })).toHaveCount(0);
     await expect(page.getByLabel("שיבוץ")).toHaveCount(0);
-    await expect(page.getByText("את התוכניות ואת השיבוץ עושים המדריכים.")).toBeVisible();
+    await expect(page.getByText("את התוכניות ואת השיבוץ עושה המדריך/ה של המחזור.")).toBeVisible();
     expect(sb.rpc.get("get_fallen_contacts")).toBeUndefined();
     expect(sb.calls.some((c) => c.path === "/rest/v1/fallen_contacts")).toBe(false);
   });

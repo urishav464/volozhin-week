@@ -6,7 +6,7 @@ import { memorialCard } from "../domain/memorial";
 import { displayName } from "../domain/names";
 import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
 import { readerFilesOf, stagesOf } from "../domain/stages";
-import { fmtRange } from "../domain/time";
+import { LRM, fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
 import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
 import { type GridModel, pitchSpeaker } from "./model";
@@ -23,12 +23,14 @@ interface Props {
   active?: boolean;
   /** In placement mode: this draft accepts the speaker. */
   placeable?: boolean;
+  /** A memorial slot's own time and room, as a line of its own (the day view, when the slot is not its row's alone). */
+  where?: { range: string; room: string | null };
   onOpen: () => void;
 }
 
 const PITCH_ICON: Record<string, string> = { approached: "✉", candidate: "?", declined: "✗" };
 
-export function LessonCard({ model, lesson, lens, height, active, placeable, onOpen }: Props) {
+export function LessonCard({ model, lesson, lens, height, active, placeable, where, onOpen }: Props) {
   const compact = height < 64;
   const tiny = height < 40;
   const time = <bdi className="text-[10px] text-ink-faint tabular-nums">{fmtRange(lesson.start_min, lesson.end_min)}</bdi>;
@@ -44,16 +46,29 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
 
   if (lesson.kind === "memorial") {
     // the yellow card (DESIGN «זיכרון»): the fallen's name, the family's status, the planned minutes — never a contact
+    // The fallen's name first, alone: on the desktop grid a lane is ~180px (79px with two slots in a row), and
+    // «זמן זיכרון – » took a third of it, cutting the surname. The yellow says «זמן זיכרון»; the accessible name and the
+    // tooltip keep the whole title (the tooltip is plain text: an LRM keeps its range left to right).
     const card = memorialCard(model.week, lesson);
+    const range = fmtRange(lesson.start_min, lesson.end_min);
     return (
       <button
         type="button"
         {...common}
         data-memorial-card={card.plan?.id ?? ""}
-        aria-label={`${card.title}, ${fmtRange(lesson.start_min, lesson.end_min)}: ${card.line}`}
+        aria-label={`${card.title}, ${range}${where?.room ? `, ${where.room}` : ""}: ${card.line}`}
+        title={`${card.title} · ${LRM}${range} · ${card.line}`}
         className={`${common.className} bg-amber-100 border border-amber-300 px-2 py-0.5 leading-tight`}
       >
-        <span className="block truncate text-xs font-semibold text-amber-950">{card.title}</span>
+        <span data-memorial-name className="block truncate text-xs font-semibold text-amber-950">
+          {card.name}
+        </span>
+        {where && (
+          <span data-memorial-where className="block truncate text-[10px] text-amber-900">
+            <bdi dir="ltr">{where.range}</bdi>
+            {where.room && ` · ${where.room}`}
+          </span>
+        )}
         {!tiny && <span className="block truncate text-[10px] text-amber-900">{card.line}</span>}
       </button>
     );

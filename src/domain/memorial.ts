@@ -3,7 +3,7 @@
 // yellow card's words, and the slot picker's choices. Pure, from a Week.
 import { FAMILY_STATUS_LABEL } from "../data/memorial";
 import { rowActive } from "../grid/layout";
-import { DAY_NAMES, type Day, fmtRange } from "./time";
+import { type Day, dayRange } from "./time";
 import type { GridRow, Lesson, MemorialPlan, Week } from "./types";
 
 /** The edition's live memorial slots, in grid order. */
@@ -24,10 +24,13 @@ export function fallenName(week: Pick<Week, "fallen">, fallenId: number): string
   return (week.fallen ?? []).find((f) => f.id === fallenId)?.name ?? "חלל/ה";
 }
 
-/** «ראשון 13:00–13:15 · אולם» — a slot as the picker and the lists name it. */
+/**
+ * «ראשון 13:00–13:15 · אולם» — a slot as the picker and the lists name it; plain text (an <option> has no <bdi>),
+ * so an LRM keeps the range left to right among the Hebrew (dayRange).
+ */
 export function slotLabel(week: Pick<Week, "rooms">, l: Pick<Lesson, "day" | "start_min" | "end_min" | "room_id">): string {
   const room = week.rooms.find((r) => r.id === l.room_id)?.name;
-  return `${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)}${room ? ` · ${room}` : ""}`;
+  return `${dayRange(l.day, l.start_min, l.end_min)}${room ? ` · ${room}` : ""}`;
 }
 
 /** The slots a plan may be placed on: those with no plan, and the plan's own. */
@@ -48,13 +51,19 @@ export function minutesText(n: number | null): string {
 
 /**
  * The grid's yellow card: «זמן זיכרון – <name>» and «<the family's status> · <minutes>», or «זמן זיכרון» and
- * «עוד לא שובץ/ה חלל/ה» on an empty slot. Never a contact.
+ * «עוד לא שובץ/ה חלל/ה» on an empty slot. Never a contact. `name` is what the card itself shows first — the
+ * fallen's name alone (the yellow says «זמן זיכרון»; the card's accessible name and tooltip keep `title`).
  */
-export function memorialCard(week: Pick<Week, "memorialPlans" | "fallen">, l: Pick<Lesson, "id" | "title">): { title: string; line: string; plan: MemorialPlan | null } {
+export function memorialCard(week: Pick<Week, "memorialPlans" | "fallen">, l: Pick<Lesson, "id" | "title">): { title: string; name: string; line: string; plan: MemorialPlan | null } {
   const plan = planOf(week, l.id);
-  if (!plan) return { title: l.title || "זמן זיכרון", line: "עוד לא שובץ/ה חלל/ה", plan: null };
+  if (!plan) {
+    const title = l.title || "זמן זיכרון";
+    return { title, name: title, line: "עוד לא שובץ/ה חלל/ה", plan: null };
+  }
+  const name = fallenName(week, plan.fallen_id);
   return {
-    title: `זמן זיכרון – ${fallenName(week, plan.fallen_id)}`,
+    title: `זמן זיכרון – ${name}`,
+    name,
     line: `${FAMILY_STATUS_LABEL[plan.family_status]} · ${minutesText(plan.planned_minutes)}${plan.hard_stop ? " · בלי חריגה" : ""}`,
     plan,
   };

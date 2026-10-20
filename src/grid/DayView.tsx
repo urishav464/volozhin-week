@@ -62,13 +62,23 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
                 ? lessons.filter((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min)).sort((a, b) => a.start_min - b.start_min || roomSort(a) - roomSort(b) || a.id - b.id)
                 : [];
             if (memorial.length) {
+              // each slot with its own start in the time column, like a lesson row; its range and room as a line of
+              // its own when the row holds more than one, or the slot is not the whole row — else two would look alike.
+              // 48px (a 44px card): a touch target, as everywhere else.
               return (
                 <li key={row.id} className="space-y-1">
-                  {memorial.map((l) => (
-                    <div key={l.id} className="relative h-10">
-                      <LessonCard model={model} lesson={l} lens={lens} height={40} onOpen={() => onLesson(l.id)} />
-                    </div>
-                  ))}
+                  {memorial.map((l) => {
+                    const alone = memorial.length === 1 && l.start_min === row.start_min && l.end_min === row.end_min;
+                    const where = alone ? undefined : { range: fmtRange(l.start_min, l.end_min), room: model.week.rooms.find((r) => r.id === l.room_id)?.name ?? null };
+                    return (
+                      <div key={l.id} className="flex gap-2">
+                        <bdi className="w-11 shrink-0 pt-1 text-xs font-semibold tabular-nums text-ink-soft">{fmt(l.start_min)}</bdi>
+                        <div className={`relative min-w-0 flex-1 ${where ? "h-14" : "h-12"}`}>
+                          <LessonCard model={model} lesson={l} lens={lens} height={where ? 56 : 48} where={where} onOpen={() => onLesson(l.id)} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </li>
               );
             }

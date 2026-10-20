@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { demoWeek } from "../data/demoWeek";
 import { trackingRows } from "../exports/tracking";
 import { freeSlots, memorialCard, memorialRowsOf, memorialSlots, slotLabel } from "./memorial";
+import { LRM } from "./time";
 
 describe("memorial times on screen", () => {
   it("draw the yellow card: the fallen's name, the family's status and the planned minutes — an empty slot says so", () => {
@@ -25,7 +26,8 @@ describe("memorial times on screen", () => {
     const held = w.memorialPlans[0]; // on Sunday's slot
     expect(freeSlots(w, w.memorialPlans[1]).map((l) => l.id)).toEqual(slots.slice(1).map((l) => l.id));
     expect(freeSlots(w, held).map((l) => l.id)).toEqual(slots.map((l) => l.id));
-    expect(slotLabel(w, slots[0])).toMatch(/^ראשון 13:00–13:15 · /);
+    // plain text (an <option>): an LRM right before the range keeps it 13:00–13:15 among the Hebrew, not 13:15–13:00
+    expect(slotLabel(w, slots[0])).toMatch(new RegExp(`^ראשון ${LRM}13:00–13:15 · `));
   });
 
   it("list a day's memorial rows inside the edition's window", () => {

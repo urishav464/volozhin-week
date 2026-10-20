@@ -10,7 +10,7 @@ import { CommandError } from "../../data/commands";
 import type { EscortLesson, EscortView, PublicPort } from "../../data/publicPort";
 import { STAGE_LIMITS } from "../../data/stageRules";
 import { telHref, waHref } from "../../domain/contactLinks";
-import { TICK_LABEL } from "../../domain/escorts";
+import { escortCount, liaisonLine, TICK_LABEL, ticksApply } from "../../domain/escorts";
 import { israelDate, israelMoment } from "../../domain/israelTime";
 import { fmtDate } from "../../domain/milestones";
 import { byGender } from "../../domain/names";
@@ -52,7 +52,7 @@ export function EscortPage({ port, token }: { port: PublicPort; token: string })
       <PhonesNote view={v} />
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-sm text-ink-soft" aria-live="polite">
-          {v.lessons.length === 0 ? "" : v.lessons.length === 1 ? "שיעור אחד" : `${v.lessons.length} שיעורים`}
+          {escortCount(v.lessons.map((l) => l.kind))}
         </p>
         <Button onClick={() => void refresh()} busy={refreshing} busyLabel="טוען…">
           טעינה מחדש
@@ -130,7 +130,7 @@ function LessonCard({
         </h3>
         <p className="text-sm text-ink-soft">
           {when.date} · {l.room}
-          {memorial && l.title && " · זמן זיכרון"}
+          {memorial && l.title && l.title !== "זמן זיכרון" && " · זמן זיכרון"}
         </p>
       </div>
       <div>
@@ -186,7 +186,8 @@ function LessonCard({
           </ul>
         </div>
       )}
-      <Ticks lesson={l} port={port} token={token} onTicks={onTicks} onLost={onLost} />
+      {/* a memorial slot has no speaker to remind, meet or introduce: the liaison's role instead (no family contact) */}
+      {ticksApply(l) ? <Ticks lesson={l} port={port} token={token} onTicks={onTicks} onLost={onLost} /> : <p className="text-sm font-semibold">{liaisonLine(view.escort.gender)}</p>}
       {l.transport && <Pickup lesson={l} port={port} token={token} onLost={onLost} />}
     </article>
   );

@@ -3,7 +3,7 @@
 // constraints.) Every warning has a stable key so it can be acknowledged as
 // «מכוון» and stay quiet.
 import { byGender, displayName } from "../domain/names";
-import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
+import { DAY_NAMES, type Day, dayRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { categoryLoad } from "./balance";
@@ -86,7 +86,7 @@ export function warningsFor(week: Week): Warning[] {
       const group = dayLessons.filter((b) => overlaps(a.start_min, a.end_min, b.start_min, b.end_min));
       if (group.length > 1) {
         group.forEach((g) => seen.add(g.id));
-        push({ kind: "parallel", severity: "info", day, lessonIds: group.map((g) => g.id), message: `${group.length} שיעורים במקביל ב${DAY_NAMES[day]} ${fmtRange(a.start_min, a.end_min)}` });
+        push({ kind: "parallel", severity: "info", day, lessonIds: group.map((g) => g.id), message: `${group.length} שיעורים במקביל ב${dayRange(day, a.start_min, a.end_min)}` });
       }
     }
 
@@ -125,11 +125,11 @@ export function warningsFor(week: Week): Warning[] {
     for (const l of live.filter((x) => x.day === day)) {
       const touching = week.rows.filter((r) => overlaps(l.start_min, l.end_min, r.start_min, r.end_min));
       if (touching.some((r) => !rowActive(r, day, week.edition))) {
-        push({ kind: "outside_window", severity: "warn", day, lessonIds: [l.id], message: `שיעור מחוץ לשעות השבוע: ${DAY_NAMES[day]} ${fmtRange(l.start_min, l.end_min)}` });
+        push({ kind: "outside_window", severity: "warn", day, lessonIds: [l.id], message: `שיעור מחוץ לשעות השבוע: ${dayRange(day, l.start_min, l.end_min)}` });
       }
       const fixed = touching.filter((r) => (r.kind === "fixed" || r.kind === "kk") && rowActive(r, day, week.edition));
       if (fixed.length > 0 && l.kind === "lesson") {
-        push({ kind: "fixed_overlap", severity: "warn", day, lessonIds: [l.id], message: `השיעור ב${DAY_NAMES[day]} ${fmtRange(l.start_min, l.end_min)} נכנס ל«${fixed[0].label}»` });
+        push({ kind: "fixed_overlap", severity: "warn", day, lessonIds: [l.id], message: `השיעור ב${dayRange(day, l.start_min, l.end_min)} נכנס ל«${fixed[0].label}»` });
       }
     }
   }
@@ -156,7 +156,7 @@ export function warningsFor(week: Week): Warning[] {
     if (!s) continue;
     const cannot = week.availability.some((v) => v.approach_id === a.id && v.kind === "cannot" && v.day === l.day && overlaps(v.from_min, v.to_min, l.start_min, l.end_min));
     if (cannot) {
-      push({ kind: "outside_availability", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")} ב${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)}` });
+      push({ kind: "outside_availability", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")} ב${dayRange(l.day, l.start_min, l.end_min)}` });
     }
     if (a.status === "declined" && p.state !== "accepted") {
       push({ kind: "declined_pitch", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "סירב", "סירבה")} השנה, ועדיין ${byGender(s.gender, "מוצע", "מוצעת")} כאן` });
@@ -180,7 +180,7 @@ export function warningsFor(week: Week): Warning[] {
     );
     for (const { a, b, gap } of pairs) {
       const who = `«${rosterName.get(rid) ?? "מלווה"}»`;
-      const when = `${DAY_NAMES[b.day]} ${fmtRange(b.start_min, b.end_min)}`;
+      const when = dayRange(b.day, b.start_min, b.end_min);
       const message =
         gap < 0
           ? `${who} מלווה שני שיעורים חופפים (${when})`
@@ -200,7 +200,7 @@ export function warningsFor(week: Week): Warning[] {
     const l = p.lesson_id == null ? undefined : byId.get(p.lesson_id);
     if (!l || p.planned_minutes == null) continue;
     const who = `«${fallenName.get(p.fallen_id) ?? "זמן זיכרון"}»`;
-    const when = `${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)}`;
+    const when = dayRange(l.day, l.start_min, l.end_min);
     const len = l.end_min - l.start_min;
     if (p.planned_minutes > len) {
       push({ kind: "memorial_over_slot", severity: "warn", day: l.day, lessonIds: [l.id], message: `${who}: ${p.planned_minutes} דקות מתוכננות, והמשבצת ${len} דקות (${when})` });
@@ -210,10 +210,13 @@ export function warningsFor(week: Week): Warning[] {
     }
   }
   if (policy?.warn_adjacent_meal === true) {
-    for (const l of live.filter((x) => x.kind === "memorial")) {
+    // only a slot a plan is placed on: the grid's memorial rows sit next to lunch by design (DESIGN), so every empty
+    // default slot would be warned about, every day, burying the warnings that matter
+    const placed = new Set((week.memorialPlans ?? []).map((p) => p.lesson_id));
+    for (const l of live.filter((x) => x.kind === "memorial" && placed.has(x.id))) {
       const meal = week.rows.find((r) => isMealRow(r) && rowActive(r, l.day, week.edition) && (r.end_min === l.start_min || r.start_min === l.end_min));
       if (meal) {
-        push({ kind: "memorial_near_meal", severity: "warn", day: l.day, lessonIds: [l.id], message: `זמן זיכרון צמוד ל«${meal.label}» (${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)})` });
+        push({ kind: "memorial_near_meal", severity: "warn", day: l.day, lessonIds: [l.id], message: `זמן זיכרון צמוד ל«${meal.label}» (${dayRange(l.day, l.start_min, l.end_min)})` });
       }
     }
   }
@@ -225,7 +228,7 @@ export function warningsFor(week: Week): Warning[] {
     if (l.category_id == null) missing.push("קטגוריה");
     if (speakersOf(l.id).some((s) => s.gender == null)) missing.push("מגדר המרצה");
     if (missing.length) {
-      push({ kind: "missing_info", severity: "info", day: l.day, lessonIds: [l.id], message: `חסר: ${missing.join(", ")} (${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)})` });
+      push({ kind: "missing_info", severity: "info", day: l.day, lessonIds: [l.id], message: `חסר: ${missing.join(", ")} (${dayRange(l.day, l.start_min, l.end_min)})` });
     }
   }
 

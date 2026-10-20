@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { FAMILY_STATUS_LABEL } from "../data/memorial";
 import { memorialCard, minutesText } from "../domain/memorial";
 import { displayName } from "../domain/names";
-import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
+import { DAY_NAMES, type Day, LRM, fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
 import { DayView } from "../grid/DayView";
 import { buildModel, type GridModel, pitchSpeaker } from "../grid/model";
@@ -57,7 +57,8 @@ function LessonFacts({ model, lesson, wide, onClose }: { model: GridModel; lesso
   const memorial = lesson.kind === "memorial" ? memorialCard(model.week, lesson) : null;
   const title = memorial ? memorial.title : lesson.state === "closed" ? (speakers[0] ? displayName(speakers[0]) : "שיעור") : "טיוטה";
   const rows: [string, string][] = [
-    ["יום ושעה", `${DAY_NAMES[lesson.day]} · ${fmtRange(lesson.start_min, lesson.end_min)}`],
+    // an LRM keeps the range left to right after the Hebrew day (in its <bdi> it would read 13:15–13:00)
+    ["יום ושעה", `${DAY_NAMES[lesson.day]} · ${LRM}${fmtRange(lesson.start_min, lesson.end_min)}`],
     ["חדר", room ?? "TBD"],
   ];
   if (memorial) {

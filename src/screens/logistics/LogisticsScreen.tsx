@@ -74,7 +74,7 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
         <EditionSelect />
       </div>
       {!mayLogistics(actor) ? (
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">המסך הזה לצוות הלוגיסטי ולמדריכים של המחזור. אפשר לבחור מחזור אחר למעלה.</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">המסך הזה לצוות הלוגיסטי ולמדריך/ה של המחזור. אפשר לבחור מחזור אחר למעלה.</p>
       ) : (
         <>
           <nav aria-label="לוגיסטיקה" className="flex flex-wrap gap-1 print:hidden">
@@ -474,7 +474,8 @@ function Prints({ port, week, notify, label }: Pick<TabProps, "port" | "week" | 
                 <li key={r.lesson.id} data-print-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3">
                   <p className="font-semibold break-words">{r.heading}</p>
                   <p className="text-sm text-ink-soft">
-                    <bdi dir="ltr">{r.time}</bdi> · {pagesText(r)}
+                    <bdi dir="ltr">{r.time}</bdi>
+                    {r.files.length > 0 && <> · {pagesText(r)}</>}
                   </p>
                   {r.files.length === 0 ? (
                     <p className="mt-1 text-sm text-warn">אין קבצים</p>

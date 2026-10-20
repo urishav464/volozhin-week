@@ -12,6 +12,7 @@ import { useShellWorker } from "./offline/register";
 import type { WeekSnapshot } from "./offline/snapshot";
 import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
+import { ScreenBoundary } from "./screens/ScreenBoundary";
 import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
 import { type NavItem, Shell, UpdateBanner } from "./screens/Shell";
@@ -277,6 +278,7 @@ function GateScreen(props: {
       // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
       // edition on screen).
       return (
+        <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
           <Route path="/" element={<WeekScreen port={props.port} me={gate.me} />} />
@@ -304,6 +306,7 @@ function GateScreen(props: {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
+        </ScreenBoundary>
       );
   }
 }

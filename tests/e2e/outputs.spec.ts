@@ -326,7 +326,7 @@ test.describe("demo build", () => {
 });
 
 test.describe("mock build", () => {
-  const signedIn = async (page: Page, membership: { role: string; global: boolean; member: number }) => {
+  const signedIn = async (page: Page, membership: { role: string; global: boolean; member: number; name?: string }) => {
     const week = demoWeek();
     week.edition.id = 7;
     week.edition.kind = "real";
@@ -334,7 +334,7 @@ test.describe("mock build", () => {
     const sb = new FakeSupabase({
       status: 200,
       body: {
-        status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: membership.global,
+        status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: membership.name ?? "חבר/ת צוות לדוגמה", global_admin: membership.global,
         memberships: [{ edition_id: membership.global ? null : 7, role: membership.role, member_id: membership.member }],
       },
     });
@@ -345,6 +345,25 @@ test.describe("mock build", () => {
     sb.token = session.access_token;
     return { sb, week, session };
   };
+  test("the header of an admin of every edition: all ten sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "the widths are set here");
+    await signedIn(page, { role: "admin", global: true, member: 1, name: "שם ארוך מאוד של מדריך/ה לדוגמה" });
+    await page.goto(mockUrl());
+    await expect(page.getByRole("button", { name: "התנתקות" })).toBeVisible();
+    const links = nav(page).getByRole("link");
+    await expect(links).toHaveCount(10);
+    for (const width of [1024, 1100, 1150, 1180, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      const navBox = (await nav(page).boundingBox())!;
+      for (const box of await links.evaluateAll((ls) => ls.map((l) => ({ text: l.textContent, ...l.getBoundingClientRect().toJSON() }) as DOMRect & { text: string }))) {
+        // inside the nav's own box: not behind its sideways scroll (headless Chromium hides the scrollbar itself)
+        expect(box.left, `${width}: ${box.text}`).toBeGreaterThanOrEqual(navBox.x - 0.5);
+        expect(box.right, `${width}: ${box.text}`).toBeLessThanOrEqual(navBox.x + navBox.width + 0.5);
+      }
+      expect((await page.getByRole("banner").boundingBox())!.height, String(width)).toBeLessThanOrEqual(56); // one row: the week's grid height holds
+    }
+  });
+
   const authed = (sb: FakeSupabase, path: string, token: string) => {
     const calls = sb.calls.filter((c) => c.path === path);
     expect(calls.length, path).toBeGreaterThan(0);
