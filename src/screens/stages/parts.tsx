@@ -51,7 +51,7 @@ export function archivedEdition(week: Week): boolean {
  * One stage of the lesson as a disclosure: its dot, name and where it stands — tapping it
  * opens the section. Collapsed, the five read as the card's five dots do.
  */
-export function StageSection({ stage, open, onToggle, children }: { stage: Stage; open: boolean; onToggle: () => void; children: ReactNode }) {
+export function StageSection({ stage, open, onToggle, children }: { stage: Pick<Stage, "label" | "state" | "note"> & { key: string }; open: boolean; onToggle: () => void; children: ReactNode }) {
   const id = `stage-${stage.key}`;
   return (
     <section id={id} aria-label={stage.label} data-stage-section={stage.key} data-state={stage.state} className="scroll-mt-2 rounded-lg border border-line bg-card">

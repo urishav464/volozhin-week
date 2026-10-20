@@ -14,6 +14,7 @@ import { Badge, Button, Confirm, Field, INPUT, Panel, useRunner } from "../setti
 import { EditionSelect, useToast } from "../speakers/parts";
 import { Markdown } from "../Markdown";
 import { actorIn, useWeekStore } from "../weekStore";
+import { KnowledgeTabs } from "./tabs";
 
 export function KnowledgeScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
@@ -62,6 +63,7 @@ export function KnowledgeScreen({ port, me }: { port: DataPort; me: Me }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h2 className="font-display text-2xl font-extrabold">ידע ואבני דרך</h2>
         <EditionSelect />
+        <KnowledgeTabs actor={actor} />
       </div>
       <Milestones edition={edition} list={milestones} admin={actor.isAdmin} k={k} act={act} busy={busy} />
       <Notes edition={edition} list={notes} admin={actor.isAdmin} global={actor.global} k={k} act={act} busy={busy} names={names} />

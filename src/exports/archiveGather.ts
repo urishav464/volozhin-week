@@ -5,7 +5,8 @@
 // has a plan for, never another year's (as the speakers' contacts are only the
 // speakers the edition touched); and, when «כולל קבצי המקורות» is asked for, the sources' bytes
 // through signed URLs a batch at a time (a file that cannot be read is skipped
-// and named, never silently left out). A cancel stops between files.
+// and named, never silently left out). A cancel stops between files. And «איך עבר»
+// (milestone 6) as the caller reads it.
 import type { DataPort } from "../data/port";
 import type { Week } from "../domain/types";
 import type { ArchiveExtras } from "../data/outputs";
@@ -21,7 +22,8 @@ export async function gatherArchive(port: DataPort, editionId: number, touchedSp
     const c = await port.memorial.contacts(id); // null: not the caller's to see
     if (c && Object.values(c).some((v) => v != null)) fallenContacts.push({ fallen_id: id, ...c });
   }
-  return { week, extras, more: { kk, fallen, fallenContacts, sources: null } };
+  const reviews = await port.reviews.ofEdition(editionId); // «איך עבר» (v12): its admins and content read them
+  return { week, extras, more: { kk, fallen, fallenContacts, sources: null, reviews } };
 }
 
 

@@ -28,6 +28,7 @@ import { MessageComposer } from "./MessageComposer";
 import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 import { SourceFiles } from "./SourceFiles";
+import { ReviewSection } from "./ReviewStage";
 import { MEMORIAL_SAID, readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
 
 export interface LessonStagesProps {
@@ -47,6 +48,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
   const { busy, run } = useRunner(notify, clear);
   const [open, setOpen] = useState<Set<StageKey>>(() => new Set(focus ? [focus] : []));
+  const [reviewOpen, setReviewOpen] = useState(false);
   // From «המרצים שלי»: the section it was opened for comes into view.
   useEffect(() => {
     if (focus) requestAnimationFrame(() => document.getElementById(`stage-${focus}`)?.scrollIntoView({ block: "start" }));
@@ -115,6 +117,10 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
           {body(s.key)}
         </StageSection>
       ))}
+      {/* after the week (milestone 6): opinions about the speaker — the edition's content members and admins only */}
+      {actor.role !== "logistics" && l.kind === "lesson" && (
+        <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
+      )}
     </section>
   );
 }

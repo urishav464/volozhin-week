@@ -28,6 +28,7 @@ const TrackingScreen = lazy(() => import("./screens/outputs/TrackingScreen").the
 const EscortsScreen = lazy(() => import("./screens/outputs/EscortsScreen").then((m) => ({ default: m.EscortsScreen })));
 const DesignerScreen = lazy(() => import("./screens/outputs/DesignerScreen").then((m) => ({ default: m.DesignerScreen })));
 const KnowledgeScreen = lazy(() => import("./screens/knowledge/KnowledgeScreen").then((m) => ({ default: m.KnowledgeScreen })));
+const SummaryScreen = lazy(() => import("./screens/knowledge/SummaryScreen").then((m) => ({ default: m.SummaryScreen })));
 const HelpScreen = lazy(() => import("./screens/HelpScreen").then((m) => ({ default: m.HelpScreen })));
 const KkScreen = lazy(() => import("./screens/kk/KkScreen").then((m) => ({ default: m.KkScreen })));
 const ReaderScreen = lazy(() => import("./screens/reader/ReaderScreen").then((m) => ({ default: m.ReaderScreen })));
@@ -312,6 +313,7 @@ function GateScreen(props: {
           <Route path="/memorial" element={<MemorialScreen port={props.port} me={gate.me} />} />
           <Route path="/logistics/:tab?" element={handlesLogistics(gate.me) ? <LogisticsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
+          <Route path="/knowledge/summary" element={<SummaryScreen port={props.port} me={gate.me} />} />
           <Route path="/help" element={<HelpScreen />} />
           <Route
             path="/settings/:tab?"

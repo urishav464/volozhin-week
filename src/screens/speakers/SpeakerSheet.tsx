@@ -28,6 +28,7 @@ import { Button, Field, GENDER_LABEL, INPUT, useRunner } from "../settings/kit";
 import { type Actor, actorIn } from "../weekStore";
 import { MessageComposer } from "../stages/MessageComposer";
 import { AvailabilityGrid, formOf, type Notify, patchOf, type ProfileForm, ProfileFields, Section } from "./parts";
+import { SpeakerReviews } from "./SpeakerReviews";
 
 export interface SpeakerSheetProps {
   port: DataPort;
@@ -267,6 +268,8 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
           </ul>
         )}
       </Section>
+
+      <SpeakerReviews port={port} s={s} actor={actor} edition={edition} />
 
       <Section title="מה קרה" label="ציר הפעולות">
         {lines == null ? (

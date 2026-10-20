@@ -54,3 +54,14 @@ export function earlierEdition(other: Pick<Edition, "start_date" | "kind" | "sta
   if (other.start_date && self.start_date) return other.start_date < self.start_date;
   return past(other) && !past(self);
 }
+
+/** One line of what a review says, for a list or a collapsed section: «להזמין שוב: כן · ציון 4/5 · חרג/ה מהזמן». */
+export function reviewLine(r: { invite_again: InviteAgain | null; rating: number | null; overran: boolean }, overranWord = "חרג/ה מהזמן"): string {
+  return [
+    r.invite_again ? `להזמין שוב: ${INVITE_LABEL[r.invite_again]}` : null,
+    r.rating != null ? `ציון ${r.rating}/5` : null,
+    r.overran ? overranWord : null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || "נכתב";
+}
