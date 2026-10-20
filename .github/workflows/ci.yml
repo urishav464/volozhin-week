@@ -51,7 +51,10 @@ jobs:
     env:
       PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
+      # the whole history: tests/sql/upgrade.test.ts reads the previous schema.sql from it
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
