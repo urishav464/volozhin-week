@@ -205,6 +205,19 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   only) — never a family's contact (`PERSONAL_KEYS` has `contact_name`/`relation`; `tests/sql/memorial.test.ts` runs
   `assertWeekOnly` on `load_week`); offline a memorial card opens its plan to read, and any other address (`/memorial`,
   `/logistics`, …) says it needs a connection over the day view (`view.ts` `sectionNeedingConnection`).
+- **The import of 5786 (schema v12):** `src/import/` — the readers (a paste: `clipboard.ts` → `html.ts`, DOMParser
+  into an inert document, text nodes only, or `table.ts` TSV; `xlsxRead.ts` and `docxRead.ts` of our own on
+  `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says),
+  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
+  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default; an escorts' column is never
+  mappable), matching (`match.ts`) and the three kinds (`candidates.ts`, `tracking.ts`, `escorts.ts`).
+  `port.imports` (`src/data/imports.ts`, `importRules.ts`) → `import_lookup` (booleans, never a contact's value) and
+  `import_commit` — a global admin's, SECURITY DEFINER, one transaction, every row or none (`import_bad_row`
+  «row:reason»), fill-empty only, re-runnable (schema.sql «Import 5786»; CONTRACT «The import of 5786»; the engine's
+  `importCommit` behind DemoPort). The wizard is «הגדרות ← ייבוא» (`src/screens/settings/ImportTab.tsx`,
+  `importParts.tsx`); **nothing raw is stored** — not in the database, not in the browser (the e2e checks the
+  storage). The archive's `lessons.import_note` shows in the lesson panel; «אישור באצווה: מי שלימד/ה ב-…» is
+  `pendingWhoTaught` (`src/domain/mine.ts`) in `/approvals` (DECISIONS «ייבוא תשפ"ו»).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

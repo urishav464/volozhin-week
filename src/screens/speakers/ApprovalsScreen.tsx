@@ -169,7 +169,9 @@ function TaughtBatch({
   }, [port, edition.id]);
   const who = archive ? pendingWhoTaught(pending, archive) : [];
   if (who.length === 0) return null;
-  const count = who.length === 1 ? "מרצה אחד/ת" : `${who.length} מרצים`;
+  const one = who.length === 1;
+  const count = one ? "מרצה אחד/ת" : `${who.length} מרצים`;
+  const taught = one ? "לימד/ה" : "לימדו";
   return (
     <div role="group" aria-label={`אישור באצווה: מי שלימד/ה ב-${edition.label}`} className="rounded-lg border border-line bg-paper p-3">
       <p className="text-sm">
@@ -179,12 +181,12 @@ function TaughtBatch({
         <Badge tone="accent">הצעה</Badge>
       </p>
       <p className="mb-2 text-sm text-ink-soft">
-        {count} {who.length === 1 ? "שממתין/ה" : "שממתינים"} לאישור לימדו שיעור במחזור «{edition.label}»: {who.map((s) => displayName(s)).join(", ")}.
+        {count} {one ? "שממתין/ה" : "שממתינים"} לאישור {taught} שיעור במחזור «{edition.label}»: {who.map((s) => displayName(s)).join(", ")}.
       </p>
       {asking ? (
         <Confirm
           danger={false}
-          text={`לאשר ${count} שלימדו ב-${edition.label}? אחר כך אפשר לסגור איתם/ן שיעורים.`}
+          text={`לאשר ${count} ש${taught} ב-${edition.label}? אחר כך אפשר לסגור ${one ? "איתו/ה" : "איתם/ן"} שיעורים.`}
           confirm={`אישור ${count}`}
           busy={busy === `taught:${edition.id}`}
           onConfirm={async () => {
@@ -194,7 +196,7 @@ function TaughtBatch({
         />
       ) : (
         <Button kind="primary" onClick={() => setAsking(true)}>
-          אישור {count} שלימדו ב-{edition.label}
+          אישור {count} ש{taught} ב-{edition.label}
         </Button>
       )}
     </div>

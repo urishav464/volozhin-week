@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), and memorial times and logistics (milestone 5ב-2)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), and the import of 5786
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -1149,3 +1149,111 @@ archive's `archive_cancelled` is the browser's.
 
 `authenticated` may also execute `app.may_see_fallen` and `app.may_see_fallen_contacts` — the
 policies run as the browser's role (`tests/sql/schema.test.ts` pins them).
+
+# The import of 5786 (schema v12)
+
+Last year's files (תשפ"ו) into the database (DESIGN «ייבוא תשפ"ו»; DECISIONS «ייבוא תשפ"ו»). The same two
+implementations: `supabase/schema.sql` «Import 5786» and `src/data/engine.ts` (`importCommit`, `importLookup`,
+behind `DemoPort`'s `imports`); `tests/parity` runs candidates, an archive (made, then replaced) and the escorts on
+both and compares results, refusals and state. Both functions are `SECURITY DEFINER` in `public`, and both are a
+**global admin's** (`app.require_global_admin`: not a member → `not_member`; a member who is not a global admin —
+an edition's admin included → `forbidden`).
+
+**What travels.** The files never reach the server. The wizard («הגדרות ← ייבוא», `src/screens/settings/ImportTab.tsx`)
+reads a paste or an .xlsx/.docx in the page (`src/import/`), the admin maps, reviews and decides, and only the
+reviewed rows arrive, as one payload. Nothing raw is stored — not in the database, not in the browser's storage. The
+pool is read as `load_week` gives a speaker (`port.imports.pool()`: `speakers` without any contact column).
+
+## `lookup(speakers[], phoneKeys[])` — `import_lookup(p_speakers bigint[], p_phone_keys text[])` → `jsonb`
+`stable`. At most 5000 of each (`import_too_big`). Returns `{phones: [{key, speaker_id}], contacts: [{speaker_id,
+phone, email, secretary_note, notes}]}`: the pool speakers whose stored phone has one of the keys (by
+`app.phone_key`), and, for the speakers asked about and those the phones found, **which** contact fields are filled
+— booleans, never a value. Ordered by key then speaker; contacts by speaker.
+
+## The phone key — `app.phone_key(text)` ≡ `phoneKey` (`src/import/phone.ts`)
+The digits; a leading `972` or `00972` becomes a `0`, and **one** `0` written after it is dropped («+972 (0)…»); 8–9
+digits with no leading `0` get it back (a number cell ate it — «הצעה»); fewer than 6 digits → null. The two are held
+equal value for value (`tests/sql/import.test.ts`).
+
+## `commit(kind, payload)` — `import_commit(p_kind text, p_payload jsonb)` → `jsonb`
+One transaction: **every row or none.** In this order: `p_kind` one of `candidates tracking escorts` and `p_payload`
+an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons) or more than 1,000,000 bytes →
+`import_too_big`. A row the function refuses aborts the whole call with `import_bad_row`, its detail `«row:reason»`
+(the row's `row`, or −1; the reason one of this file's codes); the browser's `ImportRowError(row, reason)`.
+
+### A speaker row (`candidates` rows, `tracking` speakers) — `app.import_speaker`
+Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): `action` `new`/`merge` → else
+`bad_value`; `name` one line ≤ 120 with a non-empty name key → else `name_required`; `title` one of the titles of
+`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and exactly what the
+title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null) → else `bad_value`;
+`affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
+`email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000.
+
+Resolved:
+- `merge`: the speaker `speaker_id` (locked) — gone → `stale`.
+- `new`: the one pool speaker with this name key (two → `disambiguator_required`); else the one speaker whose stored
+  phone has this phone's key; else a **new** speaker: `vetted='pending'`, `source` the payload's, `created_by` the
+  caller, the title and gender as given (a name taken a moment ago by another connection → `speaker_exists`).
+  So a re-run, or a row the browser thought new, **completes** — never a second copy.
+- Completing **fills only what is empty**: the speaker's `title`, `gender`, `affiliation`, `topics` (an empty array is
+  empty), and `speaker_contacts`' `phone`, `email`, `notes`. A field with a value is never overwritten. A speaker
+  whose own record got a field: `version + 1`.
+
+### `candidates` — `{source, titles_from, rows: SpeakerRow[]}`
+`rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`. Each row as above.
+
+### `tracking` — `{label, start_date, source, titles_from, speakers: SpeakerRow[], lessons: ArchiveLessonRow[]}`
+In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`;
+`start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; an edition with
+this label that is not of kind `archive` → `edition_exists`; `source` as above. Then the speakers (as above), then:
+- **No edition with this label:** a new one — `kind='archive'`, `status='archived'`, `start_date` only as given; its
+  grid rows copied from `grid_template` (as `start_edition` makes them), one default room «בית מדרש» (the same label
+  made a moment ago by another import → `stale`).
+- **An archive edition with this label:** **all its lessons are deleted** (their speakers with them) and replaced
+  by these; its `start_date` set to the one given (null included); its speakers stay in the pool.
+- Each lesson, checked in this order (`cleanLessonRow`): an object; `day` 0–4, `390 ≤ start_min < end_min ≤ 1830`,
+  multiples of 5 → else `bad_shape`; `room` 0–9 → else `bad_value` (0 the default room; k «מקביל k+1», made when first
+  needed); `title` ≤ 200; `category_id` null or a category → else `bad_value`; `audience` ≤ 120; `sources_kind` one of
+  the kinds, `print_when` one of `none before same_day` → else `bad_value`; `sources_note` ≤ 500; `pay_amount` null or
+  a whole 1–100000 → else `bad_amount`; `import_note` a block ≤ 1000; `speakers` a non-empty array of distinct
+  indexes into the payload's `speakers` → else `bad_value`.
+- Inserted `kind='lesson'`, `state='closed'`, `updated_by` the caller; its speakers — the first `lead`, the rest `co`;
+  two rows that resolved to one pool speaker are one speaker here. The room invariant → `room_taken`, the speaker
+  invariant → `speaker_busy` (the row named). **The closing invariant is not applied**: an archive's lesson is a
+  record of what was, its speakers may be pending, their gender unknown.
+- `lessons.import_note` (v12): what the sheet said that has no field of its own («הסעה/תשלום» words, «קיבל הודעת
+  סיכום מ» — a note, never a member), cleared of phones and e-mails in the browser. Written by this import only;
+  `load_week` carries it; the lesson panel shows it («מגיליון המעקב של אשתקד»).
+- The archive's lessons are in `speaker_history` like any edition's.
+
+### `escorts` — `{rows: PrefsRow[]}`
+`rows` an array → else `bad_value`. Each row: an object; `speaker_id` a pool speaker → else `stale`; `contact_pref`
+null or a channel (`app.pick_contact_pref`) → else `bad_value`; `secretary_note` a block ≤ 300. **Fill only what is
+empty:** `speakers.contact_pref` (`version + 1`), `speaker_contacts.secretary_note`. No speaker is added.
+
+### The result and the log
+`{created, merged, filled, contacts, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}` —
+`merged` counts every speaker row that completed one (`escorts`: every row), `filled` those whose record got a
+field, `contacts` those whose contacts did; `lessons` and `replaced` the archive's; `edition_id` null but for
+`tracking`; `speakers` each speaker row as resolved, in order.
+The activity log: per speaker `insert` (`{vetted, source}`), `update` and `contacts` (`{fields: […]}` — field names);
+per call one `import` entry (entity `import`, the archive's edition and id for `tracking`, kind = the call's kind)
+with the counts and the source. **Never a name, a phone, an e-mail or a note.**
+
+## Errors (the import)
+
+`not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `name_required bad_phone
+bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amount room_taken speaker_busy`; for
+`tracking`, `label_required not_sunday edition_exists stale`. The browser's own, before anything is sent:
+`import_too_big` (a file or a table past `IMPORT_LIMITS`), `import_bad_file`, `import_encrypted`.
+
+## RPC signatures (the import)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `import_lookup` | `p_speakers bigint[], p_phone_keys text[]` | `jsonb` | authenticated (a global admin's; definer) |
+| `import_commit` | `p_kind text, p_payload jsonb` | `jsonb` | authenticated (a global admin's; definer) |
+
+The helpers (`app.phone_key`, `app.title_gender`, `app.jint`, `app.jlen`, `app.require_global_admin`,
+`app.refuse_row`, `app.import_speaker`, `app.import_speakers`, `app.import_room`) are no API role's
+(`tests/sql/import.test.ts`).
