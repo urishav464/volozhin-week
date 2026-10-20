@@ -39,8 +39,9 @@ export function precacheList(names: readonly string[]): string[] {
 /**
  * The static pages Cloudflare Pages serves beside the app, from the names of public/'s files (relative to it, "/"
  * between folders): every HTML page in each spelling a navigation to it can take — its .html address, which Cloudflare
- * answers with a 308 to the address without the extension («pretty URLs»), and that address, which serves the page
- * (privacy.html: /privacy.html and /privacy); a folder's index.html as /d/index.html, /d/ and /d. public/index.html,
+ * answers with a 308 to the address without the extension («pretty URLs»), and that address, which serves the page,
+ * with a trailing slash too (typed by hand; privacy.html: /privacy.html, /privacy and /privacy/); a folder's
+ * index.html as /d/index.html, /d/ and /d. public/index.html,
  * were there one, is the app's own page (the build's index.html), not a static page. The worker passes a navigation to
  * any of them to the network, never the app shell (src/offline/sw.ts routeFor).
  */
@@ -54,7 +55,10 @@ export function staticPages(names: readonly string[]): string[] {
       const folder = bare.slice(0, -"index".length); // "d/"
       out.add(`/${folder}`);
       out.add(`/${folder.slice(0, -1)}`);
-    } else out.add(`/${bare}`);
+    } else {
+      out.add(`/${bare}`);
+      out.add(`/${bare}/`);
+    }
   }
   return [...out].sort();
 }

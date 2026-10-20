@@ -35,11 +35,13 @@ describe("staticPages", () => {
     expect(staticPages(["privacy.html", "favicon.svg", "manifest.webmanifest", "_headers", "docs/terms.html", "help/index.html", "index.html"])).toEqual([
       "/docs/terms",
       "/docs/terms.html",
+      "/docs/terms/",
       "/help",
       "/help/",
       "/help/index.html",
       "/privacy",
       "/privacy.html",
+      "/privacy/",
     ]);
     expect(staticPages([])).toEqual([]);
   });
@@ -128,9 +130,9 @@ describe("the files Cloudflare serves beside the build", () => {
   it("public/'s pages, as the build reads them: privacy.html in both spellings — every .html there, and nothing else", () => {
     const dir = fileURLToPath(new URL("../../public/", import.meta.url));
     const pages = staticPages(filesUnder(dir));
-    expect(pages).toEqual(["/privacy", "/privacy.html"]);
+    expect(pages).toEqual(["/privacy", "/privacy.html", "/privacy/"]);
     const html = readdirSync(dir).filter((n) => n.endsWith(".html"));
-    expect(pages).toEqual(html.flatMap((n) => [`/${n.slice(0, -".html".length)}`, `/${n}`]).sort());
+    expect(pages).toEqual(html.flatMap((n) => [`/${n.slice(0, -".html".length)}`, `/${n}`, `/${n.slice(0, -".html".length)}/`]).sort());
     expect(filesUnder(dir)).toEqual(expect.arrayContaining(["privacy.html", "favicon.svg", "_headers"]));
     expect(filesUnder("")).toEqual([]);
   });
