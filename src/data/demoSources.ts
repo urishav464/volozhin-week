@@ -7,7 +7,7 @@ import type { SourceFile } from "../domain/types";
 import { CommandError } from "./commands";
 import { makeSample, type Sample } from "./demoFiles";
 import type { Engine } from "./engine";
-import { checkPicked, sourcePath } from "./sourceRules";
+import { checkPicked, displayNameOf, sourcePath } from "./sourceRules";
 import type { SourcesPort, UploadOptions } from "./sources";
 
 export interface DemoSourceStore {
@@ -43,7 +43,7 @@ export class DemoSources implements SourcesPort {
     e.storeObject(path, mime, file.size);
     this.s.blobs.set(path, file);
     try {
-      const row = e.registerSourceFile(lessonId, path, file.name, opts.pages);
+      const row = e.registerSourceFile(lessonId, path, displayNameOf(file.name), opts.pages);
       this.s.notify();
       return row;
     } catch (err) {

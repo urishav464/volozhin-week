@@ -765,6 +765,14 @@ export class Engine {
     return null;
   }
 
+  /** The sources_upload policy (app.may_upload_source): sourceRefusal's rule, and a path no source_files row holds — a path is used once. */
+  mayUploadSource(path: string): boolean {
+    if (this.sourceRefusal(path) != null) return false;
+    const p = parseSourcePath(path);
+    const at = p && this.editionAt(p.edition);
+    return !at || !at.week.sourceFiles.some((f) => f.storage_path === path);
+  }
+
   /** The sources_read policy (app.may_read_source): the whole team of the path's edition, logistics included. */
   maySeeSource(path: string): boolean {
     const p = parseSourcePath(path);
@@ -791,7 +799,7 @@ export class Engine {
   storeObject(path: string, mime: string, size: number): void {
     this.tx(() => {
       if (!(SOURCE_MIMES as readonly string[]).includes(mime) || !(size >= 0) || size > MAX_SOURCE_BYTES) fail("bad_file");
-      if (this.sourceRefusal(path) != null) fail("upload_refused");
+      if (!this.mayUploadSource(path)) fail("upload_refused");
       if (this.shared.objects[path]) fail("upload_failed");
       this.shared.objects[path] = { mime, size, owner: this.ownerKey() };
     });

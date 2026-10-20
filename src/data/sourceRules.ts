@@ -98,6 +98,19 @@ export function checkPicked(f: { name: string; type: string; size: number }, cov
   return mime;
 }
 
+/**
+ * The display name a picked file is registered under: its own name on one line (as register_source_file cleans
+ * it), and when that is longer than the 200 characters it takes (Windows allows 255) — cut before the
+ * extension, which stays: «שם ארוך מאוד….pdf». Checked before the bytes go up, never refused after.
+ */
+export function displayNameOf(original: string): string {
+  const s = cleanLine(original, Number.MAX_SAFE_INTEGER) ?? original;
+  const chars = [...s];
+  if (chars.length <= DISPLAY_NAME_MAX) return s;
+  const ext = /\.[A-Za-z0-9]{1,5}$/.exec(s)?.[0] ?? "";
+  return `${chars.slice(0, DISPLAY_NAME_MAX - ext.length - 1).join("").trimEnd()}…${ext}`;
+}
+
 /** register_source_file's display name: one line, ≤ 200, required (bad_value). */
 export function cleanDisplayName(v: string | null | undefined): string {
   return cleanLine(v, DISPLAY_NAME_MAX) ?? fail("bad_value");

@@ -13,7 +13,7 @@ import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { MINE_GROUPS, type MineRow, mySpeakers, nextStep } from "../../domain/mine";
 import { byGender, displayName } from "../../domain/names";
-import { requestText, type StageKey } from "../../domain/stages";
+import { readerFilesOf, requestText, type StageKey } from "../../domain/stages";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { statusLabel } from "../../lib/labels";
@@ -210,7 +210,11 @@ function MineItem({
                 : group === "escort"
                   ? "אין מלווה"
                   : group === "sources"
-                    ? "המקורות עוד לא התקבלו"
+                    ? l.sources_kind === "pending"
+                      ? "המקורות עוד לא התקבלו"
+                      : readerFilesOf(week, l.id).word > 0
+                        ? "מסומן למקראה, והגיע רק Word: צריך PDF"
+                        : "מסומן למקראה, ועוד לא הועלה קובץ"
                     : null;
         return (
           <>
@@ -219,7 +223,7 @@ function MineItem({
                 {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
                 {l.title ? ` · ${l.title}` : " · כותרת: TBD"}
               </span>
-              <StageDots lesson={l} />
+              <StageDots lesson={l} week={week} />
               {l.needs_reconfirm && <ReconfirmDot />}
             </span>
             {detail && <span className="block">{detail}</span>}

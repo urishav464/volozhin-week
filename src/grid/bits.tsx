@@ -1,7 +1,7 @@
 // Small shared pieces of the grid's look.
 import type { ReactNode } from "react";
-import { type StageState, stagesOf } from "../domain/stages";
-import type { Gender, Lesson } from "../domain/types";
+import { readerFilesOf, type StageState, stagesOf } from "../domain/stages";
+import type { Gender, Lesson, Week } from "../domain/types";
 
 export function GenderDot({ gender, className = "" }: { gender: Gender | null; className?: string }) {
   const color = gender === "f" ? "bg-pink-400" : gender === "m" ? "bg-sky-500" : "bg-ink-faint";
@@ -37,8 +37,8 @@ export const STAGE_DOT: Record<StageState, string> = {
 /** What each dot state means — the progress lens's legend, and its words for a screen reader. */
 export const STAGE_STATE_LABEL: Record<StageState, string> = { done: "מוכן", waiting: "מחכה", problem: "לטפל", open: "פתוח", na: "לא נדרש" };
 
-export function StageDots({ lesson }: { lesson: Lesson }) {
-  const stages = stagesOf(lesson);
+export function StageDots({ lesson, week }: { lesson: Lesson; week: Pick<Week, "sourceFiles" | "lessonSpeakers"> }) {
+  const stages = stagesOf(lesson, readerFilesOf(week, lesson.id));
   return (
     <span role="img" className="inline-flex shrink-0 gap-1" aria-label={stages.map((s) => `${s.label}: ${s.note}`).join(", ")}>
       {stages.map((s) => (

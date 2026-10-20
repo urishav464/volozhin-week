@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
 import {
-  arrived, checkPicked, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, mimeOfFile, pagesFor, parseSourcePath, safeName, SOURCE_PATH_RE, sourcePath,
+  arrived, checkPicked, cleanDisplayName, DISPLAY_NAME_MAX, displayNameOf, DOCX, MAX_SOURCE_BYTES, mimeMatches, mimeOfFile, pagesFor, parseSourcePath, safeName, SOURCE_PATH_RE, sourcePath,
 } from "./sourceRules";
 import { SupabaseSources, uploadRefusal, type UploadRequest } from "./supabaseSources";
 
@@ -71,6 +71,21 @@ describe("the path convention", () => {
     expect(await code(() => cleanDisplayName("   "))).toBe("bad_value");
   });
 
+  it("shortens a picked file's name to what register_source_file takes before the bytes go up — the extension kept", async () => {
+    expect(displayNameOf("  דף   מקורות.pdf ")).toBe("דף מקורות.pdf");
+    const exact = `${"א".repeat(DISPLAY_NAME_MAX - 4)}.pdf`;
+    expect(displayNameOf(exact)).toBe(exact);
+    const long = displayNameOf(`${"מקור ".repeat(50)}סופי.docx`); // 259 characters, as Windows allows
+    expect([...long].length).toBeLessThanOrEqual(DISPLAY_NAME_MAX);
+    expect([...long].length).toBeGreaterThan(DISPLAY_NAME_MAX - 3);
+    expect(long.endsWith("….docx")).toBe(true);
+    expect(cleanDisplayName(long)).toBe(long); // register_source_file's own check takes it
+    const emoji = displayNameOf(`${"😀".repeat(300)}.png`); // counted in characters, as char_length does — never half a pair
+    expect([...emoji]).toHaveLength(DISPLAY_NAME_MAX);
+    expect(emoji.endsWith("….png")).toBe(true);
+    expect([...displayNameOf("x".repeat(300))]).toHaveLength(DISPLAY_NAME_MAX); // no extension: cut all the same
+  });
+
   it("turns a lesson's reader on with the speaker's first file — never a presentation alone, never against a later «off»", () => {
     expect(arrived({ sources_kind: "pending", in_reader: false }, true)).toEqual({ sources_kind: "sheet", in_reader: true });
     expect(arrived({ sources_kind: "sheet_video", in_reader: false }, true)).toEqual({ sources_kind: "sheet_video", in_reader: true });
@@ -112,11 +127,21 @@ describe("SupabaseSources on the wire", () => {
     const row = await sources.upload(7, 42, pdf(), { pages: 3, onProgress: (f) => seen.push(f) });
     expect(uploads).toHaveLength(1);
     expect(uploads[0].url).toBe(`https://stub.supabase.co/storage/v1/object/sources/7/42/${UUID}-file.pdf`);
-    expect(uploads[0].headers).toMatchObject({ authorization: "Bearer member-access-token", apikey: "stub-publishable-key", "content-type": "application/pdf", "x-upsert": "false" });
+    // «private, no-store»: Storage hands every reader of the file this Cache-Control back — no copy outlives a signed URL
+    expect(uploads[0].headers).toEqual({ authorization: "Bearer member-access-token", apikey: "stub-publishable-key", "content-type": "application/pdf", "x-upsert": "false", "cache-control": "private, no-store" });
     expect(sent.map((r) => [r.method, r.path, r.body])).toEqual([
       ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: `7/42/${UUID}-file.pdf`, p_display_name: "מקורות.pdf", p_pages: 3 }],
     ]);
     expect(row).toEqual({ ...ROW, id: 5, lesson_id: 42, speaker_id: 9, size_bytes: 1234, uploaded_by: 2 });
+  });
+
+  it("registers a name too long for the database shortened — never refused after the bytes went up", async () => {
+    const { sources, sent } = wire([[200, ROW]]);
+    await sources.upload(7, 42, pdf(`${"מקור ".repeat(50)}.pdf`), { pages: 1 });
+    const name = (sent[0].body as { p_display_name: string }).p_display_name;
+    expect([...name].length).toBeLessThanOrEqual(DISPLAY_NAME_MAX); // cut at a space: the space goes too
+    expect([...name].length).toBeGreaterThan(DISPLAY_NAME_MAX - 3);
+    expect(name.endsWith("….pdf")).toBe(true);
   });
 
   it("checks the file before sending it, and reads the Storage API's refusals", async () => {

@@ -4,7 +4,7 @@
 // closed lesson, its own next step (src/domain/stages.ts): תשלום/הסעה →
 // לעדכן את המרצה → לשלוח סיכום → חסר מלווה → חסרים מקורות → נסגר. A
 // hand-over waiting for me comes first.
-import { type LessonStep, nextLessonStep } from "./stages";
+import { type LessonStep, nextLessonStep, readerFilesOf } from "./stages";
 import type { Approach, Lesson, Pitch, Speaker, Week } from "./types";
 import { LIVE_PITCH } from "./types";
 
@@ -67,7 +67,7 @@ export function mySpeakers(week: Week, me: number): Map<MineGroup, MineRow[]> {
     const live = week.pitches.filter((p) => p.approach_id === a.id && LIVE_PITCH.has(p.state));
     if (!offered && closed.length > 0) {
       for (const lesson of [...closed].sort(byTime)) {
-        const step = nextLessonStep(lesson);
+        const step = nextLessonStep(lesson, readerFilesOf(week, lesson.id));
         const group = step ? STEP_GROUP[step] : "closed";
         out.get(group)!.push({ speaker, approach: a, group, closed, live, lesson });
       }

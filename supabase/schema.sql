@@ -3719,7 +3719,8 @@ create or replace function public.set_book_order(p_group bigint, p_copies intege
 -- policies and the functions):
 --   upload   the edition's content members and admins (logistics never; an
 --            archive is its admins' only), to a CLOSED lesson of kind 'lesson'
---            — the rule of set_sources; the poster: the edition's admins
+--            — the rule of set_sources; the poster: the edition's admins; and
+--            never at a path a source_files row holds (a path is used once)
 --   read     the edition's whole team: content, admins, and logistics (they print)
 --   delete   whoever uploaded it, or an admin of the edition
 --   update   nobody (a replacement is a delete and an upload); anon: nothing
@@ -3790,9 +3791,22 @@ create or replace function app.source_refusal(p_name text) returns text
   $$;
 
 -- The policies' predicates (they run as the browser's role: granted to authenticated at the end).
+-- Upload: the rule above, and a path is used once — never one a source_files
+-- row already holds. Its object may be gone (a removal that stopped half way:
+-- the row is still there, for the uploader to remove), and the path is in the
+-- whole team's load_week; a new upload there would put someone else's bytes,
+-- of any type the bucket takes, behind that row's name, uploader and type.
+-- A real upload always has a new uuid in its path, so nothing legitimate is
+-- refused. (register_source_file's retry, the same path again, does not
+-- upload: it reads app.source_refusal alone.)
 create or replace function app.may_upload_source(p_name text) returns boolean
-  language sql stable security definer set search_path = ''
-  as $$ select app.source_refusal(p_name) is null $$;
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    return app.source_refusal(p_name) is null
+       and not exists (select 1 from public.source_files f where f.storage_path = p_name);
+  end
+  $$;
 
 create or replace function app.may_read_source(p_name text) returns boolean
   language plpgsql stable security definer set search_path = ''
@@ -3917,9 +3931,11 @@ create policy source_files_read on public.source_files for select to authenticat
 -- convention for exactly this edition and lesson (bad_path), the caller may
 -- upload there (app.source_refusal), and the object must be in the bucket,
 -- uploaded by the caller (no_file), of an accepted type matching its
--- extension and at most 25 MB (bad_file) — the type and size are the Storage
--- API's (objects.metadata), not the browser's word. The same path again
--- returns the row it already made (a retry).
+-- extension and at most 25 MB (bad_file) — from objects.metadata: the size as
+-- Storage measured it, the type as the uploader declared it (Content-Type,
+-- held by Storage to the bucket's four types; it never sniffs the bytes — the
+-- reader checks those). The same path again returns the row it already made
+-- (a retry; app.may_upload_source refuses a new upload at a registered path).
 -- A lesson's file: «טרם התקבלו» becomes «דף מקורות» (a file arrived), and the
 -- current speaker's first file puts the lesson in the reader when its kind
 -- has something to print (in_reader's own rule — never a presentation alone).

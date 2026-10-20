@@ -1,12 +1,15 @@
 // The five stages of a closed lesson and its one next step, rule by rule —
 // the card's dots, the lesson panel and «המרצים שלי» all read these.
 import { describe, expect, it } from "vitest";
-import { nextLessonStep, reopenLoses, requestText, shekels, STEP_STAGE, stagesOf } from "./stages";
+import { NO_FILES, nextLessonStep as nextStepOf, readerFilesOf, type ReaderFiles, reopenLoses, requestText, shekels, STEP_STAGE, stagesOf as stagesWith } from "./stages";
 import { LESSON_STAGE_DEFAULTS, type Lesson } from "./types";
 
-type Fields = Parameters<typeof stagesOf>[0];
+type Fields = Parameters<typeof stagesWith>[0];
 const lesson = (over: Partial<Lesson> = {}): Fields => ({ ...LESSON_STAGE_DEFAULTS, ...over });
-const states = (l: Fields) => Object.fromEntries(stagesOf(l).map((s) => [s.key, s.state]));
+const stagesOf = (l: Fields, files: ReaderFiles = NO_FILES) => stagesWith(l, files);
+const nextLessonStep = (l: Fields, files: ReaderFiles = NO_FILES) => nextStepOf(l, files);
+const states = (l: Fields, files: ReaderFiles = NO_FILES) => Object.fromEntries(stagesOf(l, files).map((s) => [s.key, s.state]));
+const PDF_ONE: ReaderFiles = { printable: 1, word: 0 };
 
 describe("a closed lesson's five stages", () => {
   it("in the card's order, and all open (or not needed) when nothing was done", () => {
@@ -40,10 +43,40 @@ describe("a closed lesson's five stages", () => {
 
   it("sources and the reader: nothing to print is not a missing step", () => {
     expect(states(lesson({ sources_kind: "sheet" }))).toMatchObject({ sources: "done", reader: "open" });
-    expect(states(lesson({ sources_kind: "sheet", in_reader: true }))).toMatchObject({ sources: "done", reader: "done" });
+    expect(states(lesson({ sources_kind: "sheet", in_reader: true }), PDF_ONE)).toMatchObject({ sources: "done", reader: "done" });
     expect(states(lesson({ sources_kind: "presentation" }))).toMatchObject({ sources: "done", reader: "na" });
     expect(states(lesson({ sources_kind: "none" }))).toMatchObject({ sources: "done", reader: "na" });
     expect(stagesOf(lesson({ sources_kind: "none" }))[3].note).toBe("בלי מקורות");
+  });
+
+  it("«במקראה» only when a PDF or a picture is there — marked with nothing to merge is «חסר קובץ» or «צריך PDF», as the manifest says", () => {
+    const marked = lesson({ sources_kind: "sheet", in_reader: true });
+    expect(stagesOf(marked, NO_FILES)[4]).toMatchObject({ state: "open", note: "חסר קובץ" });
+    expect(stagesOf(marked, { printable: 0, word: 2 })[4]).toMatchObject({ state: "open", note: "צריך PDF" });
+    expect(stagesOf(marked, { printable: 1, word: 2 })[4]).toMatchObject({ state: "done", note: "במקראה" });
+    // a presentation alone stays out whatever its files
+    expect(stagesOf(lesson({ sources_kind: "presentation", in_reader: true }), PDF_ONE)[4].state).toBe("na");
+  });
+
+  it("counts the current lead speaker's files only — a previous speaker's never — PDFs and pictures apart from Word", () => {
+    const f = (id: number, lesson_id: number, speaker_id: number | null, mime: string) =>
+      ({ id, lesson_id, speaker_id, mime }) as Parameters<typeof readerFilesOf>[0]["sourceFiles"][number];
+    const week = {
+      lessonSpeakers: [
+        { lesson_id: 1, speaker_id: 10, role: "lead" },
+        { lesson_id: 1, speaker_id: 11, role: "co" },
+        { lesson_id: 2, speaker_id: 20, role: "lead" },
+      ] as Parameters<typeof readerFilesOf>[0]["lessonSpeakers"],
+      sourceFiles: [
+        f(1, 1, 10, "application/pdf"), f(2, 1, 10, "image/jpeg"), f(3, 1, 10, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        f(4, 1, 9, "application/pdf"), // a previous speaker's
+        f(5, 2, 20, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        f(6, null as unknown as number, null, "application/pdf"), // a poster
+      ],
+    };
+    expect(readerFilesOf(week, 1)).toEqual({ printable: 2, word: 1 });
+    expect(readerFilesOf(week, 2)).toEqual({ printable: 0, word: 1 });
+    expect(readerFilesOf(week, 3)).toEqual({ printable: 0, word: 0 }); // no lead: nothing is the current speaker's
   });
 });
 
@@ -59,6 +92,10 @@ describe("the next step of a closed lesson («המרצים שלי»)", () => {
     expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "none" }))).toBeNull();
     // the reader is not the handler's step
     expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "sheet", in_reader: false }))).toBeNull();
+    // but a lesson marked «במקראה» whose file has not been uploaded (or came only in Word) still needs its sources
+    expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "sheet", in_reader: true }), NO_FILES)).toBe("sources");
+    expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "other", in_reader: true }), { printable: 0, word: 1 })).toBe("sources");
+    expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "sheet", in_reader: true }), PDF_ONE)).toBeNull();
     expect(STEP_STAGE).toEqual({ payment: "pay", reconfirm: "msg", send: "msg", escort: "escort", sources: "sources" });
   });
 });

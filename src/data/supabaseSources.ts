@@ -9,7 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SourceFile } from "../domain/types";
 import { CommandError } from "./commands";
-import { checkPicked, SOURCES_BUCKET, sourcePath } from "./sourceRules";
+import { checkPicked, displayNameOf, SOURCES_BUCKET, sourcePath } from "./sourceRules";
 import { SIGNED_URL_SECONDS, type SourcesPort, type UploadOptions } from "./sources";
 import { callRpc } from "./supabaseCommands";
 
@@ -95,7 +95,9 @@ export class SupabaseSources implements SourcesPort {
     if (!token) throw new CommandError("not_member");
     const res = await this.send({
       url: `${this.url.replace(/\/+$/, "")}/storage/v1/object/${SOURCES_BUCKET}/${path}`,
-      headers: { authorization: `Bearer ${token}`, apikey: this.key, "content-type": mime, "x-upsert": "false", "cache-control": "max-age=3600" },
+      // «private, no-store»: Storage serves the file with the Cache-Control it was uploaded with, signed URLs too —
+      // no browser or CDN keeps a copy past the signed URL or past a removal (the reader reads each file once)
+      headers: { authorization: `Bearer ${token}`, apikey: this.key, "content-type": mime, "x-upsert": "false", "cache-control": "private, no-store" },
       body: file,
       onProgress: opts.onProgress,
       signal: opts.signal,
@@ -103,7 +105,7 @@ export class SupabaseSources implements SourcesPort {
     if (res.status < 200 || res.status >= 300) throw new CommandError(uploadRefusal(res.status, res.body));
     try {
       const row = await callRpc(this.sb, "register_source_file", {
-        p_edition: editionId, p_lesson: lessonId, p_path: path, p_display_name: file.name, p_pages: opts.pages,
+        p_edition: editionId, p_lesson: lessonId, p_path: path, p_display_name: displayNameOf(file.name), p_pages: opts.pages,
       });
       return toFile(row as Record<string, unknown>);
     } catch (e) {

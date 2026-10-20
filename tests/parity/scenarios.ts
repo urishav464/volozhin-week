@@ -774,6 +774,14 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", register: "a3" }, // the new speaker's first file: in the reader again
     { as: "E", unstore: "p1" },
     { as: "E", unregister: "p1" }, // the cover's file: the mark goes with it
+    // a path is used once: a removal that stopped half way leaves the row, and nobody uploads at its path again
+    { as: "A", store: [1, 510], file: "s1" },
+    { as: "A", register: "s1" },
+    { as: "A", unstore: "s1" }, // deleted — the row stays
+    { as: "B", store: [1, 510], file: "s1" }, // refused: the path is the row's
+    { as: "A", store: [1, 510], file: "s1" }, // the uploader too
+    { as: "A", register: "s1" }, // a retry: the row it made
+    { as: "A", unregister: "s1" },
     { archive: true },
     { as: "A", store: [1, 510], file: "a4" }, // an archive: its admins only
     { as: "A", unstore: "a3" }, // kept

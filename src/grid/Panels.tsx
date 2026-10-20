@@ -7,7 +7,7 @@ import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
-import { reopenLoses, stagesOf } from "../domain/stages";
+import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
 import { Button, Confirm, INPUT } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
 import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
@@ -360,7 +360,7 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
       ) : (
         <Section title="שלבים">
           <ul className="space-y-1 text-sm">
-            {stagesOf(l).map((s) => (
+            {stagesOf(l, readerFilesOf(model.week, l.id)).map((s) => (
               <li key={s.key} className="flex items-center gap-2">
                 <span className={`size-2.5 rounded-full border ${STAGE_DOT[s.state]}`} />
                 <span className="font-semibold">{s.label}</span>

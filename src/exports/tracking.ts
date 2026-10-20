@@ -7,7 +7,7 @@
 import { teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
 import { lessonTone, PROGRESS_FILL, type ProgressTone } from "../domain/progress";
-import { APPROVAL_LABEL, type LessonStep, nextLessonStep, PRINT_WHEN_LABEL, requestText, SOURCES_LABEL } from "../domain/stages";
+import { APPROVAL_LABEL, type LessonStep, nextLessonStep, PRINT_WHEN_LABEL, readerFilesOf, requestText, SOURCES_LABEL } from "../domain/stages";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import { type Lesson, LIVE_PITCH, type Week } from "../domain/types";
 import { LRM, type Table } from "./table";
@@ -127,7 +127,7 @@ export function trackingRows(week: Week): TrackingRow[] {
         payment,
         escort,
         confirmed,
-        stage: nextLessonStep(l) ?? "ready",
+        stage: nextLessonStep(l, readerFilesOf(week, l.id)) ?? "ready",
       };
     });
 }

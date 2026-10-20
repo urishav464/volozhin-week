@@ -266,6 +266,33 @@ describe("the sources' files", () => {
     });
   });
 
+  // the security review's probe: a removal that stopped half way left A's row; B uploaded other bytes (a 25 MB PNG
+  // at the .pdf path) at its path, register answered A's row — A's name, PDF, size — in front of B's bytes, B
+  // could not delete them and A's remove_source_file answered file_present
+  describe("a path is used once", () => {
+    it("never takes an upload at a path a source_files row holds — its object gone or not, from anyone", async () => {
+      const name = path(ed, lesson, "mine.pdf");
+      expect(await upload(A, name, PDF, 1000)).toBe("ok");
+      const row = await register(A, ed, lesson, name, "של א.pdf", 2);
+      expect(await remove(A, name)).toBe(1); // half way: the object gone, the row stays
+      for (const who of [B, A, ED_ADMIN, ADMIN]) expect(await upload(who, name, "image/png", 25 * MB), who).toBe("42501");
+      expect(await upload(B, name)).toBe("42501");
+      expect((await db.query("select count(*)::int as n from storage.objects where name = $1", [name])).rows[0].n).toBe(0);
+      // the row is as A left it, and A finishes the removal
+      expect((await db.query("select display_name, mime, size_bytes::int as size, uploaded_by::int as by from public.source_files where id = $1", [row.id])).rows[0]).toEqual({
+        display_name: "של א.pdf", mime: PDF, size: 1000, by: member[A],
+      });
+      expect(await refusal(commitAs(A, "select public.remove_source_file($1)", [row.id]))).toBe("ok");
+      // a path with a live object and its row: a second upload is refused by the policy, not by the name's uniqueness
+      const live = path(ed, lesson);
+      expect(await upload(A, live)).toBe("ok");
+      await register(A, ed, lesson, live);
+      expect(await upload(A, live)).toBe("42501");
+      // and the retry of a registration — the same path again, no upload — still answers the row it made
+      expect((await register(A, ed, lesson, live, "x", 1)).storage_path).toBe(live);
+    });
+  });
+
   describe("read, update, delete", () => {
     it("lets the whole team of the edition read — content, admins and logistics — and nobody else", async () => {
       const name = path(ed, lesson);

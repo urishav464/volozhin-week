@@ -237,7 +237,11 @@ test.describe("demo build", () => {
     await sources.getByRole("checkbox", { name: "להכניס למקראה" }).check();
     await sources.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "המקורות נשמרו")).toBeVisible();
-    for (const k of ["escort", "sources", "reader"]) await expect(card(page, "מרצה 19").locator(`[data-stage="${k}"]`)).toHaveAttribute("data-state", "done");
+    for (const k of ["escort", "sources"]) await expect(card(page, "מרצה 19").locator(`[data-stage="${k}"]`)).toHaveAttribute("data-state", "done");
+    // marked for the reader, but no file yet: the «מקראה» dot is not green — it says what the manifest says (5ב-1 review)
+    const readerDot = card(page, "מרצה 19").locator('[data-stage="reader"]');
+    await expect(readerDot).toHaveAttribute("data-state", "open");
+    await expect(readerDot).toHaveAttribute("title", "מקראה: חסר קובץ");
     await noSidewaysScroll(page);
 
     // «פתיחה מחדש» says first what goes with the speaker: the stages start over

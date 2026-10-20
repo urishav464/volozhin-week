@@ -4,7 +4,7 @@
 // progress lens paints a closed card by its sources, last year's colours.
 import { displayName } from "../domain/names";
 import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
-import { stagesOf } from "../domain/stages";
+import { readerFilesOf, stagesOf } from "../domain/stages";
 import { fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
 import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
@@ -93,7 +93,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
   // closed
   const lead = model.leadOf.get(lesson.id);
   const cat = lesson.category_id != null ? model.categoryById.get(lesson.category_id) : undefined;
-  const stages = stagesOf(lesson);
+  const stages = stagesOf(lesson, readerFilesOf(model.week, lesson.id));
   const progressBg = lens === "progress" ? PROGRESS_TONE[progressOf(lesson.sources_kind)] : "bg-card";
   const ownerId = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const owner = ownerId != null ? model.memberName.get(ownerId) : undefined;
@@ -124,7 +124,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, onO
               <span className="truncate text-[10px] text-ink-soft">{owner}</span>
             </>
           ) : (
-            <StageDots lesson={lesson} />
+            <StageDots lesson={lesson} week={model.week} />
           )}
           {lesson.audience && <Chip>{lesson.audience}</Chip>}
           <span className="ms-auto">{time}</span>

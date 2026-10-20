@@ -14,7 +14,7 @@ import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data/stageRules";
 import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro } from "../../domain/escorts";
-import { PRINT_WHEN_LABEL, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
+import { PRINT_WHEN_LABEL, readerFilesOf, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import { byGender } from "../../domain/names";
 import type { Gender, PrintWhen, SourcesKind, SpeakerContacts, Week } from "../../domain/types";
@@ -65,7 +65,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   const handler = speaker ? (week.approaches.find((a) => a.speaker_id === speaker.id)?.owner_member_id ?? null) : null;
   const mine = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
   const ctx: StageCtx = { week, lesson: l, actor, cmds, busy, act, handler, mine };
-  const stages = stagesOf(l);
+  const stages = stagesOf(l, readerFilesOf(week, l.id));
   const toggle = (k: StageKey) =>
     setOpen((cur) => {
       const next = new Set(cur);

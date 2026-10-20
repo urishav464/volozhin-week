@@ -512,7 +512,7 @@ function ClosedLessons({
               <span className="min-w-0 flex-1">
                 נסגר: {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {l.title ?? "כותרת: TBD"}
               </span>
-              <StageDots lesson={l} />
+              <StageDots lesson={l} week={week} />
               {l.needs_reconfirm && <ReconfirmDot />}
               {onLesson && <Button onClick={() => onLesson(l.id)}>לשיעור</Button>}
             </div>
