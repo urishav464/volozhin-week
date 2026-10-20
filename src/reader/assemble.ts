@@ -3,11 +3,16 @@
 // drawer. The order and page numbers are src/reader/layout.ts's plan; every
 // source page is re-framed to A4 (scaled to fit, aspect kept, its /Rotate
 // honoured); the running headers alternate, the page numbers count from the
-// cover. A file that cannot be read (protected, damaged) is left out and named
-// in the result — never a silent gap.
-import { PDFDocument, type PDFFont, type PDFImage, type PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
+// cover. A file that cannot be read (protected, damaged, no PDF or picture at all)
+// is left out and named in the result — never a silent gap, never a failed
+// build: every file is embedded as it is read, before the pages are planned.
+// A photo goes in without its metadata (src/reader/jpeg.ts).
+import {
+  PDFContentStream, PDFDocument, type PDFEmbeddedPage, type PDFFont, type PDFImage, type PDFPage, PDFRawStream, PDFStream, StandardFonts, decodePDFRawStream, degrees, rgb,
+} from "pdf-lib";
 import type { Day } from "../domain/time";
 import { A4, contentBox, dayTitle, frame, MARGIN, NUMBER_BAND, numbered, planReader, type PlanEntry, RUNNING_BAND, runningHeader, STRIP_HEIGHT } from "./layout";
+import { jpegOrientation, looksJpeg, looksPng, orientationTurn, stripJpegMetadata } from "./jpeg";
 import type { Png, ScheduleLine, TextRenderer } from "./render";
 
 export type ReaderMime = "application/pdf" | "image/png" | "image/jpeg";
@@ -57,51 +62,78 @@ export interface ReaderResult {
   skipped: Skipped[];
 }
 
-type Loaded = { kind: "pdf"; doc: PDFDocument; pages: number } | { kind: "image"; mime: ReaderMime; bytes: Uint8Array; pages: 1 };
+/** One page of a source, embedded in the reader: a PDF's page (null — a page with nothing on it, kept blank) or the image. */
+type SourcePage =
+  | { kind: "pdf"; page: PDFEmbeddedPage | null; width: number; height: number; rotation: number }
+  | { kind: "image"; img: PDFImage; turn: number };
+type Loaded = { pages: SourcePage[] };
 
-/** A JPEG's EXIF orientation (1 when there is none) — a phone's photo may be stored sideways. */
-export function jpegOrientation(bytes: Uint8Array): number {
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return 1;
-  let i = 2;
-  while (i + 4 < bytes.length) {
-    if (bytes[i] !== 0xff) return 1;
-    const marker = bytes[i + 1];
-    const len = (bytes[i + 2] << 8) | bytes[i + 3];
-    if (marker === 0xe1 && bytes[i + 4] === 0x45 && bytes[i + 5] === 0x78 && bytes[i + 6] === 0x69 && bytes[i + 7] === 0x66) {
-      const t = i + 10; // the TIFF header
-      const little = bytes[t] === 0x49;
-      const u16 = (o: number) => (little ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1]);
-      const u32 = (o: number) => (little ? (bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)) >>> 0 : ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0);
-      const ifd = t + u32(t + 4);
-      const n = u16(ifd);
-      for (let k = 0; k < n; k++) {
-        const e = ifd + 2 + k * 12;
-        if (u16(e) === 0x0112) {
-          const v = u16(e + 8);
-          return v >= 1 && v <= 8 ? v : 1;
-        }
-      }
-      return 1;
+export { jpegOrientation, orientationTurn } from "./jpeg";
+
+/**
+ * Read a file and embed it in the reader `out` — here, while the page plan can still change, so a file that cannot
+ * be read is left out and named instead of failing the build half way. The type is checked from the bytes, not
+ * the label: a PNG saved as .jpg is drawn as the PNG it is; bytes that are neither are «unreadable». A photo goes
+ * in without its metadata (src/reader/jpeg.ts). A PDF's pages are embedded together, all or none.
+ */
+async function load(out: PDFDocument, f: JobFile): Promise<Loaded | Skipped> {
+  const bytes = new Uint8Array(f.bytes);
+  if (f.mime !== "application/pdf") {
+    try {
+      if (looksPng(bytes)) return { pages: [{ kind: "image", img: await out.embedPng(bytes), turn: 0 }] };
+      const clean = looksJpeg(bytes) ? stripJpegMetadata(bytes) : null;
+      if (!clean) return { name: f.name, reason: "unreadable" };
+      return { pages: [{ kind: "image", img: await out.embedJpg(clean), turn: orientationTurn(jpegOrientation(bytes)) }] };
+    } catch {
+      return { name: f.name, reason: "unreadable" };
     }
-    if (marker === 0xda) return 1; // the image data: no EXIF before it
-    i += 2 + len;
   }
-  return 1;
-}
-
-/** EXIF orientation → the clockwise turn it asks for (mirrored orientations are rare from a phone; drawn unmirrored). */
-export function orientationTurn(o: number): number {
-  return o === 3 || o === 4 ? 180 : o === 5 || o === 6 ? 90 : o === 7 || o === 8 ? 270 : 0;
-}
-
-async function load(f: JobFile): Promise<Loaded | Skipped> {
-  if (f.mime !== "application/pdf") return { kind: "image", mime: f.mime, bytes: new Uint8Array(f.bytes), pages: 1 };
+  let doc: PDFDocument;
   try {
-    const doc = await PDFDocument.load(f.bytes, { updateMetadata: false });
-    const pages = doc.getPageCount();
-    return pages > 0 ? { kind: "pdf", doc, pages } : { name: f.name, reason: "unreadable" };
+    doc = await PDFDocument.load(f.bytes, { updateMetadata: false });
   } catch (e) {
     return { name: f.name, reason: e instanceof Error && /encrypt/i.test(e.name + e.message) ? "protected" : "unreadable" };
+  }
+  try {
+    const src = doc.getPages();
+    if (src.length === 0) return { name: f.name, reason: "unreadable" };
+    // a page with nothing on it (no Contents — pdf-lib cannot embed it) stays a blank page, kept as one
+    const drawn = src.filter((p) => p.node.Contents());
+    // pdf-lib decodes an embedded page's content only when the reader is saved — a page it cannot decode would
+    // fail the whole book there; so every page is decoded once here, and such a file is left out and named
+    if (!drawn.every(decodes)) return { name: f.name, reason: "unreadable" };
+    const embedded = await out.embedPages(
+      drawn,
+      drawn.map((p) => {
+        const c = p.getCropBox();
+        return { left: c.x, bottom: c.y, right: c.x + c.width, top: c.y + c.height };
+      }),
+    );
+    const of = new Map(drawn.map((p, i) => [p, embedded[i]]));
+    return {
+      pages: src.map((p) => {
+        const c = p.getCropBox();
+        return { kind: "pdf" as const, page: of.get(p) ?? null, width: c.width, height: c.height, rotation: p.getRotation().angle };
+      }),
+    };
+  } catch {
+    return { name: f.name, reason: "unreadable" };
+  }
+}
+
+/** Can pdf-lib decode this page's content (what embedding it does when the document is saved)? */
+function decodes(p: PDFPage): boolean {
+  try {
+    const { Contents } = p.node.normalizedEntries();
+    if (!Contents) return false;
+    for (let i = 0; i < Contents.size(); i++) {
+      const s = Contents.lookup(i, PDFStream);
+      if (s instanceof PDFRawStream) decodePDFRawStream(s).decode();
+      else if (!(s instanceof PDFContentStream)) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -117,11 +149,16 @@ export async function assembleReader(
     if (cancelled()) throw new DOMException("cancelled", "AbortError");
   };
   const skipped: Skipped[] = [];
+  // the reader itself first: every file is embedded in it as it is read (load)
+  const out = await PDFDocument.create();
+  out.setTitle(`מקראה ${job.editionLabel}`);
+  out.setCreator("volozhin-week");
+  out.setProducer("pdf-lib");
   const readTotal = job.entries.reduce((n, e) => n + e.files.length, 0) + (job.cover ? 1 : 0);
   let readDone = 0;
   const step = async (f: JobFile): Promise<Loaded | null> => {
     check();
-    const r = await load(f);
+    const r = await load(out, f);
     onProgress({ done: ++readDone, total: readTotal, step: "read" });
     if (isSkipped(r)) {
       skipped.push(r);
@@ -139,7 +176,7 @@ export async function assembleReader(
     for (let i = 0; i < e.files.length; i++) {
       const r = await step(e.files[i]);
       if (r) loaded.set(key(e.ref, i), r);
-      pages.push(r ? r.pages : 0);
+      pages.push(r ? r.pages.length : 0);
     }
     planned.push({ ref: e.ref, day: e.day, header: e.header, filePages: pages });
   }
@@ -147,14 +184,10 @@ export async function assembleReader(
 
   // 2. the cover's pages: the poster's, or the schedule made from the week
   const scheduleChunks = cover ? [] : chunkSchedule(job.schedule);
-  const coverPages = cover ? cover.pages : scheduleChunks.length;
+  const coverPages = cover ? cover.pages.length : scheduleChunks.length;
   const plan = planReader(planned, coverPages);
 
   // 3. draw
-  const out = await PDFDocument.create();
-  out.setTitle(`מקראה ${job.editionLabel}`);
-  out.setCreator("volozhin-week");
-  out.setProducer("pdf-lib");
   const helvetica = await out.embedFont(StandardFonts.Helvetica);
   const images = new Map<string, PDFImage>();
   const embedPng = async (k: string, make: () => Promise<Png>): Promise<{ img: PDFImage; png: Png | null }> => {
@@ -175,7 +208,7 @@ export async function assembleReader(
     const pageNo = n + 1;
     const page = out.addPage([A4.width, A4.height]);
     if (p.kind === "cover") {
-      if (cover) await drawSource(out, page, cover, p.index, { x: 0, y: 0, width: A4.width, height: A4.height });
+      if (cover) drawSource(page, cover.pages[p.index], { x: 0, y: 0, width: A4.width, height: A4.height });
       else {
         const png = await text.schedulePage(scheduleChunks[p.index], p.index === 0 ? job.scheduleTitle : null);
         page.drawImage(await out.embedPng(png.bytes), { x: 0, y: 0, width: A4.width, height: A4.height });
@@ -199,7 +232,7 @@ export async function assembleReader(
         const { img } = await embedPng(`strip:${p.ref}`, () => text.entryStrip(e.header, e.when, width, STRIP_HEIGHT));
         page.drawImage(img, { x: MARGIN, y: A4.height - MARGIN - RUNNING_BAND - STRIP_HEIGHT, width, height: STRIP_HEIGHT });
       }
-      if (p.kind === "file") await drawSource(out, page, loaded.get(key(p.ref, p.file))!, p.page, contentBox(first));
+      if (p.kind === "file") drawSource(page, loaded.get(key(p.ref, p.file))!.pages[p.page], contentBox(first));
     }
     const head = runningHeader(pageNo, plan.coverPages, job.headers);
     if (head) {
@@ -223,20 +256,16 @@ function drawNumber(page: PDFPage, font: PDFFont, n: number) {
   page.drawText(s, { x: (A4.width - font.widthOfTextAtSize(s, size)) / 2, y: MARGIN + 4, size, font, color: rgb(0.29, 0.34, 0.45) });
 }
 
-/** One page of a file (a PDF's page, or the image) into `box`. */
-async function drawSource(out: PDFDocument, page: PDFPage, src: Loaded, index: number, box: { x: number; y: number; width: number; height: number }) {
+/** One page of a file (a PDF's page, or the image), already embedded, into `box`. */
+function drawSource(page: PDFPage, src: SourcePage, box: { x: number; y: number; width: number; height: number }) {
   if (src.kind === "pdf") {
-    const sp = src.doc.getPage(index);
-    if (!sp.node.Contents()) return; // a page with nothing on it (pdf-lib cannot embed it): a blank page, kept as one
-    const crop = sp.getCropBox();
-    const embedded = await out.embedPage(sp, { left: crop.x, bottom: crop.y, right: crop.x + crop.width, top: crop.y + crop.height });
-    const f = frame(crop.width, crop.height, sp.getRotation().angle, box);
-    page.drawPage(embedded, { x: f.x, y: f.y, xScale: f.scale, yScale: f.scale, rotate: degrees(f.rotate) });
+    if (!src.page) return; // a page with nothing on it: a blank page, kept as one
+    const f = frame(src.width, src.height, src.rotation, box);
+    page.drawPage(src.page, { x: f.x, y: f.y, xScale: f.scale, yScale: f.scale, rotate: degrees(f.rotate) });
     return;
   }
-  const img = src.mime === "image/png" ? await out.embedPng(src.bytes) : await out.embedJpg(src.bytes);
-  const turn = src.mime === "image/jpeg" ? orientationTurn(jpegOrientation(src.bytes)) : 0;
-  const f = frame(img.width, img.height, turn, box);
+  const { img } = src;
+  const f = frame(img.width, img.height, src.turn, box);
   page.drawImage(img, { x: f.x, y: f.y, width: img.width * f.scale, height: img.height * f.scale, rotate: degrees(f.rotate) });
 }
 

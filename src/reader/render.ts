@@ -142,12 +142,14 @@ export function canvasRenderer(make: MakeSurface, scale = 3, pageScale = 2): Tex
         const lines = wrap((s) => ctx.measureText(s).width, header, w, 2);
         const size = lines.length > 1 ? 12 : 14;
         ctx.font = font(size * scale, true);
-        lines.forEach((l, i) => rtl(ctx, fit((s) => ctx.measureText(s).width, l, w), w, (size + 2 + i * (size + 3)) * scale));
+        // baselines in points: one line at 16; two at 12.5 and 26.5, so the second line's descenders (ק ן ך ר) clear the time below
+        const first = lines.length > 1 ? 12.5 : 16;
+        lines.forEach((l, i) => rtl(ctx, fit((s) => ctx.measureText(s).width, l, w), w, (first + i * 14) * scale));
         ctx.fillStyle = SOFT;
         ctx.font = font(8.5 * scale);
-        rtl(ctx, when, w, h - 9 * scale);
+        rtl(ctx, when, w, h - 6.5 * scale);
         ctx.fillStyle = LINE;
-        ctx.fillRect(0, h - 3 * scale, w, Math.max(1, scale * 0.8));
+        ctx.fillRect(0, h - 2.5 * scale, w, Math.max(1, scale * 0.8));
       }, widthPt, heightPt),
 
     tocPage: (lines, title) =>

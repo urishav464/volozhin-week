@@ -1,11 +1,12 @@
 // The reader's Word skeleton (DESIGN «תוצרים» 5: שלד Word לעריכה אחידה): a
 // .docx to paste the sources into, all of one shape — a table of contents
-// field (Word fills it on open), then each day: a heading, every lesson
-// marked «במקראה» as «מרצה – כותרת» on a page of its own (also those whose
-// files have not come yet, or are Word: this is where they are pasted), every
-// memorial slot, and a «סיכום יום» page of ruled lines. Right to left
-// throughout (w:bidi, w:rtl), A4, the same alternating running headers as the
-// PDF and a page number. Made in the browser with docx 9.8.1, downloaded —
+// field (Word fills it on open, right to left; the headings carry outline
+// levels, so LibreOffice finds them too), then each day: a heading on a new
+// page with its first lesson under it, every lesson marked «במקראה» as «מרצה –
+// כותרת» on a page of its own (also those whose files have not come yet, or
+// are Word: this is where they are pasted), every memorial slot, and a «סיכום
+// יום» page of ruled lines. Right to left throughout (w:bidi by default, w:rtl),
+// A4, the same alternating running headers as the PDF and a page number. Made in the browser with docx 9.8.1, downloaded —
 // nothing is uploaded. No text of ours beyond the structure's own words.
 import {
   AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, TableOfContents, TextRun,
@@ -47,12 +48,13 @@ const headerOf = (text: string) => new Header({ children: [para(text, { center: 
 export function skeletonParagraphs(input: SkeletonInput): { text: string; style: "title" | "h1" | "h2" | "line" | "blank"; pageBreak: boolean }[] {
   const out: { text: string; style: "title" | "h1" | "h2" | "line" | "blank"; pageBreak: boolean }[] = [];
   for (const { day, rows } of byDay(skeletonRows(input.manifest))) {
+    // the day's heading opens a page, and its first entry shares it (never a day's name alone on a page)
     out.push({ text: dayTitle(day as Day), style: "h1", pageBreak: true });
-    for (const r of rows) {
-      out.push({ text: r.header, style: "h2", pageBreak: true });
+    rows.forEach((r, i) => {
+      out.push({ text: r.header, style: "h2", pageBreak: i > 0 });
       out.push({ text: "", style: "blank", pageBreak: false });
-    }
-    out.push({ text: `סיכום ${dayTitle(day as Day)}`, style: "h2", pageBreak: true });
+    });
+    out.push({ text: `סיכום ${dayTitle(day as Day)}`, style: "h2", pageBreak: rows.length > 0 });
     for (let i = 0; i < RULED_LINES; i++) out.push({ text: "", style: "line", pageBreak: false });
   }
   return out;
@@ -61,11 +63,15 @@ export function skeletonParagraphs(input: SkeletonInput): { text: string; style:
 export async function buildSkeleton(input: SkeletonInput): Promise<Uint8Array> {
   const children: (Paragraph | TableOfContents)[] = [
     para(`מקראה · ${input.editionLabel}`, { heading: HeadingLevel.TITLE, center: true }),
+    para("תוכן העניינים", { bold: true, size: 28 }),
     new TableOfContents("תוכן העניינים", { hyperlink: true, headingStyleRange: "1-2" }),
   ];
   for (const p of skeletonParagraphs(input)) {
     if (p.style === "line") {
-      children.push(new Paragraph({ bidirectional: true, spacing: { after: 160 }, border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "BBBBBB", space: 1 } }, children: [] }));
+      // a bottom border AND a between one: Word and LibreOffice draw a run of paragraphs with the same borders as one
+      // bordered block — a bottom border alone comes out once, under the last line (ECMA-376 §17.3.1.5, §17.3.1.7)
+      const rule = { style: BorderStyle.SINGLE, size: 4, color: "BBBBBB", space: 1 };
+      children.push(new Paragraph({ bidirectional: true, spacing: { after: 160 }, border: { bottom: rule, between: rule }, children: [] }));
     } else if (p.style === "blank") {
       children.push(para(""));
     } else {
@@ -79,7 +85,13 @@ export async function buildSkeleton(input: SkeletonInput): Promise<Uint8Array> {
     features: { updateFields: true },
     evenAndOddHeaderAndFooters: true,
     styles: {
-      default: { document: { run: { font: FONT, rightToLeft: true } } },
+      default: {
+        // every paragraph right to left by default — the TOC's own paragraphs (TOC 1, TOC 2, built on Normal) included;
+        // docx 9.8.1 writes <w:bidi/> in pPrDefault but its type for the defaults leaves the option out
+        document: { run: { font: FONT, rightToLeft: true }, paragraph: { bidirectional: true } as object },
+        heading1: { paragraph: { outlineLevel: 0, keepNext: true } },
+        heading2: { paragraph: { outlineLevel: 1 } },
+      },
     },
     sections: [
       {

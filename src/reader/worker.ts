@@ -26,7 +26,15 @@ const scope = self as unknown as WorkerScope;
  */
 async function loadFont(): Promise<void> {
   if (!scope.fonts || typeof FontFace === "undefined") return;
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+  // A face that arrives after the deadline is never added: the build has started in the fallback face, and one
+  // booklet stays in one typeface (a late Assistant would switch in half way through the pages).
+  let late = false;
+  const timeout = new Promise<void>((resolve) =>
+    setTimeout(() => {
+      late = true;
+      resolve();
+    }, 4000),
+  );
   const load = (async () => {
     const css = await (await fetch("https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap")).text();
     const faces: Promise<unknown>[] = [];
@@ -36,7 +44,11 @@ async function loadFont(): Promise<void> {
       const range = /unicode-range:\s*([^;]+);/.exec(block)?.[1];
       if (!url || (range && !/U\+0?5|U\+0000-00FF/i.test(range))) continue; // the Hebrew and the basic Latin faces
       const face = new FontFace("Assistant", `url(${url})`, { weight, unicodeRange: range });
-      faces.push(face.load().then((f) => scope.fonts!.add(f)));
+      faces.push(
+        face.load().then((f) => {
+          if (!late) scope.fonts!.add(f);
+        }),
+      );
     }
     await Promise.allSettled(faces);
   })().catch(() => undefined);

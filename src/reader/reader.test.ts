@@ -5,14 +5,16 @@
 // canvas text: page count, order — by each page's embedded source — and the
 // files it had to leave out).
 import { strFromU8, unzipSync } from "fflate";
-import { PDFDict, PDFDocument, PDFName, PDFRawStream, PDFArray, PDFNumber, degrees } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFStream, decodePDFRawStream, degrees } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { demoWeek, seedDemoSources } from "../data/demoWeek";
 import type { SourceFile, Week } from "../domain/types";
 import { assembleReader, chunkSchedule, jpegOrientation, orientationTurn, type ReaderJob } from "./assemble";
+import { stripJpegMetadata } from "./jpeg";
 import { buildSkeleton, skeletonParagraphs, skeletonRows } from "./docx";
 import { A4, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
 import { manifestTotals, readerHeader, readerManifest, readerRows } from "./model";
+import { nextLessonStep, readerFilesOf, stagesOf } from "../domain/stages";
 import type { Png, TextRenderer } from "./render";
 import { fit, wrap } from "./render";
 
@@ -92,6 +94,24 @@ describe("the manifest", () => {
     expect(m.leftovers.map((f) => f.lesson_id)).toEqual([draft.id, null]);
     expect(m.covers.map((f) => f.id)).toEqual([500, 501]);
     expect(m.cover?.id).toBe(501);
+  });
+
+  // the code review's proof: «ד״ר מרצה 10» was «חסר» in the manifest and a green «במקראה» dot on its card
+  it("agrees with the lesson's «מקראה» stage — the card's dot, the panel — lesson by lesson", () => {
+    const w = demo();
+    const rows = readerManifest(w).rows.filter((r) => r.kind === "lesson");
+    expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "missing", "needs_pdf"]));
+    for (const r of rows) {
+      const files = readerFilesOf(w, r.lesson.id);
+      const reader = stagesOf(r.lesson, files).find((s) => s.key === "reader")!;
+      expect(reader.state === "done", `${r.header}: ${r.status} / ${reader.note}`).toBe(r.status === "included");
+      if (r.status === "missing" && r.lesson.in_reader) expect(reader.note).toBe("חסר קובץ");
+      if (r.status === "needs_pdf") expect(reader.note).toBe("צריך PDF");
+      // and «המרצים שלי» / the tracking table: such a lesson's sources are still a step to take, once the steps before it are done
+      const settled = { ...r.lesson, approval: "none" as const, needs_reconfirm: false, confirm_sent_at: "2026-11-01T00:00:00Z", self_intro: true };
+      if (r.status === "missing" || r.status === "needs_pdf") expect(nextLessonStep(settled, files), r.header).toBe("sources");
+      if (r.status === "included") expect(nextLessonStep(settled, files), r.header).toBeNull();
+    }
   });
 
   it("writes the header «מרצה – כותרת», TBD for what is missing, and the memorial slot's own", () => {
@@ -248,7 +268,22 @@ describe("the Word skeleton", () => {
     expect(doc).toContain("<w:bidi/>");
     expect(doc).toContain("<w:rtl/>");
     expect(doc).toMatch(/TOC \\h \\o &quot;1-2&quot;/);
-    expect((doc.match(/<w:pageBreakBefore\/>/g) ?? []).length).toBe(expected.length);
+    // a page each — but a day's heading shares its page with its first entry (never a day's name alone on a page)
+    const paras = skeletonParagraphs({ manifest: m, editionLabel: "הדגמה" });
+    expect((doc.match(/<w:pageBreakBefore\/>/g) ?? []).length).toBe(paras.filter((p) => p.pageBreak).length);
+    paras.forEach((p, i) => {
+      if (p.style === "h1") expect(p.pageBreak).toBe(true);
+      if (i > 0 && paras[i - 1].style === "h1") expect(p.pageBreak, p.text).toBe(false);
+    });
+    // «סיכום יום»'s ruled lines: a between border too, or Word and LibreOffice draw one line under the whole block
+    expect(doc).toMatch(/<w:between /);
+    expect(doc).toContain("תוכן העניינים"); // the table of contents has a title on the page, not only the field's alias
+    // right to left by default (the TOC's own paragraphs too), and outline levels a TOC can be built from
+    const styles = strFromU8(zip["word/styles.xml"]);
+    expect(styles).toMatch(/<w:pPrDefault><w:pPr>(?:(?!<\/w:pPr>).)*<w:bidi\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading1"(?:(?!<\/w:style>).)*<w:outlineLvl w:val="0"\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading1"(?:(?!<\/w:style>).)*<w:keepNext\/>/s);
+    expect(styles).toMatch(/w:styleId="Heading2"(?:(?!<\/w:style>).)*<w:outlineLvl w:val="1"\/>/s);
     const settings = strFromU8(zip["word/settings.xml"]);
     expect(settings).toContain("w:evenAndOddHeaders");
     expect(settings).toContain("w:updateFields");
@@ -264,6 +299,54 @@ describe("the Word skeleton", () => {
     expect(headers).not.toMatch(/<w:t[ >]/);
   });
 });
+
+/** Scan data with a stuffed byte (FF 00) and a restart marker (FF D0) in it. */
+const SCAN = [0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78, 0x9a];
+
+/**
+ * A photo as a phone writes it, synthetic: JFIF, EXIF (orientation 6, the camera's make, a GPS IFD), XMP, an
+ * ICC-like APP2, a comment, Adobe's APP14, the tables, a 16×8 frame, a scan — and a «motion photo» after the end.
+ * pdf-lib reads only the frame, so the scan need not decode.
+ */
+function syntheticPhoto(): Uint8Array {
+  const seg = (marker: number, body: number[]) => [0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255, ...body];
+  const ascii = (t: string) => [...Buffer.from(t, "latin1")];
+  // EXIF, little-endian: IFD0 with Orientation (0x0112) = 6, Make (0x010f) → «SamsungPhone», GPS IFD (0x8825) → one GPS tag
+  const u16 = (v: number) => [v & 255, v >> 8];
+  const u32 = (v: number) => [v & 255, (v >> 8) & 255, (v >> 16) & 255, v >>> 24];
+  const make = ascii("SamsungPhone\0");
+  const ifd0At = 8;
+  const ifd0Len = 2 + 3 * 12 + 4;
+  const makeAt = ifd0At + ifd0Len;
+  const gpsAt = makeAt + make.length;
+  const tiff = [
+    0x49, 0x49, ...u16(42), ...u32(ifd0At),
+    ...u16(3),
+    ...u16(0x010f), ...u16(2), ...u32(make.length), ...u32(makeAt),
+    ...u16(0x0112), ...u16(3), ...u32(1), ...u16(6), 0, 0,
+    ...u16(0x8825), ...u16(4), ...u32(1), ...u32(gpsAt),
+    ...u32(0),
+    ...make,
+    ...u16(1), ...u16(1), ...u16(2), ...u32(2), ...ascii("N\0"), 0, 0, ...u32(0), // GPSLatitudeRef = N
+    ...ascii("GPS"),
+  ];
+  return Uint8Array.from([
+    0xff, 0xd8,
+    ...seg(0xe0, [...ascii("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]),
+    ...seg(0xe1, [...ascii("Exif\0\0"), ...tiff]),
+    ...seg(0xe1, [...ascii("http://ns.adobe.com/xap/1.0/\0"), ...ascii("<x:xmpmeta/>")]),
+    ...seg(0xe2, [...ascii("ICC_PROFILE\0"), 1, 1, 0, 0]),
+    ...seg(0xfe, ascii("a comment")),
+    ...seg(0xee, [...ascii("Adobe"), 0, 100, 0, 0, 0, 0, 1]),
+    ...seg(0xdb, [0, ...Array(64).fill(1)]),
+    ...seg(0xc0, [8, 0, 8, 0, 16, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]),
+    ...seg(0xc4, [0, ...Array(16).fill(0)]),
+    ...seg(0xda, [3, 1, 0, 2, 0, 3, 0, 0, 63, 0]),
+    ...SCAN,
+    0xff, 0xd9,
+    ...ascii("MotionPhoto_Data"), 0, 0, 0, 0x18, ...ascii("ftypmp42"),
+  ]);
+}
 
 // A 1×1 PNG: what the stub text drawer hands back for every line of Hebrew.
 const PIXEL = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64"));
@@ -284,6 +367,15 @@ async function pdfOf(sizes: [number, number][], rotate = 0, blank = false): Prom
   }
   const b = await d.save();
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+}
+
+/** A page's content stream, decoded. */
+function pageContent(doc: PDFDocument, n: number): string {
+  const c = doc.getPage(n).node.normalizedEntries().Contents!;
+  return Array.from({ length: c.size() }, (_, i) => {
+    const s = c.lookup(i, PDFStream);
+    return s instanceof PDFRawStream ? Buffer.from(decodePDFRawStream(s).decode()).toString("latin1") : "";
+  }).join("\n");
 }
 
 /** Each page's embedded source page, by its BBox («300x400»), or «-» for a page with none (text pictures only). */
@@ -346,6 +438,77 @@ describe("the PDF assembly", () => {
     expect(sources(out).slice(0, 3)).toEqual(["1000x1414", "-", "-"]);
     expect(sources(out)).toContain("200x200");
     expect(out.getPageCount()).toBe(1 + 1 + 1 + 5);
+  });
+
+  // the reviewer's proof (a damaged picture failed the whole build with «SOI not found in JPEG»), turned round
+  it("leaves out a damaged picture, a broken PNG and a PDF whose pages cannot be embedded — names each, and builds the rest", async () => {
+    const pngHead = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
+    // a PDF that opens, with a page whose content is in a filter pdf-lib cannot decode: embedding it throws
+    const odd = await PDFDocument.create();
+    const page = odd.addPage([300, 300]);
+    page.node.set(PDFName.of("Contents"), odd.context.register(odd.context.stream("x", { Filter: "JBIG2Decode" })));
+    odd.addPage([300, 300]).drawRectangle({ x: 1, y: 1, width: 5, height: 5 });
+    const oddBytes = await odd.save();
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [
+        { id: 1, name: "photo.jpg", mime: "image/jpeg", bytes: new TextEncoder().encode("not a jpeg at all").buffer as ArrayBuffer },
+        { id: 2, name: "broken.png", mime: "image/png", bytes: pngHead.buffer as ArrayBuffer },
+        { id: 3, name: "odd.pdf", mime: "application/pdf", bytes: oddBytes.buffer.slice(oddBytes.byteOffset, oddBytes.byteOffset + oddBytes.byteLength) as ArrayBuffer },
+        { id: 4, name: "good.pdf", mime: "application/pdf", bytes: await pdfOf([[300, 400]]) },
+        { id: 5, name: "really-a-png.jpg", mime: "image/jpeg", bytes: PIXEL.buffer.slice(0) as ArrayBuffer }, // drawn as the PNG it is
+      ] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([
+      { name: "photo.jpg", reason: "unreadable" },
+      { name: "broken.png", reason: "unreadable" },
+      { name: "odd.pdf", reason: "unreadable" }, // all of its pages, or none
+    ]);
+    const out = await PDFDocument.load(r.bytes);
+    // 1 schedule page + 1 contents + good.pdf + the PNG + 5 summaries
+    expect(out.getPageCount()).toBe(1 + 1 + 1 + 1 + 5);
+    expect(sources(out).slice(2, 4)).toEqual(["300x400", "-"]);
+  });
+
+  it("puts a phone's photo in without its metadata — no EXIF, no GPS, no camera, no comment, nothing after the image — and still turns it upright", async () => {
+    const jpeg = syntheticPhoto();
+    const has = (b: Uint8Array, text: string) => Buffer.from(b).includes(Buffer.from(text, "latin1"));
+    expect(has(jpeg, "Exif\0\0") && has(jpeg, "SamsungPhone") && has(jpeg, "a comment") && has(jpeg, "MotionPhoto")).toBe(true);
+    // the control: pdf-lib alone copies the photo's bytes into the PDF as they are
+    const raw = await PDFDocument.create();
+    raw.addPage().drawImage(await raw.embedJpg(jpeg), { x: 0, y: 0, width: 10, height: 10 });
+    expect(has(await raw.save(), "SamsungPhone")).toBe(true);
+
+    const clean = stripJpegMetadata(jpeg)!;
+    for (const t of ["Exif\0\0", "SamsungPhone", "GPS", "a comment", "MotionPhoto", "http://ns.adobe.com/xap/1.0/"]) expect(has(clean, t), t).toBe(false);
+    expect(has(clean, "JFIF\0")).toBe(true); // APP0 kept
+    expect(has(clean, "Adobe")).toBe(true); // APP14 kept (the colour transform)
+    expect(Buffer.from(clean.subarray(-2)).toString("hex")).toBe("ffd9");
+    // the picture's own segments and its scan data, byte for byte
+    expect(Buffer.from(clean).includes(Buffer.from(SCAN))).toBe(true);
+    expect(jpegOrientation(jpeg)).toBe(6);
+
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [{ id: 1, name: "צילום.jpg", mime: "image/jpeg", bytes: jpeg.buffer.slice(0) as ArrayBuffer }] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([]);
+    for (const t of ["Exif\0\0", "SamsungPhone", "a comment", "MotionPhoto"]) expect(has(r.bytes, t), t).toBe(false);
+    // drawn turned a quarter clockwise (EXIF orientation 6): pdf-lib's rotate of -90° is the matrix [cos −1 1 cos 0 0]
+    const out = await PDFDocument.load(r.bytes);
+    expect(pageContent(out, 2)).toMatch(/\S+ -1 1 \S+ 0 0 cm/);
+  });
+
+  it("follows a JPEG's structure or says it cannot: cut short, no frame, a segment past the end", () => {
+    const jpeg = syntheticPhoto();
+    const eoi = jpeg.lastIndexOf(0xd9) - 1;
+    const cut = stripJpegMetadata(jpeg.subarray(0, eoi - 3).slice())!; // cut inside the scan data: kept, its end marker back
+    expect(Buffer.from(cut.subarray(-2)).toString("hex")).toBe("ffd9");
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xda, 0, 2, 1, 2]))).toBeNull(); // a scan before any frame
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x40, 0, 1, 2]))).toBeNull(); // a segment past the end
+    expect(stripJpegMetadata(new TextEncoder().encode("not a jpeg"))).toBeNull();
   });
 
   it("stops when cancelled", async () => {
