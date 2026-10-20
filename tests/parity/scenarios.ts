@@ -773,6 +773,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", close: "גמא", at: [1, 510] }, // another speaker
     { as: "A", store: [1, 510], file: "a3", mime: "image/jpeg" },
     { as: "A", register: "a3" }, // the new speaker's first file: in the reader again
+    { as: "A", store: [1, 510], file: "a5", mime: "image/png" },
+    { as: "A", register: "a5", pages: null }, // a picture the browser could not read: no page (out of the reader)
     { as: "E", unstore: "p1" },
     { as: "E", unregister: "p1" }, // the cover's file: the mark goes with it
     // a path is used once: a removal that stopped half way leaves the row, and nobody uploads at its path again

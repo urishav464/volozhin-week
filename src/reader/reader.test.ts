@@ -13,7 +13,7 @@ import { assembleReader, jpegOrientation, orientationTurn, type ReaderJob } from
 import { stripJpegMetadata } from "./jpeg";
 import { buildSkeleton, skeletonParagraphs, skeletonRows } from "./docx";
 import { A4, chunkSchedule, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, scheduleCoverPages, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
-import { manifestTotals, readerHeader, readerManifest, readerRows } from "./model";
+import { manifestTotals, readerEstimate, readerHeader, readerManifest, readerRows, unreadText, wordText } from "./model";
 import { nextLessonStep, readerFilesOf, stagesOf } from "../domain/stages";
 import type { Png, ScheduleLine, TextRenderer } from "./render";
 import { fit, wrap } from "./render";
@@ -96,20 +96,69 @@ describe("the manifest", () => {
     expect(m.cover?.id).toBe(501);
   });
 
+  // the second review's proof: a PDF or a picture the browser could not read on upload was «התקבל» in the manifest, a
+  // green dot on the card and counted in the panel — and left out of the reader only when it was built
+  it("leaves out a file the browser could not read on upload (no page count) — «צריך קובץ אחר», never «התקבל»", () => {
+    const w = demo();
+    const l = at(w, 1, 930); // marked for the reader, nothing arrived yet
+    const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
+    const file = (id: number, mime: SourceFile["mime"], page_count: number | null): SourceFile => ({
+      id, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/${id}`, display_name: `${id}`, mime, size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    const rowOf = () => readerManifest(w).rows.find((r) => r.lesson.id === l.id)!;
+    w.sourceFiles.push(file(90, "application/pdf", null), file(91, "image/png", null));
+    expect(rowOf()).toMatchObject({ status: "unreadable", pages: 0, printable: [] });
+    expect(rowOf().unread.map((f) => f.id)).toEqual([90, 91]);
+    expect(readerRows(readerManifest(w)).map((r) => r.lesson.id)).not.toContain(l.id);
+    expect(manifestTotals(readerManifest(w))).toMatchObject({ unreadable: 1, files: 6 });
+    // with Word beside them, «צריך PDF» first — as the lesson's stage says it
+    w.sourceFiles.push(file(92, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", null));
+    expect(rowOf().status).toBe("needs_pdf");
+    // a file it did read puts the lesson in; the others stay out, named
+    w.sourceFiles.push(file(93, "application/pdf", 4));
+    expect(rowOf()).toMatchObject({ status: "included", pages: 4 });
+    expect(rowOf().printable.map((f) => f.id)).toEqual([93]);
+    expect(rowOf().unread.map((f) => f.id)).toEqual([90, 91]);
+    // not marked: files came all the same
+    w.sourceFiles = w.sourceFiles.filter((f) => f.id !== 92 && f.id !== 93);
+    l.in_reader = false;
+    expect(rowOf().status).toBe("not_marked");
+    // a marked poster the browser could not read is no cover: the schedule is
+    w.sourceFiles.push({ ...file(94, "image/jpeg", null), lesson_id: null, cover: true });
+    w.edition.settings.reader_cover = 94;
+    expect(readerManifest(w).cover).toBeNull();
+  });
+
+  it("says what it leaves out in one wording, the count by number", () => {
+    expect(wordText(1)).toBe("ועוד קובץ Word אחד שלא נכנס — צריך PDF");
+    expect(wordText(2)).toBe("ועוד 2 קבצי Word שלא נכנסו — צריך PDF");
+    expect(unreadText(1, false)).toBe("קובץ אחד לא נקרא — צריך קובץ אחר");
+    expect(unreadText(3, false)).toBe("3 קבצים לא נקראו — צריך קובץ אחר");
+    expect(unreadText(1, true)).toBe("ועוד קובץ אחד שלא נקרא — צריך קובץ אחר");
+    expect(unreadText(2, true)).toBe("ועוד 2 קבצים שלא נקראו — צריך קובץ אחר");
+  });
+
   // the code review's proof: «ד״ר מרצה 10» was «חסר» in the manifest and a green «במקראה» dot on its card
   it("agrees with the lesson's «מקראה» stage — the card's dot, the panel — lesson by lesson", () => {
     const w = demo();
+    // and a lesson whose only file could not be read on upload
+    const l = at(w, 0, 870);
+    Object.assign(l, { sources_kind: "sheet", in_reader: true });
+    const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
+    w.sourceFiles.push({ id: 90, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/x`, display_name: "x.pdf", mime: "application/pdf", size_bytes: 1, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z" });
     const rows = readerManifest(w).rows.filter((r) => r.kind === "lesson");
-    expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "missing", "needs_pdf"]));
+    expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "missing", "needs_pdf", "unreadable"]));
     for (const r of rows) {
       const files = readerFilesOf(w, r.lesson.id);
       const reader = stagesOf(r.lesson, files).find((s) => s.key === "reader")!;
       expect(reader.state === "done", `${r.header}: ${r.status} / ${reader.note}`).toBe(r.status === "included");
+      expect(files, r.header).toEqual({ printable: r.printable.length, word: r.word.length, unread: r.unread.length });
       if (r.status === "missing" && r.lesson.in_reader) expect(reader.note).toBe("חסר קובץ");
       if (r.status === "needs_pdf") expect(reader.note).toBe("צריך PDF");
+      if (r.status === "unreadable") expect(reader.note).toBe("צריך קובץ אחר");
       // and «המרצים שלי» / the tracking table: such a lesson's sources are still a step to take, once the steps before it are done
       const settled = { ...r.lesson, approval: "none" as const, needs_reconfirm: false, confirm_sent_at: "2026-11-01T00:00:00Z", self_intro: true };
-      if (r.status === "missing" || r.status === "needs_pdf") expect(nextLessonStep(settled, files), r.header).toBe("sources");
+      if (r.status === "missing" || r.status === "needs_pdf" || r.status === "unreadable") expect(nextLessonStep(settled, files), r.header).toBe("sources");
       if (r.status === "included") expect(nextLessonStep(settled, files), r.header).toBeNull();
     }
   });
@@ -565,6 +614,37 @@ describe("the PDF assembly", () => {
     const r = await assembleReader({ editionLabel: "x", cover: null, schedule, scheduleTitle: "לו\"ז", entries: [] }, stub);
     expect(r.pages).toBe(planReader([], scheduleCoverPages(schedule)).pages.length);
     expect(r.pages).toBe(2 + 1 + 5);
+  });
+
+  // the second review's proof: «בערך N עמודים» was one page short for a week whose schedule takes two cover pages
+  it("has as many pages as the screen's estimate says (readerEstimate) — a schedule cover of two pages, or a poster", async () => {
+    const w = demo();
+    const m = readerManifest(w);
+    const schedule = designWeek();
+    // the manifest's files as the build gets them: a PDF of its counted pages, a picture
+    const job = async (cover: ReaderJob["cover"]): Promise<ReaderJob> => ({
+      editionLabel: "x", cover, schedule, scheduleTitle: "לו\"ז",
+      entries: await Promise.all(
+        readerRows(m).map(async (r, i) => ({
+          ref: i, day: r.day, header: r.header, when: r.when,
+          files: await Promise.all(
+            r.printable.map(async (f) => ({
+              id: f.id, name: f.display_name, mime: f.mime as "application/pdf" | "image/png",
+              bytes: f.mime === "application/pdf" ? await pdfOf(Array.from({ length: f.page_count! }, () => [300, 400] as [number, number])) : (PIXEL.buffer.slice(0) as ArrayBuffer),
+            })),
+          ),
+        })),
+      ),
+    });
+    const r = await assembleReader(await job(null), stub);
+    expect(r.skipped).toEqual([]);
+    expect(readerEstimate(m, schedule)).toBe(r.pages);
+    expect(r.pages).toBe(2 + 1 + (3 + 1 + 1) + (1 + 1) + (1 + 1 + 1) + (1 + 1) + (1 + 1)); // the two schedule pages, the contents, then each day's files, memorial slot and «סיכום יום»
+    // a marked poster of two pages instead
+    const poster: SourceFile = { ...w.sourceFiles[0], id: 70, lesson_id: null, cover: true, page_count: 2 };
+    const withPoster = { ...m, covers: [poster], cover: poster };
+    const p = await assembleReader(await job({ id: 70, name: "poster.pdf", mime: "application/pdf", bytes: await pdfOf([[300, 400], [300, 400]]) }), stub);
+    expect(readerEstimate(withPoster, schedule)).toBe(p.pages);
   });
 
   it("frames a page whose box names its corners top-left first ([0 842 595 0]) upright, as every viewer shows it", async () => {

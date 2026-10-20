@@ -2,7 +2,7 @@
 // שלב»): תשלום/הסעה · הודעה · מלווה · מקורות · מקראה — and the one next step
 // «המרצים שלי» groups it by. Pure, from the lesson's own columns and the count
 // of its files (readerFilesOf — the «מקראה» stage is the reader manifest's own
-// verdict: «במקראה» only when a PDF or a picture is there), so the card's dots,
+// verdict: «במקראה» only when a PDF or a picture the browser read is there), so the card's dots,
 // the lesson panel, «המרצים שלי», the tracking table and the reader's manifest
 // all say the same.
 import { amountText } from "./message";
@@ -59,31 +59,37 @@ export function requestText(l: Pick<Lesson, "pay_amount" | "transport">): string
   return `${l.pay_amount != null ? shekels(l.pay_amount) : "בלי תשלום"} · ${TRANSPORT_LABEL[l.transport]}`;
 }
 
-/** What the «מקראה» stage reads of a lesson's files: its current lead speaker's PDFs and pictures (printable) and Word files. */
+/**
+ * What the «מקראה» stage reads of a lesson's files: its current lead speaker's PDFs and pictures the browser read
+ * on upload (printable), Word files, and PDFs and pictures it could not read (unread: no page count).
+ */
 export interface ReaderFiles {
   printable: number;
   word: number;
+  unread: number;
 }
-export const NO_FILES: ReaderFiles = { printable: 0, word: 0 };
+export const NO_FILES: ReaderFiles = { printable: 0, word: 0, unread: 0 };
 const WORD = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /**
  * A lesson's files as the reader's manifest counts them (src/reader/model.ts): the current lead speaker's only — a
- * previous speaker's («מהמרצה הקודם») never count — split into what the PDF build merges and Word files.
+ * previous speaker's («מהמרצה הקודם») never count — split into what the PDF build merges, Word files, and files
+ * the browser could not read on upload (src/reader/pages.ts: no page count — the manifest's readableFile).
  */
 export function readerFilesOf(week: Pick<Week, "sourceFiles" | "lessonSpeakers">, lessonId: number): ReaderFiles {
   const lead = week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id;
-  const out = { printable: 0, word: 0 };
+  const out = { printable: 0, word: 0, unread: 0 };
   if (lead == null) return out;
   for (const f of week.sourceFiles ?? []) {
     if (f.lesson_id !== lessonId || f.speaker_id !== lead) continue;
     if (f.mime === WORD) out.word++;
+    else if (f.page_count == null) out.unread++;
     else out.printable++;
   }
   return out;
 }
 
-/** Marked «במקראה» with nothing the PDF build can merge: «חסר», or «צריך PDF» when Word files came. */
+/** Marked «במקראה» with nothing the PDF build can merge: «חסר קובץ», «צריך PDF» when Word files came, «צריך קובץ אחר» when they could not be read. */
 const readerFileMissing = (l: Pick<Lesson, "sources_kind" | "in_reader">, files: ReaderFiles) =>
   l.in_reader && l.sources_kind !== "none" && l.sources_kind !== "presentation" && files.printable === 0;
 
@@ -126,7 +132,7 @@ export function stagesOf(l: StageFields, files: ReaderFiles): Stage[] {
       : l.in_reader
         ? files.printable > 0
           ? stage("reader", "done", "במקראה")
-          : stage("reader", "open", files.word > 0 ? "צריך PDF" : "חסר קובץ")
+          : stage("reader", "open", files.word > 0 ? "צריך PDF" : files.unread > 0 ? "צריך קובץ אחר" : "חסר קובץ")
         : l.sources_kind === "pending"
           ? stage("reader", "open", "מחכה למקורות")
           : stage("reader", "open", "עוד לא סומן למקראה");
@@ -156,7 +162,7 @@ export type LessonStep = "payment" | "reconfirm" | "send" | "escort" | "sources"
 /**
  * In this order: a payment/transport request waiting for the instructor or rejected (the message
  * cannot go before it is settled), the speaker to be told again, the message to send, an escort, the sources —
- * not received yet, or marked «במקראה» with no PDF or picture uploaded (`files`: readerFilesOf(week, l.id)).
+ * not received yet, or marked «במקראה» with no PDF or picture uploaded that the reader can print (`files`: readerFilesOf(week, l.id)).
  */
 export function nextLessonStep(l: StageFields, files: ReaderFiles): LessonStep | null {
   if (l.approval === "pending" || l.approval === "rejected") return "payment";

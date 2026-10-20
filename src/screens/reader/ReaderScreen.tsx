@@ -2,9 +2,10 @@
 // the manifest «התקבל / חסר», always on screen, lesson by lesson in schedule
 // order; the cover (a poster an admin uploads and marks, else a schedule page
 // made from the week); the two running headers, the admin's own words; and
-// «בנה מקראה» — the PDF assembled in a worker from the files, downloaded and
-// never uploaded — and the Word skeleton beside it. Nothing here is a text of
-// ours: a missing title stays TBD, an empty header stays empty.
+// «בניית המקראה (PDF)» — the PDF assembled in a worker from the files,
+// downloaded and never uploaded; on a computer (a mouse, or a wide screen) —
+// and the Word skeleton beside it. Nothing here is a text of ours: a missing
+// title stays TBD, an empty header stays empty.
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { CommandError } from "../../data/commands";
@@ -17,20 +18,22 @@ import type { SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { download, fileName, israelDay } from "../../exports/download";
 import { useMedia } from "../../lib/useMedia";
-import type { BuildProgress, BuildResult, ReaderBuild } from "../../reader/build";
-import { planReader } from "../../reader/layout";
-import { byDay, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readerManifest, readerRows, STATUS_LABEL } from "../../reader/model";
+import { type BuildProgress, type BuildResult, buildReader, type ReaderBuild, scheduleLines } from "../../reader/build";
+import {
+  byDay, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readableFile, readerEstimate, readerManifest, readerRows, STATUS_LABEL, unreadText, wordText,
+} from "../../reader/model";
+import { readerPages } from "../../reader/pages";
 import { OutputsTabs } from "../outputs/parts";
 import { Badge, Button, Field, INPUT, Panel } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { FileRow } from "../stages/SourceFiles";
-import { countPdfPages } from "../../reader/pages";
 import { actorIn, type Actor, useWeekStore } from "../weekStore";
 
 const TONE: Record<ManifestStatus, "ok" | "accent" | "bad" | "muted" | "neutral"> = {
   included: "ok",
   memorial: "accent",
   needs_pdf: "bad",
+  unreadable: "bad",
   missing: "bad",
   not_marked: "neutral",
   pending: "bad",
@@ -99,31 +102,28 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
 type Notify = ReturnType<typeof useToast>["notify"];
 
 function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; week: Week; manifest: Manifest; notify: Notify; clear: () => void }) {
-  const wide = useMedia("(min-width: 1024px)");
+  // built on a computer: a mouse at any width (half a screen, a zoomed page) or a wide screen — never a phone or a tablet by touch
+  const computer = useMedia("(min-width: 1024px), (pointer: fine)");
   const [progress, setProgress] = useState<BuildProgress | null>(null);
   const [result, setResult] = useState<(BuildResult & { at: number }) | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [wordBusy, setWordBusy] = useState(false);
   const job = useRef<ReaderBuild | null>(null);
   useEffect(() => () => job.current?.cancel(), []);
-  const rows = readerRows(manifest);
-  const estimate = useMemo(() => {
-    const entries = rows.map((r, i) => ({ ref: i, day: r.day, header: r.header, filePages: r.printable.map((f) => f.page_count ?? 1) }));
-    const cover = manifest.cover ? (manifest.cover.page_count ?? 1) : 1;
-    return planReader(entries, cover).pages.length;
-  }, [rows, manifest.cover]);
+  const estimate = useMemo(() => readerEstimate(manifest, scheduleLines(week)), [manifest, week]);
 
   const build = async () => {
     clear();
     setFailed(null);
     setResult(null);
     setProgress({ step: "fetch", done: 0, total: 1 });
+    // the files the browser could not read on upload are not tried (the manifest says so): named with what the build left out
+    const notRead = readerRows(manifest).flatMap((r) => r.unread.map((f) => ({ name: f.display_name, reason: "unreadable" as const })));
     try {
-      const { buildReader } = await import("../../reader/build");
       job.current = buildReader(port, week, manifest, setProgress);
       const r = await job.current.promise;
       download(fileName("reader", week.edition, israelDay(), "pdf"), r.bytes, "application/pdf");
-      setResult({ ...r, at: Date.now() });
+      setResult({ ...r, skipped: [...notRead, ...r.skipped], at: Date.now() });
       notify("ok", `המקראה ירדה: ${pagesText(r.pages)}.`);
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") notify("ok", "הבנייה בוטלה.");
@@ -152,11 +152,13 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <Panel title="בניית המקראה" aside={`בערך ${pagesText(estimate)} (הערכה, לפי מה שהתקבל עד עכשיו)`}>
-      {!wide && <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-900">את המקראה בונים במחשב: הקבצים גדולים, והבנייה כבדה לטלפון. הרשימה של מה התקבל ומה חסר מוצגת גם כאן.</p>}
+      {!computer && (
+        <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-900">את המקראה בונים במחשב: הקבצים גדולים, והבנייה כבדה לטלפון ולטאבלט. הרשימה של מה התקבל ומה חסר מוצגת גם כאן.</p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        {wide && (
+        {computer && (
           <Button kind="primary" disabled={!!progress} busy={!!progress} busyLabel="בונה…" onClick={() => void build()}>
-            בנה מקראה (PDF)
+            בניית המקראה (PDF)
           </Button>
         )}
         {progress && (
@@ -191,7 +193,7 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
           </p>
           {result.skipped.length > 0 && (
             <div role="alert" className="rounded-lg bg-amber-50 p-2 text-amber-900">
-              <p className="font-semibold">לא נכנסו (צריך PDF אחר):</p>
+              <p className="font-semibold">לא נכנסו (צריך להעלות קובץ אחר):</p>
               <ul className="list-disc ps-5">
                 {result.skipped.map((s, i) => (
                   <li key={i}>
@@ -220,6 +222,7 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
     `${t.included} בתוך המקראה`,
     t.missing + t.pending > 0 && `${t.missing + t.pending} חסרים`,
     t.needsPdf > 0 && `${t.needsPdf} צריך PDF`,
+    t.unreadable > 0 && `${t.unreadable} צריך קובץ אחר`,
     t.notMarked > 0 && `${t.notMarked} לא סומנו`,
     t.presentationOnly > 0 && `${t.presentationOnly} מצגת בלבד`,
     t.noSources > 0 && `${t.noSources} בלי מקורות`,
@@ -252,7 +255,9 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
 
 /**
  * «… · 1 צריך PDF · 1 מצגת בלבד · …» — each part isolated (bdi): run together, the bidi algorithm reads «PDF · 1»
- * as one left-to-right run, and the line comes out «1 צריך 1 · PDF מצגת בלבד».
+ * as one left-to-right run, and the line comes out «1 צריך 1 · PDF מצגת בלבד». Isolated right to left: every part
+ * is a Hebrew phrase of ours (or a Hebrew label before the team's text), and a bare bdi takes its direction from
+ * its first letter — a part that opened with «PDF» would turn left to right, «PDF» at its far end.
  */
 function Parts({ parts }: { parts: string[] }) {
   return (
@@ -260,7 +265,7 @@ function Parts({ parts }: { parts: string[] }) {
       {parts.map((p, i) => (
         <span key={i}>
           {i > 0 && " · "}
-          <bdi>{p}</bdi>
+          <bdi dir="rtl">{p}</bdi>
         </span>
       ))}
     </>
@@ -277,12 +282,16 @@ function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void
     const note = r.lesson.sources_note?.trim();
     notes.push(note ? `${SOURCES_LABEL[r.sourcesKind]}: ${clip(note)}` : SOURCES_LABEL[r.sourcesKind]);
   }
+  const included = r.status === "included";
   if (r.kind === "lesson" && r.files.length > 0) {
-    notes.push(r.files.length === 1 ? "קובץ אחד" : `${r.files.length} קבצים`);
-    if (r.status === "included") notes.push(pagesText(r.pages));
+    // in the reader: what goes in, as the lesson panel counts it — the rest is named after it («ועוד …»); else every
+    // file that came, unless the note on the unread ones already counts them all
+    const n = included ? r.printable.length : r.files.length;
+    if (included || n > r.unread.length) notes.push(n === 1 ? "קובץ אחד" : `${n} קבצים`);
+    if (included) notes.push(pagesText(r.pages));
   }
-  if (r.word.length > 0 && r.status === "included") notes.push(`ועוד ${r.word.length === 1 ? "קובץ Word אחד" : `${r.word.length} קבצי Word`} שלא נכנס/ים — צריך PDF`);
-  if (r.unread.length > 0) notes.push(`${r.unread.length === 1 ? "PDF אחד לא נקרא" : `${r.unread.length} קבצי PDF לא נקראו`} בהעלאה — ייבדק/ו בבנייה`);
+  if (r.word.length > 0 && included) notes.push(wordText(r.word.length));
+  if (r.unread.length > 0) notes.push(unreadText(r.unread.length, included));
   if (r.previous.length > 0) notes.push(`מהמרצה הקודם: ${r.previous.length === 1 ? "קובץ אחד" : `${r.previous.length} קבצים`} להסרה`);
   if (r.kind === "lesson" && IN_READER[r.status] && !r.title) notes.push("אין כותרת: בכותרת שבמקראה יופיע TBD");
   if (r.kind === "memorial") notes.push("עמוד כותרת; החומרים יתווספו עם מסך זמני הזיכרון");
@@ -313,13 +322,16 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const marked = week.edition.settings.reader_cover ?? null;
+  // the cover the reader opens with: a marked poster the browser could not read is not one (the schedule is)
+  const shown = manifest.cover?.id ?? null;
+  const markedUnread = manifest.covers.some((f) => f.id === marked && !readableFile(f));
   const upload = async (file: File) => {
     clear();
     setBusy("upload");
     setProgress(0);
     try {
       const mime = checkPicked(file, true);
-      const pages = mime === "application/pdf" ? await countPdfPages(file) : null;
+      const pages = await readerPages(file, mime);
       await port.sources.upload(week.edition.id, null, file, { pages, onProgress: setProgress });
       notify("ok", "הפוסטר הועלה");
       await reload();
@@ -344,7 +356,20 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
     }
   };
   return (
-    <Panel title="שער" aside={manifest.cover ? <>הפוסטר: <bdi>{manifest.cover.display_name}</bdi></> : "עמוד לו״ז שנוצר מהשבוע (אין פוסטר מסומן)"}>
+    <Panel
+      title="שער"
+      aside={
+        manifest.cover ? (
+          <>
+            הפוסטר: <bdi>{manifest.cover.display_name}</bdi>
+          </>
+        ) : markedUnread ? (
+          "הפוסטר שסומן לא נקרא — השער הוא עמוד לו״ז מהשבוע"
+        ) : (
+          "עמוד לו״ז שנוצר מהשבוע (אין פוסטר מסומן)"
+        )
+      }
+    >
       <p className="mb-2 text-sm text-ink-soft">
         העמוד הראשון של המקראה הוא הפוסטר של השבוע — PDF או תמונה שהמדריך/ה מעלה ומסמן/ת כאן. כל עוד אין, העמוד הראשון הוא הלו״ז, כפי שהוא בשבוע.
       </p>
@@ -359,20 +384,20 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
               actor={actor}
               notify={notify}
               reload={reload}
-              before={
-                actor.isAdmin ? (
-                  <input type="radio" name={`${id}-cover`} aria-label={`השער: ${f.display_name}`} checked={marked === f.id} disabled={!!busy} onChange={() => void mark(f.id)} className="size-5 accent-ink" />
-                ) : (
-                  marked === f.id && <Badge tone="ok">השער</Badge>
+              pick={
+                actor.isAdmin && (
+                  // a poster the browser could not read cannot be the cover: its row says why
+                  <input type="radio" name={`${id}-cover`} aria-label={`השער: ${f.display_name}`} checked={shown === f.id} disabled={!!busy || !readableFile(f)} onChange={() => void mark(f.id)} className="size-5 shrink-0 accent-ink" />
                 )
               }
+              before={!actor.isAdmin && shown === f.id && <Badge tone="ok">השער</Badge>}
             />
           ))}
         </ul>
       )}
       {actor.isAdmin && manifest.covers.length > 0 && (
         <label className="mt-1 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm">
-          <input type="radio" name={`${id}-cover`} checked={!manifest.covers.some((f) => f.id === marked)} disabled={!!busy} onChange={() => void mark(null)} className="size-5 accent-ink" />
+          <input type="radio" name={`${id}-cover`} checked={shown == null} disabled={!!busy} onChange={() => void mark(null)} className="size-5 accent-ink" />
           בלי פוסטר: עמוד לו״ז מהשבוע
         </label>
       )}

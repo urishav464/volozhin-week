@@ -7,7 +7,7 @@
 import type { SourceFile } from "../domain/types";
 
 export interface UploadOptions {
-  /** A PDF's page count, as the browser counted it (src/reader/pages.ts); null when it could not be read. */
+  /** What the browser read of it as the reader would (src/reader/pages.ts): a PDF's pages, a picture 1; null — not readable (or Word). */
   pages: number | null;
   /** 0…1 while the bytes go up. */
   onProgress?: (fraction: number) => void;

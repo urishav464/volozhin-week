@@ -1,18 +1,21 @@
 // A lesson's files (milestone 5ב-1), in the lesson panel's «מקורות»: pick or
 // drop PDF, Word or a picture (≤ 25 MB), watch each go up, then the list —
-// the name it had, its size, its pages (counted in the browser for a PDF; a
-// Word file «צריך PDF»), who uploaded it, «פתיחה» (a signed URL, minutes long)
-// and «הסרה» (the uploader or an admin). A previous speaker's files are listed
-// apart, «מהמרצה הקודם», for removal. The whole team sees the list (logistics
-// print from it); the edition's content members and admins upload to a closed
-// lesson — the database decides (app.source_refusal), the screen only offers.
+// the name it had, its size, its pages (read in the browser as the reader
+// reads it, src/reader/pages.ts: a PDF or a picture it cannot read is kept,
+// «לא נקרא … צריך קובץ אחר»; a Word file «צריך PDF»), who uploaded it,
+// «פתיחה» (a signed URL, minutes long) and «הסרה» (the uploader or an
+// admin); «או לגרור לכאן» only where a mouse can drag. A previous speaker's
+// files are listed apart, «מהמרצה הקודם», for removal. The whole team sees the
+// list (logistics print from it); the edition's content members and admins
+// upload to a closed lesson — the database decides (app.source_refusal), the
+// screen only offers.
 import { type DragEvent, type ReactNode, useId, useRef, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
 import { checkPicked, DOCX, fromPreviousSpeaker, SOURCE_ACCEPT, sizeText } from "../../data/sourceRules";
 import type { Lesson, SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { countPdfPages } from "../../reader/pages";
+import { readerPages } from "../../reader/pages";
 import { Button, Confirm } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
@@ -25,11 +28,15 @@ interface Upload {
   error?: string;
 }
 
-/** «PDF · 3 עמודים», «Word · צריך PDF», «תמונה». */
+/**
+ * «PDF · 3 עמודים», «Word · צריך PDF», «תמונה · עמוד אחד» — and a PDF or a picture the browser could not read on
+ * upload (no page count: the reader leaves it out, src/reader/model.ts readableFile) «… · לא נקרא — …; צריך קובץ אחר».
+ */
 export function fileKind(f: Pick<SourceFile, "mime" | "page_count">): string {
   if (f.mime === DOCX) return "Word · צריך PDF";
-  if (f.mime === "application/pdf") return f.page_count == null ? "PDF · לא נקרא (אולי מוגן) — צריך PDF אחר" : `PDF · ${f.page_count === 1 ? "עמוד אחד" : `${f.page_count} עמודים`}`;
-  return "תמונה · עמוד אחד";
+  const pdf = f.mime === "application/pdf";
+  if (f.page_count == null) return pdf ? "PDF · לא נקרא — מוגן או פגום; צריך קובץ אחר" : "תמונה · לא נקרא — פגום או בפורמט אחר; צריך קובץ אחר";
+  return pdf ? `PDF · ${f.page_count === 1 ? "עמוד אחד" : `${f.page_count} עמודים`}` : "תמונה · עמוד אחד";
 }
 
 /** May the actor remove this file (app.may_delete_source / remove_source_file): an admin; else its uploader, outside an archive. */
@@ -49,10 +56,13 @@ export interface SourceFilesProps {
   reload: () => Promise<void>;
 }
 
-/** One file in a list: its name, what it is, who and when, «פתיחה» and «הסרה». */
+/**
+ * One file in a list: its name, what it is, who and when, «פתיחה» and «הסרה». `pick`: a control that chooses the file
+ * (the reader's cover) — its label is the name too, so tapping the name chooses it.
+ */
 export function FileRow({
-  port, week, file: f, actor, notify, reload, previous = false, before,
-}: Omit<SourceFilesProps, "lesson" | "clear"> & { file: SourceFile; previous?: boolean; before?: ReactNode }) {
+  port, week, file: f, actor, notify, reload, previous = false, before, pick,
+}: Omit<SourceFilesProps, "lesson" | "clear"> & { file: SourceFile; previous?: boolean; before?: ReactNode; pick?: ReactNode }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState<"open" | "remove" | null>(null);
   const open = async () => {
@@ -84,9 +94,18 @@ export function FileRow({
     <li data-source-file={f.id} className={`space-y-1 py-2 ${previous ? "text-ink-soft" : ""}`}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {before}
-        <span className="min-w-0 flex-1 basis-40 break-words font-semibold">
-          <bdi>{f.display_name}</bdi>
-        </span>
+        {pick ? (
+          <label className="inline-flex min-h-11 min-w-0 flex-1 basis-40 cursor-pointer items-center gap-2 has-[:disabled]:cursor-default">
+            {pick}
+            <span className="min-w-0 break-words font-semibold">
+              <bdi>{f.display_name}</bdi>
+            </span>
+          </label>
+        ) : (
+          <span className="min-w-0 flex-1 basis-40 break-words font-semibold">
+            <bdi>{f.display_name}</bdi>
+          </span>
+        )}
         <Button busy={busy === "open"} busyLabel="פותח…" onClick={() => void open()}>
           פתיחה
         </Button>
@@ -142,7 +161,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
       const key = list[i].key;
       try {
         const mime = checkPicked(file, false);
-        const pages = mime === "application/pdf" ? await countPdfPages(file) : null;
+        const pages = await readerPages(file, mime);
         await port.sources.upload(week.edition.id, l.id, file, { pages, onProgress: (p) => set(key, { progress: Math.min(0.99, p) }) });
         set(key, { progress: 1 });
         ok++;
@@ -208,7 +227,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
           >
             העלאת קבצים
           </label>
-          <span className="ms-2 text-ink-soft">או לגרור לכאן</span>
+          <span className="ms-2 text-ink-soft pointer-coarse:hidden">או לגרור לכאן</span>
           <p className="mt-1 text-xs text-ink-soft">
             PDF, ‏Word ‏(docx) או תמונה (PNG/JPG), עד 25MB לקובץ. Word נשמר, אבל למקראה צריך PDF. רק דפי המקורות — בלי קבצים עם טלפונים או פרטים אישיים.
           </p>

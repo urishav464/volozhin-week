@@ -3929,7 +3929,7 @@ create table if not exists public.source_files (
   display_name text not null,
   mime         text not null check (mime in ('application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')),
   size_bytes   bigint not null check (size_bytes between 0 and 26214400),
-  page_count   integer check (page_count between 1 and 5000),             -- counted in the browser (PDF); an image is one page; Word: NULL
+  page_count   integer check (page_count between 1 and 5000),             -- read in the browser: a PDF's pages, an image 1; NULL: not readable (or Word)
   uploaded_by  bigint references public.members (id) on delete set null,
   uploaded_at  timestamptz not null default now()
 );
@@ -4001,7 +4001,8 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
     v_name := app.clean_line(p_display_name, 200);
     if v_name is null then perform app.refuse('bad_value'); end if;
     if p_pages is not null and (p_pages < 1 or p_pages > 5000) then perform app.refuse('bad_value'); end if;
-    v_pages := case when v_mime = 'application/pdf' then p_pages when v_mime like 'image/%' then 1 end;
+    -- what the browser read of it as the reader would: a PDF's pages, a picture 1; NULL — it could not (the reader leaves it out)
+    v_pages := case when v_mime = 'application/pdf' then p_pages when v_mime like 'image/%' and p_pages is not null then 1 end;
     if p_lesson is not null then
       select x.speaker_id into v_spk from public.lesson_speakers x where x.lesson_id = p_lesson and x.role = 'lead';
       v_first := not exists (select 1 from public.source_files f where f.lesson_id = p_lesson and f.speaker_id is not distinct from v_spk);

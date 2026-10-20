@@ -440,6 +440,10 @@ describe("the sources' files", () => {
       expect(await upload(A, second, "image/png")).toBe("ok");
       expect((await register(A, ed, l, second, "צילום.png", 9)).page_count).toBe(1); // an image is one page
       expect(await lessonRow(l)).toMatchObject({ sources_kind: "sheet", in_reader: false, version: v1 + 1 });
+      // a picture the browser could not read as the reader would (src/reader/pages.ts): kept, with no page — out of the reader
+      const unread = path(ed, l, "c.jpg");
+      expect(await upload(A, unread, "image/jpeg")).toBe("ok");
+      expect((await register(A, ed, l, unread, "IMG_0001.jpg", null)).page_count).toBeNull();
     });
 
     it("never puts a presentation alone in the reader", async () => {

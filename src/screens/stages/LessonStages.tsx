@@ -28,7 +28,7 @@ import { MessageComposer } from "./MessageComposer";
 import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 import { SourceFiles } from "./SourceFiles";
-import { readerManifest, STATUS_LABEL } from "../../reader/model";
+import { readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
 
 export interface LessonStagesProps {
   port: DataPort;
@@ -400,6 +400,7 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
   const said: Record<typeof status, string> = {
     included: `בתוך המקראה: ${row?.printable.length === 1 ? "קובץ אחד" : `${row?.printable.length} קבצים`}, ${row?.pages === 1 ? "עמוד אחד" : `${row?.pages} עמודים`}, אחרי הכותרת «${row?.header}».`,
     needs_pdf: "מסומן למקראה, אבל הקבצים הם Word: צריך להעלות PDF (Word לא נכנס למקראה שנבנית בדפדפן).",
+    unreadable: "מסומן למקראה, אבל הקבצים שהועלו לא נקראו (מוגנים בסיסמה, פגומים או בפורמט אחר): צריך להעלות קובץ אחר.",
     missing: "מסומן למקראה, ועוד לא הועלה קובץ: חסר.",
     not_marked: "הקבצים הועלו, ועוד לא סומן שהשיעור נכנס למקראה.",
     pending: "המקורות עוד לא התקבלו.",
@@ -407,10 +408,16 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
     no_sources: "בלי מקורות: אין מה להדפיס במקראה.",
     memorial: "זמן זיכרון.",
   };
+  // what the reader leaves out beside it, in the manifest's words (Word is the whole story of «צריך PDF», as the unread files are of «צריך קובץ אחר»)
+  const besides = [
+    row && row.word.length > 0 && status === "included" && wordText(row.word.length),
+    row && row.unread.length > 0 && status !== "unreadable" && unreadText(row.unread.length, status === "included"),
+  ].filter(Boolean);
   return (
     <div className="space-y-2 text-sm">
       <p>
         <b>{STATUS_LABEL[status]}.</b> {said[status]}
+        {besides.map((t) => ` ${t}.`).join("")}
       </p>
       <div className="flex flex-wrap gap-2">
         {actor.canEdit && <Button onClick={onSources}>למקורות ולקבצים</Button>}

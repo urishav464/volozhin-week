@@ -1,4 +1,4 @@
-// «בנה מקראה» from the page: the files' bytes are fetched here (short-lived
+// «בניית המקראה (PDF)» from the page: the files' bytes are fetched here (short-lived
 // signed URLs — the demo's object URLs), handed to the reader's worker
 // (src/reader/worker.ts) that assembles the PDF, and the result comes back to
 // be downloaded. Never uploaded. «ביטול» aborts the fetches and ends the worker.

@@ -72,6 +72,7 @@ describe("the path convention", () => {
     expect(pagesFor("application/pdf", 12)).toBe(12);
     expect(pagesFor("application/pdf", null)).toBeNull();
     expect(pagesFor("image/png", 9)).toBe(1);
+    expect(pagesFor("image/jpeg", null)).toBeNull(); // a picture the browser could not read: no page, out of the reader
     expect(pagesFor(DOCX, 9)).toBeNull();
     expect(await code(() => pagesFor("application/pdf", 0))).toBe("bad_value");
     expect(await code(() => pagesFor("application/pdf", 5001))).toBe("bad_value");
@@ -286,7 +287,7 @@ describe("DemoSources", () => {
     expect((await port.loadWeek(1)).edition.settings.reader_headers).toEqual(["שמאל", ""]);
     await port.sources.setHeaders(1, null, null);
     expect((await port.loadWeek(1)).edition.settings.reader_headers).toBeUndefined();
-    const poster = await port.sources.upload(1, null, new File([new Uint8Array(10)], "poster.png", { type: "image/png" }), { pages: null });
+    const poster = await port.sources.upload(1, null, new File([new Uint8Array(10)], "poster.png", { type: "image/png" }), { pages: 1 });
     expect(poster).toMatchObject({ cover: true, lesson_id: null, page_count: 1 });
     expect((await port.loadWeek(1)).edition.settings.reader_cover).toBe(poster.id);
     expect(await code(port.sources.setCover(1, port.engine(1).week.sourceFiles[0].id))).toBe("bad_value"); // a lesson's file is not a poster

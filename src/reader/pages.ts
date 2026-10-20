@@ -1,13 +1,22 @@
-// A PDF's page count, read in the browser when it is picked (pdf-lib, loaded on
-// demand) — what register_source_file records, and the manifest's estimate
-// counts. null: the file could not be read (protected by a password, damaged);
-// the reader's build tries it again and says so.
-export async function countPdfPages(file: Blob): Promise<number | null> {
+// What a picked file is registered with (register_source_file's page count):
+// the reader's own check on its bytes, in the browser, before they go up —
+// src/reader/readable.ts, the steps the build opens every file with, so a file
+// the manifest counts as received is a file the build puts in. A PDF: its
+// pages; a picture: 1; null — the reader cannot print it (protected by a
+// password, damaged, not the type its name says): it is uploaded all the same,
+// for the team to see and replace, and shown «לא נקרא» everywhere. Word: null,
+// never read (its own «צריך PDF»). pdf-lib is in the check: loaded on demand.
+import type { SourceMime } from "../domain/types";
+import { DOCX } from "../data/sourceRules";
+import type { ReaderMime } from "./readable";
+
+export async function readerPages(file: Blob, mime: SourceMime): Promise<number | null> {
+  if (mime === DOCX) return null;
+  const { readableSource } = await import("./readable");
+  const bytes = new Uint8Array(await file.arrayBuffer());
   try {
-    const { PDFDocument } = await import("pdf-lib");
-    const doc = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
-    const n = doc.getPageCount();
-    return n > 0 ? n : null;
+    const r = await readableSource(bytes, mime as ReaderMime);
+    return r.ok ? r.pages : null;
   } catch {
     return null;
   }

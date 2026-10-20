@@ -5,24 +5,31 @@
 //
 // In the reader, in schedule order (day, teaching time, the room's place):
 //   - every closed lesson marked «במקראה» (in_reader) that has a PDF or an
-//     image from its current speaker — a header «מרצה – כותרת», then its files;
+//     image from its current speaker, read in the browser on upload — a header
+//     «מרצה – כותרת», then its files;
 //   - every memorial slot (its materials come with the memorial screen, 5ב-2:
 //     memorialFiles is the hook; until then its header alone).
 // Not in it: a lesson without sources, a presentation alone, one not marked,
 // one whose files are all Word (they cannot be merged in the browser: «צריך
-// PDF»), and a previous speaker's files (reopen_lesson keeps them, for removal).
+// PDF»), a file the browser could not read on upload (its page_count NULL:
+// src/reader/pages.ts — «צריך קובץ אחר»), and a previous speaker's files
+// (reopen_lesson keeps them, for removal).
 import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
 import type { Lesson, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { LRM } from "../exports/table";
 import { printableMime } from "../data/sourceRules";
+import { planReader, scheduleCoverPages } from "./layout";
+import type { ScheduleLine } from "./render";
 
 export type ManifestStatus =
   /** in the reader: marked, with at least one PDF or image */
   | "included"
   /** marked, but its files are all Word — someone makes a PDF */
   | "needs_pdf"
+  /** marked, but its PDFs and pictures could not be read (protected, damaged) — someone uploads another file */
+  | "unreadable"
   /** marked (or a kind with something to print), and nothing arrived yet */
   | "missing"
   /** files arrived, but the lesson is not marked «במקראה» */
@@ -39,6 +46,7 @@ export type ManifestStatus =
 export const STATUS_LABEL: Record<ManifestStatus, string> = {
   included: "התקבל",
   needs_pdf: "צריך PDF",
+  unreadable: "צריך קובץ אחר",
   missing: "חסר",
   not_marked: "לא סומן למקראה",
   pending: "חסר — טרם התקבלו",
@@ -49,8 +57,14 @@ export const STATUS_LABEL: Record<ManifestStatus, string> = {
 
 /** Does the status put the lesson's pages in the reader? */
 export const IN_READER: Record<ManifestStatus, boolean> = {
-  included: true, memorial: true, needs_pdf: false, missing: false, not_marked: false, pending: false, presentation_only: false, no_sources: false,
+  included: true, memorial: true, needs_pdf: false, unreadable: false, missing: false, not_marked: false, pending: false, presentation_only: false, no_sources: false,
 };
+
+/**
+ * Can the reader print this file: a PDF or a picture the browser read on upload as the build reads it (its page
+ * count). A PDF or picture without one could not be read — protected, damaged, not the type its name says.
+ */
+export const readableFile = (f: Pick<SourceFile, "mime" | "page_count">): boolean => printableMime(f.mime) && f.page_count != null;
 
 export interface ManifestRow {
   lesson: Lesson;
@@ -67,15 +81,15 @@ export interface ManifestRow {
   status: ManifestStatus;
   /** The current speaker's files, upload order. */
   files: SourceFile[];
-  /** Of those, what the PDF build merges: PDFs and images. */
+  /** Of those, what the PDF build merges: PDFs and images the browser read on upload (readableFile). */
   printable: SourceFile[];
   /** Word files: kept and listed, never merged («צריך PDF»). */
   word: SourceFile[];
-  /** PDFs whose pages the browser could not count on upload (protected? damaged?) — the build tries them and says so. */
+  /** PDFs and images the browser could not read on upload: kept and listed, never in the reader («צריך קובץ אחר»). */
   unread: SourceFile[];
   /** Files that came for a speaker who is not the lead any more — «מהמרצה הקודם», for removal. */
   previous: SourceFile[];
-  /** The pages it adds as far as is known now (a PDF not counted: 1). */
+  /** The pages it adds: its readable files' counts. */
   pages: number;
 }
 
@@ -85,7 +99,7 @@ export interface Manifest {
   leftovers: SourceFile[];
   /** The edition's posters (the cover is one of them, settings.reader_cover). */
   covers: SourceFile[];
-  /** The marked poster, when it is still there and printable. */
+  /** The marked poster, when it is still there and readable (else the schedule is the cover). */
   cover: SourceFile | null;
 }
 
@@ -108,15 +122,16 @@ export function memorialFiles(_week: Week, _lesson: Lesson): SourceFile[] {
   return [];
 }
 
-function statusOf(l: Lesson, printable: SourceFile[], word: SourceFile[]): ManifestStatus {
+/** In the order the lesson's «מקראה» stage says it (src/domain/stages.ts): a readable file, else Word, else an unread one. */
+function statusOf(l: Lesson, printable: SourceFile[], word: SourceFile[], unread: SourceFile[]): ManifestStatus {
   if (l.sources_kind === "none") return "no_sources";
   if (l.sources_kind === "presentation") return "presentation_only";
   if (l.in_reader) {
     if (printable.length > 0) return "included";
-    return word.length > 0 ? "needs_pdf" : "missing";
+    return word.length > 0 ? "needs_pdf" : unread.length > 0 ? "unreadable" : "missing";
   }
   if (l.sources_kind === "pending") return "pending";
-  return printable.length > 0 || word.length > 0 ? "not_marked" : "missing";
+  return printable.length > 0 || word.length > 0 || unread.length > 0 ? "not_marked" : "missing";
 }
 
 /** The manifest: every closed lesson and memorial slot, in schedule order, and what the reader has of it. */
@@ -133,17 +148,17 @@ export function readerManifest(week: Week): Manifest {
       const pages = mine.reduce((n, f) => n + (f.page_count ?? 1), 0);
       return {
         lesson: l, kind: "memorial", day: l.day, when, speaker: "", title: l.title, header: readerHeader("memorial", "", l.title), sourcesKind: l.sources_kind,
-        status: "memorial", files: mine, printable: mine.filter((f) => printableMime(f.mime)), word: [], unread: [], previous: [], pages: Math.max(1, pages),
+        status: "memorial", files: mine, printable: mine.filter(readableFile), word: [], unread: [], previous: [], pages: Math.max(1, pages),
       };
     }
     const current = lead.get(l.id) ?? null;
     const own = files.filter((f) => f.lesson_id === l.id);
     const mine = own.filter((f) => f.speaker_id === current);
     const previous = own.filter((f) => f.speaker_id !== current);
-    const printable = mine.filter((f) => printableMime(f.mime));
+    const printable = mine.filter(readableFile);
     const word = mine.filter((f) => !printableMime(f.mime));
-    const unread = printable.filter((f) => f.mime === "application/pdf" && f.page_count == null);
-    const status = statusOf(l, printable, word);
+    const unread = mine.filter((f) => printableMime(f.mime) && !readableFile(f));
+    const status = statusOf(l, printable, word, unread);
     return {
       lesson: l, kind: "lesson", day: l.day, when, speaker: e.speaker, title: l.title, header: readerHeader("lesson", e.speaker, l.title), sourcesKind: l.sources_kind,
       status, files: mine, printable, word, unread, previous, pages: status === "included" ? printable.reduce((n, f) => n + (f.page_count ?? 1), 0) : 0,
@@ -153,7 +168,7 @@ export function readerManifest(week: Week): Manifest {
   const leftovers = files.filter((f) => !f.cover && (f.lesson_id == null || !shownLessons.has(f.lesson_id)));
   const covers = files.filter((f) => f.cover);
   const marked = week.edition.settings?.reader_cover;
-  const cover = covers.find((f) => f.id === marked && printableMime(f.mime)) ?? null;
+  const cover = covers.find((f) => f.id === marked && readableFile(f)) ?? null;
   return { rows, leftovers, covers, cover };
 }
 
@@ -168,12 +183,13 @@ export interface ManifestTotals {
   memorial: number;
   missing: number;
   needsPdf: number;
+  unreadable: number;
   notMarked: number;
   pending: number;
   presentationOnly: number;
   noSources: number;
   files: number;
-  /** Pages from the lessons' files (an uncounted PDF: 1). */
+  /** Pages from the lessons' files in the reader. */
   filePages: number;
 }
 
@@ -185,6 +201,7 @@ export function manifestTotals(m: Manifest): ManifestTotals {
     memorial: count("memorial"),
     missing: count("missing"),
     needsPdf: count("needs_pdf"),
+    unreadable: count("unreadable"),
     notMarked: count("not_marked"),
     pending: count("pending"),
     presentationOnly: count("presentation_only"),
@@ -192,6 +209,29 @@ export function manifestTotals(m: Manifest): ManifestTotals {
     files: m.rows.reduce((n, r) => n + r.files.length, 0),
     filePages: readerRows(m).reduce((n, r) => n + (r.kind === "lesson" ? r.pages : 0), 0),
   };
+}
+
+/**
+ * The words for a lesson's files the reader leaves out, the same on the manifest and in the lesson panel: Word
+ * («ועוד קובץ Word אחד שלא נכנס — צריך PDF», after the count of what went in) and files not read on upload
+ * («קובץ אחד לא נקרא — צריך קובץ אחר»; `more`: after that count, «ועוד קובץ אחד שלא נקרא — …»).
+ */
+export function wordText(n: number): string {
+  return n === 1 ? "ועוד קובץ Word אחד שלא נכנס — צריך PDF" : `ועוד ${n} קבצי Word שלא נכנסו — צריך PDF`;
+}
+export function unreadText(n: number, more: boolean): string {
+  if (more) return n === 1 ? "ועוד קובץ אחד שלא נקרא — צריך קובץ אחר" : `ועוד ${n} קבצים שלא נקראו — צריך קובץ אחר`;
+  return n === 1 ? "קובץ אחד לא נקרא — צריך קובץ אחר" : `${n} קבצים לא נקראו — צריך קובץ אחר`;
+}
+
+/**
+ * The reader's pages as far as is known now — the screen's estimate: the plan the build makes (src/reader/layout.ts)
+ * of what the manifest puts in, the cover the marked poster's pages or the schedule's (`schedule`:
+ * scheduleLines(week), src/reader/build.ts).
+ */
+export function readerEstimate(m: Manifest, schedule: ScheduleLine[]): number {
+  const entries = readerRows(m).map((r, i) => ({ ref: i, day: r.day, header: r.header, filePages: r.printable.map((f) => f.page_count ?? 1) }));
+  return planReader(entries, m.cover ? (m.cover.page_count ?? 1) : scheduleCoverPages(schedule)).pages.length;
 }
 
 /** A day's rows in the reader, every day of the week (a «סיכום יום» page closes each one, even an empty day). */

@@ -121,11 +121,15 @@ export function cleanDisplayName(v: string | null | undefined): string {
   return cleanLine(v, DISPLAY_NAME_MAX) ?? fail("bad_value");
 }
 
-/** register_source_file's page count: a PDF's as the browser counted it (1–5000, else bad_value); an image 1; Word null. */
+/**
+ * register_source_file's page count: what the browser read of the file as the reader would (src/reader/pages.ts) —
+ * a PDF's pages (1–5000, else bad_value), a picture 1 whatever number came; null when it could not be read (the
+ * reader leaves it out, «לא נקרא»); Word null, always.
+ */
 export function pagesFor(mime: SourceMime, pages: number | null | undefined): number | null {
   if (pages != null && (!Number.isInteger(pages) || pages < 1 || pages > MAX_PAGES)) fail("bad_value");
-  if (mime === PDF) return pages ?? null;
-  return mime === DOCX ? null : 1;
+  if (mime === DOCX || pages == null) return null;
+  return mime === PDF ? pages : 1;
 }
 
 /**

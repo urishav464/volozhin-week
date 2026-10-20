@@ -1,4 +1,4 @@
-// «בנה מקראה», off the page's thread: a module worker (Vite bundles it with
+// «בניית המקראה (PDF)», off the page's thread: a module worker (Vite bundles it with
 // pdf-lib) that receives the files' bytes, draws the Hebrew text on an
 // OffscreenCanvas in the app's font, assembles the PDF and hands it back — the
 // page stays responsive, and «ביטול» simply ends the worker. Nothing here
