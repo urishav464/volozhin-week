@@ -17,6 +17,12 @@ import type { WhoAmI } from "./types";
 export interface DataPort {
   readonly mode: "demo" | "live";
   sessionEmail(): Promise<string | null>;
+  /**
+   * Whose session this device holds (the Supabase user id), read from the device alone — no network, no refresh; null
+   * when nobody is signed in here. The offline snapshot is only ever shown to this user (src/offline/).
+   */
+  deviceUserId(): string | null;
+  /** A failure with no answer from the server is a PortError with code «network» (src/offline/network.ts). */
   whoami(): Promise<WhoAmI>;
   signInWithGoogle(): Promise<void>;
   signOut(): Promise<void>;

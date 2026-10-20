@@ -6,11 +6,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TransportDetails } from "../domain/types";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
-import { PortError } from "./types";
+import { portError } from "../offline/network";
 
 /** An RPC; a refusal comes back as the contract's code (raise … message = '<code>'). */
 export async function callRpc(sb: SupabaseClient, fn: string, args: Record<string, unknown>): Promise<unknown> {
-  const { data, error } = await sb.rpc(fn, args);
+  const { data, error, status } = await sb.rpc(fn, args);
   if (error) {
     if (error.code === "P0001") throw new CommandError(error.message);
     // The RPCs re-raise constraint violations under their code; this is the
@@ -18,7 +18,8 @@ export async function callRpc(sb: SupabaseClient, fn: string, args: Record<strin
     if (error.code === "23P01") throw new CommandError(/speaker/.test(error.message) ? "speaker_busy" : "room_taken");
     // A function this role may not execute (the grants at the end of schema.sql).
     if (error.code === "42501") throw new CommandError("forbidden");
-    throw new PortError(error.code ?? null, error.message);
+    // no answer at all (status 0): «network», which may fall back to the device's snapshot (src/offline/network.ts)
+    throw portError(error, status);
   }
   return data;
 }

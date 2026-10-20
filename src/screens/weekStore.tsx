@@ -2,11 +2,13 @@
 // «המרצים שלי» and the approvals queue read the same Week, so moving between
 // them keeps the chosen edition and costs no reload — and the header's badge
 // (speakers waiting for approval) comes from it too. One live subscription per
-// edition, for as long as someone is signed in.
+// edition, for as long as someone is signed in. Every successful load is handed to
+// `onLoaded` — the app keeps it on the device for a day without internet (src/offline/).
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import type { Edition, Week } from "../domain/types";
+import { isNetworkError } from "../offline/network";
 
 export interface WeekStore {
   /** The editions this member can see, newest first. */
@@ -16,6 +18,8 @@ export interface WeekStore {
   week: Week | null;
   /** «none»: no edition opened yet; «error»: the server could not be read. */
   problem: "none" | "error" | null;
+  /** The «error» was no answer at all (no connection) — not a refusal: the app may show the device's snapshot. */
+  lostConnection: boolean;
   select(editionId: number): void;
   /** Re-reads the week (after a command, or when another device changed it). */
   reload(): Promise<void>;
@@ -24,11 +28,18 @@ export interface WeekStore {
 }
 
 /** Keyed by who is signed in: a sign-out or another account starts over. */
-export function useWeekStoreState(port: DataPort, who: string | null): WeekStore {
+export function useWeekStoreState(port: DataPort, who: string | null, onLoaded?: (editionId: number, week: Week) => void): WeekStore {
   const [editions, setEditions] = useState<Edition[]>([]);
   const [editionId, setEditionId] = useState<number | null>(null);
   const [week, setWeek] = useState<Week | null>(null);
-  const [problem, setProblem] = useState<WeekStore["problem"]>(null);
+  const [problem, setProblemState] = useState<WeekStore["problem"]>(null);
+  const [lostConnection, setLostConnection] = useState(false);
+  const setProblem = useCallback((p: WeekStore["problem"], e?: unknown) => {
+    setProblemState(p);
+    setLostConnection(p === "error" && isNetworkError(e));
+  }, []);
+  const loaded = useRef(onLoaded);
+  loaded.current = onLoaded;
   const chosen = useRef<number | null>(null);
   /** The edition whose week is on screen: a failed re-read (a blip on return to the tab) keeps it there. */
   const shown = useRef<number | null>(null);
@@ -41,11 +52,12 @@ export function useWeekStoreState(port: DataPort, who: string | null): WeekStore
         shown.current = id;
         setWeek(w);
         setProblem(null);
-      } catch {
-        if (chosen.current === id && shown.current !== id) setProblem("error");
+        loaded.current?.(id, w);
+      } catch (e) {
+        if (chosen.current === id && shown.current !== id) setProblem("error", e);
       }
     },
-    [port],
+    [port, setProblem],
   );
 
   const choose = useCallback((id: number | null) => {
@@ -67,11 +79,11 @@ export function useWeekStoreState(port: DataPort, who: string | null): WeekStore
         setProblem(pick == null ? "none" : null);
         // A new choice loads through the effect below; the same one is read again here.
         if (!choose(pick) && pick != null) await loadFor(pick);
-      } catch {
-        if (shown.current == null) setProblem("error");
+      } catch (e) {
+        if (shown.current == null) setProblem("error", e);
       }
     },
-    [port, choose, loadFor],
+    [port, choose, loadFor, setProblem],
   );
 
   useEffect(() => {
@@ -82,7 +94,7 @@ export function useWeekStoreState(port: DataPort, who: string | null): WeekStore
     setWeek(null);
     setProblem(null);
     if (who != null) void refresh();
-  }, [who, refresh]);
+  }, [who, refresh, setProblem]);
 
   useEffect(() => {
     if (who == null || editionId == null) return;
@@ -96,7 +108,7 @@ export function useWeekStoreState(port: DataPort, who: string | null): WeekStore
 
   const select = useCallback((id: number) => void choose(id), [choose]);
 
-  return { editions, editionId, week, problem, select, reload, refresh };
+  return { editions, editionId, week, problem, lostConnection, select, reload, refresh };
 }
 
 export const WeekCtx = createContext<WeekStore | null>(null);

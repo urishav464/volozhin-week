@@ -204,6 +204,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     return DEMO_EMAIL;
   }
 
+  /** The demo keeps no snapshot (its data is in memory, and so works offline as it is); this is never stored. */
+  deviceUserId(): string | null {
+    return "demo";
+  }
+
   async whoami(): Promise<WhoAmI> {
     const mine = this.members.filter((m) => m.active && m.email === DEMO_EMAIL);
     return {
