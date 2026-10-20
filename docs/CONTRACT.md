@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), and outputs and knowledge (milestone 4)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), and links and מכריכה לכריכה (milestone 5a)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -156,7 +156,7 @@ Parameter names are part of the contract — `SupabasePort` calls them by name.
 
 | RPC | Parameters | Returns |
 |---|---|---|
-| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team roster`; `roster` since v7) |
+| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team roster escortTicks`; `roster` since v7, `escortTicks` since v9) |
 | `propose` | `p_edition bigint, p_speaker bigint, p_lesson bigint` (null for a cell), `p_day int, p_start int, p_end int, p_room bigint` (null = default room), `p_mode text` (`self`/`offer`) | `jsonb {lesson_id, pitch_id}` |
 | `unpropose` | `p_pitch bigint` | `void` |
 | `set_pitch` | `p_pitch bigint, p_state text` | `void` |
@@ -528,3 +528,202 @@ policies** — the grants were already SELECT; what comes back is exactly what t
 | RPC | Parameters | Returns |
 |---|---|---|
 | `get_contacts_for` | `p_lessons bigint[]` (invoker) | `jsonb` |
+
+# Links and מכריכה לכריכה (milestone 5a, schema v9)
+
+Links without an account (DESIGN «גישה בלי חשבון»): an escort's link, the class's sign-up link for
+מכריכה לכריכה, the schedule link. The same two implementations: the SQL functions of
+`supabase/schema.sql` «Milestone 5a» and `src/data/engine.ts` (behind `DemoPort`, through
+`src/data/demoLinks.ts`); `tests/parity` runs the same scenarios on both — the public pages' answers
+included. This is the first surface for `anon`: it may execute `ping` and the six functions of «The
+anon functions» below, and nothing else — no table, no other function.
+
+## Links
+
+`share_links(id, edition_id, scope escort|kk_signup|schedule, subject_id, token_hash, created_by,
+created_at, expires_at, revoked_at)`. `subject_id` is the escort (a `roster` row of the edition) for
+`escort`, null otherwise. **The token** is 128 random bits (`extensions.gen_random_bytes(16)`),
+base64url (22 characters), returned once by `issue_link`; the database keeps only
+`sha256(token)` and finds a link by the hash of what was presented, never by the plaintext. No
+browser role may read `token_hash` (column grants): an edition's admins read every other column of
+their edition's links (`share_links_read`), everyone else nothing. A link opens at `/e#<token>`,
+`/k#<token>`, `/s#<token>` — after `#`, so the token reaches no log and no Referer.
+
+| Rule | Detail |
+|---|---|
+| expiry («הצעה») | `escort`, `schedule`: the end of the week, Friday 00:00 Israel time (`start_date + 5`); while the date is TBD, 720 hours after issue. `kk_signup`: `settings.kk_window.closes_at`; no window, 720 hours after issue (`app.link_expiry`, `linkExpiry`). Stored in `expires_at` and recomputed, for links not revoked, whenever the edition's `start_date` or `kk_window` changes (`app.editions_link_expiry`; `Engine.refreshLinkExpiry`) |
+| rate limit («הצעה») | per token, 10 minutes: 60 calls for an `escort` link, 600 for the class's (`kk_signup`, `schedule`) — `share_link_hits`, `app.link_rate` / `linkRate`. A refused call is rolled back with everything else, so only answered calls count |
+| one live link | per `(edition, scope, subject)`: issuing again revokes the live one (replace) |
+
+### `issue(edition, scope, subject)` — `issue_link` → `{link_id, token, expires_at}`
+
+`app.require_edition_admin` (`not_member`, then `forbidden`); an archive or archived edition
+`archived`; `scope` one of the three (`bad_value`); `escort` needs a trainee of the edition
+(`bad_escort`), the others none (`bad_value`); an expiry already past — the week over, the window
+closed — `link_past`. Then the live link of the same subject is revoked, and the new one inserted
+(`created_by` = the caller's member row). `expires_at` as `app.iso` writes it.
+
+### `revoke(link)` — `revoke_link` → `void`
+
+The link must exist (`stale`); an admin of its edition; already revoked → nothing.
+
+## The anon functions
+
+Each is `SECURITY DEFINER`, `search_path = ''`, takes the token first, and answers a fixed shape.
+**One refusal for every link problem: `link_invalid`** (P0001, no detail, no hint) — a token
+outside 16–64 characters, unknown, of another scope, revoked, expired, of an archived or archive
+edition, or past its rate limit; and, for the escort's writes, a lesson that is not closed, not in
+the link's edition, or not escorted by its trainee. In that order: the shape, the lookup, the
+count, the link's state, the edition (`app.link_for`, `Engine.linkFor`).
+
+### `escortView(token)` — `escort_view` → `jsonb`
+
+`{edition: {label, start_date}, escort: {full_name, gender}, phones_from, lessons: [...]}` — the
+link's trainee's **closed** lessons in its edition, in grid order (day, start, the room's sort, id).
+Each lesson exactly: `lesson_id kind day date start_min end_min room speaker title self_intro
+duty_notes escort_note phone transport driver ticks`.
+- `date`: the day column's date (`start_date + day`) or null; `start_min`/`end_min`: the teaching
+  time (`app.teach_end` = the lesson's `teach_min`, else min(`settings.lesson_minutes` ?? 75, the
+  slot); a memorial slot its whole length).
+- `speaker`: the lead speaker's `{name (title + name), gender}`, or null.
+- `duty_notes`: the edition's duty phrases that apply, in their order — `app.duty_notes`, the rule
+  of `src/domain/escorts.ts` (`dutyNotes`). Never the amount.
+- `phone`: the lead speaker's `speaker_contacts.phone` — only in a `real` edition whose
+  `start_date` is set, and only from W−7: the date in Israel ≥ `start_date − 7`. Else null.
+  `phones_from` is that date (`start_date − 7`) in a real edition, else null.
+- `transport`: transport asked and approved (`transport <> 'none' and approval = 'approved'`).
+- `driver`: `{name, phone}` from `transport_details` once `transport` and `arranged`, in a real
+  edition; else null.
+- `ticks`: `{reminded, met, introduced, gift}` — when each was ticked, or null.
+
+Never an amount, an approval or its note, an e-mail, the pickup address or time, any note but
+`escort_note`, another escort's lesson, a draft.
+
+### `escortTick(token, lesson, item, on)` — `escort_tick` → `jsonb` (the lesson's four ticks)
+
+The lesson as above (`link_invalid`); `item ∈ {reminded, met, introduced, gift}`, `on` a boolean
+(`bad_value`). On → `escort_ticks(lesson, item, at = now)` unless there (the first time is kept);
+off → deleted.
+
+### `escortPickup(token, lesson, address)` — `escort_pickup` → `void`
+
+The lesson as above; transport approved, else `no_transport`; `address` one line ≤ 200, required
+(`bad_value`). Upserts `transport_details.pickup_address` (the rest untouched). **Write-only**: no
+function returns it through a link. Logged (`lessons transport {fields: [pickup_address], via:
+escort_link}`, actor null) — never the value.
+
+### `kkForm(token)` — `kk_form` → `jsonb`
+
+`{edition: {label, start_date}, window: {opens_at, closes_at}, open, roster: [{id, full_name}],
+tracks: [{id, day, date, start_min, end_min, groups: [{id, title, author, room, leaders: [{kind,
+name}], full}]}]}`. `open`: `opens_at ≤ now < closes_at`. `roster`: the edition's trainees, names
+only — nothing about who signed up. `tracks`: those with a group **on offer** (`open` and a
+`capacity` entered); `groups`: those on offer; `full`: the sign-ups ≥ the capacity (a count, never
+who). Lists the SQL orders by collation (trainees, groups by title) are compared sorted.
+
+### `kkSignup(token, roster, group)` — `kk_signup` → `{status: 'received'}`, always
+
+Records `kk_signups(track of the group, group, roster, via 'link')` only when **all** hold: the
+group is of the link's edition, `open`, with a capacity, the window open now, the trainee of the
+edition, fewer sign-ups than the capacity — counted under the group's row lock — and no sign-up of
+that trainee for that track yet (**an existing sign-up is never changed through the link**; only
+`kk_place` moves one). Otherwise nothing. The answer is the same in every case: the link is no
+oracle of who signed up.
+
+### `scheduleView(token)` — `schedule_view` → `jsonb`
+
+`{edition: {label, start_date}, rows: [...]}` — closed lessons and memorial slots (not cancelled), in
+grid order, each exactly `kind day date start_min end_min speaker title category room parallel`:
+the facts of `scheduleEntries` (`src/exports/designer.ts`), from which the designer's rows are
+written. `speaker`: the names (title + name), the lead first then by speaker id, joined « · »;
+`category`, `room`: names or ""; `parallel`: a lesson-kind lesson overlapping another closed
+lesson-kind lesson of the day (by the slot). Never a contact, an amount or a note.
+
+## The escorts' ticks for the team
+
+`escort_ticks(lesson_id, item, at)`, read by the edition's members (`escort_ticks_read`) and in
+`load_week` as `escortTicks: [{lesson_id, item, at}]`. A lesson whose `escort_roster_id` changes —
+`set_escort`, `reopen_lesson`, a trainee deleted (`on delete set null`) — loses its ticks
+(`app.lessons_escort_ticks`; `Engine.dropStaleTicks` after every command). No browser writes them
+but through a link.
+
+## מכריכה לכריכה
+
+`kk_tracks(edition, day, start_min, end_min)` — one per kk occurrence of the grid (a kk `grid_rows`
+row active that day, as `rowActive`), made by the first group on it; `kk_groups(edition, track,
+title, author, room_id, capacity, open)`; `kk_leaders(group, kind staff|trainee|ein_prat, roster_id
+| label, sort)`; `kk_signups(edition, track, group, roster, via link|staff, created_at)`, unique
+`(track, roster)`, the group inside its track and the trainee inside the edition by composite keys;
+`book_orders(group, copies, ordered_at)`. The window: `editions.settings.kk_window = {opens_at,
+closes_at}` (instants as `toISOString` writes them). Nothing is seeded: books, leaders and
+capacities are what an admin typed. Every member of the edition reads them (`load_kk`, RLS); a
+browser writes none directly.
+
+### Fields (what both sides accept — `app.kk_clean_group` / `cleanGroupFields`, in this order)
+
+| Key | Rule | Code |
+|---|---|---|
+| `title` | one line ≤ 200, required (on a new group; on an update when present) | `title_required` / `bad_value` |
+| `author` | null, or one line ≤ 120 | `bad_value` |
+| `room_id` | null, or a room of the edition | `bad_value` |
+| `capacity` | null (not offered through the link yet — never a default), or a whole number 1–1000 | `bad_value` |
+| `open` | a boolean (a new group: true) | `bad_value` |
+| `leaders` | an array of `{kind: 'trainee', roster_id}` (a trainee of the edition, else `bad_trainee`) or `{kind: 'staff'\|'ein_prat', label}` (one line ≤ 80); repeats dropped, the first kept; at most 6 («הצעה») | `bad_value` / `bad_trainee` |
+
+Unknown keys are ignored; a patch writes only the keys present (`leaders` replaces them all).
+
+### Commands — an admin of the edition (`app.require_edition_admin`), except book orders
+
+- `addGroup(edition, day, start, fields)` — `kk_add_group` → group id: the kk row of that day
+  starting at `start` (else `outside_grid`); fields; the track made on first use.
+- `updateGroup(group, patch)` — `kk_update_group`: the group (`stale`), then the admin.
+- `deleteGroup(group)` — `kk_delete_group`: `stale`; signed-up trainees → `group_has_signups`; a
+  track left with no group goes too.
+- `place(group, roster)` — `kk_place`: `stale`; a trainee of the edition (`bad_trainee`); a new
+  sign-up `via staff`, or the trainee's sign-up for that track moved here. Not bound by the window
+  or the capacity: the staff decide.
+- `unplace(track, roster)` — `kk_unplace`: the track (`stale`); the sign-up deleted, if any.
+- `setWindow(edition, opens, closes)` — `kk_set_window`: both or neither (`bad_value`), `opens <
+  closes` (`bad_value`); neither removes the window (closed). The sign-up link's expiry follows.
+- `setBookOrder(group, copies, ordered)` — `set_book_order`: `stale`; `app.require_logistics`
+  (logistics or an admin; content `forbidden`); `ordered` a boolean, `copies` 0–1000 or null —
+  null removes the line (and may not be `ordered`) (`bad_value`); `ordered_at` := the first time
+  it was ordered, or null.
+
+`load(edition)` — `load_kk(p_edition)`, invoker: `{tracks, groups, leaders, signups, orders}`
+(`signups[].created_at`, `orders[].ordered_at` as `toISOString` writes them); null for an edition
+the caller does not see.
+
+None of `share_links`, `share_link_hits`, `escort_ticks` or the kk tables is ever published to
+Realtime (the never-publish list of `schema.sql`).
+
+## Errors (milestone 5a)
+
+`link_invalid link_past bad_trainee group_has_signups` — plus `not_member forbidden archived stale
+bad_value bad_escort title_required outside_grid no_transport`.
+
+## RPC signatures (milestone 5a)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `escort_view` | `p_token text` | `jsonb` | anon |
+| `escort_tick` | `p_token text, p_lesson bigint, p_item text, p_on boolean` | `jsonb` | anon |
+| `escort_pickup` | `p_token text, p_lesson bigint, p_address text` | `void` | anon |
+| `kk_form` | `p_token text` | `jsonb` | anon |
+| `kk_signup` | `p_token text, p_roster bigint, p_group bigint` | `jsonb` | anon |
+| `schedule_view` | `p_token text` | `jsonb` | anon |
+| `issue_link` | `p_edition bigint, p_scope text, p_subject bigint` (default null) | `jsonb` | authenticated |
+| `revoke_link` | `p_link bigint` | `void` | authenticated |
+| `load_kk` | `p_edition bigint` (invoker) | `jsonb` | authenticated |
+| `kk_add_group` | `p_edition bigint, p_day integer, p_start integer, p_fields jsonb` | `bigint` | authenticated |
+| `kk_update_group` | `p_group bigint, p_patch jsonb` | `void` | authenticated |
+| `kk_delete_group` | `p_group bigint` | `void` | authenticated |
+| `kk_place` | `p_group bigint, p_roster bigint` | `void` | authenticated |
+| `kk_unplace` | `p_track bigint, p_roster bigint` | `void` | authenticated |
+| `kk_set_window` | `p_edition bigint, p_opens timestamptz, p_closes timestamptz` | `void` | authenticated |
+| `set_book_order` | `p_group bigint, p_copies integer, p_ordered boolean` | `void` | authenticated |
+
+The public pages call the anon functions through `SupabasePublic` (`src/data/supabaseLinks.ts`): a
+plain POST to `/rest/v1/rpc/<function>` with the publishable key in `apikey` and **no
+Authorization header**, the token in the body — no session read or refreshed, so PostgREST runs it as
+`anon`.
