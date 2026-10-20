@@ -37,19 +37,24 @@ const PEER_ADMIN = "peer.admin@example.org";
 // add/update/place/delete_memorial_plan, set_memorial_policy), the logistics
 // screen's transports (get_transports_for — invoker), and the two policies'
 // predicates, may_see_fallen and may_see_fallen_contacts (tests/sql/memorial.test.ts).
-// v12 (the import of 5786) added import_commit and import_lookup — a global admin's, each checking it
-// (tests/sql/import.test.ts); every helper of the import stays in app, executable by no API role.
+// v12 had two parts. The import of 5786 added import_commit and import_lookup — a global admin's, each
+// checking it (tests/sql/import.test.ts); every helper of the import stays in app, executable by no API role.
+// After the week added «איך עבר» — save_lesson_review, load_reviews (invoker),
+// speaker_reviews — the summary's edition_returning, purge_edition_private and
+// start_edition_preview (the dry run); start_edition took a new argument
+// (tests/sql/after.test.ts). No new app.* function is a browser's to run.
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
-  "delete_memorial_plan", "get_contacts_for", "get_fallen_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
+  "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
   "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
-  "kk_update_group", "load_kk", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "register_source_file",
-  "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "schema_version", "set_approach_status",
+  "kk_update_group", "load_kk", "load_reviews", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
+  "register_source_file",
+  "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
   "set_availability", "set_book_order", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
   "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
   "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
-  "speaker_matches", "start_edition", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
+  "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
   "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_fallen", "may_see_fallen_contacts",
@@ -129,7 +134,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       await db.query(
         "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones, " +
           "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files, " +
-          "public.fallen, public.fallen_contacts, public.memorial_plans",
+          "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -157,12 +162,17 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
-        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans"]) {
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
         expect(await sqlstate(q("select public.load_kk(1)"))).toBe("42501");
         expect(await sqlstate(q("select app.link_for('x', 'escort')"))).toBe("42501");
+        // v12: nothing of «איך עבר», the purge or the dry run
+        for (const f of ["public.load_reviews(1)", "public.speaker_reviews(1)", "public.edition_returning(1)", "public.purge_edition_private(1, 'x')", "public.start_edition_preview()",
+                         "public.save_lesson_review(1, 0, 'x', null, null, false, null)"]) {
+          expect(await sqlstate(q(`select ${f}`)), f).toBe("42501");
+        }
       });
     });
   });

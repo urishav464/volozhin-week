@@ -1,8 +1,9 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds the last version and its data. This runs exactly
-// that, under both default-privilege regimes the other tests model: v10 (the
-// file as it stood at V10_COMMIT, read from git history) with some data in it,
-// then this file twice. Afterwards the data is all there, and the catalog — every
+// that, under both default-privilege regimes the other tests model: v11 (the
+// file as it stood at V11_COMMIT, read from git history) with some data in it —
+// last year's week with its transport details, links and a member — then this
+// file twice. Afterwards the data is all there, and the catalog — every
 // table, column, constraint, index, trigger, policy, function body, privilege
 // and the Realtime publication — is exactly a fresh install's, so nothing a
 // fresh database is tested for can differ on the owner's.
@@ -12,15 +13,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, type Regime } from "./db";
 
-/** The last commit whose schema.sql is v10 (5ב-1, as merged). The sql job checks out the whole history for it. */
-const V10_COMMIT = "c7adaa2";
+/** The last commit whose schema.sql is v11 (5ב-2, as merged). The sql job checks out the whole history for it. */
+const V11_COMMIT = "50ff373";
 
-function v10Schema(): string {
+function v11Schema(): string {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   try {
-    return execFileSync("git", ["show", `${V10_COMMIT}:supabase/schema.sql`], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    return execFileSync("git", ["show", `${V11_COMMIT}:supabase/schema.sql`], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   } catch (e) {
-    throw new Error(`the v10 schema is read from git history (${V10_COMMIT}); a shallow checkout has none — fetch-depth: 0 (${(e as Error).message})`);
+    throw new Error(`the v11 schema is read from git history (${V11_COMMIT}); a shallow checkout has none — fetch-depth: 0 (${(e as Error).message})`);
   }
 }
 
@@ -68,7 +69,7 @@ async function fingerprint(db: pg.Client): Promise<string[]> {
   return (await db.query(FINGERPRINT)).rows.map((r) => Object.values(r)[0] as string);
 }
 
-describe.each<Regime>(["old", "new"])("re-running schema.sql on a v10 database, under %s Supabase defaults", (regime) => {
+describe.each<Regime>(["old", "new"])("re-running schema.sql on a v11 database, under %s Supabase defaults", (regime) => {
   const upgraded = `vw_upgrade_${regime}_${process.pid}`;
   const fresh = `vw_fresh_${regime}_${process.pid}`;
   let db: pg.Client;
@@ -77,10 +78,10 @@ describe.each<Regime>(["old", "new"])("re-running schema.sql on a v10 database, 
 
   beforeAll(async () => {
     db = await freshDatabase(upgraded, regime);
-    const v10 = v10Schema();
-    expect(v10).toContain("as $$ select 10 $$");
-    await db.query(v10);
-    // last year's data, as v10 kept it
+    const v11 = v11Schema();
+    expect(v11).toContain("as $$ select 11 $$");
+    await db.query(v11);
+    // last year's data, as v11 kept it
     await db.query("select app.add_admin('admin@example.org')");
     await db.query("begin");
     await db.query("set local role authenticated");
@@ -93,6 +94,10 @@ describe.each<Regime>(["old", "new"])("re-running schema.sql on a v10 database, 
       "insert into public.source_files (edition_id, lesson_id, cover, storage_path, display_name, mime, size_bytes, page_count) values ($1, null, true, $2, 'שער.pdf', 'application/pdf', 100, 1)",
       [ed, `${ed}/cover/00000000-0000-4000-8000-000000000000-cover.pdf`],
     );
+    // v11's after-the-week data: a content member, a link and a lesson's transport details (synthetic words only)
+    await db.query("insert into public.members (email, display_name, role, edition_id) values ('content@example.org', 'חבר/ת צוות', 'content', $1)", [ed]);
+    await db.query("insert into public.share_links (edition_id, scope, token_hash, expires_at) values ($1, 'schedule', extensions.digest('a-token-for-the-upgrade', 'sha256'), now() + interval '1 day')", [ed]);
+    await db.query("insert into public.transport_details (lesson_id, pickup_address, driver_name) select id, 'כתובת לדוגמה', 'נהג/ת לדוגמה' from public.lessons where edition_id = $1", [ed]);
     await db.query(SCHEMA);
     await db.query(SCHEMA);
     ref = await freshDatabase(fresh, regime);
@@ -104,16 +109,24 @@ describe.each<Regime>(["old", "new"])("re-running schema.sql on a v10 database, 
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v12 and keeps every row v10 held", async () => {
+  it("is v12 and keeps every row v11 held — nothing is imported, purged, deactivated or reviewed by the upgrade", async () => {
     expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(12);
     expect((await db.query("select count(*)::int as n from public.roster where edition_id = $1", [ed])).rows[0].n).toBe(1);
     // v12: lessons.import_note, empty on every lesson the import did not write
     expect((await db.query("select kind, title, import_note from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון", import_note: null }]);
     expect((await db.query("select display_name, fallen_id from public.source_files")).rows).toEqual([{ display_name: "שער.pdf", fallen_id: null }]);
     expect((await db.query("select count(*)::int as n from public.grid_rows where edition_id = $1 and kind = 'memorial'", [ed])).rows[0].n).toBe(2);
-    for (const t of ["fallen", "fallen_contacts", "memorial_plans"]) {
+    for (const t of ["fallen", "fallen_contacts", "memorial_plans", "lesson_reviews"]) {
       expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(0);
     }
+    expect((await db.query("select purged_at from public.editions where id = $1", [ed])).rows).toEqual([{ purged_at: null }]);
+    expect((await db.query("select active from public.members where email = 'content@example.org'")).rows).toEqual([{ active: true }]);
+    expect((await db.query("select revoked_at from public.share_links where edition_id = $1", [ed])).rows).toEqual([{ revoked_at: null }]);
+    expect((await db.query("select pickup_address, driver_name from public.transport_details")).rows).toEqual([{ pickup_address: "כתובת לדוגמה", driver_name: "נהג/ת לדוגמה" }]);
+    // v11's start_edition is replaced, not overloaded: one signature, with the option
+    expect((await db.query("select pg_get_function_identity_arguments(p.oid) as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'start_edition'")).rows).toEqual([
+      { a: "p_label text, p_start_date date, p_first_day_from integer, p_room text, p_deactivate_team boolean" },
+    ]);
   });
 
   it("ends with exactly a fresh install's catalog: tables, constraints, policies, functions, privileges, Realtime", async () => {

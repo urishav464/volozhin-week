@@ -1199,7 +1199,15 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
 
 -- A new real edition, from the template: rows copied, the default room, the
 -- previous real edition archived (read-only for non-admins). Admin only.
-create or replace function public.start_edition(p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש')
+-- v12: p_deactivate_team — the editions archived here lose their non-admin
+-- members (content, logistics: active = false, never deleted — their history
+-- stays); their admins and every all-editions member stay. The screen offers it
+-- on by default («הצעה»: the instructor has not decided — DECISIONS «אבן דרך 6»);
+-- here it is off unless asked. public.start_edition_preview (Milestone 6, below)
+-- answers what this would do, writing nothing.
+drop function if exists public.start_edition(text, date, integer, text);   -- v11's signature
+create or replace function public.start_edition(
+  p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש', p_deactivate_team boolean default false)
   returns bigint
   language plpgsql security definer set search_path = ''
   as $$
@@ -1215,6 +1223,11 @@ create or replace function public.start_edition(p_label text, p_start_date date,
     -- edition starts without them. v8: so do its milestones (title and W−n,
     -- none of them done yet) — public.milestones is created further down.
     select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
+    if coalesce(p_deactivate_team, false) then
+      update public.members set active = false
+       where active and role <> 'admin'
+         and edition_id in (select id from public.editions where kind = 'real' and status <> 'archived');
+    end if;
     update public.editions set status = 'archived' where kind = 'real' and status <> 'archived';
     insert into public.editions (label, kind, start_date, first_day_from, settings)
     values (p_label, 'real', p_start_date, p_first_day_from,
@@ -1258,7 +1271,7 @@ create index if not exists activity_actor on public.activity (actor);
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
 -- read the tables created further down: notes, milestones, export_snapshots (v8),
--- share_links (v9), source_files (v10), memorial_plans (v11).)
+-- share_links (v9), source_files (v10), memorial_plans (v11), lesson_reviews (v12).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1274,7 +1287,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.export_snapshots where created_by = p_member)
         or exists (select 1 from public.share_links where created_by = p_member)
         or exists (select 1 from public.source_files where uploaded_by = p_member)
-        or exists (select 1 from public.memorial_plans where updated_by = p_member);
+        or exists (select 1 from public.memorial_plans where updated_by = p_member)
+        or exists (select 1 from public.lesson_reviews where written_by = p_member);   -- v12
   end
   $$;
 
@@ -5140,6 +5154,345 @@ create or replace function public.import_lookup(p_speakers bigint[], p_phone_key
   end
   $$;
 
+
+-- =============================================================================
+-- Milestone 6 (v12) — after the week. Semantics: docs/CONTRACT.md «After the
+-- week»; the in-memory twin is src/data/engine.ts (reviews, the purge) and
+-- src/data/demoSettings.ts (start_edition's option, the dry run), held to this
+-- by tests/parity and the unit tests.
+--
+--   lesson_reviews        «איך עבר» — one per closed lesson: what went well, what
+--                         did not, invite again (yes / no / maybe), overran, a
+--                         rating 1–5 (optional); the lead speaker it is about,
+--                         who wrote it and when, a version. Opinions about a
+--                         person: the edition's admins and content members read
+--                         them — never logistics, never a link, never the
+--                         designer's export, never load_week, never Realtime.
+--                         Written through save_lesson_review only.
+--   save_lesson_review    the lesson's handler or an admin of the edition; the
+--                         handler only once the lesson's day has passed in Israel
+--                         time (app.review_opens_on) — never while the week's
+--                         date is TBD; an admin always; an archive: admins only.
+--   load_reviews          the edition's reviews, as the policy shows them (invoker).
+--   speaker_reviews       a speaker's reviews across the years, for the speaker
+--                         sheet: a global admin, or an admin or content member of
+--                         a live real edition (app.may_read_reviews — the
+--                         people the contacts rule counts); past years, and a
+--                         live edition only to its own admins and content.
+--   edition_returning     which speakers of an edition taught in an earlier year
+--                         (the summary's «חדשים / חוזרים»), with those years.
+--   purge_edition_private a global admin, once the week is over (Israel time:
+--                         Friday 00:00, start_date + 5 — when the links expire)
+--                         or the edition is archived, with the edition's label
+--                         typed: deletes its transport details (pickup addresses,
+--                         drivers' names and phones), revokes every link of it
+--                         and deletes the links' rate-limit counts (hashed
+--                         addresses); keeps everything else (DECISIONS «אבן דרך
+--                         6», table by table). editions.purged_at says when (the
+--                         first time); the log has the counts, never a value.
+--                         Idempotent: a second run deletes nothing more.
+--   start_edition         (above) gains p_deactivate_team.
+--   start_edition_preview the dry run: what start_edition would archive, copy,
+--                         deactivate and leave as it is — counts. STABLE (PL/pgSQL
+--                         runs it read-only): it cannot write.
+-- lesson_reviews is never published to Realtime (the list at the end): the
+-- lesson panel and the summary read it when they open, and after a save.
+-- =============================================================================
+
+-- ------------------------------------------------------------- «איך עבר»
+
+create table if not exists public.lesson_reviews (
+  lesson_id    bigint primary key references public.lessons (id) on delete cascade,
+  edition_id   bigint not null references public.editions (id) on delete cascade,
+  speaker_id   bigint references public.speakers (id) on delete set null,   -- the lead speaker when it was written
+  went_well    text check (char_length(went_well) <= 2000),
+  issues       text check (char_length(issues) <= 2000),
+  invite_again text check (invite_again in ('yes', 'no', 'maybe')),
+  overran      boolean not null default false,
+  rating       smallint check (rating between 1 and 5),
+  written_by   bigint,
+  written_at   timestamptz not null default now(),
+  version      integer not null default 1
+);
+create index if not exists lesson_reviews_edition on public.lesson_reviews (edition_id);
+create index if not exists lesson_reviews_speaker on public.lesson_reviews (speaker_id);
+alter table public.lesson_reviews enable row level security;
+
+-- Opinions about a person: the edition's admins and content members — never its
+-- logistics members (public/privacy.html says exactly this).
+drop policy if exists lesson_reviews_read on public.lesson_reviews;
+create policy lesson_reviews_read on public.lesson_reviews for select to authenticated
+  using (app.my_role(edition_id) in ('admin', 'content'));
+
+-- The first Israel date on which a lesson's «איך עבר» opens to its handler: the
+-- day after the calendar day the lesson ends on — a night lesson in a day's
+-- column (00:30, end_min 1560) ends on the next date. src/domain/reviews.ts
+-- (reviewOpensOn) is the same rule.
+create or replace function app.review_opens_on(p_start date, p_day integer, p_end integer) returns date
+  language sql immutable set search_path = ''
+  as $$ select p_start + p_day + ((p_end - 1) / 1440) + 1 $$;
+
+-- May the caller read «איך עבר» across the years? A global admin, or an admin
+-- or content member of a real edition that is not archived — a practice or demo
+-- week, last year's team and logistics give no access (the contacts' rule).
+create or replace function app.may_read_reviews() returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select app.is_global_admin() or exists (
+      select 1 from public.editions e
+       where e.kind = 'real' and e.status <> 'archived' and app.my_role(e.id) in ('admin', 'content'))
+  $$;
+
+-- Is `p_other` a year before `p_this`? By the weeks' dates when both are known;
+-- otherwise a past year (an archive, or an archived real edition) is before one
+-- that is not. src/domain/reviews.ts (earlierEdition) is the same rule.
+create or replace function app.earlier_edition(p_other public.editions, p_this public.editions) returns boolean
+  language sql immutable set search_path = ''
+  as $$
+    select case
+      when p_other.start_date is not null and p_this.start_date is not null then p_other.start_date < p_this.start_date
+      else (p_other.kind = 'archive' or p_other.status = 'archived') and not (p_this.kind = 'archive' or p_this.status = 'archived')
+    end
+  $$;
+
+-- Write (or rewrite) a closed lesson's «איך עבר», at the version on screen (0: none
+-- yet). Refusals, in this order: the lesson gone `stale`; not a member
+-- `not_member`; logistics `forbidden`; an archive `archived` (its admins may);
+-- not a closed lesson `not_closed`; neither its handler nor an admin
+-- `not_handler`; the handler before the lesson's day has passed in Israel, or
+-- while the week's date is TBD, `review_closed`; another version `stale`; a text
+-- longer than 2000, an answer outside yes/no/maybe or a rating outside 1–5
+-- `bad_value`; nothing at all `review_empty`. The same answers again change
+-- nothing. Returns the version saved.
+create or replace function public.save_lesson_review(
+  p_lesson bigint, p_version integer, p_went_well text, p_issues text, p_invite_again text, p_overran boolean, p_rating integer)
+  returns integer
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l    public.lessons;
+    v_ed   public.editions;
+    v_role text;
+    v_me   bigint;
+    v_old  public.lesson_reviews;
+    v_ww   text;
+    v_is   text;
+    v_ia   text;
+    v_ov   boolean := coalesce(p_overran, false);
+    v_lead bigint;
+    v_v    integer;
+  begin
+    select * into v_l from public.lessons where id = p_lesson for update;
+    if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('stale'); end if;
+    v_role := app.my_role(v_l.edition_id);
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if v_role = 'logistics' then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = v_l.edition_id;
+    if (v_ed.kind = 'archive' or v_ed.status = 'archived') and v_role <> 'admin' then perform app.refuse('archived'); end if;
+    if v_l.state <> 'closed' or v_l.kind <> 'lesson' then perform app.refuse('not_closed'); end if;
+    v_me := app.my_member_id(v_l.edition_id);
+    if v_role <> 'admin' then
+      if app.lesson_handler(v_l.id) is distinct from v_me then perform app.refuse('not_handler'); end if;
+      if v_ed.start_date is null
+         or (now() at time zone 'Asia/Jerusalem')::date < app.review_opens_on(v_ed.start_date, v_l.day, v_l.end_min) then
+        perform app.refuse('review_closed');
+      end if;
+    end if;
+    select * into v_old from public.lesson_reviews where lesson_id = v_l.id for update;
+    if coalesce(v_old.version, 0) is distinct from p_version then perform app.refuse('stale'); end if;
+    v_ww := app.clean_block(p_went_well, 2000);
+    v_is := app.clean_block(p_issues, 2000);
+    v_ia := nullif(btrim(coalesce(p_invite_again, '')), '');
+    if v_ia is not null and v_ia not in ('yes', 'no', 'maybe') then perform app.refuse('bad_value'); end if;
+    if p_rating is not null and p_rating not between 1 and 5 then perform app.refuse('bad_value'); end if;
+    if v_ww is null and v_is is null and v_ia is null and p_rating is null and not v_ov then perform app.refuse('review_empty'); end if;
+    select x.speaker_id into v_lead from public.lesson_speakers x where x.lesson_id = v_l.id and x.role = 'lead' limit 1;
+    if v_old.lesson_id is not null
+       and (v_old.went_well, v_old.issues, v_old.invite_again, v_old.overran, v_old.rating::integer, v_old.speaker_id)
+           is not distinct from (v_ww, v_is, v_ia, v_ov, p_rating, v_lead) then
+      return v_old.version;
+    end if;
+    insert into public.lesson_reviews as r (lesson_id, edition_id, speaker_id, went_well, issues, invite_again, overran, rating, written_by, written_at, version)
+    values (v_l.id, v_l.edition_id, v_lead, v_ww, v_is, v_ia, v_ov, p_rating, v_me, now(), 1)
+    on conflict (lesson_id) do update
+      set speaker_id = excluded.speaker_id, went_well = excluded.went_well, issues = excluded.issues, invite_again = excluded.invite_again,
+          overran = excluded.overran, rating = excluded.rating, written_by = excluded.written_by, written_at = now(), version = r.version + 1
+    returning r.version into v_v;
+    return v_v;
+  end
+  $$;
+
+-- The edition's reviews, through the policy (invoker): its admins and content
+-- members see them all; anyone else none.
+create or replace function public.load_reviews(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'lesson_id', r.lesson_id, 'speaker_id', r.speaker_id, 'went_well', r.went_well, 'issues', r.issues,
+             'invite_again', r.invite_again, 'overran', r.overran, 'rating', r.rating, 'written_by', r.written_by,
+             'written_at', to_char(r.written_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'version', r.version)
+             order by r.lesson_id), '[]'::jsonb)
+      from public.lesson_reviews r where r.edition_id = p_edition
+  $$;
+
+-- A speaker's «איך עבר» across the years, for the speaker sheet: the reviews
+-- written about them (as the lesson's lead) in real and archive editions — a
+-- past year (an archive, an archived real edition) to whoever may read reviews
+-- at all (app.may_read_reviews), a live edition only to its own admins and
+-- content members. Never a practice or demo week; never who wrote it. The
+-- newest year first (a year whose date is TBD — this one, usually — at the top).
+create or replace function public.speaker_reviews(p_speaker bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.may_read_reviews() then perform app.refuse('forbidden'); end if;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'edition_id', e.id, 'edition_label', e.label, 'edition_kind', e.kind, 'start_date', e.start_date,
+               'lesson_id', l.id, 'day', l.day, 'start_min', l.start_min, 'end_min', l.end_min, 'title', l.title,
+               'went_well', r.went_well, 'issues', r.issues, 'invite_again', r.invite_again, 'overran', r.overran,
+               'rating', r.rating, 'written_at', app.iso(r.written_at))
+             order by e.start_date desc nulls first, e.id desc, l.day, l.start_min, l.id)
+        from public.lesson_reviews r
+        join public.lessons l on l.id = r.lesson_id
+        join public.editions e on e.id = r.edition_id
+       where r.speaker_id = p_speaker and e.kind in ('real', 'archive')
+         and (e.kind = 'archive' or e.status = 'archived' or app.my_role(e.id) in ('admin', 'content'))), '[]'::jsonb);
+  end
+  $$;
+
+-- «סיכום המחזור»: the speakers of the edition's closed lessons who taught a
+-- closed lesson in an earlier real or archive year (app.earlier_edition), each
+-- with those years' labels. The edition's admins and content members.
+create or replace function public.edition_returning(p_edition bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_role text := app.my_role(p_edition);
+    v_ed   public.editions;
+  begin
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if v_role = 'logistics' then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = p_edition;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object('speaker_id', t.speaker_id, 'editions', t.labels) order by t.speaker_id)
+        from (select s.speaker_id,
+                     (select jsonb_agg(o.label order by o.start_date nulls first, o.id)
+                        from public.editions o
+                       where o.id <> p_edition and o.kind in ('real', 'archive') and app.earlier_edition(o, v_ed)
+                         and exists (select 1 from public.lesson_speakers y join public.lessons m on m.id = y.lesson_id
+                                      where y.speaker_id = s.speaker_id and m.edition_id = o.id and m.state = 'closed' and m.kind = 'lesson')) as labels
+                from (select distinct x.speaker_id from public.lesson_speakers x join public.lessons l on l.id = x.lesson_id
+                       where l.edition_id = p_edition and l.state = 'closed' and l.kind = 'lesson') s) t
+       where t.labels is not null), '[]'::jsonb);
+  end
+  $$;
+
+-- ------------------------------------------------------------- the purge
+
+-- When an edition's private data was deleted (the first purge) — written only by
+-- purge_edition_private: any other write keeps it as it was (a global admin
+-- writes editions directly, and must not mark one purged that is not).
+alter table public.editions add column if not exists purged_at timestamptz;
+
+create or replace function app.editions_purged_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if coalesce(current_setting('app.purging', true), '') <> 'on' then
+      if tg_op = 'INSERT' then new.purged_at := null; else new.purged_at := old.purged_at; end if;
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists editions_purged_guard on public.editions;
+create trigger editions_purged_guard before insert or update on public.editions
+  for each row execute function app.editions_purged_guard();
+
+-- After the week (DESIGN «שלבים», שלב 4): a global admin's irreversible action.
+-- Refusals, in this order: not a global admin `forbidden`; no such edition
+-- `stale`; the label not typed exactly `confirm_mismatch`; the week not over yet
+-- (Israel time, before Friday 00:00 = start_date + 5; the date TBD) and the
+-- edition not archived `week_not_over`. Then: the transport details of its
+-- lessons deleted, its links revoked (the anon functions answer `link_invalid`
+-- from now on) and their rate-limit counts deleted. Returns the counts; logs
+-- them (and nothing else) in the edition's activity.
+create or replace function public.purge_edition_private(p_edition bigint, p_confirm text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_ed  public.editions;
+    v_t   integer;
+    v_l   integer;
+    v_h   integer;
+    v_at  timestamptz;
+  begin
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = p_edition for update;
+    if v_ed.id is null then perform app.refuse('stale'); end if;
+    if p_confirm is null or btrim(p_confirm) <> v_ed.label then perform app.refuse('confirm_mismatch'); end if;
+    if not (v_ed.kind = 'archive' or v_ed.status = 'archived'
+            or (v_ed.start_date is not null and (now() at time zone 'Asia/Jerusalem')::date >= v_ed.start_date + 5)) then
+      perform app.refuse('week_not_over');
+    end if;
+    delete from public.transport_details t using public.lessons l where l.id = t.lesson_id and l.edition_id = p_edition;
+    get diagnostics v_t = row_count;
+    delete from public.share_link_hits h using public.share_links s where s.token_hash = h.token_hash and s.edition_id = p_edition;
+    get diagnostics v_h = row_count;
+    update public.share_links set revoked_at = now() where edition_id = p_edition and revoked_at is null;
+    get diagnostics v_l = row_count;
+    v_at := coalesce(v_ed.purged_at, now());
+    perform set_config('app.purging', 'on', true);
+    update public.editions set purged_at = v_at where id = p_edition and purged_at is null;
+    perform set_config('app.purging', '', true);
+    perform app.log_event(p_edition, 'editions', p_edition, 'purge',
+                          jsonb_build_object('transport_details', v_t, 'links_revoked', v_l, 'link_hits', v_h));
+    return jsonb_build_object('transport_details', v_t, 'links_revoked', v_l, 'link_hits', v_h, 'purged_at', app.iso(v_at));
+  end
+  $$;
+
+-- ------------------------------------------------------------- moving to next year
+
+-- The dry run of public.start_edition (a global admin): which editions it would
+-- archive, where the wording and milestones would come from and how many, how
+-- many grid rows, how many of the archived editions' members it would
+-- deactivate (with p_deactivate_team) and how many of their admins stay — and
+-- what stays across the years as it is. Counts and labels; never an address.
+-- STABLE: PL/pgSQL runs it read-only, so it cannot write.
+create or replace function public.start_edition_preview(p_deactivate_team boolean default true) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_from public.editions;
+  begin
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    select * into v_from from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
+    return jsonb_build_object(
+      'archive', coalesce((select jsonb_agg(jsonb_build_object('id', e.id, 'label', e.label) order by e.id)
+                             from public.editions e where e.kind = 'real' and e.status <> 'archived'), '[]'::jsonb),
+      'carry_from', case when v_from.id is null then null else jsonb_build_object('id', v_from.id, 'label', v_from.label) end,
+      'grid_rows', (select count(*) from public.grid_template)::integer,
+      'milestones', (select count(*) from public.milestones m where m.edition_id = v_from.id)::integer,
+      'confirm_template', coalesce(v_from.settings ? 'confirm_template', false),
+      'duty_phrases', coalesce(case when jsonb_typeof(v_from.settings -> 'duty_phrases') = 'array' then jsonb_array_length(v_from.settings -> 'duty_phrases') end, 0),
+      'deactivate', case when coalesce(p_deactivate_team, false) then
+                      (select count(*) from public.members m
+                        where m.active and m.role <> 'admin'
+                          and m.edition_id in (select id from public.editions where kind = 'real' and status <> 'archived'))::integer
+                    else 0 end,
+      'admins_stay', (select count(*) from public.members m
+                       where m.active and m.role = 'admin'
+                         and m.edition_id in (select id from public.editions where kind = 'real' and status <> 'archived'))::integer,
+      'stays', jsonb_build_object(
+        'speakers', (select count(*) from public.speakers s where not s.retired)::integer,
+        'categories', (select count(*) from public.categories c where c.active)::integer,
+        'fallen', (select count(*) from public.fallen f where f.active)::integer,
+        'notes', (select count(*) from public.notes n where n.edition_id is null)::integer));
+  end
+  $$;
+
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -5191,7 +5544,7 @@ grant execute on function public.reopen_lesson(bigint) to authenticated;
 grant execute on function public.move_lesson(bigint, integer, integer, integer, bigint) to authenticated;
 grant execute on function public.reshape(bigint, integer, integer, text, integer, text, integer[]) to authenticated;
 grant execute on function public.update_lesson(bigint, integer, jsonb) to authenticated;
-grant execute on function public.start_edition(text, date, integer, text) to authenticated;
+grant execute on function public.start_edition(text, date, integer, text, boolean) to authenticated;   -- v12: the deactivation option
 
 -- Settings (v5). Column lists are the whole point for rooms and categories:
 -- `is_default` moves only through set_default_room(), and no id or edition is
@@ -5313,6 +5666,20 @@ grant execute on function public.set_memorial_policy(bigint, text, integer, bool
 grant execute on function public.import_lookup(bigint[], text[]) to authenticated;
 grant execute on function public.import_commit(text, jsonb) to authenticated;
 
+-- After the week (v12). lesson_reviews is read under RLS (an edition's admins and
+-- content members; load_reviews is invoker) and written only by save_lesson_review;
+-- speaker_reviews, edition_returning, purge_edition_private and the dry run are
+-- definer functions that check the caller. app.review_opens_on,
+-- app.may_read_reviews, app.earlier_edition and app.editions_purged_guard run
+-- inside them (or the policy's own app.my_role) — no browser role executes them.
+grant select on public.lesson_reviews to authenticated;
+grant execute on function public.save_lesson_review(bigint, integer, text, text, text, boolean, integer) to authenticated;
+grant execute on function public.load_reviews(bigint) to authenticated;
+grant execute on function public.speaker_reviews(bigint) to authenticated;
+grant execute on function public.edition_returning(bigint) to authenticated;
+grant execute on function public.purge_edition_private(bigint, text) to authenticated;
+grant execute on function public.start_edition_preview(boolean) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -5328,7 +5695,8 @@ grant execute on function public.import_commit(text, jsonb) to authenticated;
 -- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead);
 -- v10 the sources' files (file names; the week reloads after an upload); v11 the
 -- fallen, their families' contacts, and the memorial plans (the memorial screen
--- reloads after each action; the grid on return to the tab).
+-- reloads after each action; the grid on return to the tab); v12 the lessons'
+-- «איך עבר» (opinions about a person; read when the panel or the summary opens).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -5346,7 +5714,7 @@ begin
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
-                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans'] loop
+                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);
