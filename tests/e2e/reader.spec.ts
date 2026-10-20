@@ -94,6 +94,14 @@ test.describe("demo build", () => {
     await expect(stage(panel, "reader")).toHaveAttribute("data-state", "done"); // «במקראה»
     await expect(stage(panel, "reader")).toContainText("במקראה");
     await noSidewaysScroll(page);
+    // the keyboard's focus on the upload shows — on the label that looks like the button (the input is 1px, clipped)
+    const pick = panel.locator("input[type=file]");
+    await pick.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(pick).toBeFocused();
+    const label = panel.locator(`label[for="${await pick.getAttribute("id")}"]`);
+    expect(await label.evaluate((el) => `${getComputedStyle(el).outlineStyle} ${getComputedStyle(el).outlineWidth}`)).toBe("solid 2px");
     // not a type the bucket takes: refused before anything is sent
     await panel.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
     await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toContainText("אפשר להעלות רק PDF");
@@ -138,6 +146,15 @@ test.describe("demo build", () => {
     await expect(page.locator('[data-status="no_sources"]')).toContainText("בלי מקורות");
     await expect(page.locator('[data-status="missing"]').first()).toContainText("חסר");
     await expect(page.locator("[data-manifest-totals]")).toContainText("2 בתוך המקראה");
+    // each part of the totals isolated, so «PDF · 1» never reads as one left-to-right run
+    await expect(page.locator("[data-manifest-totals] bdi").first()).toHaveText("2 בתוך המקראה");
+    await expect(page.locator("[data-manifest-totals] bdi").filter({ hasText: "צריך PDF" })).toHaveText("1 צריך PDF");
+    // the kind of sources, beside the files and the pages
+    const included = m.rows.find((r) => r.status === "included")!;
+    const kind = included.lesson.sources_note ? `דף מקורות: ${included.lesson.sources_note}` : "דף מקורות"; // and its note, when there is one
+    await expect(page.locator(`[data-manifest-row="${included.lesson.id}"]`)).toContainText(`${kind} · 2 קבצים · ${included.pages} עמודים`);
+    // the running headers laid out as the spread: the right (even) page's field first, on the right
+    expect(await page.getByRole("form", { name: "כותרות רצות" }).locator("label").allTextContents()).toEqual(["עמוד ימני (זוגי)", "עמוד שמאלי (אי-זוגי)"]);
     // the headers are empty until typed — last year's are an example only
     await expect(page.getByLabel("עמוד שמאלי (אי-זוגי)")).toHaveValue("");
     await expect(page.getByText("«שבוע וולוז׳ין תשפ״ו 2026»")).toBeVisible();
@@ -252,6 +269,7 @@ test.describe("mock build", () => {
     const up = sb.storage.find((c) => c.method === "POST" && c.path.startsWith("/storage/v1/object/sources/"))!;
     expect(up.path).toMatch(new RegExp(`^/storage/v1/object/sources/7/${target.id}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-file\\.pdf$`));
     expect([up.auth, up.contentType, up.apikey]).toEqual([bearer, "application/pdf", "sb_publishable_mock"]);
+    expect(up.cacheControl).toBe("private, no-store"); // Storage serves the file back with it: no copy outlives a signed URL or a removal
     const path = up.path.slice("/storage/v1/object/sources/".length);
     expect(sb.rpc.get("register_source_file")).toEqual([{ p_edition: 7, p_lesson: target.id, p_path: path, p_display_name: "מקורות.pdf", p_pages: 2 }]);
     expect(sb.calls.filter((c) => c.path === "/rest/v1/rpc/register_source_file").every((c) => c.auth === bearer)).toBe(true);

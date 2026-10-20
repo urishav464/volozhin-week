@@ -57,6 +57,7 @@ export interface StorageCall {
   auth: string | undefined;
   apikey: string | undefined;
   contentType: string | undefined;
+  cacheControl: string | undefined;
   /** JSON bodies parsed; an upload's body is its byte length. */
   body: unknown;
 }
@@ -142,7 +143,7 @@ export class FakeSupabase {
     const h = req.headers();
     const raw = req.postDataBuffer();
     const json = (h["content-type"] ?? "").includes("application/json") && raw ? JSON.parse(raw.toString("utf8")) : raw ? raw.length : null;
-    this.storage.push({ method: req.method(), path: u.pathname, auth: h["authorization"], apikey: h["apikey"], contentType: h["content-type"], body: json });
+    this.storage.push({ method: req.method(), path: u.pathname, auth: h["authorization"], apikey: h["apikey"], contentType: h["content-type"], cacheControl: h["cache-control"], body: json });
     const ok = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     const signPrefix = "/storage/v1/object/sign/sources/";
     if (req.method() === "GET" && u.pathname.startsWith(signPrefix)) {

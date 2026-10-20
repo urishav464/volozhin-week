@@ -11,6 +11,7 @@ import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
 import { checkPicked, COVER_ACCEPT } from "../../data/sourceRules";
 import type { Me } from "../../data/types";
+import { SOURCES_LABEL } from "../../domain/stages";
 import { DAY_NAMES } from "../../domain/time";
 import type { SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
@@ -227,7 +228,7 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
   return (
     <Panel title="מה התקבל ומה חסר" aside={`${t.lessons} שיעורים סגורים · ${t.files} קבצים · ${pagesText(t.filePages)} של מקורות`}>
       <p className="mb-3 text-sm" data-manifest-totals>
-        {parts.join(" · ")}
+        <Parts parts={parts as string[]} />
       </p>
       {manifest.rows.length === 0 ? (
         <p className="text-ink-soft">עוד אין שיעורים סגורים או זמני זיכרון במחזור הזה.</p>
@@ -249,9 +250,37 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
   );
 }
 
+/**
+ * «… · 1 צריך PDF · 1 מצגת בלבד · …» — each part isolated (bdi): run together, the bidi algorithm reads «PDF · 1»
+ * as one left-to-right run, and the line comes out «1 צריך 1 · PDF מצגת בלבד».
+ */
+function Parts({ parts }: { parts: string[] }) {
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          <bdi>{p}</bdi>
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** What kind of sources the lesson has, when the status does not already say it («דף מקורות וסרטון», «אחר: …»). */
+const KIND_SHOWN = new Set(["sheet", "sheet_presentation", "sheet_video", "other"]);
+const clip = (s: string, n = 80) => ([...s].length > n ? `${[...s].slice(0, n).join("").trimEnd()}…` : s);
+
 function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void }) {
   const notes: string[] = [];
-  if (r.kind === "lesson" && r.files.length > 0) notes.push(`${r.files.length === 1 ? "קובץ אחד" : `${r.files.length} קבצים`}${r.status === "included" ? ` · ${pagesText(r.pages)}` : ""}`);
+  if (r.kind === "lesson" && KIND_SHOWN.has(r.sourcesKind)) {
+    const note = r.lesson.sources_note?.trim();
+    notes.push(note ? `${SOURCES_LABEL[r.sourcesKind]}: ${clip(note)}` : SOURCES_LABEL[r.sourcesKind]);
+  }
+  if (r.kind === "lesson" && r.files.length > 0) {
+    notes.push(r.files.length === 1 ? "קובץ אחד" : `${r.files.length} קבצים`);
+    if (r.status === "included") notes.push(pagesText(r.pages));
+  }
   if (r.word.length > 0 && r.status === "included") notes.push(`ועוד ${r.word.length === 1 ? "קובץ Word אחד" : `${r.word.length} קבצי Word`} שלא נכנס/ים — צריך PDF`);
   if (r.unread.length > 0) notes.push(`${r.unread.length === 1 ? "PDF אחד לא נקרא" : `${r.unread.length} קבצי PDF לא נקראו`} בהעלאה — ייבדק/ו בבנייה`);
   if (r.previous.length > 0) notes.push(`מהמרצה הקודם: ${r.previous.length === 1 ? "קובץ אחד" : `${r.previous.length} קבצים`} להסרה`);
@@ -266,7 +295,11 @@ function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void
         <button type="button" onClick={onOpen} className="min-h-11 text-start font-semibold underline-offset-4 hover:underline">
           <bdi>{r.header}</bdi>
         </button>
-        {notes.length > 0 && <p className="text-xs text-ink-soft">{notes.join(" · ")}</p>}
+        {notes.length > 0 && (
+          <p className="text-xs text-ink-soft">
+            <Parts parts={notes} />
+          </p>
+        )}
       </div>
       <Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
     </li>
@@ -349,7 +382,7 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
             id={`${id}-pick`}
             type="file"
             accept={COVER_ACCEPT}
-            className="sr-only"
+            className="peer sr-only"
             disabled={!!busy}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -357,7 +390,11 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
               if (f) void upload(f);
             }}
           />
-          <label htmlFor={`${id}-pick`} className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-line bg-paper px-3 font-semibold ${busy ? "opacity-50" : "hover:bg-line/50"}`}>
+          {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
+          <label
+            htmlFor={`${id}-pick`}
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-line bg-paper px-3 font-semibold peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-line/50"}`}
+          >
             {busy === "upload" ? `מעלה… ${Math.round((progress ?? 0) * 100)}%` : "העלאת פוסטר (PDF או תמונה)"}
           </label>
         </div>
@@ -402,7 +439,15 @@ function HeadersPanel({ port, week, actor, notify, clear, reload }: { port: Data
   if (!actor.isAdmin) {
     return (
       <Panel title="כותרות רצות">
-        <p className="text-sm">{saved[0] || saved[1] ? <>שמאל: «{saved[0] || "—"}» · ימין: «{saved[1] || "—"}»</> : "אין כותרות רצות (המדריך/ה כותב/ת אותן כאן)."}</p>
+        <p className="text-sm">
+          {saved[0] || saved[1] ? (
+            <>
+              ימין: «<bdi>{saved[1] || "—"}</bdi>» · שמאל: «<bdi>{saved[0] || "—"}</bdi>»
+            </>
+          ) : (
+            "אין כותרות רצות (המדריך/ה כותב/ת אותן כאן)."
+          )}
+        </p>
         <p className="mt-1 text-xs text-ink-soft">{help}</p>
       </Panel>
     );
@@ -410,12 +455,13 @@ function HeadersPanel({ port, week, actor, notify, clear, reload }: { port: Data
   return (
     <Panel title="כותרות רצות">
       <form onSubmit={(e) => void submit(e)} className="space-y-3" aria-label="כותרות רצות">
+        {/* laid out as the spread it describes: on a right-to-left page the first field is on the right — the right (even) page */}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field id={`${id}-left`} label="עמוד שמאלי (אי-זוגי)">
-            <input id={`${id}-left`} value={left} maxLength={120} onChange={(e) => setLeft(e.target.value)} className={INPUT} />
-          </Field>
           <Field id={`${id}-right`} label="עמוד ימני (זוגי)">
             <input id={`${id}-right`} value={right} maxLength={120} onChange={(e) => setRight(e.target.value)} className={INPUT} />
+          </Field>
+          <Field id={`${id}-left`} label="עמוד שמאלי (אי-זוגי)">
+            <input id={`${id}-left`} value={left} maxLength={120} onChange={(e) => setLeft(e.target.value)} className={INPUT} />
           </Field>
         </div>
         <p className="text-xs text-ink-soft">{help}</p>

@@ -193,7 +193,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
             type="file"
             multiple
             accept={SOURCE_ACCEPT}
-            className="sr-only"
+            className="peer sr-only"
             disabled={busy}
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
@@ -201,7 +201,11 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
               if (files.length) void send(files);
             }}
           />
-          <label htmlFor={`${id}-pick`} className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-ink px-3 font-semibold text-paper ${busy ? "opacity-50" : "hover:bg-ink/90"}`}>
+          {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
+          <label
+            htmlFor={`${id}-pick`}
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-ink px-3 font-semibold text-paper peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-ink/90"}`}
+          >
             העלאת קבצים
           </label>
           <span className="ms-2 text-ink-soft">או לגרור לכאן</span>
