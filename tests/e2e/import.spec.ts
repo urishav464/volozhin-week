@@ -84,8 +84,7 @@ test.describe("demo build — the import of 5786", () => {
       const dbs = (await indexedDB.databases?.()) ?? [];
       return JSON.stringify({ l: { ...localStorage }, s: { ...sessionStorage }, dbs: dbs.map((d) => d.name) });
     });
-    expect(stored).not.toContain("מרצה לבדיקה");
-    expect(stored).not.toContain("טווח ימים");
+    for (const piece of ["מרצה לבדיקה", "טווח ימים", "מוסד לבדיקה", "חניך/ה לבדיקה", "plain text that must not be read"]) expect(stored).not.toContain(piece);
 
     // the new speakers wait for approval
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();

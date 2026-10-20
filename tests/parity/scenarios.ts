@@ -967,6 +967,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", importLookup: { speakers: ["בטא", "גמא"], phones: ["0000000005", "0000000006", "9999999999"] } },
     // the first rows again: nothing new, nothing more to fill
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת לדוגמה", title: "הרב", gender: "m" }, { row: 3, action: "new", name: "בטא" }] },
+    // «בטא» again, with another affiliation: its empty title and topics filled, its affiliation kept
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "בטא", title: "ד״ר", affiliation: "מוסד שלישי", topics: ["נושא לדוגמה"] }] },
     // all or nothing, the row and the reason named
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 3, action: "new", name: "טלפון שגוי", phone: "12-34" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 7, action: "new", name: "מגדר מנוחש", title: "ד״ר", gender: "f" }] },

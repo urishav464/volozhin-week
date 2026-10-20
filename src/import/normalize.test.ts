@@ -54,6 +54,7 @@ describe("phones and e-mails", () => {
     expect(phoneKey("+972 11 111 1111")).toBe("0111111111");
     expect(phoneKey("00972-11-1111111")).toBe("0111111111");
     expect(phoneKey("+972 (0)11 111 1111")).toBe("0111111111");
+    expect(phoneKey("+972 (0)00 000 0001")).toBe("0000000001"); // the one 0 written after the code — not every 0
     expect(phoneKey("111111111")).toBe("0111111111"); // 9 digits, the leading 0 eaten by a number cell
     expect(phoneKey("11111111")).toBe("011111111");
     expect(phoneKey("1111111111")).toBe("1111111111"); // ten digits: as they are
