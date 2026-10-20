@@ -3,6 +3,8 @@
 // introduces the speaker, and «משהו שחשוב לדעת» (the instructor's duty phrases
 // that apply, then the lesson's note). Printed A4, an escort per page if asked.
 // No phones unless «כולל טלפונים», and then only the ones the caller may see.
+// On screen only, each lesson's four ticks from the escort's link (not printed:
+// the printed list is handed to the escort).
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
@@ -11,6 +13,7 @@ import { escortGroups } from "../../exports/escorts";
 import { israelDate } from "../../exports/tracking";
 import { Button } from "../settings/kit";
 import { EditionSelect } from "../speakers/parts";
+import { EscortTicksLine } from "../stages/parts";
 import { actorIn, useWeekStore } from "../weekStore";
 import { OutputsTabs, PhonesToggle, PrintSetup, usePhones } from "./parts";
 
@@ -105,6 +108,11 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
                   <p className="text-sm">
                     <b>{x.intro}</b> — {x.introDetail}
                   </p>
+                  {g.escort != null && (
+                    <div className="mt-1">
+                      <EscortTicksLine week={week} lessonId={x.lesson.id} />
+                    </div>
+                  )}
                   {x.notes.length > 0 && (
                     <div className="mt-1 text-sm">
                       <p className="font-semibold">משהו שחשוב לדעת</p>

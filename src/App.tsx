@@ -23,6 +23,7 @@ const EscortsScreen = lazy(() => import("./screens/outputs/EscortsScreen").then(
 const DesignerScreen = lazy(() => import("./screens/outputs/DesignerScreen").then((m) => ({ default: m.DesignerScreen })));
 const KnowledgeScreen = lazy(() => import("./screens/knowledge/KnowledgeScreen").then((m) => ({ default: m.KnowledgeScreen })));
 const HelpScreen = lazy(() => import("./screens/HelpScreen").then((m) => ({ default: m.HelpScreen })));
+const KkScreen = lazy(() => import("./screens/kk/KkScreen").then((m) => ({ default: m.KkScreen })));
 
 type State = { kind: "loading" } | { kind: "gate"; gate: Gate; email: string | null } | { kind: "error"; message: string };
 
@@ -121,6 +122,8 @@ function navFor(me: Me, week: Week | null): NavItem[] {
   if (handlesSpeakers(me)) items.push({ to: "/mine", label: "המרצים שלי" });
   // the outputs (milestone 4): the tracking table, the escorts' list, the designer's export — one section
   items.push({ to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/"] });
+  // מכריכה לכריכה (milestone 5a): every member reads it; admins write, logistics the book orders
+  items.push({ to: "/kk", label: "מכריכה לכריכה" });
   items.push({ to: "/knowledge", label: "ידע" });
   if (me.global_admin) {
     const waiting = week ? waitingForApproval(week) : 0;
@@ -178,7 +181,7 @@ function GateScreen(props: {
       // The gate above stays in front of every route. «הגדרות» is for admins
       // only, the approvals queue for a global admin, «המרצים שלי» for whoever
       // handles speakers; anyone else who opens one lands on the week. The
-      // outputs, «ידע» and «עזרה» are every member's — the designer's export an
+      // outputs, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
       // admin's (the screen also checks the edition on screen).
       return (
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
@@ -189,6 +192,7 @@ function GateScreen(props: {
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />
           <Route path="/export/designer" element={isSettingsAdmin(gate.me) ? <DesignerScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
+          <Route path="/kk" element={<KkScreen port={props.port} me={gate.me} />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
           <Route path="/help" element={<HelpScreen />} />
           <Route

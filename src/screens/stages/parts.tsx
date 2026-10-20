@@ -5,7 +5,8 @@
 import type { ReactNode } from "react";
 import type { WeekCommands } from "../../data/commands";
 import type { Stage } from "../../domain/stages";
-import type { Lesson, Week } from "../../domain/types";
+import { TICK_TEAM_LABEL, ticksOf } from "../../domain/escorts";
+import { type Lesson, TICK_ITEMS, type Week } from "../../domain/types";
 import { STAGE_DOT } from "../../grid/bits";
 import type { Actor } from "../weekStore";
 
@@ -123,3 +124,25 @@ export function Problem({ id, children }: { id?: string; children: ReactNode }) 
 }
 
 export const LINK_BUTTON = "inline-flex min-h-11 items-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold hover:bg-line/50";
+
+/**
+ * The escort's four ticks, as the team reads them (written only through the escort's link): each with when it was
+ * first ticked, or not yet. In the lesson panel and the escorts' list; not printed (the printed list is the escort's).
+ */
+export function EscortTicksLine({ week, lessonId }: { week: Week; lessonId: number }) {
+  const ticks = ticksOf(week.escortTicks ?? [], lessonId);
+  return (
+    <ul aria-label="הסימונים של המלווה" className="flex flex-wrap gap-1.5 text-xs print:hidden">
+      {TICK_ITEMS.map((item) => {
+        const at = ticks[item];
+        return (
+          <li key={item} data-tick={item} data-done={at != null} className={`rounded-full px-2 py-0.5 ${at ? "bg-ok/10 font-semibold text-ok" : "bg-line/50 text-ink-soft"}`}>
+            {at ? "✓" : "○"} {TICK_TEAM_LABEL[item]}
+            {at && <span className="font-normal"> · {whenText(at)}</span>}
+            <span className="sr-only">{at ? " (סומן)" : " (עוד לא)"}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

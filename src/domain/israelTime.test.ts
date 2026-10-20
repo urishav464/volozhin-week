@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, israelDate, israelMidnight } from "./israelTime";
+import { addDays, israelDate, israelInstant, israelLocal, israelMidnight, israelMoment } from "./israelTime";
 
 describe("days in Israel", () => {
   it("is the date in Israel, whatever the instant's zone", () => {
@@ -20,5 +20,18 @@ describe("days in Israel", () => {
     expect(israelMidnight("2027-06-18")).toBe("2027-06-17T21:00:00.000Z");
     expect(israelMidnight("2026-10-25")).toBe("2026-10-24T21:00:00.000Z"); // summer time ends at 02:00 that night
     expect(israelMidnight("2027-03-26")).toBe("2027-03-25T22:00:00.000Z"); // summer time starts at 02:00 that night
+  });
+
+  it("reads and writes Israel's wall clock for the sign-up window's fields, whatever the device's zone", () => {
+    expect(israelInstant("2027-01-10T20:00")).toBe("2027-01-10T18:00:00.000Z"); // winter: UTC+2
+    expect(israelInstant("2027-06-10T20:00")).toBe("2027-06-10T17:00:00.000Z"); // summer: UTC+3
+    expect(israelInstant("2027-03-26T02:30")).toBeNull(); // the hour the clock skips
+    expect(israelInstant("2026-10-25T01:30")).toBe("2026-10-24T22:30:00.000Z"); // the repeated hour: the first of the two
+    expect(israelInstant("10.1.2027 20:00")).toBeNull();
+    expect(israelInstant("")).toBeNull();
+    expect(israelLocal("2027-01-10T18:00:00.000Z")).toBe("2027-01-10T20:00");
+    expect(israelLocal(israelInstant("2027-06-10T09:05")!)).toBe("2027-06-10T09:05");
+    expect(israelMoment("2027-01-10T18:00:00.000Z")).toBe("10.1.2027 20:00");
+    expect(israelMoment("2026-10-19T22:30:00Z")).toBe("20.10.2026 01:30");
   });
 });

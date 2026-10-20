@@ -24,7 +24,7 @@ import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
 import { MessageComposer } from "./MessageComposer";
-import { type Act, Choice, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
+import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 
 export interface LessonStagesProps {
@@ -204,6 +204,14 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
     </div>
   );
 
+  // what the escort ticked through their link (the team only reads it)
+  const ticks = l.escort_roster_id != null && (
+    <div className="space-y-1">
+      <p className="text-sm font-semibold">מה המלווה סימן/ה בקישור</p>
+      <EscortTicksLine week={week} lessonId={l.id} />
+    </div>
+  );
+
   if (!actor.canEdit) {
     return (
       <>
@@ -213,6 +221,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
           <dt className="text-ink-soft">הצגה עצמית</dt>
           <dd>{l.self_intro ? "כן" : "לא"}</dd>
         </dl>
+        {ticks}
         {dutyList}
       </>
     );
@@ -260,6 +269,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
         <textarea id={`${id}-note`} rows={2} value={note} maxLength={STAGE_LIMITS.escort_note} onChange={(e) => setNote(e.target.value)} className={`${INPUT} py-2`} aria-describedby={`${id}-note-hint`} />
       </Field>
       {dutyList}
+      {ticks}
       {problem && <Problem>{problem}</Problem>}
       <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "escort"} busyLabel="שומר…">
         שמירה

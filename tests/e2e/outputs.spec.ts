@@ -304,9 +304,9 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
-    // the instructor's seven sections: every one inside the screen, none cut off or behind a sideways scroll
+    // the instructor's eight sections: every one inside the screen, none cut off or behind a sideways scroll
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
+    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
     const width = page.viewportSize()!.width;
     for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
       expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
@@ -432,7 +432,7 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "ידע", "עזרה"]);
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
     await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים"]);

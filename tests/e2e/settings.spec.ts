@@ -169,7 +169,7 @@ test.describe("mock build", () => {
     await signIn(page, "edition.admin@example.org");
     await page.goto(`${mockUrl()}/settings/categories`); // global admins only → back to the team
     await expect(page).toHaveURL(/\/settings\/team$/);
-    await expect(page.getByRole("tab")).toHaveText(["מחזור", "צוות", "חניכים", "חדרים", "תבניות"]);
+    await expect(page.getByRole("tab")).toHaveText(["מחזור", "צוות", "חניכים", "חדרים", "תבניות", "קישורים"]);
 
     // no way to mint an admin, and no handle on a fellow admin's row
     await expect(page.getByRole("radio", { name: "צוות תוכן" })).toBeVisible();

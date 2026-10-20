@@ -41,3 +41,34 @@ export function israelMidnight(date: string): string {
   }
   throw new Error(`no midnight in Israel on ${date}`);
 }
+
+/** An instant as Israel's wall clock, in the shape a datetime-local field takes: «2027-01-10T20:00». */
+export function israelLocal(iso: string): string {
+  const p = israelParts(Date.parse(iso));
+  return `${p.date}T${p.hm}`;
+}
+
+/**
+ * The instant Israel's wall clock reads «2027-01-10T20:00» — whatever the device's clock zone, so a window typed on a
+ * laptop abroad still opens at that hour in Israel. null for anything else, and for an hour the clock skips (02:00–03:00
+ * on the night summer time starts).
+ */
+export function israelInstant(local: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local.trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  // the later offset first: in the hour the clock repeats (the night summer time ends) the first of the two is kept
+  for (const offset of [3, 2]) {
+    const ms = Date.UTC(y, mo - 1, d, h - offset, mi);
+    const p = israelParts(ms);
+    if (`${p.date}T${p.hm}` === local.trim()) return new Date(ms).toISOString();
+  }
+  return null;
+}
+
+/** «10.1.2027 20:00» — an instant as Israel reads it. */
+export function israelMoment(iso: string): string {
+  const p = israelParts(Date.parse(iso));
+  const [y, mo, d] = p.date.split("-").map(Number);
+  return `${d}.${mo}.${y} ${p.hm}`;
+}

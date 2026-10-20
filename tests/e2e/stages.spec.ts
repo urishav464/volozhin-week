@@ -411,7 +411,7 @@ test.describe("mock build", () => {
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
     await page.goto(mockUrl());
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "ידע", "עזרה"]); // no «המרצים שלי», no approvals, no settings
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "מכריכה לכריכה", "ידע", "עזרה"]); // no «המרצים שלי», no approvals, no settings
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
     let panel = await openLesson(page, info, "שני", "מרצה 12");

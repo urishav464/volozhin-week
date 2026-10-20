@@ -1,6 +1,6 @@
 // A fake Supabase for the mock build: a stored session, and a recorder that
 // answers the auth and RPC endpoints.
-import type { Page, Route } from "@playwright/test";
+import type { BrowserContext, Page, Route } from "@playwright/test";
 import { MOCK_URL } from "./global-setup";
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -37,6 +37,10 @@ export interface Call {
   query: URLSearchParams;
   method: string;
   auth: string | undefined;
+  /** The `apikey` header — the publishable key on every request. */
+  apikey?: string | undefined;
+  /** The full URL, as sent (a token must never be in it). */
+  url?: string;
 }
 
 /** A table write (POST / PATCH / DELETE on /rest/v1/<table>), as PostgREST would receive it. */
@@ -63,8 +67,9 @@ export class FakeSupabase {
   pkceBody: { auth_code?: string; code_verifier?: string } | null = null;
   constructor(private whoami: { status: number; body: unknown } = { status: 200, body: {} }) {}
 
-  async attach(page: Page) {
-    await page.route(`${MOCK_URL}/**`, (route) => this.handle(route));
+  /** A page — or a whole context, so a page it opens (a link's tab) is answered too. */
+  async attach(target: Page | BrowserContext) {
+    await target.route(`${MOCK_URL}/**`, (route) => this.handle(route));
   }
 
   count(path: string) {
@@ -74,7 +79,7 @@ export class FakeSupabase {
   private handle(route: Route) {
     const req = route.request();
     const u = new URL(req.url());
-    this.calls.push({ path: u.pathname, query: u.searchParams, method: req.method(), auth: req.headers()["authorization"] });
+    this.calls.push({ path: u.pathname, query: u.searchParams, method: req.method(), auth: req.headers()["authorization"], apikey: req.headers()["apikey"], url: req.url() });
     if (u.pathname === "/auth/v1/authorize") {
       return route.fulfill({ status: 200, contentType: "text/html", body: "<p>mock Google</p>" });
     }

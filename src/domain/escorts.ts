@@ -2,7 +2,7 @@
 // self-introduction suggestion, and a lesson's «משהו שחשוב לדעת» composed from
 // the instructor's duty phrases (editions.settings.duty_phrases — pasted from
 // last year's escorts file, never ours). Pure, from a loaded Week.
-import type { DutyPhrase, DutyWhen, Lesson, Week } from "./types";
+import type { DutyPhrase, DutyWhen, EscortTick, Lesson, TickItem, Week } from "./types";
 
 /**
  * «הצגה עצמית» is suggested for lessons from 22:30 to 06:30 — DESIGN's default,
@@ -52,4 +52,26 @@ export function dutyApplies(when: DutyWhen, l: Pick<Lesson, "kind" | "self_intro
 /** A lesson's duty notes: the instructor's phrases that apply to it, in their order. Never the amount. */
 export function dutyNotes(l: Pick<Lesson, "kind" | "self_intro" | "transport" | "approval">, phrases: readonly DutyPhrase[] | null | undefined): string[] {
   return (phrases ?? []).filter((p) => dutyApplies(p.when, l)).map((p) => p.text);
+}
+
+/** The four ticks in the escort's own words, on their link's page (DESIGN «קישור המלווה»). */
+export const TICK_LABEL: Record<TickItem, string> = {
+  reminded: "הזכרתי למרצה",
+  met: "פגשתי בחניה",
+  introduced: "הצגתי",
+  gift: "נתתי מתנה",
+};
+
+/** The same four as the team reads them, in the lesson panel and the escorts' list. */
+export const TICK_TEAM_LABEL: Record<TickItem, string> = {
+  reminded: "תזכורת למרצה",
+  met: "פגישה בחניה",
+  introduced: "הצגה",
+  gift: "מתנה",
+};
+
+/** When each of a lesson's four ticks was made (the first time), or null — from the week's ticks. */
+export function ticksOf(ticks: readonly EscortTick[], lessonId: number): Record<TickItem, string | null> {
+  const at = (item: TickItem) => ticks.find((t) => t.lesson_id === lessonId && t.item === item)?.at ?? null;
+  return { reminded: at("reminded"), met: at("met"), introduced: at("introduced"), gift: at("gift") };
 }

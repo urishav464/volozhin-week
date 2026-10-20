@@ -1,6 +1,7 @@
 // «הגדרות» — admins run the year from here instead of the SQL Editor: the
 // edition, the team, the trainees' roster, the rooms, the templates (the
-// summary message and the escorts' phrases), the categories. One tab
+// summary message and the escorts' phrases), the links without an account
+// (an escort's, the sign-up's, the schedule's), the categories. One tab
 // per path (/settings/<tab>); tabs on the side on a wide screen, a scrolling
 // row on a phone. Everything goes through port.settings (src/data/settings.ts).
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import { useMedia } from "../../lib/useMedia";
 import { CategoriesTab } from "./CategoriesTab";
 import { EditionsTab } from "./EditionsTab";
 import { Ctx, type SettingsContext } from "./kit";
+import { LinksTab } from "./LinksTab";
 import { RoomsTab } from "./RoomsTab";
 import { RosterTab } from "./RosterTab";
 import { TeamTab } from "./TeamTab";
@@ -24,6 +26,7 @@ const TABS = [
   { slug: "roster", label: "חניכים", globalOnly: false },
   { slug: "rooms", label: "חדרים", globalOnly: false },
   { slug: "templates", label: "תבניות", globalOnly: false },
+  { slug: "links", label: "קישורים", globalOnly: false },
   { slug: "categories", label: "קטגוריות", globalOnly: true },
 ] as const;
 type Slug = (typeof TABS)[number]["slug"];
@@ -135,6 +138,8 @@ export function SettingsScreen({
         return <RoomsTab {...picked} />;
       case "templates":
         return <TemplatesTab {...picked} reload={loadEditions} />;
+      case "links":
+        return <LinksTab data={port} {...picked} />;
       case "categories":
         return <CategoriesTab />;
     }
