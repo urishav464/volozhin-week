@@ -140,7 +140,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   two places (`app.source_path_re` ≡ `SOURCE_PATH_RE`, `src/data/sourceRules.ts`, compared by a test). Upload =
   Storage first (XHR with the member's token, `Cache-Control: private, no-store`), then `register_source_file` (the
   object must exist, be the caller's; its size as Storage measured it, its type as the uploader declared it — Storage
-  never sniffs; the display name shortened to ≤ 200 before upload, `displayNameOf`); removal = Storage first, then
+  never sniffs; the display name shortened to ≤ 200 before upload, `displayNameOf`; the lesson row locked before any
+  check; a lost answer asked once more, the object deleted only on a refusal); removal = Storage first, then
   `remove_source_file` (refuses `file_present`).
   `source_files` rows remember the lead speaker they came for (`speaker_id`): `reopen_lesson` keeps them as
   «מהמרצה הקודם», never in the reader. Never in Realtime. `port.sources` (`src/data/sources.ts`: SupabaseSources /
@@ -148,10 +149,18 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   **The reader** is browser-only (`src/reader/`): `model.ts` the manifest «התקבל / חסר» (one status per closed lesson
   and memorial slot; `memorialFiles` is 5ב-2's hook), `layout.ts` the pure page plan (cover, TOC with page numbers,
   days, «סיכום יום»), `assemble.ts` the PDF on pdf-lib 1.17.1 inside a module worker (`worker.ts`; Hebrew drawn on
-  OffscreenCanvas → PNG) — every file read AND embedded before the plan (a file pdf-lib cannot decode is named, never
-  a failed build), a picture by its bytes, a JPEG stripped of EXIF/GPS/XMP/ICC/comments first (`jpeg.ts`) —
-  `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
-  newer). Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
+  OffscreenCanvas → PNG) — every file opened AND embedded before the plan (a file pdf-lib cannot decode is named, never
+  a failed build), `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
+  newer). **One readable check for the upload and the build:** `readable.ts` — `openSource` is the only way the build
+  opens a file, `readableSource` the same steps for the upload (`pages.ts` `readerPages`, loaded on demand; pdf-lib
+  inside): a picture by its bytes; a PNG whose image data does not inflate to its end refused BEFORE pdf-lib, whose
+  decoder loops for ever on data cut short (`png.ts` `pngInflates`, fflate `inflateSync` — not `unzlibSync`); a JPEG
+  stripped of EXIF/GPS/XMP/ICC/comments (`jpeg.ts`); a PDF's printing annotations and filled fields painted into each
+  page (`annotations.ts` `flattenAnnotations` — never pdf-lib's `form.flatten()`), its box normalised, every page
+  decoded once. A PDF or picture registered with `page_count` NULL was not read (`model.ts` `readableFile`): never
+  printable, manifest status `unreadable` «צריך קובץ אחר». CI: `npm run test:unit` has a step `timeout-minutes: 5`
+  (`.github/workflows/ci.yml`; jobs 15 and 10) — a decoder loop blocks vitest's own timeouts.
+  Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
   Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
   (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
   `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
@@ -170,8 +179,11 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   «full» residual pinned.
 - `tests/sql/sources.test.ts` — the bucket on the Storage stub of `tests/sql/bootstrap.sql` (its assumptions cite
   Storage's migrations): uploads per role/edition/archive/anon as the Storage API makes them (INSERT as the caller),
-  the restrictive caps against a wide-open policy someone adds, direct SQL deletes refused, register/remove rules,
-  reopen keeping files. `tests/e2e/reader.spec.ts` — upload and removal, the manifest at three widths, a real PDF
+  the restrictive caps against a wide-open policy someone adds, direct SQL deletes refused, register/remove rules
+  (a register waiting on a reopen's lock, on two connections), reopen keeping files, the bucket and policy blocks
+  failing one at a time. `src/reader/files.test.ts` — files that hang or fool plain pdf-lib (PNGs cut short, Huffman-
+  coded — a stub throws and proves nothing), annotations painted in, and `readableSource` ≡ the build on a corpus.
+  `tests/e2e/reader.spec.ts` — upload and removal, the manifest at three widths, a real PDF
   built and its pages checked, the cover and the Word skeleton; on the mock wire, Storage then register, in order.
 - `tests/e2e/links.spec.ts` — the public pages at three widths (the token out of the address bar, the one refusal),
   issuing and opening a link, the sign-up and the staff's /kk, the schedule in print; on the mock wire, the public

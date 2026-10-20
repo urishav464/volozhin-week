@@ -755,9 +755,11 @@ Week: nothing of it is in the database but two settings.
 Supabase Storage, bucket `sources`, created by `schema.sql`: **private** (a re-run makes it private
 again, with a warning, and never rewrites its size or types), `file_size_limit` 25 MB (26214400),
 `allowed_mime_types` `application/pdf image/png image/jpeg` and DOCX
-(`application/vnd.openxmlformats-officedocument.wordprocessingml.document`). If the policies cannot
-be created (no privilege on `storage`), the block warns and the rest of the file applies: no policy,
-no upload.
+(`application/vnd.openxmlformats-officedocument.wordprocessingml.document`). The bucket and its
+policies are two `do` blocks, each with its own handler (no privilege on `storage`): a failed block
+rolls back alone and warns — the bucket as it was before the run, or the previous policies (on a
+first run none: no upload) — so the bucket goes private even when the policies cannot be
+(re)created; the rest of the file applies.
 
 **The path** (`app.source_path_re()` ≡ `SOURCE_PATH_RE` in `src/data/sourceRules.ts`, a unit test
 compares the two): `<edition id>/<lesson id | cover>/<uuid>-<safe name>.<ext>` — ids without leading
@@ -786,7 +788,7 @@ a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `
 policy's whole predicate (with the used path): `Engine.mayUploadSource`.
 
 The Storage API's own answers, as the browser maps them (`SupabaseSources`; `Engine.storeObject`):
-a type or size the bucket refuses (413/415) → `bad_file`; a policy refusal (401/403) →
+over the bucket's size (413) → `file_too_big`; not one of its types (415) → `bad_file`; a policy refusal (401/403) →
 `upload_refused` — a path a row already holds included; anything else, or an unregistered object
 already at the path → `upload_failed`.
 
@@ -794,7 +796,7 @@ already at the path → `upload_failed`.
 `mimetype` is the uploader's declared `Content-Type`, held only to the bucket's four types — Storage
 never looks at the bytes. `register_source_file` holds the type to the path's extension as well, but a
 row marked `application/pdf` can still hold any bytes. The reader therefore checks the bytes
-themselves (a PDF that does not open, a picture that is neither PNG nor JPEG → left out, named).
+themselves — at upload and at the build, by one check (`src/reader/readable.ts`, below).
 
 **Every upload carries `Cache-Control: private, no-store`**, which Storage stores and sends back on
 every read of the file, signed URLs included: no browser or shared cache keeps a copy past its signed
@@ -818,18 +820,24 @@ in the reader; `register_source_file`'s "first file" counts only the current spe
 
 ### `upload(edition, lesson | null, file, {pages})` — Storage, then `register_source_file` → the row
 
-The browser checks the pick (`checkPicked`: a type we take, ≤ 25 MB, never Word for a poster —
-`bad_file`), counts a PDF's pages (pdf-lib; null when it cannot), POSTs the bytes to
-`/storage/v1/object/sources/<path>` with the member's own access token (never a service key), then
-calls:
+The browser checks the pick (`checkPicked`, each reason its own code: a poster that is not a PDF or
+a picture → `cover_bad_file`; a type we do not take → `bad_file`; over 25 MB → `file_too_big`),
+reads the bytes as the reader will (`readerPages`, `src/reader/pages.ts` → `readableSource`: a PDF's
+pages, a picture 1, null when the reader cannot print it — protected, damaged, not what its name
+says; Word null, never read), POSTs the bytes to `/storage/v1/object/sources/<path>` with the
+member's own access token (never a service key), then calls:
 
 `register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages)` — in this order:
 - the caller not a member of `p_edition` → `not_member`;
 - `p_path` not the convention for exactly this edition and this lesson (`cover` when `p_lesson` is
   null) → `bad_path`;
+- the lesson row locked (`for update`, this edition's) **before any other check**: a `reopen_lesson`
+  that commits while this waits is seen by every check after it (→ `not_closed`), never a file
+  registered on the draft and its stages set again;
+- a row already at `p_path` → that row again (a retry — the browser lost the first answer —
+  answered even if the lesson was reopened since), unless it is another edition's or lesson's
+  (`bad_path`);
 - `app.source_refusal(p_path)` → its code;
-- (the lesson row locked) a row already at `p_path` → that row again (a retry), unless it is another
-  edition's or lesson's (`bad_path`);
 - no live object at `p_path`, or not uploaded by the caller (`owner_id` ≠ the JWT `sub`) → `no_file`;
 - the object's `metadata.mimetype` not one of the four or not matching the extension, or its
   `metadata.size` missing or over 25 MB → `bad_file` — the size as Storage measured it; the type as the
@@ -838,21 +846,28 @@ calls:
   sends the picked file's name shortened to fit before the bytes go up (`displayNameOf`: cut before
   the extension, which stays — «….pdf»), so a long name is never refused after the upload.
 
-Then the row: `page_count` = `p_pages` for a PDF, 1 for an image, null for Word; `speaker_id` = the
-lesson's lead; `uploaded_by` = the caller's member row. **A lesson's file:** `sources_kind`
+Then the row: `page_count` = `p_pages` for a PDF; for an image 1 when the browser read it (`p_pages`
+not null), else null; null for Word. **A PDF or picture with no page count was not read**
+(«לא נקרא»): never printable (`readableFile`, `src/reader/model.ts`), never fetched by the build.
+`speaker_id` = the lesson's lead; `uploaded_by` = the caller's member row. **A lesson's file:** `sources_kind`
 `pending` → `sheet` (a file arrived); and when it is the current speaker's first file and the kind
 prints something (not `pending none presentation`), `in_reader` := true — only then, so a lesson
 someone unmarked stays unmarked. `version + 1` when either changed. **A poster:** the edition's first
 becomes the cover (`settings.reader_cover`). Engine: `Engine.registerSourceFile` (`arrived`,
 `pagesFor`).
 
-A registration the database refuses removes the uploaded object again (the browser, under the delete
-policy), and the refusal is shown.
+A registration the database refuses (a `CommandError`) removes the uploaded object again (the
+browser, under the delete policy), and the refusal is shown. A registration with no answer (a
+dropped connection, a 5xx — no refusal) is asked once more with the same arguments: the row it made,
+or the row now, or a refusal (→ the object removed). No answer twice: the object is kept — it may be
+registered — and the error shown.
 
 ### `remove(file)` — Storage, then `remove_source_file(p_file)` → `void`
 
-The stored object first, through the Storage API under the delete policy (a refusal →
-`remove_failed`), then: no such row → nothing; not a member → `not_member`; an archive and not an
+The stored object first, through the Storage API under the delete policy — a refused delete is no
+error there (nothing is deleted, the answer an empty list), so the refusal comes from
+`remove_source_file` (`not_uploader`, or `file_present`); a failed call to the Storage API →
+`remove_failed`. Then: no such row → nothing; not a member → `not_member`; an archive and not an
 admin → `archived`; not an admin and not its uploader → `not_uploader`; **the object still in the
 bucket → `file_present`**; else the row goes, and `settings.reader_cover` with it when it named the
 file. So a failure half-way leaves a row whose file is gone — visible, removed again with one tap —
@@ -883,12 +898,21 @@ memorial slot, not cancelled, in grid order — with its status:
 |---|---|
 | `no_sources` | `sources_kind = none` |
 | `presentation_only` | `sources_kind = presentation` (whatever `in_reader` says) |
-| `included` | `in_reader`, and a PDF or an image of the current speaker |
-| `needs_pdf` | `in_reader`, and only Word files |
+| `included` | `in_reader`, and a PDF or an image of the current speaker that was read (a page count) |
+| `needs_pdf` | `in_reader`, none read, and Word files |
+| `unreadable` («צריך קובץ אחר») | `in_reader`, none read, no Word, and PDFs or images not read |
 | `missing` | `in_reader` and no file; or not marked, not pending, and no file |
 | `pending` | not marked, `sources_kind = pending` |
-| `not_marked` | not marked, files arrived |
+| `not_marked` | not marked, files arrived (read or not) |
 | `memorial` | a memorial slot: always in, its header page (its materials: `memorialFiles`, 5ב-2) |
+
+A row's files split into `printable` (read: what the build merges), `word` and `unread`; an
+`included` row counts `printable`, then names the rest («ועוד קובץ Word אחד שלא נכנס — צריך PDF»,
+«ועוד קובץ אחד שלא נקרא — צריך קובץ אחר»; `wordText`, `unreadText` — the lesson panel's words too).
+`manifestTotals` counts each status (`unreadable` included). The marked poster is the cover only when
+it was read; else the schedule is. The screen's estimate is `readerEstimate(manifest,
+scheduleLines(week))`: the build's own plan, the cover the poster's pages or the schedule's
+(`scheduleCoverPages`).
 
 The PDF (`layout.ts`, `assemble.ts`, in a module worker): first the cover — the marked poster's
 pages, else schedule pages made from the designer's rows; the table of contents (each day, each
@@ -897,19 +921,32 @@ entry with the page it starts on); then each day: every `included` row — a hea
 files' pages, each scaled to fit A4 with its aspect and rotation kept — and every memorial slot; a
 «סיכום יום» page closes every day. Running headers `[left, right]` alternate (an odd page the left
 one); page numbers count from the cover's first page as 1; the cover carries neither. Hebrew is drawn on an OffscreenCanvas and
-embedded as PNG. Every file is read and embedded before the pages are planned; a file that cannot be
-read — a PDF that does not open or is protected, one whose pages pdf-lib cannot decode (all its pages
-or none), a picture that is neither PNG nor JPEG by its bytes, or broken — is left out and named, and
-the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A JPEG
-goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame and
-the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the image
-are dropped; its EXIF orientation is read first and honoured. A PDF's pages are copied as they are
-(an image inside a PDF keeps what it carries). The result is downloaded — never uploaded.
+embedded as PNG. Only read files are fetched (an unread one the screen names at once, under «לא
+נכנסו (צריך להעלות קובץ אחר):»). Every file is opened — `openSource` (`src/reader/readable.ts`), the
+same steps as the upload's `readableSource` — and embedded before the pages are planned; a file that
+cannot be read — a PDF that does not open or is protected, has no pages, or one whose pages pdf-lib
+cannot decode (all its pages or none), a picture that is neither PNG nor JPEG by its bytes, a PNG
+whose image data does not inflate to its end (`src/reader/png.ts`, before pdf-lib's decoder, which
+never returns on data cut short), a JPEG whose structure cannot be followed — is left out and named,
+and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
+JPEG goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame
+and the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the
+image are dropped; its EXIF orientation is read first and honoured. A PDF's pages are copied with
+**their printing annotations and filled form fields painted in** (`src/reader/annotations.ts`, as a
+viewer prints, PDF 32000-1 §12.5.5: the Print flag and not Hidden, never a Popup or a Link; the
+normal appearance — a check box's by its /AS — its /BBox through its /Matrix onto its /Rect; one
+that cannot be followed is skipped alone, never the file); an annotation with no appearance stream
+is not drawn. A page's box is taken with its corners in order (`[0 842 595 0]` is an upright A4).
+An image inside a PDF keeps what it carries. The result is downloaded — never uploaded.
 
 **The lesson's «מקראה» stage** (`stagesOf(lesson, readerFilesOf(week, id))`, `src/domain/stages.ts`)
-says what the manifest says: «במקראה» (done) only for `included`; marked with no PDF or picture of
-the current speaker → open, «חסר קובץ», or «צריך PDF» when Word files came. `nextLessonStep` then
-still says `sources` for such a lesson («המרצים שלי», the tracking table).
+says what the manifest says (`readerFilesOf` → `{printable, word, unread}`): «במקראה» (done) only
+for `included`; marked with no PDF or picture of the current speaker that was read → open, «חסר
+קובץ», «צריך PDF» when Word files came, or «צריך קובץ אחר» when only unread ones did.
+`nextLessonStep` then still says `sources` for such a lesson («המרצים שלי», the tracking table).
+
+The build's button shows on a computer — `(min-width: 1024px), (pointer: fine)`: a mouse at any
+width, or 1024px and up; elsewhere the screen says it is built on a computer.
 
 The Word skeleton (`docx.ts`, docx 9.8.1): a title «תוכן העניינים» and a TOC field updated on open,
 a heading per day (Heading 1, outline level 0) opening a page with its first entry under it, every
@@ -922,8 +959,9 @@ headers and a page number.
 ## Errors (milestone 5ב-1)
 
 `bad_path no_file bad_file not_uploader file_present not_closed` from the database; `upload_refused
-upload_failed remove_failed read_failed` from the Storage API as the browser maps it — plus
-`not_member forbidden archived bad_value`.
+upload_failed remove_failed read_failed`, and `file_too_big` (413), from the Storage API as the
+browser maps it; `bad_file cover_bad_file file_too_big` from the browser's own check of a pick
+(`checkPicked`) — plus `not_member forbidden archived bad_value`.
 
 ## RPC signatures (milestone 5ב-1)
 
