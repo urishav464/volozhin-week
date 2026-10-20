@@ -12,7 +12,7 @@ import { editedText, type EscortsPreview as EscortsRowPreview, isMoneyOrTranspor
 import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
 import { DESIGN_SOURCES, sourcesKey, type SourcesRule, SUGGESTED_SOURCES } from "../../import/sources";
 import { ARCHIVE_ROOM, parallelRoomName } from "../../data/importRules";
-import { scrubContacts } from "../../import/phone";
+import { hasContact, scrubContacts } from "../../import/phone";
 import type { DoubleGroup, ExtraLine, GroupDecision, LessonPlan, LineAs, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
 import { Badge, INPUT, Panel } from "./kit";
@@ -331,6 +331,7 @@ export function SpeakersPreview({
   choices,
   resolved,
   onChoose,
+  postPhones = new Map(),
 }: {
   rows: TrackingSpeakerPreview[];
   pool: MatchContext;
@@ -338,6 +339,8 @@ export function SpeakersPreview({
   /** Each speaker's action as the commit takes it (null: undecided). */
   resolved: Map<string, Resolved | null>;
   onChoose: (key: string, c: Choice | null) => void;
+  /** A row's phone the admin's choices give a speaker (phonesAfterChoices) — what the payload will send. */
+  postPhones?: ReadonlyMap<string, { value: string; key: string | null; row: number }>;
 }) {
   return (
     <Panel title="המרצים">
@@ -348,6 +351,11 @@ export function SpeakersPreview({
           const name = `${s.title ? `${s.title} ` : ""}${s.name}`;
           const c = choices.get(s.key);
           const open = resolved.get(s.key) == null;
+          // the phone it gets only after the choices (a row of two, one left): shown, and whose in the pool it already is
+          const post = s.phone ? undefined : postPhones.get(s.key);
+          const target = actionOf(r.status, r.match, c);
+          const owners = post?.key ? (pool.phones.get(post.key) ?? []).filter((id) => !(target?.action === "merge" && target.target === id)) : [];
+          const owner = owners.length ? pool.pool.find((x) => x.id === owners[0]) : undefined;
           return (
             <li key={s.key} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -355,12 +363,21 @@ export function SpeakersPreview({
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
-              <Facts items={[genderSaid(s.gender), s.affiliation && `שיוך מוסדי: ${s.affiliation}`, s.phone && "יש טלפון"]} />
+              <Facts
+                items={[
+                  genderSaid(s.gender),
+                  s.affiliation && `שיוך מוסדי: ${s.affiliation}`,
+                  s.phone && "יש טלפון",
+                  post && `יש טלפון (משורה ${post.row}, אחרי הבחירות)`,
+                  s.email && "יש מייל",
+                ]}
+              />
+              {owner && <p className="text-sm text-bad">הטלפון משורה {post!.row} כבר במאגר אצל {owner.title ? `${owner.title} ` : ""}{owner.name} — לבדוק שזה אותו אדם.</p>}
               <SpeakerDecision
                 name={name}
                 status={r.status}
                 match={r.match}
-                fill={{ title: s.title, gender: s.gender, affiliation: s.affiliation, topics: [], phone: s.phone, email: null, notes: null }}
+                fill={{ title: s.title, gender: s.gender, affiliation: s.affiliation, topics: [], phone: s.phone ?? post?.value ?? null, email: s.email, notes: null }}
                 pool={pool}
                 choice={c}
                 onChoose={(x) => onChoose(s.key, x)}
@@ -465,12 +482,14 @@ export function PhrasesTable({
     <Panel title="ניסוחים" aside="נשמרים רק הניסוחים המסומנים — על ערוץ הקשר">
       <p className="mb-2 text-sm text-ink-soft">
         הסימון הראשון הוא <Badge tone="accent">הצעה</Badge>: ניסוח שמזכיר מזכירות, וואטסאפ, מייל או טלפון — ולא מלווה. ניסוחים על תשלום והסעה לא נשמרים — הם נגזרים
-        מהשיעור. אפשר לערוך ניסוח לפני הסימון: נשמר הנוסח הערוך. ניסוח שיש בו שם של מלווה לא נשמר עד שהשם נמחק ממנו.
+        מהשיעור. אפשר לערוך ניסוח לפני הסימון: נשמר הנוסח הערוך. ניסוח שיש בו מילה משם של מלווה (גם שם פרטי או שם משפחה לבד) לא נשמר עד שהיא נמחקת ממנו, ומספר
+        טלפון או כתובת מייל יוצאים מכל ניסוח — נשמר איך פונים, לא המספר.
       </p>
       <ul aria-label="ניסוחים" className="divide-y divide-line border-y border-line">
         {rest.map((p, i) => {
           const text = editedText(p.text, edits);
           const escort = namedEscort(text, names);
+          const typed = hasContact(text);
           const blocked = !!escort || text === "" || isMoneyOrTransport(text);
           const on = ticked.has(p.key) && !blocked;
           return (
@@ -485,7 +504,7 @@ export function PhrasesTable({
                     disabled={blocked}
                     onChange={() => onToggle(p.key)}
                     aria-label={`${p.text} (${p.count}${p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})`}
-                    aria-describedby={escort || p.mentions ? `${id}-w-${i}` : undefined}
+                    aria-describedby={escort || p.mentions || typed ? `${id}-w-${i}` : undefined}
                     className="size-5 cursor-pointer accent-ink disabled:cursor-not-allowed"
                   />
                 </span>
@@ -507,6 +526,10 @@ export function PhrasesTable({
               {escort ? (
                 <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
                   יש כאן שם של מלווה («{escort}») — לא נשמר. מוחקים את השם מהנוסח, ואז אפשר לסמן.
+                </p>
+              ) : typed ? (
+                <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
+                  יש בנוסח טלפון או מייל — הם יוצאים ממנו ולא נשמרים.
                 </p>
               ) : (
                 p.mentions && (
@@ -541,15 +564,21 @@ export function LinesTable({ lines, onChoose }: { lines: ExtraLine[]; onChoose: 
   return (
     <Panel title="שורה נוספת בתא של המרצה" aside="שיוך מוסדי או מרצה נוסף/ת">
       <p className="mb-2 text-sm text-ink-soft">
-        שורה בסוגריים, או בלי תואר ולא שם שכבר בגיליון או במאגר, נקראת כשיוך המוסדי של השם שמעליה <Badge tone="accent">הצעה</Badge>. השיוך משלים את «מוסד» של
-        המרצה, רק אם הוא ריק.
+        שורה בסוגריים, או עם שם של מוסד (ישיבת…, מכון…, מדרשת…), נקראת כשיוך המוסדי של השם שמעליה <Badge tone="accent">הצעה</Badge>; שורה בתואר, או שם שכבר
+        בגיליון או במאגר — כמרצה נוסף/ת. כל שורה אחרת מחכה להחלטה. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
       </p>
       <ul aria-label="שורות נוספות בתא המרצה" className="space-y-2">
         {lines.map((l) => (
-          <li key={l.id} data-line={l.id} className="rounded-lg border border-line bg-paper p-2.5">
+          <li key={l.id} data-line={l.id} data-undecided={l.as == null || undefined} className="rounded-lg border border-line bg-paper p-2.5">
             <p className="text-sm break-words">
               <span className="text-ink-soft">שורה {l.row}:</span> <b>{l.ofName}</b> / <b>{l.text}</b>{" "}
-              {!l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>}
+              {l.as == null ? (
+                <>
+                  <Badge tone="bad">צריך לבחור</Badge> <span className="text-ink-soft">({l.why})</span>
+                </>
+              ) : (
+                !l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>
+              )}
             </p>
             <fieldset className="mt-1 min-w-0">
               <legend className="sr-only">

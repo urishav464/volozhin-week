@@ -2,7 +2,7 @@
 // strings; WordprocessingML's document) — the browser's own XML parser would do, but this one runs the same in the
 // unit tests, and it does less: no DTD at all (a part that declares one is refused — nothing to expand, no entity
 // to blow up), the five predefined entities and character references only, names compared without their prefix.
-import { badFile } from "./limits";
+import { badFile, tooBig } from "./limits";
 
 export type XmlEvent =
   | { t: "open"; name: string; attrs: Record<string, string>; self: boolean }
@@ -27,7 +27,38 @@ export function unescapeXml(s: string): string {
 }
 
 const NAME = /^[A-Za-z_][\w.:-]*$/;
-const ATTR = /([^\s=/]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+/** A tag's length, its attributes with it: an Office tag is a few hundred characters — past this the part is no Office file. */
+export const MAX_TAG = 65_536;
+const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\r";
+
+/**
+ * A tag's attributes («name="value"», «name='value'»), read in ONE pass: every character is looked at once — a name
+ * runs to a space, «=» or «/»; a name with no «=» after it, or an «=» with no quote after it, is passed over, never
+ * tried again from inside (a regular expression would retry it from every position: quadratic in the tag's length).
+ */
+export function attributes(s: string, from = 0): Record<string, string> {
+  const out: Record<string, string> = {};
+  const n = s.length;
+  let i = from;
+  while (i < n) {
+    while (i < n && (isSpace(s[i]) || s[i] === "/" || s[i] === "=")) i++;
+    const start = i;
+    while (i < n && !isSpace(s[i]) && s[i] !== "=" && s[i] !== "/") i++;
+    if (i === start) continue;
+    const name = s.slice(start, i);
+    while (i < n && isSpace(s[i])) i++;
+    if (s[i] !== "=") continue;
+    i++;
+    while (i < n && isSpace(s[i])) i++;
+    const q = s[i];
+    if (q !== '"' && q !== "'") continue;
+    const end = s.indexOf(q, i + 1);
+    if (end < 0) break;
+    out[name] = unescapeXml(s.slice(i + 1, end));
+    i = end + 1;
+  }
+  return out;
+}
 
 /** The events of an XML text, in order. A tag that never closes, or a DOCTYPE, is refused (import_bad_file). */
 export function* xmlEvents(src: string): Generator<XmlEvent> {
@@ -70,7 +101,7 @@ export function* xmlEvents(src: string): Generator<XmlEvent> {
         if (c === quote) quote = "";
       } else if (c === '"' || c === "'") quote = c;
       else if (c === ">") break;
-      j++;
+      if (++j - lt > MAX_TAG) tooBig(); // refused as it is read — never scanned to its end first
     }
     if (j >= n) badFile();
     const body = src.slice(lt + 1, j);
@@ -86,8 +117,7 @@ export function* xmlEvents(src: string): Generator<XmlEvent> {
     const sp = inner.search(/\s/);
     const name = sp < 0 ? inner : inner.slice(0, sp);
     if (!NAME.test(name)) badFile(); // «<row</worksheet>»: a tag cut short
-    const attrs: Record<string, string> = {};
-    if (sp >= 0) for (const m of inner.slice(sp).matchAll(ATTR)) attrs[m[1]] = unescapeXml(m[3] ?? m[4] ?? "");
+    const attrs = sp >= 0 ? attributes(inner, sp) : {};
     yield { t: "open", name, attrs, self };
     if (self) yield { t: "close", name };
   }

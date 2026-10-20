@@ -2,7 +2,10 @@
 // key, the affiliation, the topics as tags (one line ≤ 40, at most 10 — the rest of the cell goes to the note, never
 // cut), the phone and e-mail (to speaker_contacts only), and every status-like column («טווח ימים», «נסגר») and note
 // column as a line of the note «כותרת: ערך» — no meaning invented for them. Gender only from הרב / הרבנית, as a
-// «הצעה» the admin may turn off. Matching: src/import/match.ts.
+// «הצעה» the admin may turn off. Matching: src/import/match.ts. A phone or an e-mail anywhere else in the row is
+// taken out (stripContacts): one in the name's cell becomes the row's phone or e-mail when that column is empty and
+// it is the only one; every other is dropped, and the row says so — never kept in a name, a title, the affiliation, a
+// tag or the note (supabase/schema.sql refuses one: «contact_in_text»).
 import type { CandidatesPayload, ContactFlags, SpeakerRow } from "../data/imports";
 import { IMPORT_RULES } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
@@ -10,7 +13,7 @@ import { nameKey } from "../domain/nameKey";
 import type { Gender, Speaker } from "../domain/types";
 import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
-import { normalizeEmail, normalizePhone } from "./phone";
+import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { pickTitleCell, splitTitle, titleGender } from "./speakerName";
 import type { Grid } from "./table";
@@ -65,11 +68,19 @@ export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): Candidat
   return dataRows(grid, o.headerRow).map(({ row, cells }) => {
     const warnings: string[] = [];
     const skip = (why: string): CandidateRead => ({ row, data: null, skip: why, warnings });
-    const raw = oneLine(cellOf(cells, m, "name"));
+    // the name's cell without a phone or an e-mail in it — one may be the row's (below)
+    const inName = stripContacts(cellOf(cells, m, "name"));
+    const raw = oneLine(inName.text);
     if (!raw) return skip("אין שם");
     let { title, name } = splitTitle(raw, o.titles);
     const notes: string[] = [];
-    const titleCell = oneLine(cellOf(cells, m, "title"));
+    /** A field's text with every contact taken out — said once per field. */
+    const clean = (text: string, field: string) => {
+      const st = stripContacts(text);
+      if (st.phones.length || st.emails.length) warnings.push(`הוסר טלפון או מייל מ«${field}» — לא נשמר`);
+      return st.text;
+    };
+    const titleCell = oneLine(clean(cellOf(cells, m, "title"), "תואר"));
     if (titleCell && !title) {
       title = pickTitleCell(titleCell, o.titles);
       if (!title) {
@@ -84,20 +95,34 @@ export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): Candidat
     if (first != null) return skip(`כפול בטבלה (כמו שורה ${first})`);
     seen.set(key, row);
     const gender = o.genderFromTitle ? titleGender(title) : null;
-    let affiliation: string | null = oneLine(cellOf(cells, m, "affiliation")) || null;
+    let affiliation: string | null = oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")) || null;
     if (affiliation && chars(affiliation) > LIMITS.affiliation) {
       notes.push(`מוסד: ${affiliation}`);
       warnings.push("המוסד ארוך — נשמר בהערה");
       affiliation = null;
     }
-    const { tags, rest } = splitTopics(cellOf(cells, m, "topics"));
+    const { tags, rest } = splitTopics(clean(cellOf(cells, m, "topics"), "נושאים"));
     if (rest.length) notes.push(`נושאים: ${rest.join(", ")}`);
-    const phone = normalizePhone(cellOf(cells, m, "phone"));
+    let phone = normalizePhone(cellOf(cells, m, "phone"));
     if (phone.problem) warnings.push("הטלפון לא נשמר: לא נראה כמו מספר");
-    const email = normalizeEmail(cellOf(cells, m, "email"));
+    let email = normalizeEmail(cellOf(cells, m, "email"));
     if (email.problem) warnings.push("המייל לא נשמר: לא נראה כמו כתובת");
-    notes.push(...noteLines(labelledCells(cells, m, "status", names)), ...noteLines(labelledCells(cells, m, "note", names)));
-    const note = notes.join("\n") || null;
+    // a phone (an e-mail) in the name's cell: the row's, when its column is empty and it is the only one; else dropped
+    const named = [...new Map(inName.phones.map((x) => normalizePhone(x)).filter((x) => x.value).map((x) => [x.key, x])).values()];
+    if (named.length === 1 && !phone.value && !phone.problem) {
+      phone = named[0];
+      warnings.push("הטלפון שהיה בתא השם נשמר כטלפון של המרצה");
+    } else if (named.some((x) => x.key !== phone.key) || inName.phones.length > named.length) warnings.push("הוסר טלפון מתא השם — לא נשמר");
+    const mails = [...new Set(inName.emails.map((x) => normalizeEmail(x).value).filter((x): x is string => !!x))];
+    if (mails.length === 1 && !email.value && !email.problem) {
+      email = { value: mails[0], problem: false };
+      warnings.push("המייל שהיה בתא השם נשמר כמייל של המרצה");
+    } else if (mails.some((x) => x !== email.value) || inName.emails.length > mails.length) warnings.push("הוסר מייל מתא השם — לא נשמר");
+    // the note's lines: a phone or an e-mail in them replaced (the note is the speaker's private note, never a contact)
+    const lines = noteLines([...labelledCells(cells, m, "status", names), ...labelledCells(cells, m, "note", names)]);
+    const sc = scrubContacts([...notes, ...lines].join("\n"));
+    if (sc.scrubbed) warnings.push("הוסר טלפון או מייל מההערה — לא נשמר");
+    const note = sc.text.trim() || null;
     if (note && chars(note) > IMPORT_RULES.contact_notes) return skip(`ההערות ארוכות מ-${IMPORT_RULES.contact_notes} תווים`);
     return {
       row,

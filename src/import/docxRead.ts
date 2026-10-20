@@ -57,11 +57,15 @@ export function documentGrid(xml: string): Grid {
       para.push(s);
     }
   };
+  // a self-closing skipped element (a moved paragraph's mark, <w:moveFrom/>; a deleted one's, <w:del/>) opens nothing:
+  // its close — the one xmlEvents gives right after it — must not end an outer skip (a text box's fallback copy)
+  let selfClosing = false;
   for (const e of xmlEvents(xml)) {
     if (e.t === "open") {
       const n = local(e.name);
       if (SKIPPED.has(n)) {
-        if (!e.self) skip++;
+        if (e.self) selfClosing = true;
+        else skip++;
         continue;
       }
       if (skip) continue;
@@ -90,7 +94,8 @@ export function documentGrid(xml: string): Grid {
     } else if (e.t === "close") {
       const n = local(e.name);
       if (SKIPPED.has(n)) {
-        skip = Math.max(0, skip - 1);
+        if (selfClosing) selfClosing = false;
+        else skip = Math.max(0, skip - 1);
         continue;
       }
       if (skip) continue;

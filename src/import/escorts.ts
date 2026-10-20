@@ -3,16 +3,20 @@
 // the ticked phrases name exactly one. The admin ticks which phrases are about the channel — a heuristic pre-ticks
 // («הצעה»); phrases about payment or transport are dropped (they are derived from the lesson), and so is every other
 // phrase left unticked. The escorts' names are never imported: no field takes them; a column headed «מלווה» — in the
-// header row chosen, or anywhere in the table's first rows — cannot be mapped at all, in any kind (escortColumns);
-// and their names, as the file writes them and as an edition's roster has them, are read in the page only to keep them
-// OUT of a phrase: a phrase that names one is never pre-ticked, and cannot be ticked until the admin edits the name out
-// (a phrase's text is editable before it is ticked). A speaker not in the pool is «מדולג» (the escorts' file adds no one).
+// header row chosen, or in a row below it among the table's first rows — cannot be mapped at all, in any kind
+// (escortColumns), unless the header row chosen names that column as a field («מרצה»); and their names, as the file
+// writes them and as an edition's roster has them, are read in the page only to keep them OUT of a phrase — word by
+// word: a phrase holding ANY word of an escort's name (a first name alone, a surname alone, a Hebrew prefix letter
+// before it) is never pre-ticked, and cannot be ticked — nor kept, ticked or edited — while it holds one (a phrase's
+// text is editable before it is ticked). A phone or an e-mail in a phrase is taken out of it (stripContacts) and said:
+// the note says how, never a number. A speaker not in the pool is «מדולג» (the escorts' file adds no one).
 import type { ContactFlags, EscortsPayload, PrefsRow } from "../data/imports";
 import { LIMITS } from "../data/speakerRules";
 import { nameKey } from "../domain/nameKey";
 import type { ContactPref } from "../domain/types";
 import type { MatchContext } from "./candidates";
-import { columnsOf, HEADER_SEARCH, headerKey, type Mapping } from "./fields";
+import { columnsOf, FIELDS, HEADER_SEARCH, headerKey, type Mapping } from "./fields";
+import { stripContacts } from "./phone";
 import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
 import { cellOf, dataRows, type HeaderAt } from "./rows";
 import { splitSpeakers, splitTitle } from "./speakerName";
@@ -24,49 +28,82 @@ export const ESCORT_COLUMN = /מלוו/;
 const ESCORT_HEADER = /^(?:שם)?ה?מלוו(?:ה|ת|ים|ות|הת)?[0-9]*$/;
 export const looksLikeEscortHeader = (cell: string) => ESCORT_HEADER.test(headerKey(cell));
 
+/** Every header a kind reads by itself («מרצה», «טלפון», «שיעור ב»…), as compared. */
+const FIELD_HEADERS = new Set(Object.values(FIELDS).flatMap((fs) => fs.flatMap((f) => f.headers.map(headerKey))));
+
 /**
  * The columns the escorts' names are in — never mappable, in any kind: the header row's cell says so, or a cell of the
- * table's first rows reads as that header (the header row not chosen, or a title row above it). The guard does not
- * depend on the header row being right.
+ * header row chosen or a row below it, among the table's first rows, reads as that header (the header row chosen too
+ * high, or none). The rows ABOVE the header row chosen are not looked at — a title paragraph «מלווים» over the table
+ * blocks nothing — and a column whose header in the row chosen is a field's own («מרצה») is never blocked.
  */
 export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
   const out = new Set<number>();
   const width = grid[0]?.length ?? 0;
+  const below = grid.slice(headerRow ?? 0, Math.max(HEADER_SEARCH, (headerRow ?? 0) + 1));
   for (let i = 0; i < width; i++) {
-    if (headerRow != null && ESCORT_COLUMN.test(grid[headerRow]?.[i] ?? "")) out.add(i);
-    else if (grid.slice(0, HEADER_SEARCH).some((r) => looksLikeEscortHeader(r[i] ?? ""))) out.add(i);
+    const head = headerRow == null ? "" : (grid[headerRow]?.[i] ?? "");
+    if (headerRow != null && ESCORT_COLUMN.test(head)) out.add(i);
+    else if (headerRow != null && FIELD_HEADERS.has(headerKey(head))) continue;
+    else if (below.some((r) => looksLikeEscortHeader(r[i] ?? ""))) out.add(i);
   }
   return out;
 }
 
+/** A value of the escorts' column that names no one: «אין», «לא צריך», «מגיע/ה לבד», «—», «TBD», «?». */
+const FILLER = /^(?:אין(?: מלווה| מלווים| צורך)?|בלי(?: מלווה)?|ללא(?: מלווה)?|לא(?: צריך| צריכה| צריך\/ה| רלוונטי| ידוע)?|מגיע(?:\/ה|ה)?(?: לבד)?|מגיעים לבד|לבד|עצמאי(?:\/ת|ת)?|tbd|x|\?+|[-–—־.]+)$/i;
+/** Words that are no one's name, in a value of that column («חניך X ו…», «(שנה ב)» aside): never a reason to lock a phrase. */
+export const NOT_A_NAME: ReadonlySet<string> = new Set(["אין", "לא", "צריך", "צריכה", "מגיע", "מגיעה", "מגיעים", "לבד", "ללא", "בלי", "עם", "של", "את", "או", "גם", "רק", "הרב", "הרבנית", "רב", "דר", "פרופ", "שנה", "שנת", "מלווה", "מלווים", "מלוות", "tbd"]);
+
 /**
- * The escorts' names as the file writes them — the data cells of their columns, by line, comma or «+» — read only to
- * keep them out of the phrases (namedEscort); never imported, never kept.
+ * The escorts' names as the file writes them — the data cells of their columns, by line, comma, «+», « / » or « - »;
+ * a phone, an e-mail, a bracket («(שנה ב)») and digits out; a value that names no one («אין», «מגיע/ה לבד») skipped —
+ * read only to keep them out of the phrases (namedEscort); never imported, never kept.
  */
 export function escortNames(grid: Grid, headerRow: HeaderAt, columns: ReadonlySet<number>): string[] {
   const out = new Set<string>();
   for (const { cells } of dataRows(grid, headerRow)) {
     for (const i of columns) {
-      for (const n of (cells[i] ?? "").split(/\n|[,;+]|\s\/\s/)) {
+      const cell = stripContacts(cells[i] ?? "").text.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g, " ").replace(/[0-9]+/g, " ");
+      for (const n of cell.split(/\n|[,;+()[\]{}]|\s[/\-–—־]\s/)) {
         const name = n.replace(/\s+/g, " ").trim();
-        if ([...name].length >= 2 && !looksLikeEscortHeader(name)) out.add(name);
+        if ([...name].length >= 2 && !looksLikeEscortHeader(name) && !FILLER.test(name.replace(/[.:!]+$/, ""))) out.add(name);
       }
     }
   }
   return [...out];
 }
 
-const LETTER = "A-Za-z0-9\u05D0-\u05EA";
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const loose = (s: string) => s.replace(/["'״׳]/g, "").replace(/\s+/g, " ").trim();
+const WORD = /[A-Za-z\u05D0-\u05EA]+/g;
+/** A text's words as compared: quote marks out («ג'ני» is «גני» on both sides), Latin in lower case. */
+const wordsOf = (s: string) => (s.replace(/["'״׳`]/g, "").match(WORD) ?? []).map((w) => w.toLowerCase());
 
-/** The escort's name a phrase holds (a whole word sequence, a Hebrew prefix letter allowed) — null when none. */
-export function namedEscort(phrase: string, names: readonly string[]): string | null {
-  const p = loose(phrase);
+/**
+ * The words an escort may be named by: every word of 2 letters or more of each name (a first name, a surname); a word
+ * that begins with «ו» after the first («… וחניכה …») also without it — two names joined. Words that are no one's name
+ * (NOT_A_NAME) aside.
+ */
+export function escortWords(names: readonly string[]): Set<string> {
+  const out = new Set<string>();
   for (const n of names) {
-    const k = loose(n);
-    if ([...k].length < 2) continue;
-    if (new RegExp(`(?<![${LETTER}])[והבכלמש]{0,2}${escapeRe(k)}(?![${LETTER}])`).test(p)) return n;
+    wordsOf(n).forEach((w, i) => {
+      if (NOT_A_NAME.has(w)) return;
+      if (w.length >= 2) out.add(w);
+      if (i > 0 && w.startsWith("ו") && w.length >= 3 && !NOT_A_NAME.has(w.slice(1))) out.add(w.slice(1));
+    });
+  }
+  return out;
+}
+
+/** The escort's word a phrase holds — a word of it, alone or after one or two Hebrew prefix letters (ו ה ב כ ל מ ש) — or null. */
+export function namedEscort(phrase: string, names: readonly string[] | ReadonlySet<string>): string | null {
+  const words = names instanceof Set ? names : escortWords(names as readonly string[]);
+  if (words.size === 0) return null;
+  for (const w of wordsOf(phrase)) {
+    for (let k = 0; k <= 2 && w.length - k >= 2; k++) {
+      if (k > 0 && !/^[והבכלמש]+$/.test(w.slice(0, k))) break;
+      if (words.has(w.slice(k))) return w.slice(k);
+    }
   }
   return null;
 }
@@ -97,10 +134,10 @@ export const isMoneyOrTransport = (phrase: string) => MONEY_OR_TRANSPORT.test(ph
 export const isContactPhrase = (phrase: string) =>
   !isMoneyOrTransport(phrase) && !mentionsEscort(phrase) && (CHANNELS.some(([re]) => re.test(phrase)) || CONTACT_WORDS.test(phrase));
 
-/** A cell's phrases: split at lines, semicolons, bullets and sentence ends. */
+/** A cell's phrases: split at lines, semicolons, bullets and sentence ends — never at an initial («ח. לדוגמה»). */
 export function splitPhrases(cell: string): string[] {
   return cell
-    .split(/\n|;|•|\.(?=\s|$)/)
+    .split(/\n|;|•|(?<!(?:^|[\s(])[A-Za-z\u05D0-\u05EA])\.(?=\s|$)/)
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => [...p].length >= 2);
 }
@@ -114,18 +151,28 @@ export interface EscortsRow {
   /** The speaker's name key, and the name as written. */
   key: string;
   name: string;
+  /** Its phrases — a phone or an e-mail taken out of the cell first (stripContacts), then split: a number broken over a
+   * line is one number, never two «phrases» of digits. */
   phrases: string[];
+  /** A phone or an e-mail was taken out of its cells (said in the preview). */
+  contactsOut: boolean;
 }
 
 export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: number | null; titles: readonly string[] }): EscortsRow[] {
   return dataRows(grid, o.headerRow).map(({ row, cells }) => {
-    const [first] = splitSpeakers(cellOf(cells, m, "speaker"));
+    // the speaker as named — a phone or an e-mail beside the name is no part of it (matched by the name alone)
+    const [first] = splitSpeakers(stripContacts(cellOf(cells, m, "speaker")).text);
     const { name } = splitTitle(first ?? "", o.titles);
     const key = nameKey(name);
-    const phrases = columnsOf(m, "phrases").flatMap((i) => splitPhrases(cells[i] ?? ""));
-    if (!key) return { row, skip: "אין מרצה", key, name, phrases };
-    if (phrases.length === 0) return { row, skip: "אין ניסוחים", key, name, phrases };
-    return { row, skip: null, key, name, phrases };
+    let contactsOut = false;
+    const phrases = columnsOf(m, "phrases").flatMap((i) => {
+      const st = stripContacts(cells[i] ?? "");
+      if (st.phones.length || st.emails.length) contactsOut = true;
+      return splitPhrases(st.text);
+    });
+    if (!key) return { row, skip: "אין מרצה", key, name, phrases, contactsOut };
+    if (phrases.length === 0) return { row, skip: "אין ניסוחים", key, name, phrases, contactsOut };
+    return { row, skip: null, key, name, phrases, contactsOut };
   });
 }
 
@@ -147,11 +194,12 @@ export interface Phrase {
 /** The phrases, grouped; `names`: the escorts' (escortNames, and an edition's roster) — a phrase holding one is never pre-ticked. */
 export function phrasesOf(rows: EscortsRow[], names: readonly string[] = []): Phrase[] {
   const m = new Map<string, Phrase>();
+  const words = escortWords(names);
   for (const r of rows) {
     if (r.skip) continue;
     for (const p of r.phrases) {
       const k = phraseKey(p);
-      const escort = namedEscort(p, names);
+      const escort = namedEscort(p, words);
       const mentions = mentionsEscort(p);
       const e = m.get(k) ?? { key: k, text: p, count: 0, channel: channelOf(p), contact: isContactPhrase(p) && !escort, money: isMoneyOrTransport(p), escort, mentions };
       e.count++;
@@ -179,7 +227,8 @@ export const editedText = (p: string, edits: ReadonlyMap<string, string> | undef
 
 /**
  * One line per speaker: their ticked phrases (as edited), the one channel those name, and what would be filled. A
- * phrase about payment or transport, or one that still holds an escort's name, is never kept — ticked or not.
+ * phrase about payment or transport, or one that still holds an escort's name (a word of it), is never kept — ticked or
+ * not; a phone or an e-mail (the file's, or one typed into an edit) is taken out of a phrase kept, and said.
  */
 export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, ctx: MatchContext, edits?: ReadonlyMap<string, string>, names: readonly string[] = []): EscortsPreview[] {
   const by = new Map<string, EscortsRow[]>();
@@ -188,18 +237,25 @@ export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, 
   for (const r of rows) {
     if (r.skip) out.push({ key: r.key, name: r.name, rows: [r.row], status: "skip", reason: r.skip, match: null, contact_pref: null, secretary_note: null, warnings: [], fills: [] });
   }
+  const words = escortWords(names);
   for (const [key, rs] of by) {
+    let typedOut = false;
     const phrases = [
       ...new Set(
         rs
           .flatMap((r) => r.phrases)
           .filter((p) => ticked.has(phraseKey(p)))
-          .map((p) => editedText(p, edits))
-          .filter((p) => p !== "" && !isMoneyOrTransport(p) && namedEscort(p, names) == null),
+          .map((p) => {
+            const st = stripContacts(editedText(p, edits));
+            if (st.phones.length || st.emails.length) typedOut = true;
+            return st.text.replace(/\s+/g, " ").trim();
+          })
+          .filter((p) => [...p].length >= 2 && !isMoneyOrTransport(p) && namedEscort(p, words) == null),
       ),
     ];
     const channels = [...new Set(phrases.map(channelOf).filter((c): c is ContactPref => c != null))];
     const warnings: string[] = [];
+    if (typedOut || rs.some((r) => r.contactsOut)) warnings.push("הוסר טלפון או מייל מהניסוחים — לא נשמר (ההערה אומרת איך פונים, לא מספר)");
     let note: string | null = phrases.join(" · ") || null;
     if (note && [...note].length > LIMITS.secretary_note) {
       warnings.push(`הניסוחים ארוכים מ-${LIMITS.secretary_note} תווים — לא נשמרים`);

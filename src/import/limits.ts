@@ -16,10 +16,14 @@ export const IMPORT_LIMITS = {
   textChars: 2_000_000,
   /** Parts in a zip (an xlsx has ~10–30, a docx with pictures a few dozen). */
   zipEntries: 2_000,
-  /** One part, inflated — what a zip says of its size is not trusted: the inflate itself stops here. */
-  entryBytes: 32 * 1024 * 1024,
-  /** Every part read from one file, inflated, together. */
-  totalBytes: 64 * 1024 * 1024,
+  /**
+   * One part, inflated — what a zip says of its size is not trusted: the inflate itself stops here. «הצעה»: a real
+   * part is far below it (a 139-row sheet1.xml, a 70-row document.xml: well under 1MB), and a part this size of empty
+   * elements is read in under a second (DECISIONS «ביקורת: ייבוא ואבן דרך 6», סבב שלישי).
+   */
+  entryBytes: 4 * 1024 * 1024,
+  /** Every part read from one file, inflated, together («הצעה», as entryBytes). */
+  totalBytes: 8 * 1024 * 1024,
   /** A table's rows, columns and filled cells after reading. */
   rows: 3_000,
   cols: 60,

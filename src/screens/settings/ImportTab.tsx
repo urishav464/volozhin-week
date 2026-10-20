@@ -17,14 +17,15 @@ import { readDocx } from "../../import/docxRead";
 import { escortColumns, escortNames, escortsPayload, phrasesOf, previewEscorts, readEscorts } from "../../import/escorts";
 import { defaultMapping, FIELDS, findHeaderRow, HEADER_SEARCH, type ImportKind, KIND_LABEL, type Mapping, setMapping } from "../../import/fields";
 import { IMPORT_LIMITS } from "../../import/limits";
+import { hasContact } from "../../import/phone";
 import type { Choice } from "../../import/match";
 import { columnNames, dataRows, type HeaderAt } from "../../import/rows";
 import { sampleGrid } from "../../import/sample";
 import { defaultSourcesRule, type SourcesRule } from "../../import/sources";
 import type { Grid, GridSource } from "../../import/table";
 import {
-  archivePayload, doubleGroups, type GroupDecision, type LineAs, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf, speakerAliases,
-  topicsOf,
+  archivePayload, doubleGroups, type GroupDecision, type LineAs, phonesAfterChoices, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf,
+  speakerAliases, topicsOf,
 } from "../../import/tracking";
 import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
@@ -277,6 +278,13 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
     () => allTrackSpeakers?.filter((s) => !plans || usedKeys.has(alias.get(s.speaker.key) ?? s.speaker.key)) ?? null,
     [allTrackSpeakers, plans, usedKeys, alias],
   );
+  // the phones the choices give (a row of two, one left): shown on the speaker before the commit, as the payload sends them
+  const postPhones = useMemo(() => {
+    const m = plans ? phonesAfterChoices(plans) : new Map<string, { value: string; key: string | null; row: number }>();
+    for (const k of alias.keys()) m.delete(k);
+    return m;
+  }, [plans, alias]);
+  const linesOpen = kind === "tracking" && track ? track.lines.filter((l) => l.as == null).length : 0;
   const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ticked, ctx.match, edits, escortsNamed) : null), [esc, ctx, ticked, edits, escortsNamed]);
   const groups = useMemo(() => (track ? doubleGroups(track) : []), [track]);
 
@@ -295,12 +303,14 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       return p ? { kind, payload: p } : null;
     }
     if (kind === "tracking") {
+      // a line under a name not yet decided (a speaker or an affiliation?): nothing is sent
+      if (track?.lines.some((l) => l.as == null)) return null;
       const p = plans && trackSpeakers && archivePayload(plans, trackSpeakers, choices, meta);
       return p ? { kind, payload: p } : null;
     }
     const p = escPreview && escortsPayload(escPreview, choices);
     return p ? { kind, payload: p } : null;
-  }, [ctx, kind, candPreview, rowChoices, plans, trackSpeakers, choices, escPreview, meta.label, meta.start_date, meta.source, meta.titles_from]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ctx, kind, candPreview, rowChoices, plans, trackSpeakers, track, choices, escPreview, meta.label, meta.start_date, meta.source, meta.titles_from]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const candResolved = useMemo(() => (candPreview ? resolvedRows(candPreview, rowChoices) : null), [candPreview, rowChoices]);
   const trackResolved = useMemo(() => (trackSpeakers ? resolvedSpeakers(allTrackSpeakers ?? [], choices) : null), [trackSpeakers, allTrackSpeakers, choices]);
@@ -312,6 +322,9 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const blockers = [
     undecidedCount > 0 && (undecidedCount === 1 ? "מרצה אחד/ת «עמום/ה» מחכה להחלטה" : `${undecidedCount} מרצים «עמומים» מחכים להחלטה`),
     groupsOpen > 0 && (groupsOpen === 1 ? "קבוצת «כפולה» אחת מחכה להחלטה" : `${groupsOpen} קבוצות «כפולה» מחכות להחלטה`),
+    linesOpen > 0 && (linesOpen === 1 ? "שורה נוספת אחת בתא של מרצה מחכה להחלטה (שיוך מוסדי או מרצה נוסף/ת)" : `${linesOpen} שורות נוספות בתאי המרצים מחכות להחלטה (שיוך מוסדי או מרצה נוסף/ת)`),
+    kind === "tracking" && hasContact(labelTrim) && "בשם המחזור יש טלפון או מייל — צריך שם אחר",
+    kind !== "escorts" && hasContact(source) && "במקור יש טלפון או מייל — צריך מקור אחר",
     kind === "tracking" && !labelTrim && "צריך שם למחזור בארכיון",
     kind === "tracking" && sameLabel && sameLabel.kind !== "archive" && "יש כבר מחזור פעיל בשם הזה — צריך שם אחר",
     kind === "tracking" && sameLabels.length > 1 && "יותר ממחזור אחד עונה לשם הזה (במירכאות ובגרשיים) — צריך שם אחר",
@@ -605,7 +618,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       )}
       {ctx && kind === "tracking" && trackSpeakers && (
         <>
-          <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} resolved={trackResolved ?? new Map()} onChoose={choose} />
+          <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} resolved={trackResolved ?? new Map()} onChoose={choose} postPhones={postPhones} />
           {plans ? <LessonsPreview plans={plans} categories={ctx.categories} speakers={trackSpeakers} choices={choices} /> : <Panel title="השיעורים"><p className="text-ink-soft">אחרי ההחלטה על כל קבוצות «כפולה» יופיעו כאן השיעורים.</p></Panel>}
         </>
       )}
@@ -618,7 +631,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               {blockers.map((b) => (
                 <li key={b}>{b}</li>
               ))}
-              {(undecidedCount > 0 || groupsOpen > 0) && (
+              {(undecidedCount > 0 || groupsOpen > 0 || linesOpen > 0) && (
                 <li className="list-none">
                   <Button
                     kind="quiet"
@@ -635,7 +648,15 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
             </ul>
           ) : (
             <p className="mb-2 text-sm text-ink-soft">
-              {kind === "tracking" ? `${rowsInCommit} שיעורים במחזור «${labelTrim}»` : kind === "candidates" ? `${rowsInCommit} שורות למאגר` : `${rowsInCommit} מרצים יושלמו`}
+              {kind === "tracking"
+                ? `${rowsInCommit === 1 ? "שיעור אחד" : `${rowsInCommit} שיעורים`} במחזור «${labelTrim}»`
+                : kind === "candidates"
+                  ? rowsInCommit === 1
+                    ? "שורה אחת למאגר"
+                    : `${rowsInCommit} שורות למאגר`
+                  : rowsInCommit === 1
+                    ? "מרצה אחד/ת יושלם/תושלם"
+                    : `${rowsInCommit} מרצים יושלמו`}
               {replacing && " — במקום השיעורים שכבר שם"}.
             </p>
           )}

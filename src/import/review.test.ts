@@ -331,15 +331,15 @@ describe("סבב שני: a second line in the speaker's cell — an affiliation 
     expect(p.speakers.map((x) => [x.name, x.affiliation, x.phone])).toEqual([["אלפא דוגמני", "ישיבת דוגמה", "0000000011"]]);
   });
 
-  it("a line with a title, or a name the sheet or the pool has, is a speaker; one with neither is an affiliation («הצעה»)", () => {
+  it("a line with a title, or a name the sheet or the pool has, is a speaker; an institution's, an affiliation; any other waits (סבב שלישי)", () => {
     const read = () =>
       track([r("דוגמה אלף\nהרבנית דוגמה בית", "ראשון 8:30"), r("דוגמה גימל\nדוגמה אלף", "ראשון 10:00"), r("דוגמה דלת\nמכון לדוגמה", "ראשון 11:30"), r("דוגמה הא\nשם מהמאגר", "ראשון 13:00")]);
     const plain = read();
     expect(plain.lines.map((l) => [l.text, l.as, l.why])).toEqual([
       ["הרבנית דוגמה בית", "speaker", "בתואר הרבנית"],
       ["דוגמה אלף", "speaker", "שם שמופיע בגיליון"],
-      ["מכון לדוגמה", "affiliation", "בלי תואר, ולא שם שבגיליון או במאגר"],
-      ["שם מהמאגר", "affiliation", "בלי תואר, ולא שם שבגיליון או במאגר"],
+      ["מכון לדוגמה", "affiliation", "שם של מוסד"],
+      ["שם מהמאגר", null, "בלי תואר ובלי שם של מוסד, ולא שם שבגיליון או במאגר"],
     ]);
     const pooled = readTracking(
       [H, r("דוגמה הא\nשם מהמאגר", "ראשון 13:00")],
@@ -352,8 +352,10 @@ describe("סבב שני: a second line in the speaker's cell — an affiliation 
 
   it("the admin turns a line; the phone goes to the one speaker left after the choices — never while two are", () => {
     const rows = [withPhone("דוגמה אלף\nדוגמה בית", "ראשון 8:30", "000-000-0012")];
-    // the read: «דוגמה בית» an affiliation — one speaker, the phone theirs
-    expect(track(rows).speakers.map((x) => [x.key, x.affiliation, x.phone])).toEqual([["דוגמה אלף", "דוגמה בית", "0000000012"]]);
+    // the read: «דוגמה בית» undecided — neither, until chosen; turned into an affiliation: one speaker, the phone theirs
+    expect(track(rows).speakers.map((x) => [x.key, x.affiliation, x.phone])).toEqual([["דוגמה אלף", null, "0000000012"]]);
+    const aff = readTracking([H, ...rows], defaultMapping("tracking", H, H.length), { ...opts, lineAs: new Map([["2:2", "affiliation" as const]]) });
+    expect(aff.speakers.map((x) => [x.key, x.affiliation, x.phone])).toEqual([["דוגמה אלף", "דוגמה בית", "0000000012"]]);
     // turned into a speaker: two — the phone waits, and the lesson says why
     const two = readTracking([H, ...rows], defaultMapping("tracking", H, H.length), { ...opts, lineAs: new Map([["2:2", "speaker" as const]]) });
     expect(two.lines[0]).toMatchObject({ as: "speaker", chosen: true });
@@ -391,7 +393,7 @@ describe("סבב שני: the header row in the first rows; the escorts' column n
     expect([...escortColumns(grid, 0)]).toEqual([0, 1]); // the title row chosen as the header: still blocked — and, on the safe side, the title's column too
     // a phrase that speaks of the escort is no header: the phrases' column stays mappable
     expect([...escortColumns([["מרצה", "הערות"], ["מרצה 07", "המלווה יתאם"]], null)]).toEqual([]);
-    expect(escortNames(grid, null, new Set([1]))).toEqual(["חניך/ה לדוגמה 1"]); // the header cell is no name
+    expect(escortNames(grid, null, new Set([1]))).toEqual(["חניך/ה לדוגמה"]); // the header cell is no name; digits out
   });
 });
 
@@ -412,17 +414,17 @@ describe("סבב שני: a phrase that names an escort is never ticked by itself
     expect(names).toEqual(["חניכה לדוגמה", "חניך לדוגמה"]);
     const ps = phrasesOf(rows, names);
     expect(ps.map((p) => [p.text, p.contact, p.escort, p.mentions])).toEqual([
-      ["המלווה חניכה לדוגמה תתאם דרך המזכירה", false, "חניכה לדוגמה", true],
-      ["לתאם עם חניך לדוגמה בוואטסאפ", false, "חניך לדוגמה", false],
+      ["המלווה חניכה לדוגמה תתאם דרך המזכירה", false, "חניכה", true],
+      ["לתאם עם חניך לדוגמה בוואטסאפ", false, "חניך", false],
       ["רק בוואטסאפ", true, null, false],
     ]);
     // a name only a roster has
-    expect(phrasesOf(rows, ["חניכה לדוגמה"]).map((p) => p.escort)).toEqual(["חניכה לדוגמה", null, null]);
+    expect(phrasesOf(rows, ["חניכה לדוגמה"]).map((p) => p.escort)).toEqual(["חניכה", "לדוגמה", null]);
     // a phrase about the escort with no name the file or a roster knows: still not pre-ticked (a name may be in it)
     expect(phrasesOf(readEscorts([["מרצה", "הערות"], ["מרצה 07", "המלווה יתאם דרך המזכירה"]], ["speaker", "phrases"], { headerRow: 0, titles: DEFAULT_TITLES }), []).map((p) => [p.contact, p.mentions])).toEqual([[false, true]]);
     expect(namedEscort("דרך המזכירה", names)).toBeNull();
-    expect(namedEscort("לחניך לדוגמה בוואטסאפ", names)).toBe("חניך לדוגמה"); // a prefix letter
-    expect(namedEscort("חניך לדוגמה2", names)).toBeNull(); // another word
+    expect(namedEscort("לחניך לדוגמה בוואטסאפ", names)).toBe("חניך"); // a prefix letter
+    expect(namedEscort("להתקשר לחניכות בוואטסאפ", names)).toBeNull(); // another word
   });
 
   it("ticked anyway, a phrase with the name is not kept; edited to drop the name, the channel is kept without it", () => {
