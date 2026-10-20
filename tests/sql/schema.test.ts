@@ -37,11 +37,13 @@ const PEER_ADMIN = "peer.admin@example.org";
 // add/update/place/delete_memorial_plan, set_memorial_policy), the logistics
 // screen's transports (get_transports_for — invoker), and the two policies'
 // predicates, may_see_fallen and may_see_fallen_contacts (tests/sql/memorial.test.ts).
+// v12 (the import of 5786) added import_commit and import_lookup — a global admin's, each checking it
+// (tests/sql/import.test.ts); every helper of the import stays in app, executable by no API role.
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
   "delete_memorial_plan", "get_contacts_for", "get_fallen_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
-  "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
+  "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
   "kk_update_group", "load_kk", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "schema_version", "set_approach_status",
   "set_availability", "set_book_order", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
@@ -194,7 +196,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(11);
+        expect(w.schema_version).toBe(12);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

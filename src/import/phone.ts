@@ -11,7 +11,7 @@ import { cleanCell } from "./table";
  */
 export function phoneKey(p: string | null | undefined): string | null {
   let d = (p ?? "").replace(/[^0-9]/g, "");
-  if (/^(00)?972/.test(d)) d = `0${d.replace(/^(00)?972/, "").replace(/^0+/, "")}`;
+  if (/^(00)?972/.test(d)) d = `0${d.replace(/^(00)?972/, "").replace(/^0/, "")}`;
   else if ((d.length === 8 || d.length === 9) && !d.startsWith("0")) d = `0${d}`;
   return d.length >= 6 ? d : null;
 }

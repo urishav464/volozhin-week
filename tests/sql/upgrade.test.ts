@@ -104,10 +104,11 @@ describe.each<Regime>(["old", "new"])("re-running schema.sql on a v10 database, 
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v11 and keeps every row v10 held", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(11);
+  it("is v12 and keeps every row v10 held", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(12);
     expect((await db.query("select count(*)::int as n from public.roster where edition_id = $1", [ed])).rows[0].n).toBe(1);
-    expect((await db.query("select kind, title from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון" }]);
+    // v12: lessons.import_note, empty on every lesson the import did not write
+    expect((await db.query("select kind, title, import_note from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון", import_note: null }]);
     expect((await db.query("select display_name, fallen_id from public.source_files")).rows).toEqual([{ display_name: "שער.pdf", fallen_id: null }]);
     expect((await db.query("select count(*)::int as n from public.grid_rows where edition_id = $1 and kind = 'memorial'", [ed])).rows[0].n).toBe(2);
     for (const t of ["fallen", "fallen_contacts", "memorial_plans"]) {

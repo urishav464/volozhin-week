@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 11 $$;
+  as $$ select 12 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -4665,6 +4665,481 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
   $$;
 
 
+-- =============================================================================
+-- Import 5786 (v12) — last year's files (תשפ"ו) into the database, through the
+-- browser only. Semantics: docs/CONTRACT.md «The import of 5786»; the in-memory
+-- twin is src/data/engine.ts (importCommit), held to this by tests/parity.
+--
+-- The files themselves never reach the server: the wizard («הגדרות ← ייבוא»)
+-- reads a paste or an .xlsx/.docx in the page, the admin maps, reviews and
+-- decides, and only the reviewed rows arrive here, as one payload, in one
+-- transaction — every row or none. A GLOBAL ADMIN only: it writes the cross-year
+-- speaker pool and makes an archive edition.
+--   import_lookup   which pool speaker has a phone (by app.phone_key — the
+--                   browser's phoneKey, src/import/phone.ts), and which contact
+--                   fields of some speakers are filled: booleans, never a value
+--   import_commit   'candidates' → the pool (source as typed, vetted pending)
+--                   'tracking'   → an archive edition of closed lessons (kind
+--                                  'archive', status 'archived'); the same label
+--                                  again REPLACES that edition's lessons
+--                   'escorts'    → contact_pref and speaker_contacts.secretary_note
+-- Re-runnable: a 'new' speaker whose name key — or phone — the pool already has
+-- completes that speaker instead of adding a second one. A match only FILLS what
+-- is empty, never overwrites. Gender only as the title says (הרב m, הרבנית f).
+-- Phones and e-mails only in speaker_contacts. The log keeps ids, counts and
+-- field names — never a name, a phone or a note.
+-- lessons.import_note: what last year's sheet said that has no field of its
+-- own (transport/payment words, who sent the summary message), cleared of
+-- phones and e-mails in the browser (scrubContacts); written by this import only.
+-- =============================================================================
+
+alter table public.lessons add column if not exists import_note text;
+
+-- A phone's comparison key (src/import/phone.ts phoneKey holds the same):
+-- digits; 972 / 00972 (and a 0 after it) as a leading 0; a leading 0 a number
+-- cell dropped (8–9 digits) given back; NULL under 6 digits.
+create or replace function app.phone_key(p text) returns text
+  language sql immutable set search_path = ''
+  as $$
+    select case when length(k) >= 6 then k end
+      from (select case
+                     when d ~ '^(00)?972' then '0' || regexp_replace(regexp_replace(d, '^(00)?972', ''), '^0', '')
+                     when length(d) in (8, 9) and d !~ '^0' then '0' || d
+                     else d
+                   end as k
+              from (select regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) a) b
+  $$;
+
+-- The gender a title says, and nothing else (src/import/speakerName.ts titleGender).
+create or replace function app.title_gender(p text) returns text
+  language sql immutable set search_path = ''
+  as $$ select case p when 'הרב' then 'm' when 'הרבנית' then 'f' end $$;
+
+-- A whole number from a JSON value, or NULL (anything else: a string, 1.5, an object).
+create or replace function app.jint(p jsonb) returns bigint
+  language sql immutable set search_path = ''
+  as $$ select case when jsonb_typeof(p) = 'number' and (p #>> '{}') ~ '^-?[0-9]{1,15}$' then (p #>> '{}')::bigint end $$;
+
+-- A JSON array's length; 0 for anything that is not an array.
+create or replace function app.jlen(p jsonb) returns integer
+  language sql immutable set search_path = ''
+  as $$ select case when jsonb_typeof(p) = 'array' then jsonb_array_length(p) else 0 end $$;
+
+-- The caller: a global admin (not_member, forbidden); their all-editions member id.
+create or replace function app.require_global_admin() returns bigint
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    return app.my_member_id(null);
+  end
+  $$;
+
+-- A row the import refuses: «import_bad_row», its row number and the reason in
+-- the detail («7:bad_phone») — the whole import is rolled back.
+create or replace function app.refuse_row(p_item jsonb, p_reason text) returns void
+  language plpgsql set search_path = ''
+  as $$
+  begin
+    raise exception using message = 'import_bad_row', errcode = 'P0001',
+      detail = coalesce(app.jint(case when jsonb_typeof(p_item) = 'object' then p_item -> 'row' end), -1)::text || ':' || p_reason;
+  end
+  $$;
+
+-- One speaker row: cleaned and checked (as src/data/importRules.ts cleanSpeakerRow,
+-- in its order), then resolved — 'merge' completes the speaker named; 'new'
+-- completes the one speaker with this name key (two: disambiguator_required),
+-- else the one speaker with this phone, else adds a speaker (vetted pending,
+-- source as typed). Completing fills ONLY what is empty — the speaker's title,
+-- gender, affiliation, topics, and the contacts' phone, e-mail, notes.
+create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_action  text := case when jsonb_typeof(p) = 'object' then p ->> 'action' end;
+    v_name    text;
+    v_key     text;
+    v_title   text;
+    v_gender  text;
+    v_aff     text;
+    v_topics  text[];
+    v_phone   text;
+    v_email   text;
+    v_notes   text;
+    v_pkey    text;
+    v_n       integer;
+    v_s       public.speakers;
+    v_c       public.speaker_contacts;
+    v_created boolean := false;
+    v_fields  text[] := '{}';
+    v_cfields text[] := '{}';
+  begin
+    if v_action is null or v_action not in ('new', 'merge') then perform app.refuse('bad_value'); end if;
+    v_name := app.clean_line(case when jsonb_typeof(p -> 'name') = 'string' then p ->> 'name' end, 120);
+    v_key := app.name_key(v_name);
+    if v_name is null or v_key = '' then perform app.refuse('name_required'); end if;
+    v_title  := app.pick_title(p ->> 'title', p_titles_from);
+    v_gender := app.pick_gender(p ->> 'gender');
+    if v_gender is not null and v_gender is distinct from app.title_gender(v_title) then perform app.refuse('bad_value'); end if;
+    v_aff    := app.clean_line(p ->> 'affiliation', 120);
+    v_topics := app.clean_topics(p -> 'topics');
+    v_phone  := app.clean_line(p ->> 'phone', 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    v_email  := app.clean_line(p ->> 'email', 120);
+    if v_email is not null and v_email !~ '^[^ @]+@[^ @]+\.[^ @]+$' then perform app.refuse('bad_contact_email'); end if;
+    v_notes  := app.clean_block(p ->> 'notes', 1000);
+
+    if v_action = 'merge' then
+      select * into v_s from public.speakers where id = app.jint(p -> 'speaker_id') for update;
+      if v_s.id is null then perform app.refuse('stale'); end if;
+    else
+      select count(*) into v_n from public.speakers where name_key = v_key;
+      if v_n > 1 then perform app.refuse('disambiguator_required'); end if;
+      if v_n = 1 then
+        select * into v_s from public.speakers where name_key = v_key for update;
+      else
+        v_pkey := app.phone_key(v_phone);
+        if v_pkey is not null then
+          select count(distinct c.speaker_id) into v_n from public.speaker_contacts c where app.phone_key(c.phone) = v_pkey;
+          if v_n = 1 then
+            select s.* into v_s from public.speakers s join public.speaker_contacts c on c.speaker_id = s.id
+             where app.phone_key(c.phone) = v_pkey for update of s;
+          end if;
+        end if;
+      end if;
+    end if;
+
+    if v_s.id is null then
+      begin
+        insert into public.speakers (title, name, gender, affiliation, topics, vetted, created_by, source)
+        values (v_title, v_name, v_gender, v_aff, v_topics, 'pending', p_me, p_source)
+        returning * into v_s;
+      exception when unique_violation then
+        perform app.refuse('speaker_exists');   -- someone added the same name a moment ago
+      end;
+      v_created := true;
+      perform app.log_event(null, 'speakers', v_s.id, 'insert', jsonb_build_object('vetted', 'pending', 'source', p_source));
+    else
+      select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+        from unnest(array[
+          case when v_s.title is null and v_title is not null then 'title' end,
+          case when v_s.gender is null and v_gender is not null then 'gender' end,
+          case when v_s.affiliation is null and v_aff is not null then 'affiliation' end,
+          case when cardinality(v_s.topics) = 0 and cardinality(v_topics) > 0 then 'topics' end]) with ordinality as u(f, o)
+       where u.f is not null;
+      if cardinality(v_fields) > 0 then
+        update public.speakers
+           set title = coalesce(title, v_title), gender = coalesce(gender, v_gender), affiliation = coalesce(affiliation, v_aff),
+               topics = case when cardinality(topics) = 0 then v_topics else topics end, version = version + 1
+         where id = v_s.id;
+        perform app.log_event(null, 'speakers', v_s.id, 'update', jsonb_build_object('fields', to_jsonb(v_fields)));
+      end if;
+    end if;
+
+    select * into v_c from public.speaker_contacts where speaker_id = v_s.id for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_cfields
+      from unnest(array[
+        case when v_c.phone is null and v_phone is not null then 'phone' end,
+        case when v_c.email is null and v_email is not null then 'email' end,
+        case when v_c.notes is null and v_notes is not null then 'notes' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_cfields) > 0 then
+      insert into public.speaker_contacts (speaker_id, phone, email, notes) values (v_s.id, v_phone, v_email, v_notes)
+      on conflict (speaker_id) do update
+        set phone = coalesce(speaker_contacts.phone, excluded.phone),
+            email = coalesce(speaker_contacts.email, excluded.email),
+            notes = coalesce(speaker_contacts.notes, excluded.notes);
+      perform app.log_event(null, 'speakers', v_s.id, 'contacts', jsonb_build_object('fields', to_jsonb(v_cfields)));
+    end if;
+    return jsonb_build_object('speaker_id', v_s.id, 'created', v_created, 'filled', cardinality(v_fields) > 0, 'contacts', cardinality(v_cfields) > 0);
+  end
+  $$;
+
+-- The speaker rows of a payload, each refused as its row: their results, in order.
+create or replace function app.import_speakers(p_rows jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb[]
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_item jsonb;
+    v_out  jsonb[] := '{}';
+  begin
+    for v_item in select x from jsonb_array_elements(p_rows) as t(x) loop
+      begin
+        v_out := v_out || app.import_speaker(v_item, p_titles_from, p_source, p_me);
+      exception when sqlstate 'P0001' then
+        if sqlerrm = 'import_bad_row' then raise; end if;
+        perform app.refuse_row(v_item, sqlerrm);
+      end;
+    end loop;
+    return v_out;
+  end
+  $$;
+
+-- A parallel room of an archive edition: 0 its default room, k «מקביל k+1» (made when first needed).
+create or replace function app.import_room(p_edition bigint, p_index integer) returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v bigint;
+  begin
+    if p_index = 0 then return app.default_room(p_edition); end if;
+    select id into v from public.rooms where edition_id = p_edition and name = 'מקביל ' || (p_index + 1);
+    if v is null then
+      insert into public.rooms (edition_id, name, sort) values (p_edition, 'מקביל ' || (p_index + 1), p_index + 1) returning id into v;
+    end if;
+    return v;
+  end
+  $$;
+
+-- The import's commit: one transaction, every row or none (docs/CONTRACT.md «The import of 5786»).
+create or replace function public.import_commit(p_kind text, p_payload jsonb) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me       bigint := app.require_global_admin();
+    v_titles   bigint;
+    v_source   text;
+    v_label    text;
+    v_date     date;
+    v_ed       public.editions;
+    v_res      jsonb[];
+    v_r        jsonb;
+    v_ids      bigint[] := '{}';
+    v_item     jsonb;
+    v_lid      bigint;
+    v_sid      bigint;
+    v_seen     bigint[];
+    v_ref      jsonb;
+    v_refs     bigint[];
+    v_c        text;
+    v_day      bigint;
+    v_start    bigint;
+    v_end      bigint;
+    v_room     bigint;
+    v_title    text;
+    v_cat      bigint;
+    v_aud      text;
+    v_kind     text;
+    v_print    text;
+    v_snote    text;
+    v_pay      bigint;
+    v_inote    text;
+    v_s        public.speakers;
+    v_cn       public.speaker_contacts;
+    v_pref     text;
+    v_sec      text;
+    v_created  integer := 0;
+    v_merged   integer := 0;
+    v_filled   integer := 0;
+    v_contacts integer := 0;
+    v_lessons  integer := 0;
+    v_replaced integer := 0;
+    v_rows     jsonb := '[]';
+  begin
+    if p_kind is null or p_kind not in ('candidates', 'tracking', 'escorts') then perform app.refuse('bad_value'); end if;
+    if p_payload is null or jsonb_typeof(p_payload) <> 'object' then perform app.refuse('bad_value'); end if;
+    if (case when p_kind = 'tracking' then app.jlen(p_payload -> 'speakers') + app.jlen(p_payload -> 'lessons') else app.jlen(p_payload -> 'rows') end) > 1000
+       or octet_length(p_payload::text) > 1000000 then
+      perform app.refuse('import_too_big');
+    end if;
+    v_titles := app.jint(p_payload -> 'titles_from');
+
+    if p_kind = 'candidates' then
+      if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
+      v_source := app.clean_line(p_payload ->> 'source', 60);
+      if v_source is null then perform app.refuse('bad_value'); end if;
+      v_res := app.import_speakers(p_payload -> 'rows', v_titles, v_source, v_me);
+
+    elsif p_kind = 'tracking' then
+      if jsonb_typeof(p_payload -> 'speakers') is distinct from 'array' or jsonb_typeof(p_payload -> 'lessons') is distinct from 'array' then
+        perform app.refuse('bad_value');
+      end if;
+      v_label := app.clean_line(case when jsonb_typeof(p_payload -> 'label') = 'string' then p_payload ->> 'label' end, 60);
+      if v_label is null then perform app.refuse('label_required'); end if;
+      if jsonb_typeof(p_payload -> 'start_date') = 'string' and p_payload ->> 'start_date' <> '' then
+        if p_payload ->> 'start_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then perform app.refuse('bad_value'); end if;
+        begin
+          v_date := (p_payload ->> 'start_date')::date;
+        exception when others then
+          perform app.refuse('bad_value');
+        end;
+        if to_char(v_date, 'YYYY-MM-DD') <> p_payload ->> 'start_date' then perform app.refuse('bad_value'); end if;
+        if extract(dow from v_date) <> 0 then perform app.refuse('not_sunday'); end if;
+      elsif jsonb_typeof(p_payload -> 'start_date') not in ('null', 'string') then
+        perform app.refuse('bad_value');
+      end if;
+      select * into v_ed from public.editions where label = v_label for update;
+      if v_ed.id is not null and v_ed.kind <> 'archive' then perform app.refuse('edition_exists'); end if;
+      v_source := app.clean_line(p_payload ->> 'source', 60);
+      if v_source is null then perform app.refuse('bad_value'); end if;
+      v_res := app.import_speakers(p_payload -> 'speakers', v_titles, v_source, v_me);
+      foreach v_r in array v_res loop v_ids := v_ids || (v_r ->> 'speaker_id')::bigint; end loop;
+
+      -- the edition: made from the template (as start_edition makes one), or the same label again — its lessons replaced
+      if v_ed.id is null then
+        begin
+          insert into public.editions (label, kind, status, start_date) values (v_label, 'archive', 'archived', v_date) returning * into v_ed;
+        exception when unique_violation then
+          perform app.refuse('stale');   -- the same label, made by another import a moment ago
+        end;
+        insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
+        select v_ed.id, start_min, end_min, kind, label, days from public.grid_template;
+        insert into public.rooms (edition_id, name, sort, is_default) values (v_ed.id, 'בית מדרש', 1, true);
+      else
+        delete from public.lessons where edition_id = v_ed.id;
+        get diagnostics v_replaced = row_count;
+        update public.editions set start_date = v_date where id = v_ed.id and start_date is distinct from v_date;
+        if not exists (select 1 from public.rooms where edition_id = v_ed.id) then
+          insert into public.rooms (edition_id, name, sort, is_default) values (v_ed.id, 'בית מדרש', 1, true);
+        end if;
+      end if;
+
+      -- the lessons, closed, each checked as src/data/importRules.ts cleanLessonRow (in its order)
+      for v_item in select x from jsonb_array_elements(p_payload -> 'lessons') as t(x) loop
+        begin
+          if jsonb_typeof(v_item) <> 'object' then perform app.refuse('bad_value'); end if;
+          v_day := app.jint(v_item -> 'day');
+          v_start := app.jint(v_item -> 'start_min');
+          v_end := app.jint(v_item -> 'end_min');
+          if v_day is null or v_start is null or v_end is null or v_day not between 0 and 4 or v_start < 390 or v_end > 1830
+             or v_start >= v_end or v_start % 5 <> 0 or v_end % 5 <> 0 then
+            perform app.refuse('bad_shape');
+          end if;
+          v_room := app.jint(v_item -> 'room');
+          if v_room is null or v_room < 0 or v_room >= 10 then perform app.refuse('bad_value'); end if;
+          v_title := app.clean_line(v_item ->> 'title', 200);
+          v_cat := app.jint(v_item -> 'category_id');
+          if jsonb_typeof(v_item -> 'category_id') not in ('null') and v_item ? 'category_id'
+             and (v_cat is null or not exists (select 1 from public.categories where id = v_cat)) then
+            perform app.refuse('bad_value');
+          end if;
+          v_aud := app.clean_line(v_item ->> 'audience', 120);
+          v_kind := v_item ->> 'sources_kind';
+          if v_kind is null or v_kind not in ('pending', 'sheet', 'presentation', 'sheet_presentation', 'sheet_video', 'none', 'other') then
+            perform app.refuse('bad_value');
+          end if;
+          v_print := v_item ->> 'print_when';
+          if v_print is null or v_print not in ('none', 'before', 'same_day') then perform app.refuse('bad_value'); end if;
+          v_snote := app.clean_block(v_item ->> 'sources_note', 500);
+          if v_item ? 'pay_amount' and jsonb_typeof(v_item -> 'pay_amount') <> 'null' then
+            v_pay := app.jint(v_item -> 'pay_amount');
+            if v_pay is null or v_pay < 1 or v_pay > 100000 then perform app.refuse('bad_amount'); end if;
+          else
+            v_pay := null;
+          end if;
+          v_inote := app.clean_block(v_item ->> 'import_note', 1000);
+          v_refs := '{}';
+          if jsonb_typeof(v_item -> 'speakers') = 'array' then
+            for v_ref in select x from jsonb_array_elements(v_item -> 'speakers') as t(x) loop
+              if app.jint(v_ref) is null or app.jint(v_ref) < 0 or app.jint(v_ref) >= cardinality(v_ids) or app.jint(v_ref) = any (v_refs) then
+                perform app.refuse('bad_value');
+              end if;
+              v_refs := v_refs || app.jint(v_ref);
+            end loop;
+          end if;
+          if cardinality(v_refs) = 0 then perform app.refuse('bad_value'); end if;
+
+          insert into public.lessons (edition_id, kind, state, day, start_min, end_min, room_id, title, category_id, audience,
+                                      sources_kind, print_when, sources_note, pay_amount, import_note, updated_by)
+          values (v_ed.id, 'lesson', 'closed', v_day, v_start, v_end, app.import_room(v_ed.id, v_room::integer), v_title, v_cat, v_aud,
+                  v_kind, v_print, v_snote, v_pay, v_inote, v_me)
+          returning id into v_lid;
+          -- its speakers: the first leads; two rows that became one pool speaker are one speaker here
+          v_seen := '{}';
+          foreach v_sid in array v_refs loop
+            v_sid := v_ids[v_sid + 1];
+            continue when v_sid = any (v_seen);
+            insert into public.lesson_speakers (lesson_id, speaker_id, role)
+            values (v_lid, v_sid, case when cardinality(v_seen) = 0 then 'lead' else 'co' end);
+            v_seen := v_seen || v_sid;
+          end loop;
+          v_lessons := v_lessons + 1;
+        exception
+          when sqlstate 'P0001' then
+            if sqlerrm = 'import_bad_row' then raise; end if;
+            perform app.refuse_row(v_item, sqlerrm);
+          when exclusion_violation then
+            get stacked diagnostics v_c = constraint_name;
+            perform app.refuse_row(v_item, app.exclusion_code(v_c));
+        end;
+      end loop;
+
+    else -- 'escorts': how a speaker is reached — fill-empty only
+      if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
+      v_res := '{}';
+      for v_item in select x from jsonb_array_elements(p_payload -> 'rows') as t(x) loop
+        begin
+          if jsonb_typeof(v_item) <> 'object' then perform app.refuse('bad_value'); end if;
+          select * into v_s from public.speakers where id = app.jint(v_item -> 'speaker_id') for update;
+          if v_s.id is null then perform app.refuse('stale'); end if;
+          v_pref := app.pick_contact_pref(v_item ->> 'contact_pref');
+          v_sec := app.clean_block(v_item ->> 'secretary_note', 300);
+          v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false);
+          if v_s.contact_pref is null and v_pref is not null then
+            update public.speakers set contact_pref = v_pref, version = version + 1 where id = v_s.id;
+            perform app.log_event(null, 'speakers', v_s.id, 'update', jsonb_build_object('fields', jsonb_build_array('contact_pref')));
+            v_r := v_r || jsonb_build_object('filled', true);
+          end if;
+          select * into v_cn from public.speaker_contacts where speaker_id = v_s.id for update;
+          if v_cn.secretary_note is null and v_sec is not null then
+            insert into public.speaker_contacts (speaker_id, secretary_note) values (v_s.id, v_sec)
+            on conflict (speaker_id) do update set secretary_note = coalesce(speaker_contacts.secretary_note, excluded.secretary_note);
+            perform app.log_event(null, 'speakers', v_s.id, 'contacts', jsonb_build_object('fields', jsonb_build_array('secretary_note')));
+            v_r := v_r || jsonb_build_object('contacts', true);
+          end if;
+          v_res := v_res || v_r;
+        exception when sqlstate 'P0001' then
+          if sqlerrm = 'import_bad_row' then raise; end if;
+          perform app.refuse_row(v_item, sqlerrm);
+        end;
+      end loop;
+    end if;
+
+    -- the result: counts, and each speaker row as resolved
+    for v_r, v_item in
+      select r, coalesce(case when p_kind = 'tracking' then p_payload -> 'speakers' else p_payload -> 'rows' end -> (o::integer - 1), '{}')
+        from unnest(v_res) with ordinality as u(r, o)
+    loop
+      if (v_r ->> 'created')::boolean then v_created := v_created + 1; else v_merged := v_merged + 1; end if;
+      if (v_r ->> 'filled')::boolean then v_filled := v_filled + 1; end if;
+      if (v_r ->> 'contacts')::boolean then v_contacts := v_contacts + 1; end if;
+      v_rows := v_rows || jsonb_build_object('row', coalesce(app.jint(v_item -> 'row'), -1), 'speaker_id', (v_r ->> 'speaker_id')::bigint,
+                                             'created', (v_r ->> 'created')::boolean);
+    end loop;
+    -- the log: counts and the label — never a name, a phone or a note
+    perform app.log_event(v_ed.id, 'import', v_ed.id, p_kind, jsonb_build_object(
+      'rows', cardinality(v_res), 'created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts,
+      'lessons', v_lessons, 'replaced', v_replaced) || case when v_source is not null then jsonb_build_object('source', v_source) else '{}' end);
+    return jsonb_build_object('created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts,
+                              'lessons', v_lessons, 'replaced', v_replaced, 'edition_id', v_ed.id, 'speakers', v_rows);
+  end
+  $$;
+
+-- What the preview needs from the pool beyond the names: which speaker has one
+-- of these phones (by key), and which contact fields of these speakers (and of
+-- those the phones found) are filled — true/false, never a value. A global admin.
+create or replace function public.import_lookup(p_speakers bigint[], p_phone_keys text[]) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    perform app.require_global_admin();
+    if coalesce(cardinality(p_speakers), 0) > 5000 or coalesce(cardinality(p_phone_keys), 0) > 5000 then perform app.refuse('import_too_big'); end if;
+    return (
+      with phones as (
+        select distinct k.key, c.speaker_id
+          from unnest(coalesce(p_phone_keys, '{}'::text[])) as k(key)
+          join public.speaker_contacts c on app.phone_key(c.phone) = k.key
+      )
+      select jsonb_build_object(
+        'phones', coalesce((select jsonb_agg(jsonb_build_object('key', key, 'speaker_id', speaker_id) order by key, speaker_id) from phones), '[]'::jsonb),
+        'contacts', coalesce((
+          select jsonb_agg(jsonb_build_object('speaker_id', s.id, 'phone', c.phone is not null, 'email', c.email is not null,
+                                              'secretary_note', c.secretary_note is not null, 'notes', c.notes is not null) order by s.id)
+            from public.speakers s left join public.speaker_contacts c on c.speaker_id = s.id
+           where s.id = any (coalesce(p_speakers, '{}'::bigint[])) or s.id in (select speaker_id from phones)), '[]'::jsonb)));
+  end
+  $$;
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -4831,6 +5306,12 @@ grant execute on function public.update_memorial_plan(bigint, integer, jsonb) to
 grant execute on function public.place_memorial_plan(bigint, integer, bigint) to authenticated;
 grant execute on function public.delete_memorial_plan(bigint) to authenticated;
 grant execute on function public.set_memorial_policy(bigint, text, integer, boolean) to authenticated;
+
+-- Import 5786 (v12): a global admin's two functions (each checks it) — the lookup (which pool speaker has a
+-- phone, which contact fields are filled: booleans) and the commit. Every helper (app.phone_key,
+-- app.import_speaker, …) stays in app, out of the browser's reach; no new table, nothing new in Realtime.
+grant execute on function public.import_lookup(bigint[], text[]) to authenticated;
+grant execute on function public.import_commit(text, jsonb) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
