@@ -137,10 +137,19 @@ describe("offlineDecision: who may see the snapshot", () => {
     expect(decide({ deviceUserId: null, whoami: null })).toBe("drop");
   });
 
-  it("another schema version — the snapshot's or the cached whoami's: deleted", () => {
+  it("an older schema version — the snapshot's or the cached whoami's: deleted", () => {
     expect(decide({ expectedVersion: 11 })).toBe("drop");
     expect(decide({ snapshot: snap({ schemaVersion: 9 }) })).toBe("drop");
     expect(decide({ whoami: who({ me: me({ schema_version: 9 }) }) })).toBe("drop");
+  });
+
+  it("a newer schema version (saved by the next build; this is the old shell, offline): kept, not shown", () => {
+    expect(decide({ expectedVersion: 9 })).toBe("none");
+    expect(decide({ snapshot: snap({ schemaVersion: 11 }) })).toBe("none");
+    expect(decide({ whoami: who({ me: me({ schema_version: 11 }) }) })).toBe("none");
+    // still never kept for another user, or nobody
+    expect(decide({ expectedVersion: 9, deviceUserId: null })).toBe("drop");
+    expect(decide({ expectedVersion: 9, deviceUserId: "00000000-0000-4000-8000-0000000000bb" })).toBe("drop");
   });
 
   it("an edition the member no longer belongs to (by the cached whoami): deleted", () => {

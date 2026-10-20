@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { Plugin } from "vite";
-import { CACHE_PREFIX, FONT_CACHE, FONT_ORIGINS, OFFLINE_SHELL_ENABLED, SHELL_CACHE_PREFIX, SKIP_WAITING } from "./config";
+import { CACHE_PREFIX, FONT_CACHE, FONT_ORIGINS, NAVIGATE_TIMEOUT_MS, OFFLINE_SHELL_ENABLED, SHELL_CACHE_PREFIX, SKIP_WAITING } from "./config";
 import { killWorkerScript, type ShellConfig, shellWorkerScript, workerSourceText } from "./sw";
 
 /** The public files kept beside the build's own: the icon and the manifest (privacy.html stays a plain page). */
@@ -74,6 +74,7 @@ export function workerScriptFor(files: readonly BuiltFile[], opts: { enabled: bo
     precache,
     supabaseOrigin: supabaseOriginOf(opts.supabaseUrl),
     skipWaiting: SKIP_WAITING,
+    navigateTimeoutMs: NAVIGATE_TIMEOUT_MS,
   };
   return { script: shellWorkerScript(config), config };
 }

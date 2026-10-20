@@ -8,6 +8,12 @@
 // worker looks like to a browser that has this one (tests/e2e/offline.spec.ts);
 // `e2e-sw=kill` gets the kill switch's worker (src/offline/sw.ts). Cookies are per
 // context, so tests running side by side never see each other's worker.
+// No connection, for real: context.setOffline does not reach a service worker's
+// own fetches in this Chromium (they still get an answer), so a context carrying
+// `e2e-net=down` has every connection dropped here — the worker's network-first
+// navigation fails as it would with no network, and its cached shell is what the
+// tests see. `e2e-net=hang` takes every request and never answers it: a network
+// that accepts requests and stays silent (tests/e2e/offline.spec.ts).
 import { execFileSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -43,9 +49,18 @@ function build(outDir: string, env: Record<string, string>) {
   });
 }
 
+/** What a context's network is: as usual, gone (`down`), or taking requests and never answering (`hang`). */
+export function netFor(cookie: string | undefined): "up" | "down" | "hang" {
+  const v = /(?:^|;\s*)e2e-net=(down|hang)(?:;|$)/.exec(cookie ?? "")?.[1];
+  return v === "down" || v === "hang" ? v : "up";
+}
+
 // A static server with the SPA fallback Cloudflare Pages applies.
 function serve(root: string): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
+    const net = netFor(req.headers.cookie);
+    if (net === "down") return void req.socket.destroy();
+    if (net === "hang") return void setTimeout(() => req.socket.destroy(), 60_000).unref(); // silent; let go in the end
     const path = normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
     let file = join(root, path);
     if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) file = join(root, "index.html");
@@ -75,7 +90,9 @@ export default async function globalSetup() {
   process.env.E2E_DEMO_URL = demo.url;
   process.env.E2E_MOCK_URL = mock.url;
   return async () => {
-    demo.server.close();
-    mock.server.close();
+    for (const s of [demo.server, mock.server]) {
+      s.closeAllConnections(); // a request a test left hanging
+      s.close();
+    }
   };
 }

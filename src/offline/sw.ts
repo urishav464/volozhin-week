@@ -8,10 +8,13 @@
 //   - anything sent to the Supabase project (REST, RPC, Auth, Storage, Realtime), anything carrying Authorization or
 //     apikey, anything but GET, and every other origin: NOT touched — no respondWith, the browser sends it as if there
 //     were no worker, and nothing of it is ever cached;
-//   - a navigation: the network first; without one, the cached index.html (the app then shows the day from its own
-//     snapshot, src/offline/snapshot.ts). The network's answer is never cached: the cached index.html is always the one
-//     whose chunks this worker precached;
-//   - the build's own files (/assets/…, the precache list): the cache first;
+//   - a navigation: the network first, for a few seconds (cfg.navigateTimeoutMs); without one — or with one that takes
+//     the request and never answers — the cached index.html (the app then shows the day from its own snapshot,
+//     src/offline/snapshot.ts). The network's answer is never cached: the cached index.html is always the one whose
+//     chunks this worker precached;
+//   - the build's own files (/assets/…, the precache list): the cache first; only this build's files are ever kept —
+//     an old build's chunk name is answered by Cloudflare Pages' SPA fallback with index.html (200, text/html), and
+//     kept, that HTML would answer the chunk even after a rollback brought the file back;
 //   - Google Fonts (public, no personal data): stale-while-revalidate, in a cache of their own.
 
 /** What the build hands the worker. */
@@ -28,6 +31,8 @@ export interface ShellConfig {
   supabaseOrigin: string | null;
   /** The message that lets a waiting worker take over (the update banner's «רענון»). */
   skipWaiting: string;
+  /** A navigation waits this long for the network before the cached shell answers. */
+  navigateTimeoutMs: number;
 }
 
 export type Route = "pass" | "navigate" | "asset" | "font";
@@ -70,6 +75,7 @@ export interface WorkerScope {
     delete(name: string): Promise<boolean>;
   };
   fetch(req: Request | string): Promise<Response>;
+  setTimeout(fn: () => void, ms: number): unknown;
   clients: { claim(): Promise<void> };
   registration: { unregister(): Promise<boolean> };
   skipWaiting(): Promise<void>;
@@ -79,7 +85,6 @@ export interface WorkerScope {
 export interface CacheLike {
   match(req: Request | string, options?: { ignoreVary?: boolean }): Promise<Response | undefined>;
   put(req: Request | string, res: Response): Promise<void>;
-  addAll(reqs: Request[]): Promise<void>;
 }
 
 export interface ExtendableEventLike {
@@ -99,8 +104,21 @@ export function shellWorker(self: WorkerScope, cfg: ShellConfig, route: typeof r
   const abs = (path: string) => new URL(path, self.location.origin).href;
 
   self.addEventListener("install", (event: ExtendableEventLike) => {
-    // `reload`: past the HTTP cache, so the copies are this build's. No skipWaiting here: an update waits.
-    event.waitUntil(open().then((cache) => cache.addAll(cfg.precache.map((p) => new Request(abs(p), { cache: "reload" })))));
+    // `reload`: past the HTTP cache, so the copies are this build's. No skipWaiting here: an update waits. A file
+    // answered with HTML (the SPA fallback: a deploy landed mid-install and the file is gone) fails the install — it is
+    // tried again at the next update — rather than keeping a page under a script's name.
+    event.waitUntil(
+      open().then((cache) =>
+        Promise.all(
+          cfg.precache.map(async (p) => {
+            const req = new Request(abs(p), { cache: "reload" });
+            const res = await self.fetch(req);
+            if (!res.ok || (p !== "/" && (res.headers.get("content-type") || "").indexOf("text/html") === 0)) throw new TypeError(`precache: ${p}`);
+            await cache.put(req, res);
+          }),
+        ),
+      ),
+    );
   });
 
   self.addEventListener("activate", (event: ExtendableEventLike) => {
@@ -127,11 +145,23 @@ export function shellWorker(self: WorkerScope, cfg: ShellConfig, route: typeof r
   });
 
   async function navigate(req: Request): Promise<Response> {
+    const shell = async () => (await open()).match(abs("/"));
+    const network = self.fetch(req);
+    // a network that takes the request and never answers must not hold the page: after a few seconds, the cached shell
+    // (the late answer is dropped — never cached); with no cached shell, the network's answer whenever it comes
+    const late = new Promise<null>((resolve) => self.setTimeout(() => resolve(null), cfg.navigateTimeoutMs));
     try {
-      return await self.fetch(req);
+      const first = await Promise.race([network, late]);
+      if (first) return first;
+      const cached = await shell();
+      if (cached) {
+        network.catch(() => undefined);
+        return cached;
+      }
+      return await network;
     } catch (e) {
-      const shell = await (await open()).match(abs("/"));
-      if (shell) return shell;
+      const cached = await shell();
+      if (cached) return cached;
       throw e;
     }
   }
@@ -141,8 +171,9 @@ export function shellWorker(self: WorkerScope, cfg: ShellConfig, route: typeof r
     const hit = await cache.match(req, { ignoreVary: true });
     if (hit) return hit;
     const res = await self.fetch(req);
-    // a hashed file never changes: one missing from the precache list is kept too (this build's cache)
-    if (res.ok && res.type === "basic") await cache.put(req, res.clone()).catch(() => undefined);
+    // only this build's own files are kept (the precache list names every file the build emitted): another build's
+    // chunk is answered by the SPA fallback with index.html, and is passed on — never kept under the chunk's name
+    if (res.ok && res.type === "basic" && cfg.precache.indexOf(new URL(req.url).pathname) >= 0) await cache.put(req, res.clone()).catch(() => undefined);
     return res;
   }
 

@@ -134,13 +134,15 @@ export type OfflineDecision =
   | { kind: "show"; snapshot: WeekSnapshot; me: Me }
   /** Nothing to show (yet); keep what is stored. */
   | { kind: "none" }
-  /** What is stored belongs to nobody signed in here, to another user, or to another schema: delete it. */
+  /** What is stored belongs to nobody signed in here, to another user, or to an older schema: delete it. */
   | { kind: "drop" };
 
 /**
  * May this device show its snapshot? Only with a Supabase session stored on the device, of the very user both the
  * snapshot and the cached whoami were saved for, saved by a build of this schema version, for an edition that member
- * belongs to.
+ * belongs to. A copy from a NEWER schema is kept, not shown: a page that already ran the next build (a reload after
+ * a deploy, the old worker still in charge) saved it, and offline the old worker serves its own older shell. That
+ * shell cannot read it, but must not destroy it — «רענון» (the waiting worker) brings the build that shows it.
  */
 export function offlineDecision(input: {
   deviceUserId: string | null;
@@ -152,6 +154,7 @@ export function offlineDecision(input: {
   if (!s && !w) return { kind: "none" };
   if (uid == null) return { kind: "drop" };
   if ((s && s.userId !== uid) || (w && w.userId !== uid)) return { kind: "drop" };
+  if ((s && s.schemaVersion > expectedVersion) || (w && w.me.schema_version > expectedVersion)) return { kind: "none" };
   if ((s && s.schemaVersion !== expectedVersion) || (w && w.me.schema_version !== expectedVersion)) return { kind: "drop" };
   if (!s || !w) return { kind: "none" };
   const member = w.me.global_admin || w.me.memberships.some((m) => m.edition_id == null || m.edition_id === s.editionId);

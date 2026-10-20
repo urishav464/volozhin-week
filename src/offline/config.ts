@@ -19,3 +19,9 @@ export const FONT_CACHE = `${CACHE_PREFIX}fonts`;
 export const FONT_ORIGINS = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"];
 /** The message the update banner's «רענון» sends the waiting worker. */
 export const SKIP_WAITING = "skip-waiting";
+/**
+ * How long a navigation waits for the network before the worker answers with the cached shell (a network that takes
+ * the request and never answers: crowded Wi-Fi, one bar, a captive portal). A technical choice, not a policy: the app's
+ * own 8 seconds (SLOW_FIRST_CHECK_MS) then decide between the live week and the device's copy.
+ */
+export const NAVIGATE_TIMEOUT_MS = 3500;

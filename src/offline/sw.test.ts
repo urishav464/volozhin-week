@@ -16,24 +16,33 @@ const cfg: ShellConfig = {
   precache: ["/", "/assets/index-AAAA.js", "/assets/index-BBBB.css", "/assets/worker-CCCC.js", "/favicon.svg", "/manifest.webmanifest"],
   supabaseOrigin: SUPABASE,
   skipWaiting: "skip-waiting",
+  navigateTimeoutMs: 3500,
 };
 
 /** A request as the worker sees it. */
 const req = (url: string, o: { method?: string; mode?: string; headers?: Record<string, string> } = {}): RequestLike & Request =>
   ({ url: new URL(url, ORIGIN).href, method: o.method ?? "GET", mode: o.mode ?? "cors", headers: new Headers(o.headers ?? {}) }) as never;
 
-/** A response the worker can read: ok, type, clone. */
+/** A response the worker can read: ok, type, its Content-Type, clone. */
 interface FakeResponse {
   body: string;
   ok: boolean;
   type: string;
+  headers: { get(name: string): string | null };
   clone(): FakeResponse;
 }
-const res = (body: string, type = "basic", ok = true): FakeResponse => ({ body, ok, type, clone: () => res(body, type, ok) });
+const res = (body: string, type = "basic", ok = true, contentType = "text/javascript"): FakeResponse => ({
+  body,
+  ok,
+  type,
+  headers: { get: (n: string) => (n.toLowerCase() === "content-type" ? contentType : null) },
+  clone: () => res(body, type, ok, contentType),
+});
+/** What the static server sends for a path: a page is HTML, a script is JavaScript. */
+const typeOf = (u: string) => (/\.js$/.test(new URL(u).pathname) ? "text/javascript" : /\.(css|svg|webmanifest)$/.test(new URL(u).pathname) ? "text/css" : "text/html; charset=utf-8");
 
 class FakeCache {
   readonly map = new Map<string, FakeResponse>();
-  constructor(private readonly net: (r: Request | string) => Promise<FakeResponse>) {}
   private key(r: Request | string) {
     return new URL(typeof r === "string" ? r : r.url, ORIGIN).href;
   }
@@ -43,30 +52,31 @@ class FakeCache {
   async put(r: Request | string, v: FakeResponse) {
     this.map.set(this.key(r), v);
   }
-  async addAll(rs: Request[]) {
-    for (const r of rs) this.map.set(this.key(r), await this.net(r));
-  }
 }
 
 function scope() {
   const listeners = new Map<string, (e: never) => void>();
   const caches = new Map<string, FakeCache>();
   const online = { on: true };
+  /** Paths the server no longer has: Cloudflare Pages' SPA fallback answers them with index.html, 200. */
+  const gone = new Set<string>();
   const fetched: (Request | string)[] = [];
   const net = vi.fn(async (r: Request | string) => {
     fetched.push(r);
     if (!online.on) throw new TypeError("Failed to fetch");
     const u = typeof r === "string" ? r : r.url;
-    return res(`network:${u}`, u.startsWith(ORIGIN) ? "basic" : "cors");
+    if (gone.has(new URL(u).pathname)) return res(`network:${ORIGIN}/`, "basic", true, "text/html; charset=utf-8");
+    return res(`network:${u}`, u.startsWith(ORIGIN) ? "basic" : "cors", true, typeOf(u));
   });
   const self = {
     location: { origin: ORIGIN },
     caches: {
-      open: async (name: string) => caches.get(name) ?? caches.set(name, new FakeCache(net)).get(name)!,
+      open: async (name: string) => caches.get(name) ?? caches.set(name, new FakeCache()).get(name)!,
       keys: async () => [...caches.keys()],
       delete: async (name: string) => caches.delete(name),
     },
     fetch: net,
+    setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
     clients: { claim: vi.fn(async () => undefined) },
     registration: { unregister: vi.fn(async () => true) },
     skipWaiting: vi.fn(async () => undefined),
@@ -87,7 +97,7 @@ function scope() {
     await Promise.all(waits);
     return out;
   };
-  return { self: self as unknown as WorkerScope & typeof self, listeners, caches, online, fetched, net, extendable, fetchEvent };
+  return { self: self as unknown as WorkerScope & typeof self, listeners, caches, online, gone, fetched, net, extendable, fetchEvent };
 }
 
 describe("routeFor: what the worker answers, and what it never touches", () => {
@@ -187,6 +197,49 @@ describe("shellWorker", () => {
     expect((await s.fetchEvent(page))?.body).toBe(`network:${ORIGIN}/`); // the copy install made of "/"
   });
 
+  it("a navigation on a network that takes it and never answers: the cached shell after cfg.navigateTimeoutMs, never before", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = scope();
+      shellWorker(s.self, cfg, routeFor);
+      await s.extendable("install");
+      s.net.mockImplementationOnce(() => new Promise(() => undefined)); // held for ever
+      const out: { r?: FakeResponse } = {};
+      const got = (): FakeResponse | undefined => out.r;
+      void s.fetchEvent(req(`${ORIGIN}/kk`, { mode: "navigate" })).then((r) => (out.r = r));
+      await vi.advanceTimersByTimeAsync(cfg.navigateTimeoutMs - 1);
+      expect(out.r).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(out.r?.body).toBe(`network:${ORIGIN}/`); // the copy install made of "/"
+      // a slow network that answers in time still wins, and is not kept
+      s.net.mockImplementationOnce((r) => new Promise((ok) => setTimeout(() => ok(res(`network:${(r as Request).url}`, "basic", true, "text/html")), 1000)));
+      delete out.r;
+      void s.fetchEvent(req(`${ORIGIN}/kk`, { mode: "navigate" })).then((r) => (out.r = r));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(got()?.body).toBe(`network:${ORIGIN}/kk`);
+      expect(s.caches.get(cfg.cache)!.map.has(`${ORIGIN}/kk`)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with no cached shell, a navigation waits for the network's answer however late", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = scope();
+      shellWorker(s.self, cfg, routeFor);
+      s.net.mockImplementationOnce((r) => new Promise((ok) => setTimeout(() => ok(res(`network:${(r as Request).url}`, "basic", true, "text/html")), 10_000)));
+      const out: { r?: FakeResponse } = {};
+      void s.fetchEvent(req(`${ORIGIN}/`, { mode: "navigate" })).then((r) => (out.r = r));
+      await vi.advanceTimersByTimeAsync(cfg.navigateTimeoutMs);
+      expect(out.r).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(out.r?.body).toBe(`network:${ORIGIN}/`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a navigation without a network and without a cached shell fails as the network did", async () => {
     const s = scope();
     shellWorker(s.self, cfg, routeFor);
@@ -194,7 +247,7 @@ describe("shellWorker", () => {
     await expect(s.fetchEvent(req(`${ORIGIN}/`, { mode: "navigate" }))).rejects.toThrow("Failed to fetch");
   });
 
-  it("the build's files: the cache first; one not cached yet is fetched and kept", async () => {
+  it("the build's files: the cache first; one of this build not cached (yet, or any more) is fetched and kept", async () => {
     const s = scope();
     shellWorker(s.self, cfg, routeFor);
     await s.extendable("install");
@@ -203,8 +256,32 @@ describe("shellWorker", () => {
     expect((await s.fetchEvent(req(`${ORIGIN}/assets/index-AAAA.js`)))?.body).toBe(`network:${ORIGIN}/assets/index-AAAA.js`);
     expect(s.net.mock.calls.length).toBe(calls);
     s.online.on = true;
-    await s.fetchEvent(req(`${ORIGIN}/assets/lazy-DDDD.js`));
-    expect(s.caches.get(cfg.cache)!.map.has(`${ORIGIN}/assets/lazy-DDDD.js`)).toBe(true);
+    s.caches.get(cfg.cache)!.map.delete(`${ORIGIN}/assets/index-BBBB.css`);
+    await s.fetchEvent(req(`${ORIGIN}/assets/index-BBBB.css`));
+    expect(s.caches.get(cfg.cache)!.map.has(`${ORIGIN}/assets/index-BBBB.css`)).toBe(true);
+  });
+
+  it("another build's file (a tab left on the old version, a rollback) is passed on — never kept, not even its SPA fallback's HTML", async () => {
+    const s = scope();
+    shellWorker(s.self, cfg, routeFor);
+    await s.extendable("install");
+    // the old chunk is gone from the server: the SPA fallback answers index.html — handed over, never cached
+    s.gone.add("/assets/OldScreen-EEEE.js");
+    const html = await s.fetchEvent(req(`${ORIGIN}/assets/OldScreen-EEEE.js`));
+    expect(html?.headers.get("content-type")).toContain("text/html");
+    expect(s.caches.get(cfg.cache)!.map.has(`${ORIGIN}/assets/OldScreen-EEEE.js`)).toBe(false);
+    // the rollback brings the file back: the network's real file answers, nothing stored stands in its way
+    s.gone.clear();
+    expect((await s.fetchEvent(req(`${ORIGIN}/assets/OldScreen-EEEE.js`)))?.body).toBe(`network:${ORIGIN}/assets/OldScreen-EEEE.js`);
+    expect(s.caches.get(cfg.cache)!.map.has(`${ORIGIN}/assets/OldScreen-EEEE.js`)).toBe(false);
+  });
+
+  it("install fails rather than keep a page under a file's name (a deploy landing mid-install)", async () => {
+    const s = scope();
+    shellWorker(s.self, cfg, routeFor);
+    s.gone.add("/assets/index-AAAA.js");
+    await expect(s.extendable("install")).rejects.toThrow("precache: /assets/index-AAAA.js");
+    for (const c of s.caches.values()) expect(c.map.get(`${ORIGIN}/assets/index-AAAA.js`)).toBeUndefined();
   });
 
   it("Google Fonts: stale-while-revalidate in their own cache; a failed refresh keeps the copy", async () => {

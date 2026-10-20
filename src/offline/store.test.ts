@@ -57,13 +57,23 @@ describe("OfflineCopy", () => {
     expect(kv.data.get("whoami")).toMatchObject({ userId: B });
   });
 
-  it("a build of another schema version: not shown, and deleted", async () => {
+  it("a build of a newer schema version: the old copy is not shown, and deleted", async () => {
     const { kv, copy } = setup();
     await copy.saveWeek(1, emptyWeek());
     await copy.saveWhoami(me);
     const next = new OfflineCopy(kv, () => A, 11);
     expect(await next.decide()).toEqual({ kind: "drop" });
     expect(kv.data.size).toBe(0);
+  });
+
+  it("an older build (the old worker's shell, offline) finding the next build's copy: not shown, and kept for it", async () => {
+    const { kv, copy } = setup();
+    await copy.saveWeek(1, emptyWeek());
+    await copy.saveWhoami(me);
+    const old = new OfflineCopy(kv, () => A, 9);
+    expect(await old.decide()).toEqual({ kind: "none" });
+    expect([...kv.data.keys()].sort()).toEqual(["week", "whoami"]);
+    expect(await copy.decide()).toMatchObject({ kind: "show" }); // «רענון» brings the build that reads it
   });
 
   it("a week with a personal key anywhere is not saved", async () => {

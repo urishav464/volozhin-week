@@ -10,6 +10,7 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { ScheduleView } from "../../src/data/publicPort";
+import { fmtRange, LRM } from "../../src/domain/time";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { OFFLINE_DB, OFFLINE_STORE } from "../../src/offline/store";
 import { MOCK_URL } from "./global-setup";
@@ -68,6 +69,22 @@ async function signedIn(context: BrowserContext, page: Page) {
     [SESSION_KEY, JSON.stringify(mine), JSON.stringify(other), JSON.stringify(expired)] as const,
   );
   return { sb, week, offline };
+}
+
+/**
+ * No connection — for the page AND its service worker. context.setOffline alone does not reach the worker's own
+ * fetches in this Chromium (they are still answered), so the test server also drops every connection of this context
+ * (the cookie `e2e-net=down`, tests/e2e/global-setup.ts): the worker's navigation really fails, and the cached shell
+ * is what opens. Cookies ignore the port: the one cookie covers both builds' servers.
+ */
+async function noConnection(context: BrowserContext, on: boolean) {
+  if (on) {
+    await context.addCookies([{ name: "e2e-net", value: "down", url: process.env.E2E_MOCK_URL! }]);
+    await context.setOffline(true);
+  } else {
+    await context.clearCookies({ name: "e2e-net" });
+    await context.setOffline(false);
+  }
 }
 
 /** The worker is active, and the snapshot of edition 7 is on the device. */
@@ -139,6 +156,22 @@ test.describe("mock build", () => {
         expect(u).not.toMatch(/supabase|\/rest\/v1\/|\/auth\/v1\/|\/storage\/v1\//);
       }
     }
+
+    // another build's file (a tab left on the old version): the SPA fallback answers its name with index.html —
+    // passed on, never kept under that name (kept, it would answer the chunk with HTML even after a rollback)
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    expect(await page.evaluate(async () => (await fetch("/assets/OldScreen-0ld0ld00.js")).headers.get("content-type"))).toContain("text/html");
+    const htmlUnderAssets = await page.evaluate(async () => {
+      const out: string[] = [];
+      for (const name of await caches.keys()) {
+        const c = await caches.open(name);
+        for (const r of await c.keys()) {
+          if (new URL(r.url).pathname.startsWith("/assets/") && ((await c.match(r))?.headers.get("content-type") ?? "").includes("text/html")) out.push(r.url);
+        }
+      }
+      return out;
+    });
+    expect(htmlUnderAssets).toEqual([]);
   });
 
   test("loaded once online, the week opens offline from the snapshot: the day view, read-only, with the banner — and live again when the connection returns", async ({ context, page }, info) => {
@@ -155,7 +188,7 @@ test.describe("mock build", () => {
     expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
 
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.reload();
     await expect(offlineBanner(page)).toBeVisible();
     await expect(offlineBanner(page)).toContainText(/מוצג המצב מיום \S+ \d{1,2}\.\d{1,2} בשעה \d{2}:\d{2}/);
@@ -189,7 +222,7 @@ test.describe("mock build", () => {
     await page.evaluate(() => ((window as unknown as { stay: number }).stay = 1));
     const whoamis = sb.count("/rest/v1/rpc/whoami");
     offline.on = false;
-    await context.setOffline(false);
+    await noConnection(context, false);
     await expect(lens(page)).toBeVisible({ timeout: 10_000 });
     await expect(offlineBanner(page)).toHaveCount(0);
     expect(sb.count("/rest/v1/rpc/whoami")).toBeGreaterThan(whoamis);
@@ -213,21 +246,26 @@ test.describe("mock build", () => {
     expect(saved.fallen).toEqual(week.fallen);
 
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.goto(`${mockUrl()}/memorial`);
     await expect(offlineBanner(page)).toBeVisible();
     await expect(offlineBanner(page)).toContainText("«זמני זיכרון» צריך חיבור לאינטרנט");
     await expect(page.locator("[data-memorial-plan]")).toHaveCount(0);
     await page.getByRole("tab", { name: "ראשון" }).click();
     const card = page.locator(`[data-memorial-card="${placed.id}"]`);
-    await expect(card).toContainText(`זמן זיכרון – ${name}`);
-    // the day view shows every slot of the row, each its own yellow card
+    await expect(card.locator("[data-memorial-name]")).toHaveText(name); // the name first; the title stays its accessible name
+    await expect(card).toHaveAttribute("aria-label", new RegExp(`^זמן זיכרון – ${name}, `));
+    // the day view shows every slot of the row, each its own yellow card — with its own time and room, told apart
     await expect(page.locator("[data-memorial-card]").filter({ visible: true })).toHaveCount(2);
     await expect(page.locator(`[data-lesson-id="${second.id}"]`)).toContainText("עוד לא שובץ/ה חלל/ה");
+    const roomOf = (id: number) => week.rooms.find((r) => r.id === id)!.name;
+    await expect(card.locator("[data-memorial-where]")).toHaveText(`${fmtRange(slot.start_min, slot.end_min)} · ${roomOf(slot.room_id)}`);
+    await expect(page.locator(`[data-lesson-id="${second.id}"] [data-memorial-where]`)).toHaveText(`${fmtRange(slot.start_min, slot.end_min)} · ${roomOf(second.room_id)}`);
     await card.click();
     const sheet = page.getByRole("dialog");
     await expect(sheet).toContainText("לצפייה בלבד");
     await expect(sheet).toContainText(`זמן זיכרון – ${name}`);
+    await expect(sheet).toContainText(`ראשון · ${LRM}${fmtRange(slot.start_min, slot.end_min)}`); // the range left to right after the Hebrew day
     await expect(sheet).toContainText("המשפחה אישרה");
     await expect(sheet).toContainText("בלי חריגה");
     await expect(sheet).toContainText(liaison);
@@ -245,7 +283,7 @@ test.describe("mock build", () => {
     await page.goto(`${mockUrl()}/memorial`);
     await expect(offlineBanner(page)).toBeVisible();
     offline.on = false;
-    await context.setOffline(false);
+    await noConnection(context, false);
     await expect(page.locator("[data-memorial-plan]").first()).toBeVisible({ timeout: 10_000 });
     await expect(offlineBanner(page)).toHaveCount(0);
   });
@@ -256,7 +294,7 @@ test.describe("mock build", () => {
     await page.goto(mockUrl());
     await readyOffline(page);
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
 
     await page.evaluate(() => sessionStorage.setItem("e2e-session", "expired"));
     await page.reload();
@@ -272,7 +310,7 @@ test.describe("mock build", () => {
     // a schema of another version: saved again online by this user, then stamped with another version
     await page.evaluate(() => sessionStorage.setItem("e2e-session", "mine"));
     offline.on = false;
-    await context.setOffline(false);
+    await noConnection(context, false);
     await page.reload();
     await readyOffline(page);
     await page.evaluate(
@@ -293,7 +331,7 @@ test.describe("mock build", () => {
       [OFFLINE_DB, OFFLINE_STORE] as const,
     );
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.reload();
     await expect(page.getByRole("heading", { name: "אין חיבור לאינטרנט" })).toBeVisible();
     expect((await stored(page)).count).toBe(0);
@@ -331,7 +369,7 @@ test.describe("mock build", () => {
     void sb;
   });
 
-  test("a network that takes requests and never answers: the snapshot after a few seconds — and the late answer still decides", async ({ context, page }, info) => {
+  test("a network that takes requests and never answers — the page itself too: the shell after a few seconds, the snapshot after a few more — and the late answer still decides", async ({ context, page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough");
     await signedIn(context, page);
     await page.goto(mockUrl());
@@ -342,12 +380,18 @@ test.describe("mock build", () => {
       await held;
       await route.fallback();
     });
-    await page.reload();
+    // the site's own server takes the page's request and stays silent (global-setup.ts): the worker's navigation waits
+    // a few seconds for it (NAVIGATE_TIMEOUT_MS), then answers with the cached shell — else nothing would ever show
+    await context.addCookies([{ name: "e2e-net", value: "hang", url: mockUrl() }]);
+    const started = Date.now();
+    await page.reload({ timeout: 15_000 });
+    expect(Date.now() - started).toBeLessThan(10_000);
     await expect(page.getByText("טוען…")).toBeVisible();
-    await expect(offlineBanner(page)).toBeVisible({ timeout: 12_000 });
+    await expect(offlineBanner(page)).toBeVisible({ timeout: 15_000 });
     answer();
     await expect(lens(page)).toBeVisible();
     await expect(offlineBanner(page)).toHaveCount(0);
+    await context.clearCookies({ name: "e2e-net" });
   });
 
   test("sign-out empties IndexedDB — online, and offline from the day view", async ({ context, page }, info) => {
@@ -364,7 +408,7 @@ test.describe("mock build", () => {
     await page.reload();
     await readyOffline(page);
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.evaluate(() => sessionStorage.setItem("e2e-session", "expired"));
     await page.reload();
     await expect(offlineBanner(page)).toBeVisible();
@@ -463,7 +507,7 @@ test.describe("mock build", () => {
     await readyOffline(page);
 
     offline.on = true;
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.goto("about:blank");
     await page.goto(`${mockUrl()}/s#${TOKEN}`);
     const alert = page.getByRole("alert");
@@ -477,7 +521,7 @@ test.describe("mock build", () => {
     expect(everything).not.toContain(TOKEN);
 
     offline.on = false;
-    await context.setOffline(false);
+    await noConnection(context, false);
     await expect(page.locator("[data-schedule-row]")).toHaveCount(1);
     void info;
   });
@@ -488,7 +532,7 @@ test.describe("demo build", () => {
     await page.goto(demoUrl());
     await expect(lens(page)).toBeVisible();
     await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.ready).active?.state), { timeout: 15_000 }).toBe("activated");
-    await context.setOffline(true);
+    await noConnection(context, true);
     await page.reload();
     await expect(page.getByRole("status").first()).toContainText("מצב הדגמה");
     await expect(lens(page)).toBeVisible(); // the demo needs no server: the week as always
