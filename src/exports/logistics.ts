@@ -282,11 +282,12 @@ export function pagesText(r: Pick<PrintRow, "files" | "pages" | "uncounted">): s
   return r.pages > 0 ? `${counted} · ${rest}` : rest;
 }
 
+/** The prints' file (the A4 print, the CSV, the xlsx): «אין קבצים» said once, in the files' column — the pages' cell empty. */
 export function printTable(rows: PrintRow[], editionLabel: string): Table {
   return {
     name: `הדפסות ${editionLabel}`,
     headers: ["מתי", "יום ושעה", "מרצה – כותרת", "קבצים", "עמודים"],
     widths: [16, 20, 36, 40, 18],
-    rows: rows.map((r) => [PRINT_WHEN_LABEL[r.when], whenCell(r), r.heading, r.files.length ? r.files.map((f) => f.display_name).join("; ") : "אין קבצים", pagesText(r)]),
+    rows: rows.map((r) => [PRINT_WHEN_LABEL[r.when], whenCell(r), r.heading, r.files.length ? r.files.map((f) => f.display_name).join("; ") : "אין קבצים", r.files.length ? pagesText(r) : ""]),
   };
 }

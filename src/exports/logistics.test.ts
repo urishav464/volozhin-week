@@ -139,7 +139,9 @@ describe("the prints", () => {
       ["same_day", [[1, 1]]],
     ]);
     const t = printTable(rows, "הדגמה");
-    expect(t.rows[0]).toEqual(["להדפיס מראש", `ראשון ${LRM}08:30–09:45`, "אלמוני/ת לדוגמה – שיעור ג", "אין קבצים", "אין קבצים"]);
+    // «אין קבצים» once: the files' column says it, the pages' cell stays empty (the print, the CSV and the xlsx alike)
+    expect(t.rows[0]).toEqual(["להדפיס מראש", `ראשון ${LRM}08:30–09:45`, "אלמוני/ת לדוגמה – שיעור ג", "אין קבצים", ""]);
+    expect(t.rows.every((r) => r.filter((c) => c === "אין קבצים").length <= 1)).toBe(true);
     expect(JSON.stringify(t)).not.toMatch(/עותקים/); // no copy count nobody entered
   });
 });

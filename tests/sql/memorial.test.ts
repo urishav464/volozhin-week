@@ -11,9 +11,9 @@
 // the memorial policy, and get_transports_for against get_transport_details.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type pg from "pg";
+import pg from "pg";
 import { assertWeekOnly, WEEK_KEYS } from "../../src/offline/snapshot";
-import { SCHEMA, dropDatabase, freshDatabase, google, sqlstate, type Claims } from "./db";
+import { SCHEMA, adminUrl, dropDatabase, freshDatabase, google, sqlstate, type Claims } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
 const ED_ADMIN = "edition.admin@example.org";
@@ -451,7 +451,14 @@ describe("memorial times and the logistics screen's transports", () => {
         expect(view.lessons[0]).toMatchObject({ speaker: null, phone: null, transport: false, driver: null, self_intro: false, start_min: 780, end_min: 795 });
         const text = JSON.stringify(view);
         for (const secret of ["חלל/ה לבדיקה", "דובר/ת סודי/ת", "חומרים לבדיקה", FAMILY_PHONE, FAMILY_EMAIL, FAMILY_NAME, "family_status", "fallen"]) expect(text, secret).not.toContain(secret);
-        expect(await code(run("anon", "select public.escort_tick($1, $2, 'reminded', true)", [token, slot.sun]))).toBe("ok");
+        // a speaker's four ticks are not a liaison's: on their own memorial slot, the same answer as an item that does not
+        // exist — nothing stored, and nothing the page does not already show (the slot is on it)
+        expect(await code(run("anon", "select public.escort_tick($1, $2, 'reminded', true)", [token, slot.sun]))).toBe("bad_value");
+        expect(await code(run("anon", "select public.escort_tick($1, $2, 'reminded', false)", [token, slot.sun]))).toBe("bad_value");
+        expect(await code(run("anon", "select public.escort_tick($1, $2, 'hug', true)", [token, slot.sun]))).toBe("bad_value");
+        expect(Number(await val(run, "owner", "select count(*) from public.escort_ticks where lesson_id = $1", [slot.sun]))).toBe(0);
+        // a memorial slot that is not this link's: the one refusal of every bad link, before anything else
+        expect(await code(run("anon", "select public.escort_tick($1, $2, 'reminded', true)", [token, slot.mon]))).toBe("link_invalid");
         // off its slot, the plan's liaison has nothing there any more
         await run(ED_ADMIN, "select public.place_memorial_plan($1, (select version from public.memorial_plans where id = $1), null)", [plan.f1]);
         expect(((await val(run, "anon", "select public.escort_view($1)", [token])) as { lessons: unknown[] }).lessons).toEqual([]);
@@ -551,6 +558,73 @@ describe("memorial times and the logistics screen's transports", () => {
           }
         });
       }
+    });
+  });
+
+  describe("two connections at once", () => {
+    /** Two browsers: each its own connection to this database, in a transaction, as a Google member. */
+    async function two(): Promise<[pg.Client, pg.Client]> {
+      const url = new URL(adminUrl());
+      url.pathname = `/${dbName}`;
+      const cs: [pg.Client, pg.Client] = [new pg.Client({ connectionString: url.toString() }), new pg.Client({ connectionString: url.toString() })];
+      for (const c of cs) await c.connect();
+      return cs;
+    }
+    async function begin(c: pg.Client, email: string) {
+      await c.query("begin");
+      await c.query("set local role authenticated");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(claims(email))]);
+    }
+    /** The first connection's command, then the second's (which waits on it), then the first commits: the second's answer. */
+    async function race(first: [string, string, unknown[]], second: [string, string, unknown[]], secondCommits = false): Promise<string> {
+      const [c1, c2] = await two();
+      try {
+        await begin(c1, first[0]);
+        await begin(c2, second[0]);
+        await c1.query(first[1], first[2]);
+        const got = code(c2.query(second[1], second[2]));
+        await new Promise((r) => setTimeout(r, 200)); // the second is waiting on the fallen's row
+        await c1.query("commit");
+        const answer = await got;
+        await c2.query(answer === "ok" && secondCommits ? "commit" : "rollback");
+        return answer;
+      } finally {
+        await c1.end();
+        await c2.end();
+      }
+    }
+    const plans = async (f: number) => Number(await owner("select count(*) from public.memorial_plans where fallen_id = $1", [f]));
+
+    it("add_memorial_plan against delete_fallen: a refusal code, never PostgreSQL's foreign-key error", async () => {
+      const f = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ א', null, null, true)"));
+      const got = await race([ADMIN, "select public.delete_fallen($1)", [f]], [ED_ADMIN, "select public.add_memorial_plan($1, $2)", [ed, f]]);
+      expect(got).toBe("bad_value");
+      expect(await plans(f)).toBe(0);
+      // the other way round: the plan first, and the delete sees it
+      const g = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ב', null, null, true)"));
+      const [c1, c2] = await two();
+      try {
+        await begin(c1, ED_ADMIN);
+        await begin(c2, ADMIN);
+        await c1.query("select public.add_memorial_plan($1, $2)", [ed, g]);
+        const del = code(c2.query("select public.delete_fallen($1)", [g]));
+        await new Promise((r) => setTimeout(r, 200));
+        await c1.query("commit");
+        expect(await del).toBe("in_use");
+        await c2.query("rollback");
+      } finally {
+        await c1.end();
+        await c2.end();
+      }
+      expect(await plans(g)).toBe(1);
+    });
+
+    it("add_memorial_plan against a deactivation: never a plan for an inactive fallen", async () => {
+      const f = Number(await commitAs(ADMIN, "select public.save_fallen(null, 'חלל/ה למירוץ ג', null, null, true)"));
+      const got = await race([ADMIN, "select public.save_fallen($1, 'חלל/ה למירוץ ג', null, null, false)", [f]], [ED_ADMIN, "select public.add_memorial_plan($1, $2)", [ed, f]], true);
+      expect(got).toBe("bad_value");
+      expect(await owner("select active from public.fallen where id = $1", [f])).toBe(false);
+      expect(await plans(f)).toBe(0);
     });
   });
 });

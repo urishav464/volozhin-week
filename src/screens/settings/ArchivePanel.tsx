@@ -84,7 +84,7 @@ export function ArchivePanel({ data, editions }: { data: DataPort; editions: Edi
           טבלת המעקב. כדאי לייצא אחרי הייבוא, באמצע העונה ובסוף השנה.
         </p>
         <p className="rounded-lg bg-accent-soft px-3 py-2">
-          <b>הארכיון כולל מידע אישי:</b> פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף ונהגים) ואנשי הקשר של משפחות החללים, בקובץ נפרד בשם
+          <b>הארכיון כולל מידע אישי:</b> פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף ונהגים) ואנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות), בקובץ נפרד בשם
           <span dir="ltr" className="my-1 block break-all text-start font-mono text-xs">
             {PERSONAL_FILE}
           </span>

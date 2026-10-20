@@ -863,8 +863,10 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", escort: [0, 780], trainee: "חניכה לדוגמה", selfIntro: false, note: "הערה למלווה" },
     { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "liaison" },
     { anon: "escortView", token: "liaison" }, // the slot as the page shows any: never the fallen or the plan
-    { anon: "escortTick", token: "liaison", at: [0, 780], item: "reminded", on: true },
-    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [1, 855] }, // the liaison moves with it; the ticks start over
+    { anon: "escortTick", token: "liaison", at: [0, 780], item: "reminded", on: true }, // a memorial slot has no speaker's ticks: bad_value
+    { anon: "escortTick", token: "liaison", at: [0, 780], item: "reminded", on: false },
+    { anon: "escortTick", token: "liaison", at: [0, 780], item: "hug", on: true }, // the same answer as an item that does not exist
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [1, 855] }, // the liaison moves with it
     { anon: "escortView", token: "liaison" },
     // the materials: a slot with a plan
     { as: "A", store: [1, 855], file: "memorialpage" },

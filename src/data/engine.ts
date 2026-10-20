@@ -1235,11 +1235,11 @@ export class Engine {
     });
   }
 
-  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons. */
+  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons — never a memorial slot (no ticks there: bad_value, as an unknown item). */
   escortTick(token: unknown, lessonId: number, item: TickItem, on: boolean): EscortTicks {
     return this.tx(() => {
       const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
-      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean") fail("bad_value");
+      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean" || l.kind === "memorial") fail("bad_value");
       const has = this.week.escortTicks.some((t) => t.lesson_id === l.id && t.item === item);
       if (on && !has) this.week.escortTicks.push({ lesson_id: l.id, item, at: this.now() });
       if (!on) this.week.escortTicks = this.week.escortTicks.filter((t) => !(t.lesson_id === l.id && t.item === item));

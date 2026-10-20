@@ -420,6 +420,7 @@ test.describe("mock build", () => {
     sb.tables.set("speaker_contacts", [{ speaker_id: 1, phone: "טלפון לדוגמה", email: null, secretary_note: null, notes: null }]);
     sb.tables.set("transport_details", []);
     sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
+    sb.answers.set("get_fallen_contacts", null); // asked for the fallen this edition planned for (the demo's: 1, 2, 3) — none stored
     await nav(page).getByRole("link", { name: "הגדרות" }).click();
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());
@@ -429,7 +430,8 @@ test.describe("mock build", () => {
     const contacts = sb.calls.find((c) => c.path === "/rest/v1/speaker_contacts")!;
     expect(contacts.query.get("speaker_id")).toMatch(/^in\.\(/);
 
-    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen"]) {
+    expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 1 }, { p_fallen: 2 }, { p_fallen: 3 }]);
+    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen", "/rest/v1/rpc/get_fallen_contacts"]) {
       authed(sb, p, session.access_token);
     }
   });

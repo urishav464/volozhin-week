@@ -19,7 +19,8 @@
 //   PERSONAL-DATA_contacts_and_transport.json — only when the caller's RLS
 //                    showed any (a global admin): the speakers' contacts, the
 //                    lessons' transport details and the families' contact persons
-//                    of the fallen (admins only — so only here), apart, named so
+//                    of the fallen this edition has a plan for — never another
+//                    year's family (admins only — so only here), apart, named so
 //                    nobody mistakes it.
 import { strToU8, zipSync } from "fflate";
 import type { KkData } from "../data/kk";
@@ -43,13 +44,22 @@ export interface ArchiveMore {
   kk: KkData | null;
   /** The fallen the caller reads — an admin: the whole cross-year list. */
   fallen: Fallen[];
-  /** The families' contact persons the caller may see (admins only, one fallen at a time) — personal data. */
+  /** The families' contact persons the caller may see, of the fallen this edition has a plan for (plannedFallen) — personal data. */
   fallenContacts: (FallenContacts & { fallen_id: number })[];
   /** «כולל קבצי המקורות»: the files' bytes by id, and those that could not be read. null: not asked for. */
   sources: { bytes: ReadonlyMap<number, Uint8Array>; skipped: { id: number; name: string }[] } | null;
 }
 
 export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null };
+
+/**
+ * The fallen this edition has a plan for (placed or in the tray), in id order: the only families whose contact person
+ * an edition's archive holds — as its speakers' contacts are only the speakers it touched. The cross-year list of the
+ * fallen goes in memorial.json as names, never a contact.
+ */
+export function plannedFallen(week: Pick<Week, "memorialPlans">): number[] {
+  return [...new Set((week.memorialPlans ?? []).map((p) => p.fallen_id))].sort((a, b) => a - b);
+}
 
 export interface ArchiveInput {
   week: Week;
@@ -108,14 +118,14 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     "- edition.json: המחזור, ההגדרות, שורות הרשת, החדרים, הקטגוריות, שמות הצוות (בלי מיילים), שמות החניכים, השיעורים, הפניות, ההצעות, הזמינות, הסימונים של המלווים, יומן הפעולות, הערות הידע, אבני הדרך והייצואים למעצבת.",
     "- speakers.json: המרצים שהמחזור נגע בהם (בלי פרטי קשר).",
     more.kk ? "- kk.json: מכריכה לכריכה — המשבצות, הקבוצות והספרים, המובילים, ההרשמות (עם שמות החניכים) והזמנות הספרים." : "- מכריכה לכריכה לא נקרא בייצוא הזה.",
-    "- memorial.json: תוכניות זמני הזיכרון של המחזור ורשימת החללים (בלי פרטי קשר).",
+    "- memorial.json: תוכניות זמני הזיכרון של המחזור ורשימת החללים של כל השנים (בלי פרטי קשר).",
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
     more.sources
       ? `- sources/: קבצי המקורות עצמם, בתיקייה לכל יום.${skipped.length ? ` ${skipped.length} קבצים לא נקראו ולא נכללו: ${skipped.map((x) => x.name).join(", ")}.` : ""}`
       : "- קבצי המקורות עצמם לא נכללו (אפשר לבחור «כולל קבצי המקורות»).",
     "- tracking.xlsx: טבלת המעקב (בלי טלפונים).",
     personal
-      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים) ואנשי הקשר של משפחות החללים.`
+      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים) ואנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות).`
       : "- אין בקובץ הזה פרטי קשר או פרטי הסעה: מי שייצא/ה לא רשאי/ת לראות אותם.",
     "",
     personal
@@ -204,7 +214,8 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   }
   const contacts = extras.contacts.filter((c) => c.phone || c.email || c.secretary_note || c.notes);
   const transport = extras.transport.filter((t) => t.pickup_address || t.pickup_time || t.driver_name || t.driver_phone || t.arranged);
-  const families = more.fallenContacts.filter((c) => c.contact_name || c.relation || c.phone || c.email || c.note);
+  const planned = new Set(plannedFallen(week));
+  const families = more.fallenContacts.filter((c) => planned.has(c.fallen_id) && (c.contact_name || c.relation || c.phone || c.email || c.note));
   const personal = contacts.length > 0 || transport.length > 0 || families.length > 0;
   if (personal) {
     const name = new Map(week.speakers.map((s) => [s.id, displayName(s)]));

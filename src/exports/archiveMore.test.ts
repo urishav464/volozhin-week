@@ -10,7 +10,7 @@ import { demoWeek } from "../data/demoWeek";
 import type { KkData } from "../data/kk";
 import type { ArchiveExtras } from "../data/outputs";
 import type { SourceFile, Week } from "../domain/types";
-import { type ArchiveMore, archiveFiles, archiveZip, PERSONAL_FILE, safeEntryName, sourcePath, sourcesSize, touchedSpeakers } from "./archive";
+import { type ArchiveMore, archiveFiles, archiveZip, PERSONAL_FILE, plannedFallen, safeEntryName, sourcePath, sourcesSize, touchedSpeakers } from "./archive";
 import { fetchSources, gatherArchive } from "./archiveGather";
 
 const extras: ArchiveExtras = { activity: [], contacts: [], transport: [], notes: [], milestones: [], snapshots: [] };
@@ -66,7 +66,28 @@ describe("the archive's 5ב-2 files", () => {
       expect(strFromU8(files[k]), k).not.toMatch(/טלפון לדוגמה|family1@example\.org|איש\/אשת קשר לדוגמה/);
     }
     expect(json(PERSONAL_FILE).family_contacts).toEqual([{ fallen: "חלל/ה לדוגמה 1", ...more.fallenContacts[0] }]);
-    expect(strFromU8(files["README.txt"])).toContain("אנשי הקשר של משפחות החללים");
+    expect(strFromU8(files["README.txt"])).toContain("אנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות)");
+  });
+
+  it("hold the families' contacts of the fallen THIS edition planned for only — another year's family never, though its name is in the cross-year list", () => {
+    const w = demoWeek(); // plans for fallen 1, 2 and 3
+    expect(plannedFallen(w)).toEqual([1, 2, 3]);
+    const more: ArchiveMore = {
+      kk: null,
+      fallen: [1, 2, 9].map((id) => ({ id, name: `חלל/ה לדוגמה ${id}`, gender: null, note: null, active: true })),
+      fallenContacts: [
+        { fallen_id: 1, contact_name: "קשר אחד לדוגמה", relation: null, phone: null, email: null, note: null },
+        { fallen_id: 9, contact_name: "קשר תשע לדוגמה", relation: "קרבה לדוגמה", phone: "טלפון תשע לדוגמה", email: null, note: null }, // no plan here
+      ],
+      sources: null,
+    };
+    const files = archiveFiles({ week: w, extras, more, schemaVersion: 11, exportedAt: AT });
+    expect(JSON.parse(strFromU8(files[PERSONAL_FILE])).family_contacts.map((c: { fallen_id: number }) => c.fallen_id)).toEqual([1]);
+    for (const k of Object.keys(files).filter((x) => x !== "tracking.xlsx")) expect(strFromU8(files[k]), k).not.toMatch(/קשר תשע לדוגמה|טלפון תשע לדוגמה/);
+    expect(JSON.parse(strFromU8(files["memorial.json"])).fallen.map((f: { id: number }) => f.id)).toEqual([1, 2, 9]); // the names stay
+    // only another year's family: no personal-data file at all
+    const none = archiveFiles({ week: w, extras, more: { ...more, fallenContacts: [more.fallenContacts[1]] }, schemaVersion: 11, exportedAt: AT });
+    expect(none[PERSONAL_FILE]).toBeUndefined();
   });
 
   it("make a personal-data file for a family's contact alone, and none for an empty one", () => {
@@ -113,6 +134,21 @@ describe("reading the archive through the port", () => {
     expect(more.fallen.map((f) => f.name)).toEqual(Array.from({ length: 9 }, (_, i) => `חלל/ה לדוגמה ${i + 1}`));
     expect(more.fallenContacts).toEqual([expect.objectContaining({ fallen_id: 1, phone: "טלפון לדוגמה" })]);
     expect(more.sources).toBeNull();
+  });
+
+  it("asks for the families' contacts of the fallen this edition planned for only — a fallen with a contact and no plan here is never read", async () => {
+    const port = new DemoPort();
+    // fallen 9 has no plan in the demo edition (its plans: fallen 1, 2 and 3) — another year's family
+    await port.memorial.setContacts(9, { contact_name: "קשר תשע לדוגמה", relation: "קרבה לדוגמה", phone: null, email: "family9@example.org", note: null });
+    const asked: number[] = [];
+    const contacts = port.memorial.contacts.bind(port.memorial);
+    port.memorial.contacts = async (id: number) => (asked.push(id), contacts(id));
+    const { week, extras, more } = await gatherArchive(port, 1, touchedSpeakers);
+    expect(asked).toEqual([1, 2, 3]);
+    expect(more.fallenContacts.map((c) => c.fallen_id)).toEqual([1]);
+    expect(more.fallen.map((f) => f.id)).toContain(9); // the name stays in the cross-year list
+    const files = archiveFiles({ week, extras, more, schemaVersion: 11, exportedAt: AT });
+    expect(JSON.parse(strFromU8(files[PERSONAL_FILE])).family_contacts.map((c: { fallen_id: number }) => c.fallen_id)).toEqual([1]);
   });
 
   it("fetches each file through a signed URL, names one that could not be read, and stops when cancelled", async () => {

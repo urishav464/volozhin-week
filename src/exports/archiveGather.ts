@@ -1,13 +1,15 @@
 // What the archive reads before it zips (src/exports/archive.ts), through the
 // port: the week, the outputs' extras, מכריכה לכריכה, the fallen the caller
-// reads and — one fallen at a time, admins only — their families' contact
-// persons; and, when «כולל קבצי המקורות» is asked for, the sources' bytes
+// reads (names only — an admin: the whole cross-year list) and — one fallen at a
+// time, admins only — the families' contact persons of the fallen THIS edition
+// has a plan for, never another year's (as the speakers' contacts are only the
+// speakers the edition touched); and, when «כולל קבצי המקורות» is asked for, the sources' bytes
 // through signed URLs a batch at a time (a file that cannot be read is skipped
 // and named, never silently left out). A cancel stops between files.
 import type { DataPort } from "../data/port";
 import type { Week } from "../domain/types";
 import type { ArchiveExtras } from "../data/outputs";
-import type { ArchiveMore } from "./archive";
+import { type ArchiveMore, plannedFallen } from "./archive";
 
 export async function gatherArchive(port: DataPort, editionId: number, touchedSpeakers: (w: Week) => number[]): Promise<{ week: Week; extras: ArchiveExtras; more: ArchiveMore }> {
   const week = await port.loadWeek(editionId);
@@ -15,12 +17,13 @@ export async function gatherArchive(port: DataPort, editionId: number, touchedSp
   const kk = await port.kk.load(editionId);
   const fallen = await port.memorial.fallen();
   const fallenContacts: ArchiveMore["fallenContacts"] = [];
-  for (const f of fallen) {
-    const c = await port.memorial.contacts(f.id); // null: not the caller's to see
-    if (c && Object.values(c).some((v) => v != null)) fallenContacts.push({ fallen_id: f.id, ...c });
+  for (const id of plannedFallen(week)) {
+    const c = await port.memorial.contacts(id); // null: not the caller's to see
+    if (c && Object.values(c).some((v) => v != null)) fallenContacts.push({ fallen_id: id, ...c });
   }
   return { week, extras, more: { kk, fallen, fallenContacts, sources: null } };
 }
+
 
 export interface SourcesProgress {
   done: number;

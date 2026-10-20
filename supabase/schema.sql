@@ -3355,7 +3355,10 @@ create or replace function public.escort_view(p_token text) returns jsonb
   $$;
 
 -- One of the four ticks on one of the escort's lessons, on (its first time
--- kept) or off. Answers the lesson's four ticks.
+-- kept) or off. Answers the lesson's four ticks. They are a speaker's escort's
+-- (הזכרתי למרצה, פגשתי בחניה, …): a memorial slot — the liaison's own, on the
+-- page already — has none to tick, and answers as an item that does not exist
+-- (`bad_value`), after the link's one refusal: no answer the page does not give.
 create or replace function public.escort_tick(p_token text, p_lesson bigint, p_item text, p_on boolean) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -3363,7 +3366,9 @@ create or replace function public.escort_tick(p_token text, p_lesson bigint, p_i
     v   public.share_links := app.link_for(p_token, 'escort');
     v_l public.lessons := app.escort_lesson(v, p_lesson);
   begin
-    if p_item is null or p_item not in ('reminded', 'met', 'introduced', 'gift') or p_on is null then perform app.refuse('bad_value'); end if;
+    if p_item is null or p_item not in ('reminded', 'met', 'introduced', 'gift') or p_on is null or v_l.kind = 'memorial' then
+      perform app.refuse('bad_value');
+    end if;
     if p_on then
       insert into public.escort_ticks (lesson_id, item) values (v_l.id, p_item) on conflict do nothing;
     else
@@ -4462,13 +4467,19 @@ create or replace function public.remove_memorial_slot(p_lesson bigint) returns 
 
 -- A plan for one of the active fallen (`bad_value`), one per fallen per edition
 -- (`duplicate`). Adding and deleting one is logged (who, the fallen's id).
+-- The fallen's row is locked (FOR SHARE) before the check: a delete_fallen or a
+-- deactivation (save_fallen) on another connection either finishes first — and
+-- the check sees no active row: `bad_value`, never a raw foreign-key error or a
+-- plan for an inactive fallen — or waits for this plan, and then sees it
+-- (`in_use` / a deactivation of a planned fallen, as anywhere).
 create or replace function public.add_memorial_plan(p_edition bigint, p_fallen bigint) returns bigint
   language plpgsql security definer set search_path = ''
   as $$
   declare v_id bigint;
   begin
     perform app.require_edition_admin(p_edition);
-    if not exists (select 1 from public.fallen where id = p_fallen and active) then perform app.refuse('bad_value'); end if;
+    perform 1 from public.fallen where id = p_fallen and active for share;
+    if not found then perform app.refuse('bad_value'); end if;
     insert into public.memorial_plans (edition_id, fallen_id, updated_by) values (p_edition, p_fallen, app.my_member_id(p_edition))
     on conflict (edition_id, fallen_id) do nothing
     returning id into v_id;
