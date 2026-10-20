@@ -42,13 +42,34 @@ const who = (patch: Partial<WhoamiSnapshot> = {}): WhoamiSnapshot => ({ userId: 
 describe("only the Week is kept", () => {
   it("by type: the Week has no contact or transport key, and a snapshot is the Week and four fields", () => {
     expect([noPersonalKeyInWeek, snapshotHoldsAWeek, snapshotFields]).toEqual([true, true, true]);
-    expect(PERSONAL_KEYS).toEqual(expect.arrayContaining(["phone", "email", "pickup_address", "driver_phone", "driver_name"]));
+    expect(PERSONAL_KEYS).toEqual(expect.arrayContaining(["phone", "email", "pickup_address", "driver_phone", "driver_name", "contact_name", "relation"]));
   });
 
   it("the demo's whole week passes the runtime check, and keeps every key", () => {
     const w = demoWeek();
     expect(assertWeekOnly(w)).toBe(w);
     expect(Object.keys(w).sort()).toEqual([...WEEK_KEYS].sort());
+  });
+
+  it("the memorial times (v11) are kept as the team reads them: the plans and the fallen's names, never a family's contact", () => {
+    const w = demoWeek();
+    expect(w.memorialPlans.some((p) => p.lesson_id != null)).toBe(true);
+    const back = readWeekSnapshot(JSON.parse(JSON.stringify(makeWeekSnapshot(UID, 1, w, new Date("2027-02-14T08:00:00Z"), 10))));
+    expect(back?.week.memorialPlans).toEqual(w.memorialPlans);
+    expect(back?.week.fallen).toEqual(w.fallen);
+    expect(Object.keys(back!.week.fallen[0]).sort()).toEqual(["gender", "id", "name"]);
+    // a family's contact person, wherever it would turn up, is never written to the device
+    const family: [string, (w: Week) => void][] = [
+      ["contact_name", (w) => w.fallen.push({ id: 9, name: "א", gender: null, contact_name: "x" } as never)],
+      ["relation", (w) => w.memorialPlans.push({ ...demoWeek().memorialPlans[0], id: 9, relation: "x" } as never)],
+      ["phone", (w) => w.memorialPlans.push({ ...demoWeek().memorialPlans[0], id: 9, contacts: { phone: "x" } } as never)],
+      ["email", (w) => w.fallen.push({ id: 9, name: "א", gender: null, email: "x" } as never)],
+    ];
+    for (const [key, add] of family) {
+      const x = demoWeek();
+      add(x);
+      expect(() => assertWeekOnly(x), key).toThrow(new RegExp(`personal data at .*${key}`));
+    }
   });
 
   it("refuses a key that is not the Week's, a key missing, and a personal key anywhere inside", () => {

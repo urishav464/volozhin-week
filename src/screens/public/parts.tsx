@@ -115,7 +115,7 @@ export function LinkMissing() {
 /**
  * The read failed. Without a connection it says so plainly: a link's page is never kept on the device — its code
  * stays in memory only, and the escort's page shows a speaker's phone from W−7 — so it opens with a connection
- * alone (docs/DECISIONS.md «אבן דרך 5ב-2: בלי רשת»). When the connection returns it tries again by itself.
+ * alone (docs/DECISIONS.md «אבן דרך 5ב-2, חלק ב: בלי רשת»). When the connection returns it tries again by itself.
  */
 export function LoadFailed({ onRetry }: { onRetry: () => void }) {
   const online = useOnline();

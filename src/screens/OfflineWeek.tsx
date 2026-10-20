@@ -1,7 +1,12 @@
 // The week without internet: the day view drawn from the device's snapshot (src/offline/snapshot.ts), read-only, on
 // every width — no command, no proposal, no panel that writes; a card opens a sheet to read. The banner says it is
-// a copy, and from when. The app (App.tsx) leaves this screen by itself when the connection returns.
+// a copy, and from when. The app (App.tsx) leaves this screen by itself when the connection returns. A memorial slot
+// opens its plan as the team reads it (the fallen, the family's status, who speaks, the minutes, the liaison) — never
+// a family's contact, which no snapshot holds. Any other section asked for («זמני זיכרון», «לוגיסטיקה», …) reads the
+// server one list at a time: the banner says it needs a connection, and the week is shown meanwhile.
 import { useMemo, useState } from "react";
+import { FAMILY_STATUS_LABEL } from "../data/memorial";
+import { memorialCard, minutesText } from "../domain/memorial";
 import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
@@ -10,20 +15,26 @@ import { buildModel, type GridModel, pitchSpeaker } from "../grid/model";
 import { Sheet } from "../grid/Panels";
 import { useMedia } from "../lib/useMedia";
 import type { WeekSnapshot } from "../offline/snapshot";
-import { savedAtText, todayColumn } from "../offline/view";
+import { savedAtText, sectionNeedingConnection, todayColumn } from "../offline/view";
 
-export function OfflineWeek({ snapshot }: { snapshot: WeekSnapshot }) {
+export function OfflineWeek({ snapshot, path = "/" }: { snapshot: WeekSnapshot; path?: string }) {
   const wide = useMedia("(min-width: 1024px)");
   const model = useMemo(() => buildModel(snapshot.week), [snapshot]);
   const [day, setDay] = useState<Day>(() => todayColumn(snapshot.week.edition.start_date, new Date().toISOString()) ?? 0);
   const [open, setOpen] = useState<number | null>(null);
   const lesson = open != null ? model.week.lessons.find((l) => l.id === open) : undefined;
+  const elsewhere = sectionNeedingConnection(path);
 
   return (
     <div className="mx-auto max-w-3xl space-y-2">
       <div role="status" data-offline-banner className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
         <p className="font-semibold">אין חיבור לאינטרנט — מוצג המצב מ{savedAtText(snapshot.savedAt)}</p>
         <p>לצפייה בלבד: אי אפשר לשנות דבר עד שהחיבור חוזר. כשהוא חוזר, המסך מתעדכן לבד.</p>
+        {elsewhere && (
+          <p data-offline-elsewhere className="mt-1 font-semibold">
+            «{elsewhere}» צריך חיבור לאינטרנט. בינתיים מוצגת תצוגת היום מהעותק.
+          </p>
+        )}
       </div>
       <h2 className="font-display text-lg font-semibold">{model.week.edition.label}</h2>
       <DayView model={model} lens="diversity" day={day} onDay={setDay} placing={null} onCell={() => undefined} onLesson={setOpen} readOnly />
@@ -43,12 +54,25 @@ function LessonFacts({ model, lesson, wide, onClose }: { model: GridModel; lesso
     .filter((s) => s != null);
   const escort = lesson.escort_roster_id != null ? model.week.roster.find((r) => r.id === lesson.escort_roster_id)?.full_name : undefined;
   const pitches = model.pitchesByLesson.get(lesson.id) ?? [];
-  const title =
-    lesson.kind === "memorial" ? lesson.title || "זמן זיכרון" : lesson.state === "closed" ? (speakers[0] ? displayName(speakers[0]) : "שיעור") : "טיוטה";
+  const memorial = lesson.kind === "memorial" ? memorialCard(model.week, lesson) : null;
+  const title = memorial ? memorial.title : lesson.state === "closed" ? (speakers[0] ? displayName(speakers[0]) : "שיעור") : "טיוטה";
   const rows: [string, string][] = [
     ["יום ושעה", `${DAY_NAMES[lesson.day]} · ${fmtRange(lesson.start_min, lesson.end_min)}`],
     ["חדר", room ?? "TBD"],
   ];
+  if (memorial) {
+    // the plan as load_week gives it to the team (src/screens/memorial/SlotPanel.tsx's words) — never a family's contact
+    const plan = memorial.plan;
+    if (plan) {
+      rows.push(["המשפחה", FAMILY_STATUS_LABEL[plan.family_status]]);
+      rows.push(["מדבר/ת", plan.speaker_text ?? "TBD"]);
+      rows.push(["דקות", `${minutesText(plan.planned_minutes)}${plan.hard_stop ? " · בלי חריגה" : ""}`]);
+      rows.push(["קשר עם המשפחה", lesson.escort_roster_id != null ? (escort ?? "חניך/ה שנמחק/ה") : "עוד לא נקבע/ה"]);
+      if (plan.materials_note) rows.push(["למקראה", plan.materials_note]);
+    } else {
+      rows.push(["תוכנית", "עוד לא שובץ/ה כאן חלל/ה"]);
+    }
+  }
   if (lesson.kind === "lesson") {
     if (lesson.state === "closed") {
       rows.push(["כותרת", lesson.title ?? "TBD"]);
@@ -68,7 +92,7 @@ function LessonFacts({ model, lesson, wide, onClose }: { model: GridModel; lesso
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
             <dt className="font-semibold text-ink-soft">{k}</dt>
-            <dd>{k === "יום ושעה" ? <bdi>{v}</bdi> : v}</dd>
+            <dd className="min-w-0 break-words">{k === "יום ושעה" ? <bdi>{v}</bdi> : v}</dd>
           </div>
         ))}
       </dl>

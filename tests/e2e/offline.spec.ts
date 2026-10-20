@@ -4,7 +4,9 @@
 // returns. The caches hold the shell and nothing sent to Supabase; sign-out empties IndexedDB; another user's session
 // or another schema never sees the snapshot; an expired token offline is not a sign-out. A changed /sw.js waits behind
 // «גרסה חדשה של האתר זמינה» and takes over only on «רענון»; the kill switch's worker clears the caches and leaves.
-// A link's page offline says plainly that it needs a connection, and keeps its token off the device. Synthetic data.
+// A link's page offline says plainly that it needs a connection, and keeps its token off the device. The memorial
+// times (5ב-2's other half) travel in the snapshot as the team reads them — the yellow card and its plan, never a
+// family's contact — and «זמני זיכרון» or «לוגיסטיקה» asked for offline say they need a connection. Synthetic data.
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { ScheduleView } from "../../src/data/publicPort";
@@ -127,6 +129,9 @@ test.describe("mock build", () => {
     expect(shell[0].urls).toContain(`${mockUrl()}/`);
     expect(shell[0].urls.some((u) => /\/assets\/index-[^/]+\.js$/.test(u))).toBe(true);
     expect(shell[0].urls.some((u) => /\/assets\/worker-[^/]+\.js$/.test(u))).toBe(true); // the reader's worker, a lazy file
+    // 5ב-2's lazy screens are in the shell too: «זמני זיכרון» and «לוגיסטיקה»
+    expect(shell[0].urls.some((u) => /\/assets\/MemorialScreen-[^/]+\.js$/.test(u))).toBe(true);
+    expect(shell[0].urls.some((u) => /\/assets\/LogisticsScreen-[^/]+\.js$/.test(u))).toBe(true);
     for (const c of all) {
       expect(c.name.startsWith("volozhin-")).toBe(true);
       for (const u of c.urls) {
@@ -145,9 +150,9 @@ test.describe("mock build", () => {
     expect(saved.week!.userId).toBe(fakeSession().user.id);
     // only the Week is kept: its own keys, and no contact or transport detail anywhere in it
     expect(Object.keys(saved.week!.week).sort()).toEqual(
-      ["approaches", "availability", "categories", "edition", "escortTicks", "lessonSpeakers", "lessons", "pitches", "roster", "rooms", "rows", "sourceFiles", "speakers", "team"].sort(),
+      ["approaches", "availability", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "sourceFiles", "speakers", "team"].sort(),
     );
-    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|driver_phone|driver_name|secretary_note)"/);
+    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
 
     offline.on = true;
     await context.setOffline(true);
@@ -189,6 +194,60 @@ test.describe("mock build", () => {
     await expect(offlineBanner(page)).toHaveCount(0);
     expect(sb.count("/rest/v1/rpc/whoami")).toBeGreaterThan(whoamis);
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1);
+  });
+
+  test("memorial times offline: the yellow card and its plan from the snapshot, never a family's contact — «זמני זיכרון» and «לוגיסטיקה» say they need a connection", async ({ context, page }) => {
+    const { week, offline } = await signedIn(context, page);
+    const placed = week.memorialPlans.find((p) => p.lesson_id != null)!;
+    const name = week.fallen.find((f) => f.id === placed.fallen_id)!.name;
+    const slot = week.lessons.find((l) => l.id === placed.lesson_id)!;
+    const liaison = week.roster.find((r) => r.id === slot.escort_roster_id)!.full_name;
+    // a second slot in the same memorial row, in another room and with no plan yet (5ב-2: any part of the row, any room)
+    const second = { ...slot, id: Math.max(...week.lessons.map((l) => l.id)) + 1, room_id: week.rooms.find((r) => r.id !== slot.room_id)!.id, escort_roster_id: null, version: 1 };
+    week.lessons.push(second);
+    await page.goto(mockUrl());
+    await expect(lens(page)).toBeVisible();
+    await readyOffline(page);
+    const saved = (await stored(page)).week!.week;
+    expect(saved.memorialPlans).toEqual(week.memorialPlans);
+    expect(saved.fallen).toEqual(week.fallen);
+
+    offline.on = true;
+    await context.setOffline(true);
+    await page.goto(`${mockUrl()}/memorial`);
+    await expect(offlineBanner(page)).toBeVisible();
+    await expect(offlineBanner(page)).toContainText("«זמני זיכרון» צריך חיבור לאינטרנט");
+    await expect(page.locator("[data-memorial-plan]")).toHaveCount(0);
+    await page.getByRole("tab", { name: "ראשון" }).click();
+    const card = page.locator(`[data-memorial-card="${placed.id}"]`);
+    await expect(card).toContainText(`זמן זיכרון – ${name}`);
+    // the day view shows every slot of the row, each its own yellow card
+    await expect(page.locator("[data-memorial-card]").filter({ visible: true })).toHaveCount(2);
+    await expect(page.locator(`[data-lesson-id="${second.id}"]`)).toContainText("עוד לא שובץ/ה חלל/ה");
+    await card.click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet).toContainText("לצפייה בלבד");
+    await expect(sheet).toContainText(`זמן זיכרון – ${name}`);
+    await expect(sheet).toContainText("המשפחה אישרה");
+    await expect(sheet).toContainText("בלי חריגה");
+    await expect(sheet).toContainText(liaison);
+    await expect(sheet.getByRole("button")).toHaveCount(1);
+    await noSidewaysScroll(page);
+    await sheet.getByRole("button", { name: "סגירה" }).click();
+
+    await page.goto(`${mockUrl()}/logistics/transports`);
+    await expect(offlineBanner(page)).toContainText("«לוגיסטיקה» צריך חיבור לאינטרנט");
+    await page.goto(`${mockUrl()}/`);
+    await expect(offlineBanner(page)).toBeVisible();
+    await expect(page.locator("[data-offline-elsewhere]")).toHaveCount(0);
+
+    // back online on «זמני זיכרון»: the screen itself, by itself
+    await page.goto(`${mockUrl()}/memorial`);
+    await expect(offlineBanner(page)).toBeVisible();
+    offline.on = false;
+    await context.setOffline(false);
+    await expect(page.locator("[data-memorial-plan]").first()).toBeVisible({ timeout: 10_000 });
+    await expect(offlineBanner(page)).toHaveCount(0);
   });
 
   test("an expired token offline is not a sign-out: the snapshot shows; another user's session, or another schema, never sees it — and it is deleted", async ({ context, page }, info) => {

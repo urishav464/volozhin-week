@@ -3,8 +3,10 @@
 // {userId, editionId, savedAt, schemaVersion, week}, and with it the last whoami answer of that user. Started without
 // a connection, it shows the day view from the snapshot, read-only — only to the user it was saved for (the Supabase
 // session stored on the device), never across a schema version. Only the Week is kept: it holds no contact details
-// and no transport details (speaker_contacts and transport_details are fetched one at a time, never in a Week), which
-// the type below and the runtime check of the keys both hold.
+// and no transport details (speaker_contacts, transport_details and a bereaved family's fallen_contacts are fetched
+// one at a time, never in a Week), which the type below and the runtime check of the keys both hold. The memorial
+// times (v11) are in it as the team reads them: the plans and the names of the fallen — never a family's contact.
+import type { FallenContacts } from "../data/memorial";
 import type { Me } from "../data/types";
 import type { SpeakerContacts, TransportDetails, Week } from "../domain/types";
 
@@ -41,13 +43,21 @@ export const WEEK_KEYS = [
   "roster",
   "escortTicks",
   "sourceFiles",
+  // v11: the memorial plans (status, who speaks, minutes, the reader's note) and the fallen's names — looked at for
+  // personal data when the two halves of 5ב-2 met: neither carries a family's contact (fallen_contacts, one at a time)
+  "memorialPlans",
+  "fallen",
 ] as const satisfies readonly (keyof Week)[];
 type Unlisted = Exclude<keyof Week, (typeof WEEK_KEYS)[number]>;
 const everyKeyListed: [Unlisted] extends [never] ? true : Unlisted = true;
 void everyKeyListed;
 
-/** Keys that are personal data wherever they turn up: a speaker's contacts, a transport's details, an address. */
-export type PersonalKey = keyof SpeakerContacts | keyof TransportDetails | "address";
+/**
+ * Keys that are personal data wherever they turn up: a speaker's contacts, a transport's details, a bereaved family's
+ * contact person, an address. A family contact's `note` is the one key left out: availability's own `note` (a chip's
+ * «לא בבקרים») shares its name — the family's note never travels without its `contact_name` and `relation`.
+ */
+export type PersonalKey = keyof SpeakerContacts | keyof TransportDetails | Exclude<keyof FallenContacts, "note"> | "address";
 export const PERSONAL_KEYS = [
   "phone",
   "email",
@@ -58,6 +68,8 @@ export const PERSONAL_KEYS = [
   "driver_name",
   "driver_phone",
   "arranged",
+  "contact_name",
+  "relation",
   "address",
 ] as const satisfies readonly PersonalKey[];
 type MissedPersonal = Exclude<PersonalKey, (typeof PERSONAL_KEYS)[number]>;

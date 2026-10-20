@@ -25,3 +25,29 @@ export function todayColumn(startDate: string | null, nowIso: string): Day | nul
   for (let i = 0; i < 5; i++) if (addDays(startDate, i) === column) return i as Day;
   return null;
 }
+
+/** The team's sections by their first path segment, as the header names them — every one but the week needs a connection. */
+const SECTIONS: Record<string, string> = {
+  mine: "המרצים שלי",
+  approvals: "אישורים",
+  tracking: "תוצרים",
+  print: "תוצרים",
+  export: "תוצרים",
+  reader: "תוצרים",
+  logistics: "לוגיסטיקה",
+  memorial: "זמני זיכרון",
+  kk: "מכריכה לכריכה",
+  knowledge: "ידע",
+  help: "עזרה",
+  settings: "הגדרות",
+};
+
+/**
+ * The section an address asked for that the offline day view cannot show (it shows only the week): «לוגיסטיקה»,
+ * «זמני זיכרון» and the rest read the server, one list at a time. null for the week itself.
+ */
+export function sectionNeedingConnection(path: string): string | null {
+  const first = path.split("/").filter(Boolean)[0];
+  if (!first) return null;
+  return SECTIONS[first] ?? "המסך הזה";
+}

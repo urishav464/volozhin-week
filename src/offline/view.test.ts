@@ -1,6 +1,6 @@
 // The offline banner's day and time, and the day the view opens on — in Israel, whatever the device's clock zone.
 import { describe, expect, it } from "vitest";
-import { savedAtText, todayColumn } from "./view";
+import { savedAtText, sectionNeedingConnection, todayColumn } from "./view";
 
 describe("savedAtText", () => {
   it("the day and the time in Israel (summer time, winter time, across midnight UTC)", () => {
@@ -26,5 +26,18 @@ describe("todayColumn", () => {
     expect(todayColumn(start, "2027-02-14T03:00:00Z")).toBeNull(); // 05:00 Sunday: Saturday night
     expect(todayColumn(start, "2027-02-19T12:00:00Z")).toBeNull();
     expect(todayColumn(null, "2027-02-15T12:00:00Z")).toBeNull();
+  });
+});
+
+describe("sectionNeedingConnection", () => {
+  it("the week itself needs nothing; every other section is named as the header names it", () => {
+    expect(sectionNeedingConnection("/")).toBeNull();
+    expect(sectionNeedingConnection("")).toBeNull();
+    expect(sectionNeedingConnection("/memorial")).toBe("זמני זיכרון");
+    expect(sectionNeedingConnection("/logistics/transports")).toBe("לוגיסטיקה");
+    expect(sectionNeedingConnection("/logistics/")).toBe("לוגיסטיקה");
+    expect(sectionNeedingConnection("/print/escorts")).toBe("תוצרים");
+    expect(sectionNeedingConnection("/settings/team")).toBe("הגדרות");
+    expect(sectionNeedingConnection("/nowhere")).toBe("המסך הזה");
   });
 });

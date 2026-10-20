@@ -192,7 +192,7 @@ export default function App() {
             </p>
           </Notice>
         )}
-        {state.kind === "offline" && <OfflineWeek snapshot={state.snapshot} />}
+        {state.kind === "offline" && <OfflineWeek snapshot={state.snapshot} path={path} />}
         {state.kind === "gate" && (
           <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} onRefresh={refresh} store={store} />
         )}

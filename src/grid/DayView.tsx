@@ -27,6 +27,7 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
   const { edition } = model.week;
   const lessons = lessonsOfDay(model, day);
   const need = model.days[day].balance.need;
+  const roomSort = (l: Lesson) => model.week.rooms.find((r) => r.id === l.room_id)?.sort ?? 0;
 
   return (
     <div className="space-y-2">
@@ -55,11 +56,19 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
         {model.layout.bands.map(({ row }) => {
           if (!rowActive(row, day, edition)) return null;
           if (row.kind !== "lesson") {
-            const memorial = row.kind === "memorial" ? lessons.filter((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min)) : [];
+            // a memorial row may hold several slots (5ב-2: any part of the row, any room) — each its own yellow card
+            const memorial =
+              row.kind === "memorial"
+                ? lessons.filter((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min)).sort((a, b) => a.start_min - b.start_min || roomSort(a) - roomSort(b) || a.id - b.id)
+                : [];
             if (memorial.length) {
               return (
-                <li key={row.id} className="relative h-10">
-                  <LessonCard model={model} lesson={memorial[0]} lens={lens} height={40} onOpen={() => onLesson(memorial[0].id)} />
+                <li key={row.id} className="space-y-1">
+                  {memorial.map((l) => (
+                    <div key={l.id} className="relative h-10">
+                      <LessonCard model={model} lesson={l} lens={lens} height={40} onOpen={() => onLesson(l.id)} />
+                    </div>
+                  ))}
                 </li>
               );
             }

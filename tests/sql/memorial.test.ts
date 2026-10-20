@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
+import { assertWeekOnly, WEEK_KEYS } from "../../src/offline/snapshot";
 import { SCHEMA, dropDatabase, freshDatabase, google, sqlstate, type Claims } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -262,6 +263,10 @@ describe("memorial times and the logistics screen's transports", () => {
           expect(w.fallen).toEqual([{ id: fallen[0], name: "חלל/ה לבדיקה 1", gender: null }, { id: fallen[1], name: "חלל/ה לבדיקה 2", gender: null }]);
           const text = JSON.stringify(w);
           for (const secret of [FAMILY_PHONE, FAMILY_EMAIL, FAMILY_NAME, RELATION, FAMILY_NOTE]) expect(text, `${who}: ${secret}`).not.toContain(secret);
+          // the week a device keeps for a day without internet (src/offline/snapshot.ts): exactly the Week's keys, and
+          // no personal key anywhere inside — the memorial plans and the fallen's names go with it, a family's contact never
+          expect(Object.keys(w).sort(), who).toEqual([...WEEK_KEYS].sort());
+          expect(() => assertWeekOnly(w), who).not.toThrow();
         }
         for (const who of [OTHER, SANDBOX, STRANGER]) expect((await run(who, "select id from public.memorial_plans where edition_id = $1", [ed])).rows, who).toEqual([]);
         expect(await sqlstate(run("anon", "select * from public.memorial_plans"))).toBe("42501");

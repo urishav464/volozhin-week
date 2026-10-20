@@ -192,7 +192,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `PortError("network")`, `network.ts` — never a refusal) the day view shows it read-only (`src/screens/OfflineWeek.tsx`)
   only to the device's own user (`DataPort.deviceUserId()`, `snapshot.ts` `offlineDecision`); sign-out clears it. The
   public pages stay online-only. `playwright.config.ts` blocks workers except in `tests/e2e/offline.spec.ts`
-  (DECISIONS «אבן דרך 5ב-2, חלק ב: בלי רשת»).
+  (DECISIONS «אבן דרך 5ב-2, חלק ב: בלי רשת»). With part A the snapshot holds `memorialPlans` and `fallen` (names
+  only) — never a family's contact (`PERSONAL_KEYS` has `contact_name`/`relation`; `tests/sql/memorial.test.ts` runs
+  `assertWeekOnly` on `load_week`); offline a memorial card opens its plan to read, and any other address (`/memorial`,
+  `/logistics`, …) says it needs a connection over the day view (`view.ts` `sectionNeedingConnection`).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

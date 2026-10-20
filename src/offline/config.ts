@@ -5,7 +5,7 @@
  * The kill switch. `false` makes the build write a /sw.js that deletes this site's caches and unregisters itself
  * (`killWorker`, src/offline/sw.ts), and makes the app unregister any worker it finds — for the day a worker
  * misbehaves. Flip, commit, deploy: every browser fetches /sw.js afresh (no-cache, public/_headers) on its next visit.
- * docs/DECISIONS.md «אבן דרך 5ב-2: בלי רשת».
+ * docs/DECISIONS.md «אבן דרך 5ב-2, חלק ב: בלי רשת».
  */
 export const OFFLINE_SHELL_ENABLED = true;
 
