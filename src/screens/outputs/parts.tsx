@@ -4,8 +4,9 @@
 // whoever may see some contacts at all (a global admin, or a handler in a live
 // real edition — app.may_see_contacts), and then only the rows the database
 // returns (get_contacts_for, under the contacts policy).
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router";
+import type { LessonPhone } from "../../data/outputs";
 import type { DataPort } from "../../data/port";
 import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone } from "../../domain/progress";
 import type { Week } from "../../domain/types";
@@ -19,29 +20,53 @@ export function maySeeSomeContacts(actor: Actor, week: Week): boolean {
   return week.approaches.some((a) => a.owner_member_id === actor.memberId);
 }
 
-/** The phones of the week's lessons the caller may see — fetched once per week while `on`; null while off or loading. */
-export function usePhones(port: DataPort, week: Week | null, on: boolean): { phones: Map<number, string> | null; failed: boolean } {
-  const [phones, setPhones] = useState<Map<number, string> | null>(null);
+/**
+ * «כולל טלפונים» and the phones it shows. The choice belongs to one edition: choosing another one in
+ * EditionSelect turns it off, so phones are always off in a newly chosen edition — and it is on only while
+ * it is offered (maySeeSomeContacts: never in a practice week, never to logistics), so it can never stay on
+ * where its switch is hidden. The phones come in one call per edition and set of closed lessons: a Realtime
+ * update that leaves those alone keeps the answer, and a new answer replaces the old one only once it
+ * arrives (the טלפון column does not blink, a file downloaded meanwhile keeps it). Only the closed lessons'
+ * lead speakers' phones are shown.
+ */
+export function usePhones(
+  port: DataPort,
+  week: Week | null,
+  actor: Actor,
+): { on: boolean; setOn: (v: boolean) => void; phones: Map<number, string> | null; failed: boolean } {
+  const editionId = week?.edition.id ?? null;
+  const [choice, setChoice] = useState<{ edition: number | null; on: boolean }>({ edition: editionId, on: false });
+  // another edition: off again — also when coming back (React's «state from the previous render» pattern;
+  // this render already reads it as off, so nothing is fetched for the new edition first)
+  if (choice.edition !== editionId) setChoice({ edition: editionId, on: false });
+  const on = week != null && choice.on && choice.edition === editionId && maySeeSomeContacts(actor, week);
+  const setOn = useCallback((v: boolean) => setChoice({ edition: editionId, on: v }), [editionId]);
+  const closedIds = useMemo(() => (week ? week.lessons.filter((l) => l.state === "closed").map((l) => l.id) : []), [week]);
+  const key = closedIds.join(",");
+  const [answer, setAnswer] = useState<{ edition: number; rows: LessonPhone[] } | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    setPhones(null);
     setFailed(false);
-    if (!on || !week) return;
+    if (!on || editionId == null) {
+      setAnswer(null);
+      return;
+    }
     let live = true;
-    const ids = week.lessons.filter((l) => l.state === "closed").map((l) => l.id);
-    port.outputs.phones(week.edition.id, ids).then(
-      (rows) => {
-        if (!live) return;
-        const lead = new Map(week.lessonSpeakers.filter((x) => x.role === "lead").map((x) => [x.lesson_id, x.speaker_id]));
-        setPhones(new Map(rows.filter((r) => lead.get(r.lesson_id) === r.speaker_id).map((r) => [r.lesson_id, r.phone])));
-      },
+    port.outputs.phones(editionId, key === "" ? [] : key.split(",").map(Number)).then(
+      (rows) => live && setAnswer({ edition: editionId, rows }),
       () => live && setFailed(true),
     );
     return () => {
       live = false;
     };
-  }, [port, week, on]);
-  return { phones: on ? phones : null, failed };
+  }, [port, editionId, on, key]);
+  const phones = useMemo(() => {
+    if (!on || !week || answer?.edition !== editionId) return null;
+    const closed = new Set(closedIds);
+    const lead = new Map(week.lessonSpeakers.filter((x) => x.role === "lead").map((x) => [x.lesson_id, x.speaker_id]));
+    return new Map(answer.rows.filter((r) => closed.has(r.lesson_id) && lead.get(r.lesson_id) === r.speaker_id).map((r) => [r.lesson_id, r.phone]));
+  }, [on, week, answer, editionId, closedIds]);
+  return { on, setOn, phones, failed };
 }
 
 /** The outputs, under the screen's title: a link each (the designer's export for the edition's admins only). */

@@ -10,7 +10,9 @@
 // toggle) and «עזרה». Mock build: every new call goes out by its contract —
 // get_contacts_for, the snapshot's insert, the notes' and milestones' writes,
 // the archive's reads — with the member's token; a logistics member is offered
-// no phones and no designer export. Synthetic data only.
+// no phones and no designer export; «כולל טלפונים» is off again in another
+// edition (none in a practice week, no call); a snapshot that is not kept says
+// so. Synthetic data only.
 import { readFileSync } from "node:fs";
 import { expect, type Download, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
@@ -56,6 +58,14 @@ test.describe("demo build", () => {
     // no phones until asked
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
     await noSidewaysScroll(page);
+    if (info.project.name === "desktop") {
+      // one fixed layout: every day's columns line up
+      const sunday = page.getByRole("table", { name: "טבלת מעקב, יום ראשון" });
+      const monday = page.getByRole("table", { name: "טבלת מעקב, יום שני" });
+      expect(await sunday.evaluate((e) => getComputedStyle(e).tableLayout)).toBe("fixed");
+      const xs = async (t: Locator) => t.locator("th").evaluateAll((ths) => ths.map((th) => Math.round(th.getBoundingClientRect().x)));
+      expect(await xs(monday)).toEqual(await xs(sunday));
+    }
 
     // filters: a day, what is missing, «שלי»
     await page.getByLabel("יום", { exact: true }).selectOption({ label: "שני" });
@@ -99,6 +109,11 @@ test.describe("demo build", () => {
     expect(withPhones.d.suggestedFilename()).toContain("tracking-with-phones");
     expect(withPhones.bytes.toString("utf8").split("\r\n")[0]).toBe("﻿מרצה,טלפון,יום ושעה,כותרת,נושא,מקורות,הסעה/תשלום,מלווה,קיבל הודעת סיכום מ");
     await expect(toast(page, "יש בו טלפונים")).toBeVisible();
+    // the toast is never printed (a print right after a download)
+    await page.emulateMedia({ media: "print" });
+    // (by CSS, not by role: hidden, it is out of the accessibility tree)
+    expect(await page.locator("[role=status]", { hasText: "יש בו טלפונים" }).evaluate((e) => getComputedStyle(e).display)).toBe("none");
+    await page.emulateMedia({ media: "screen" });
     await page.getByRole("checkbox", { name: "כולל טלפונים" }).uncheck();
     await noSidewaysScroll(page);
 
@@ -111,6 +126,9 @@ test.describe("demo build", () => {
     await expect(table).toBeVisible();
     expect(await table.locator("thead").evaluate((e) => getComputedStyle(e).display)).toBe("table-header-group");
     expect(await page.getByRole("region", { name: "יום שני" }).evaluate((e) => getComputedStyle(e).breakBefore)).toBe("page");
+    // a day's own page says which sheet it is; the print date as the site writes dates
+    await expect(page.getByRole("region", { name: "יום שני" }).getByText("טבלת מעקב · שבוע וולוז'ין הדגמה · הודפס ב-")).toBeVisible();
+    await expect(page.getByText(/^הודפס ב-\d{1,2}\.\d{1,2}\.\d{4} · /)).toBeVisible();
     expect(await table.locator("tbody tr").first().evaluate((e) => getComputedStyle(e).printColorAdjust)).toBe("exact");
     if (info.project.name === "desktop") {
       // A4 landscape: the page is wider than it is tall
@@ -162,7 +180,9 @@ test.describe("demo build", () => {
     await expect(page.getByRole("banner")).toBeHidden();
     await expect(open).toBeHidden();
     expect(await b.evaluate((e) => getComputedStyle(e).breakBefore)).toBe("page");
+    await expect(b.getByText("רשימת מלווים · שבוע וולוז'ין הדגמה · הודפס ב-")).toBeVisible(); // a page handed to an escort says which week
     await page.emulateMedia({ media: "screen" });
+    await expect(b.getByText("רשימת מלווים · שבוע וולוז'ין הדגמה · הודפס ב-")).toBeHidden();
     await noSidewaysScroll(page);
   });
 
@@ -170,7 +190,11 @@ test.describe("demo build", () => {
     await page.goto(`${demoUrl()}/export/designer`);
     await expect(page.getByRole("heading", { name: "ייצוא למעצבת" })).toBeVisible();
     await expect(page.getByText("עוד לא ייצאו את הלו״ז למעצבת.")).toBeVisible();
-    await expect(page.getByRole("table", { name: "הלו״ז שייצא" })).toContainText("במקביל");
+    const schedule = page.getByRole("table", { name: "הלו״ז שייצא" });
+    await expect(schedule).toContainText("במקביל");
+    // a time range and «זמן זיכרון» stay on one line; the speaker and the title may wrap
+    const cells = schedule.locator("tbody tr").first().locator("td");
+    expect(await cells.evaluateAll((tds) => tds.map((td) => getComputedStyle(td).whiteSpace))).toEqual(["nowrap", "nowrap", "nowrap", "nowrap", "normal", "normal", "normal", "nowrap", "nowrap"]);
     await noSidewaysScroll(page);
 
     const first = await downloaded(page, () => page.getByRole("button", { name: "ייצוא xlsx" }).click());
@@ -240,7 +264,7 @@ test.describe("demo build", () => {
     await expect(page.getByRole("heading", { name: "ידע ואבני דרך" })).toBeVisible();
     const milestones = page.getByRole("list", { name: "אבני הדרך" });
     await expect(milestones.getByRole("listitem").first()).toContainText("W−42 · הצעה");
-    await expect(page.getByText("תאריך השבוע עוד TBD")).toBeVisible();
+    await expect(page.getByText("תאריך השבוע עוד לא נקבע (TBD), ולכן מוצג רק W−n")).toBeVisible();
     await expect(page.getByRole("region", { name: "תהליך" }).locator("strong")).toHaveText("הדגשה");
     await noSidewaysScroll(page);
 
@@ -280,8 +304,18 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
+    // the instructor's seven sections: every one inside the screen, none cut off or behind a sideways scroll
+    const links = nav(page).getByRole("link");
+    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
+    const width = page.viewportSize()!.width;
+    for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
+      expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
+      expect(box.right, JSON.stringify(box)).toBeLessThanOrEqual(width);
+    }
     await nav(page).getByRole("link", { name: "עזרה" }).click();
     await expect(page).toHaveURL(/\/help$/);
+    await expect(nav(page).getByRole("link", { name: "עזרה" })).toHaveAttribute("aria-current", "page");
+    await expect(nav(page).getByRole("link", { name: "עזרה" })).toBeInViewport({ ratio: 1 });
     const guide = page.getByRole("article", { name: "מדריך קצר לצוות" });
     await expect(guide.getByRole("heading", { level: 2, name: "מדריך קצר לצוות" })).toBeVisible();
     for (const h of ["כניסה", "הרשת", "המרצים שלי", "כרטיס המרצה", "שלבי השיעור", "הודעת הסיכום", "תוצרים"]) {
@@ -406,5 +440,86 @@ test.describe("mock build", () => {
     await expect(page.getByRole("region", { name: "מלווה לדוגמה ב׳" })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     expect(sb.rpc.get("get_contacts_for")).toBeUndefined();
+  });
+
+  test("«כולל טלפונים» belongs to one edition: in a practice week it is off — no phones, no call, no file with phones", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the permissions");
+    const real = demoWeek();
+    Object.assign(real.edition, { id: 7, kind: "real", label: "real-7" });
+    const practice = demoWeek();
+    Object.assign(practice.edition, { id: 8, kind: "practice", label: "practice-8" });
+    const email = "content@example.org";
+    const sb = new FakeSupabase({
+      status: 200,
+      body: {
+        status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: false,
+        memberships: [{ edition_id: 7, role: "content", member_id: 2 }, { edition_id: 8, role: "content", member_id: 2 }],
+      },
+    });
+    sb.answers.set("editions", [practice.edition, real.edition]);
+    await sb.attach(page);
+    await page.route("**/rest/v1/rpc/load_week", (route) => {
+      const { p_edition } = route.request().postDataJSON() as { p_edition: number };
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(p_edition === 8 ? practice : real) });
+    });
+    const asked: number[][] = [];
+    const lead = real.lessonSpeakers.find((x) => x.role === "lead" && real.approaches.some((a) => a.speaker_id === x.speaker_id && a.owner_member_id === 2))!;
+    await page.route("**/rest/v1/rpc/get_contacts_for", (route) => {
+      asked.push((route.request().postDataJSON() as { p_lessons: number[] }).p_lessons);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ lesson_id: lead.lesson_id, speaker_id: lead.speaker_id, phone: "טלפון לדוגמה מהשרת" }]) });
+    });
+    const session = await signIn(page, email);
+    sb.token = session.access_token;
+
+    await page.goto(`${mockUrl()}/tracking`);
+    const edition = page.getByRole("combobox", { name: "מחזור" });
+    await edition.selectOption("7");
+    const phones = page.getByRole("checkbox", { name: "כולל טלפונים" });
+    await phones.check();
+    await expect(page.getByText("טלפון לדוגמה מהשרת").first()).toBeVisible();
+    expect(asked).toHaveLength(1);
+
+    // the practice week: the switch is not offered there, and nothing it turned on stays on
+    await edition.selectOption("8");
+    await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
+    await expect(phones).toHaveCount(0);
+    await expect(page.getByText("טלפון לדוגמה מהשרת")).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "טלפון" })).toHaveCount(0);
+    const csv = await downloaded(page, () => page.getByRole("button", { name: "הורדת CSV" }).click());
+    expect(csv.d.suggestedFilename()).toMatch(/^volozhin-tracking-practice-8-/);
+    expect(csv.bytes.toString("utf8").split("\r\n")[0]).toBe("﻿מרצה,יום ושעה,כותרת,נושא,מקורות,הסעה/תשלום,מלווה,קיבל הודעת סיכום מ");
+    expect(csv.bytes.toString("utf8")).not.toContain("טלפון לדוגמה");
+    expect(asked).toHaveLength(1);
+
+    // back in the real week: off by default in a newly chosen edition, until asked again
+    await edition.selectOption("7");
+    await expect(phones).toBeVisible();
+    await expect(phones).not.toBeChecked();
+    await expect(page.getByText("טלפון לדוגמה מהשרת")).toHaveCount(0);
+    expect(asked).toHaveLength(1);
+  });
+
+  test("the designer's export: a file that downloaded but whose snapshot was not kept says both", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb } = await signedIn(page, { role: "admin", global: true, member: 1 });
+    sb.tables.set("export_snapshots", []);
+    // the insert is refused (as RLS would refuse it); reads still answer
+    await page.route(
+      (url) => url.pathname === "/rest/v1/export_snapshots",
+      (route) =>
+        route.request().method() === "POST"
+          ? route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ code: "42501", message: "new row violates row-level security policy" }) })
+          : route.fallback(),
+    );
+    await page.goto(`${mockUrl()}/export/designer`);
+    await expect(page.getByText("עוד לא ייצאו את הלו״ז למעצבת.")).toBeVisible();
+    const csv = await downloaded(page, () => page.getByRole("button", { name: "ייצוא CSV" }).click());
+    expect(csv.d.suggestedFilename()).toMatch(/^volozhin-designer-.*\.csv$/);
+    const alert = page.getByRole("alert").filter({ hasText: "הקובץ ירד, אבל הייצוא לא נשמר להשוואה" });
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText("אפשר לייצא שוב.");
+    await expect(alert).toContainText("הפעולה הזו שמורה למדריך/ה."); // the refusal's own words
+    await expect(toast(page, "הייצוא נשמר להשוואה")).toHaveCount(0);
+    await expect(page.getByText("עוד לא ייצאו את הלו״ז למעצבת.")).toBeVisible(); // nothing to compare with yet
   });
 });

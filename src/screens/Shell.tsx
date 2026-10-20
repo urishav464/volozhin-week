@@ -44,8 +44,9 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
       )}
       <header className="bg-ink text-paper print:hidden">
         {/* Signed in, the header keeps one width on every screen, so a section link stays under the pointer.
-            Below 1024px the sections wrap to a row of their own, under the name and «התנתקות»: every
-            entry stays one tap away on a phone, nothing hides behind a menu. */}
+            Below 1024px the sections move to a row of their own, under the name and «התנתקות», and wrap
+            onto a second line when they do not fit (an admin's seven on a phone): every entry stays
+            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll. */}
         <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:flex-nowrap`}>
           <h1 className="flex h-14 shrink-0 items-center font-display font-extrabold text-xl tracking-tight">
             {nav ? (
@@ -57,7 +58,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
             )}
           </h1>
           {nav && nav.length > 0 && (
-            <nav aria-label="אזורי המערכת" className="order-last flex w-full gap-1 overflow-x-auto pb-2 lg:order-none lg:w-auto lg:pb-0">
+            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:flex-nowrap lg:overflow-x-auto lg:pb-0">
               {nav.map((item) => {
                 const isActive = sectionActive(item, path);
                 return (

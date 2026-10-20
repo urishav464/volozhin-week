@@ -379,7 +379,7 @@ export function useToast(bottom = "bottom-6") {
     <div
       key={toast.at}
       role={toast.kind === "error" ? "alert" : "status"}
-      className={`fixed inset-x-0 ${bottom} z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${toast.kind === "error" ? "bg-bad text-paper" : "bg-ink text-paper"}`}
+      className={`fixed inset-x-0 ${bottom} z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl print:hidden ${toast.kind === "error" ? "bg-bad text-paper" : "bg-ink text-paper"}`}
     >
       <span>{toast.text}</span>
       <button type="button" aria-label="סגירת ההודעה" onClick={clear} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-md text-lg leading-none hover:bg-paper/10">

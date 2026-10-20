@@ -8,7 +8,7 @@ import { type KnowledgePort, type Milestone, type Note, NOTE_SECTION_LABEL, NOTE
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { errorMessage } from "../../errors";
-import { byDue, fmtDate, isLate, israelToday, milestoneDate, milestoneLabel } from "../../domain/milestones";
+import { byDue, fmtDate, fmtMoment, isLate, israelToday, milestoneDate, milestoneLabel } from "../../domain/milestones";
 import type { Edition } from "../../domain/types";
 import { Badge, Button, Confirm, Field, INPUT, Panel, useRunner } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
@@ -80,7 +80,7 @@ function Milestones({ edition, list, admin, k, act, busy }: { edition: Edition; 
   return (
     <Panel
       title="אבני דרך"
-      aside={edition.start_date ? `לפי תאריך השבוע, ${fmtDate(milestoneDate(edition.start_date, 0)!)}` : "תאריך השבוע עוד TBD: מוצג רק המרחק ממנו (W−n)"}
+      aside={edition.start_date ? `לפי תאריך השבוע, ${fmtDate(milestoneDate(edition.start_date, 0)!)}` : "תאריך השבוע עוד לא נקבע (TBD), ולכן מוצג רק W−n"}
     >
       {sorted.length === 0 ? (
         <p className="mb-3 text-ink-soft">
@@ -135,7 +135,7 @@ function MilestoneItem({ m, edition, admin, k, act, busy, late }: { m: Milestone
       <span className="text-sm text-ink-soft">
         <bdi>{milestoneLabel(m.days_before)}</bdi> · הצעה{date ? ` · עד ${fmtDate(date)}` : ""}
       </span>
-      {done && <Badge tone="ok">בוצע {fmtDate(new Date(m.done_at!))}</Badge>}
+      {done && <Badge tone="ok">בוצע {fmtMoment(m.done_at!)}</Badge>}
       {late && <Badge tone="bad">באיחור</Badge>}
       {admin && !deleting && (
         <span className="flex gap-1">
@@ -178,7 +178,7 @@ function MilestoneForm({ initial, onSave, onCancel, busy }: { initial?: Mileston
       <Field id={`${id}-t`} label="אבן הדרך">
         <input id={`${id}-t`} className={INPUT} value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
       </Field>
-      <Field id={`${id}-d`} label="כמה ימים לפני השבוע" hint="הצעה. 42 = W−42; מספר שלילי = אחרי השבוע.">
+      <Field id={`${id}-d`} label="כמה ימים לפני השבוע" hint="למשל 42 = שישה שבועות לפני יום הפתיחה (W−42). מספר שלילי = אחרי השבוע. המספר הוא הצעה.">
         <input id={`${id}-d`} className={INPUT} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} aria-describedby={`${id}-d-hint`} dir="ltr" />
       </Field>
       {problem && (
@@ -288,7 +288,7 @@ function NoteItem({ n, edition, mayEdit, global, k, act, busy, names }: { n: Not
       </div>
       {n.body_md ? <Markdown source={n.body_md} top={4} /> : <p className="text-sm text-ink-soft">(בלי תוכן)</p>}
       <p className="mt-1 text-xs text-ink-soft">
-        עודכן {fmtDate(new Date(n.updated_at))}
+        עודכן {fmtMoment(n.updated_at)}
         {n.updated_by != null && names.get(n.updated_by) ? ` · ${names.get(n.updated_by)}` : ""}
       </p>
       {deleting && (

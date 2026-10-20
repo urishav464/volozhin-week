@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DataPort } from "../../data/port";
 import type { ExportSnapshot } from "../../data/outputs";
 import type { Me } from "../../data/types";
+import { errorMessage } from "../../errors";
 import { csvBytes } from "../../exports/csv";
 import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
 import {
@@ -72,18 +73,28 @@ export function DesignerScreen({ port, me }: { port: DataPort; me: Me }) {
 
   const names = new Map(week.team.map((t) => [t.id, t.display_name]));
   const name = (ext: string) => fileName("designer", week.edition, israelDay(), ext);
-  const exportAs = (kind: "xlsx" | "csv") =>
-    run(
+  const exportAs = (kind: "xlsx" | "csv") => {
+    let downloaded = false;
+    return run(
       kind,
       async () => {
         const t = designerTable(rows, week.edition.label);
         if (kind === "xlsx") download(name("xlsx"), toXlsx([t]), XLSX_MIME);
         else download(name("csv"), csvBytes(t), CSV_MIME);
+        downloaded = true;
         await port.outputs.saveSnapshot(week.edition.id, "designer", rows);
         await load();
       },
       "הקובץ ירד, והייצוא נשמר להשוואה בפעם הבאה.",
+      // the file is out, but the snapshot is not kept: say both, or the next diff silently compares with an older export
+      (code) => {
+        if (!downloaded) return false;
+        const why = errorMessage(code);
+        notify("error", `הקובץ ירד, אבל הייצוא לא נשמר להשוואה, ולכן בפעם הבאה ההשוואה תהיה מול הייצוא הקודם. אפשר לייצא שוב.${why !== errorMessage(null) ? ` ${why}` : ""}`);
+        return true;
+      },
     );
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-20">
@@ -148,7 +159,7 @@ function ScheduleTable({ rows, label }: { rows: DesignerRow[]; label: string }) 
         {rows.map((r) => (
           <tr key={r.lesson_id} className={r.kind === "memorial" ? "bg-amber-50" : ""}>
             {DESIGNER_FIELDS.map((f) => (
-              <td key={f} className="px-2 py-1.5">
+              <td key={f} className={`px-2 py-1.5 ${f === "title" || f === "speaker" || f === "category" ? "" : "whitespace-nowrap"}`}>
                 <bdi dir={f === "time" ? "ltr" : undefined}>{designerCell(r, f)}</bdi>
               </td>
             ))}

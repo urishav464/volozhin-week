@@ -11,7 +11,9 @@ import { csvBytes } from "../../exports/csv";
 import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
 import { PROGRESS_TONE } from "../../domain/progress";
 import { DAY_NAMES, DAYS, type Day } from "../../domain/time";
-import { filterTracking, STAGE_FILTER_LABEL, TRACKING_HEADERS, type TrackingRow, type TrackingStage, trackingRows, trackingTable } from "../../exports/tracking";
+import {
+  filterTracking, israelDate, STAGE_FILTER_LABEL, TRACKING_HEADERS, type TrackingRow, type TrackingStage, trackingRows, trackingTable, trackingWidths,
+} from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { useMedia } from "../../lib/useMedia";
 import { Button } from "../settings/kit";
@@ -30,19 +32,18 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
   const [day, setDay] = useState<Day | null>(null);
   const [stage, setStage] = useState<TrackingStage | null>(null);
   const [mine, setMine] = useState(false);
-  const [withPhones, setWithPhones] = useState(false);
   const [pagePerDay, setPagePerDay] = useState(false);
   const actor = actorIn(me, week?.edition);
   const all = useMemo(() => (week ? trackingRows(week) : []), [week]);
   const rows = useMemo(() => filterTracking(all, { day, stage, mine: mine ? actor.memberId : null }), [all, day, stage, mine, actor.memberId]);
-  const { phones, failed } = usePhones(port, week, withPhones);
+  const { on: withPhones, setOn: setWithPhones, phones, failed } = usePhones(port, week, actor);
 
   if (store.problem === "none") return <p className="mt-10 text-center text-ink-soft">עוד לא נפתח מחזור.</p>;
   if (store.problem === "error") return <p className="mt-10 text-center text-bad">לא הצלחנו לטעון. כדאי לרענן את הדף.</p>;
   if (!week) return <p className="mt-10 text-center text-ink-soft">טוען…</p>;
 
   const label = week.edition.label;
-  const showPhones = withPhones && phones != null;
+  const showPhones = phones != null; // only while «כולל טלפונים» is on and offered here (usePhones)
   const name = (ext: string) => fileName(showPhones ? "tracking-with-phones" : "tracking", week.edition, israelDay(), ext);
   const table = () => trackingTable(rows, label, showPhones ? phones : undefined);
   const save = (kind: "xlsx" | "csv") => {
@@ -53,12 +54,13 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
   const open = (id: number) => navigate("/", { state: { lesson: id } });
   const days = DAYS.filter((d) => rows.some((r) => r.day === d));
   const filtered = day != null || stage != null || mine;
+  const printed = `הודפס ב-${israelDate(new Date().toISOString())}`;
 
   return (
     <div className="mx-auto max-w-[110rem] space-y-4 pb-20">
       <PrintSetup landscape title={`טבלת מעקב · שבוע וולוז'ין ${label}`}>
         <p className="text-sm">
-          הודפס ב-{israelDay()} · {rows.length} שיעורים{filtered ? " (מסונן)" : ""}
+          {printed} · {rows.length} שיעורים{filtered ? " (מסונן)" : ""}
           {showPhones ? " · כולל טלפונים: מידע אישי" : ""}
         </p>
       </PrintSetup>
@@ -132,7 +134,13 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
           const ofDay = rows.filter((r) => r.day === d);
           return (
             <section key={d} aria-label={`יום ${DAY_NAMES[d]}`} className={i > 0 && pagePerDay ? "print:break-before-page" : ""}>
-              <h3 className="mb-1 font-display text-lg font-semibold">
+              {/* a page of its own says which sheet it is */}
+              {i > 0 && pagePerDay && (
+                <p className="hidden text-xs text-ink-soft print:block">
+                  טבלת מעקב · שבוע וולוז'ין {label} · {printed}
+                </p>
+              )}
+              <h3 className="mb-1 font-display text-lg font-semibold print:break-after-avoid">
                 יום {DAY_NAMES[d]} <span className="text-sm font-normal text-ink-soft">{ofDay.length}</span>
               </h3>
               {wide ? (
@@ -142,7 +150,7 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
                   <div className="hidden print:block">
                     <DayTable rows={ofDay} phones={showPhones ? phones : null} onOpen={open} day={d} />
                   </div>
-                  <ul aria-label={`השיעורים של יום ${DAY_NAMES[d]}`} className="space-y-2 print:hidden">
+                  <ul aria-label={`השיעורים של יום ${DAY_NAMES[d]}`} className="grid items-start gap-2 md:grid-cols-2 print:hidden">
                     {ofDay.map((r) => (
                       <RowCard key={r.lesson.id} row={r} phone={showPhones ? (phones?.get(r.lesson.id) ?? "") : null} onOpen={() => open(r.lesson.id)} />
                     ))}
@@ -161,12 +169,20 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
 function DayTable({ rows, phones, onOpen, day }: { rows: TrackingRow[]; phones: Map<number, string> | null; onOpen: (id: number) => void; day: Day }) {
   const headers: string[] = [...TRACKING_HEADERS];
   if (phones) headers.splice(1, 0, "טלפון");
+  // one fixed layout, the file's proportions: every day's columns line up, on screen and on paper
+  const widths = trackingWidths(phones != null);
+  const total = widths.reduce((a, b) => a + b, 0);
   return (
-    <table aria-label={`טבלת מעקב, יום ${DAY_NAMES[day]}`} className="w-full border-collapse text-start text-sm">
+    <table aria-label={`טבלת מעקב, יום ${DAY_NAMES[day]}`} className="w-full table-fixed border-collapse break-words text-start text-sm">
+      <colgroup>
+        {widths.map((w, i) => (
+          <col key={i} style={{ width: `${((w / total) * 100).toFixed(1)}%` }} />
+        ))}
+      </colgroup>
       <thead>
         <tr className="border-b-2 border-ink/30 bg-paper">
           {headers.map((h) => (
-            <th key={h} scope="col" className="px-2 py-1.5 text-start font-semibold">
+            <th key={h} scope="col" className="px-2 py-1.5 text-start font-semibold text-balance">
               {h}
             </th>
           ))}
@@ -181,8 +197,11 @@ function DayTable({ rows, phones, onOpen, day }: { rows: TrackingRow[]; phones: 
               </button>
             </td>
             {phones && <td className="px-2 py-1.5"><bdi>{phones.get(r.lesson.id) ?? ""}</bdi></td>}
-            <td className="px-2 py-1.5 whitespace-nowrap">
-              {r.dayLabel} <bdi dir="ltr">{r.time}</bdi>
+            <td className="px-2 py-1.5">
+              {r.dayLabel}{" "}
+              <bdi dir="ltr" className="whitespace-nowrap">
+                {r.time}
+              </bdi>
             </td>
             <td className="px-2 py-1.5">{r.title}</td>
             <td className="px-2 py-1.5">{r.category}</td>
