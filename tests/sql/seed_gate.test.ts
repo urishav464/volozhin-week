@@ -49,9 +49,16 @@ describe("seed_gate.sql / unseed_gate.sql", () => {
     }
     expect(await count(`select count(*) as n from public.speakers where source = 'synthetic' and id in (${added.join(",")})`)).toBe(2);
     await db.query("insert into public.approaches (edition_id, speaker_id, owner_member_id) select $1, $2, id from public.members where email = 'real@example.org'", [real, added[1]]);
+    // a file uploaded in the practice week: its row goes with the edition, its bytes stay — the run says where, as SETUP does
+    await db.query("insert into public.source_files (edition_id, cover, storage_path, display_name, mime, size_bytes, page_count) values ($1, true, $2, 'פוסטר.pdf', 'application/pdf', 10, 1)", [gate, `${gate}/cover/00000000-0000-4000-8000-000000000000-poster.pdf`]);
+    const notices: string[] = [];
+    const heard = (n: { message?: string }) => notices.push(n.message ?? "");
+    db.on("notice", heard);
 
     await db.query(UNSEED);
     await db.query(UNSEED);
+    db.off("notice", heard);
+    expect(notices).toEqual([`1 uploaded file(s) of the practice week stay in Storage: Storage → Files → sources → folder ${gate} (right-click → Delete)`]);
     expect((await db.query("select label from public.editions")).rows.map((r) => r.label)).toEqual(["מחזור אמיתי"]);
     expect((await db.query("select name from public.speakers order by name")).rows.map((r) => r.name)).toEqual(["מרצה אחרת שנוספה בהדגמה", "מרצה אמיתית"]);
   });

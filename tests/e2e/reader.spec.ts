@@ -221,7 +221,7 @@ test.describe("demo build", () => {
     await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
     const opening = await openLesson(page, info, "ראשון", "מרצה 01");
     await stage(opening, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await opening.locator("input[type=file]").setInputFiles({ name: "צילום חתוך.png", mimeType: "image/png", buffer: cutPng() });
+    await opening.locator("input[type=file]").setInputFiles({ name: "תמונה חתוכה.png", mimeType: "image/png", buffer: cutPng() });
     await expect(toast(page, "הקובץ הועלה")).toBeVisible();
     await expect(stage(opening, "reader")).toHaveAttribute("data-state", "done");
     await stage(opening, "reader").getByRole("button", { name: /^מקראה/ }).click();
@@ -242,12 +242,14 @@ test.describe("demo build", () => {
     await partsRightToLeft(page);
     await noSidewaysScroll(page);
     if (info.project.name !== "desktop") return;
-    // the build leaves it out and names it, under a heading that fits a picture as well as a PDF
+    // the build leaves them out and names them, under a heading that fits a picture as well as a PDF — the files of
+    // a lesson in the reader, and (the third round's proof: named nowhere after a build) those of a lesson marked for
+    // it whose files were all unread; in schedule order, each once
     const out = await downloaded(page, () => page.getByRole("button", { name: BUILD }).click());
     expect((await PDFDocument.load(out.bytes)).getPageCount()).toBe(16); // the demo's 16: nothing of ours went in
     const left = page.locator("[data-reader-result]").getByRole("alert");
     await expect(left).toContainText("לא נכנסו (צריך להעלות קובץ אחר):");
-    await expect(left.getByRole("listitem")).toHaveText(["צילום חתוך.png — הקובץ לא נקרא"]);
+    await expect(left.getByRole("listitem")).toHaveText(["תמונה חתוכה.png — הקובץ לא נקרא", "קובץ פגום.pdf — הקובץ לא נקרא", "צילום חתוך.png — הקובץ לא נקרא"]);
   });
 
   test("reopening a lesson keeps its files, «מהמרצה הקודם», out of the reader and for removal", async ({ page }, info) => {
@@ -335,6 +337,27 @@ test.describe("demo build", () => {
     expect(doc.getPages().every((p) => Math.round(p.getWidth()) === 595 && Math.round(p.getHeight()) === 842)).toBe(true);
     await expect(page.locator("[data-reader-result]")).toContainText("18 עמודים");
     await expect(page.getByRole("progressbar", { name: "בניית המקראה" })).toHaveCount(0);
+  });
+
+  // the third round's proof: the first poster became the cover whatever the browser made of it — one it could not
+  // read (never fetched by the build) was the cover, and the good poster uploaded after it was not
+  test("a first poster the browser cannot read is not the cover; the first one it can read is, its radio checked", async ({ page }) => {
+    await page.goto(`${demoUrl()}/reader`);
+    const pick = page.locator('input[type=file][accept*=".png"]').last();
+    const cover = page.locator("section").filter({ has: page.getByRole("heading", { name: "שער", exact: true }) });
+    const none = page.getByRole("radio", { name: "בלי פוסטר: עמוד לו״ז מהשבוע" });
+    await pick.setInputFiles({ name: "פוסטר חתוך.png", mimeType: "image/png", buffer: cutPng() });
+    const bad = page.getByRole("radio", { name: "השער: פוסטר חתוך.png" });
+    await expect(bad).toBeDisabled();
+    await expect(bad).not.toBeChecked();
+    await expect(none).toBeChecked();
+    await expect(cover).toContainText("עמוד לו״ז שנוצר מהשבוע (אין פוסטר מסומן)");
+    await pick.setInputFiles({ name: "פוסטר.png", mimeType: "image/png", buffer: PIXEL });
+    await expect(page.getByRole("radio", { name: "השער: פוסטר.png" })).toBeChecked();
+    await expect(bad).not.toBeChecked();
+    await expect(none).not.toBeChecked();
+    await expect(cover).toContainText("הפוסטר: פוסטר.png");
+    await noSidewaysScroll(page);
   });
 
   test("a poster marked as the cover opens the reader; the Word skeleton has the headings in order, right to left", async ({ page }, info) => {

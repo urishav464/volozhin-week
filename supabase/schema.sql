@@ -3955,7 +3955,8 @@ create policy source_files_read on public.source_files for select to authenticat
 -- A lesson's file: «טרם התקבלו» becomes «דף מקורות» (a file arrived), and the
 -- current speaker's first file puts the lesson in the reader when its kind
 -- has something to print (in_reader's own rule — never a presentation alone).
--- The poster: the first one becomes the cover (settings.reader_cover).
+-- The poster: the first one the browser could read (page_count set — the
+-- build never fetches a file without one) becomes the cover (settings.reader_cover).
 create or replace function public.register_source_file(p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer)
   returns jsonb
   language plpgsql security definer set search_path = ''
@@ -4016,7 +4017,7 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
       if (v_kind, v_in) is distinct from (v_l.sources_kind, v_l.in_reader) then
         update public.lessons set sources_kind = v_kind, in_reader = v_in, version = version + 1, updated_by = v_me where id = p_lesson;
       end if;
-    elsif not ((select settings from public.editions where id = p_edition) ? 'reader_cover') then
+    elsif v_pages is not null and not ((select settings from public.editions where id = p_edition) ? 'reader_cover') then
       update public.editions set settings = settings || jsonb_build_object('reader_cover', v_row.id) where id = p_edition;
     end if;
     return to_jsonb(v_row);

@@ -177,6 +177,15 @@ export function readerRows(m: Manifest): ManifestRow[] {
   return m.rows.filter((r) => IN_READER[r.status]);
 }
 
+/**
+ * The files a build names without trying them: the PDFs and pictures the browser could not read on upload, of every
+ * lesson marked for the reader — one in it beside its other files, and one whose files were all unread («צריך קובץ
+ * אחר»), not in it at all — in schedule order. Never a file the build fetches (those it read), so never named twice.
+ */
+export function unreadForReader(m: Manifest): SourceFile[] {
+  return m.rows.filter((r) => r.lesson.in_reader).flatMap((r) => r.unread);
+}
+
 export interface ManifestTotals {
   lessons: number;
   included: number;

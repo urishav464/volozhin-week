@@ -4,13 +4,14 @@
 // counts as received is a file the build puts in. The type is taken from the
 // bytes, not the label, for a picture: a PNG saved as .jpg is the PNG it is;
 // a PNG whose image data does not inflate to its end (src/reader/png.ts), a
-// JPEG whose structure cannot be followed (src/reader/jpeg.ts) and bytes that
-// are neither are «unreadable». A PDF: opened (a password → «protected»), its
+// JPEG whose structure cannot be followed (src/reader/jpeg.ts) or whose frame
+// pdf-lib's embedder does not take, and bytes that are neither are
+// «unreadable». A PDF: opened (a password → «protected»), its
 // pages' annotations painted in (src/reader/annotations.ts), each page's box and
 // turn read, and every page that draws anything decoded once — what embedding
 // it does when the reader is saved. pdf-lib is in it: a screen loads this
 // module on demand.
-import { decodePDFRawStream, PDFContentStream, PDFDocument, type PDFPage, PDFRawStream, PDFStream } from "pdf-lib";
+import { decodePDFRawStream, JpegEmbedder, PDFContentStream, PDFDocument, type PDFPage, PDFRawStream, PDFStream } from "pdf-lib";
 import { flattenAnnotations } from "./annotations";
 import { jpegOrientation, looksJpeg, orientationTurn, stripJpegMetadata } from "./jpeg";
 import { looksPng, pngInflates } from "./png";
@@ -57,7 +58,15 @@ export async function openSource(bytes: Uint8Array, mime: ReaderMime): Promise<O
   if (mime !== "application/pdf") {
     if (looksPng(bytes)) return pngInflates(bytes) ? { ok: true, kind: "png", bytes } : unreadable;
     const clean = looksJpeg(bytes) ? stripJpegMetadata(bytes) : null;
-    return clean ? { ok: true, kind: "jpeg", bytes: clean, turn: orientationTurn(jpegOrientation(bytes)) } : unreadable;
+    if (!clean) return unreadable;
+    try {
+      // pdf-lib's own read of the frame (what embedJpg does first, up to the SOF): a frame it cannot take — not
+      // 1, 3 or 4 components, a marker it cannot step over — is «unreadable» here, as it would be at the build
+      await JpegEmbedder.for(clean);
+    } catch {
+      return unreadable;
+    }
+    return { ok: true, kind: "jpeg", bytes: clean, turn: orientationTurn(jpegOrientation(bytes)) };
   }
   let doc: PDFDocument;
   try {

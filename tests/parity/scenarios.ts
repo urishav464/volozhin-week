@@ -792,4 +792,17 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", unstore: "a1" },
     { as: "E", unregister: "a1" },
   ],
+
+  // the cover set by itself: the first poster the browser could read — one it could not, the build never fetches
+  "the reader's cover: the first poster the browser could read": [
+    { as: "E", store: "cover", file: "p1", mime: "image/jpeg" },
+    { as: "E", register: "p1", pages: null }, // not read: no cover — the schedule page
+    { as: "E", store: "cover", file: "p2" },
+    { as: "E", register: "p2", pages: 2 }, // the first one read: the cover
+    { as: "E", store: "cover", file: "p3", mime: "image/png" },
+    { as: "E", register: "p3" }, // a poster after it leaves the cover as it is
+    { as: "E", unstore: "p2" },
+    { as: "E", unregister: "p2" }, // the cover's file: the mark goes with it, and no other poster takes its place
+    { as: "E", readerCover: "p3" },
+  ],
 };

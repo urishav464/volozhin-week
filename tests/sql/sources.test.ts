@@ -539,6 +539,30 @@ describe("the sources' files", () => {
       await commitAs(ED_ADMIN, "select public.remove_source_file($1)", [row.id]);
       expect((await db.query("select settings ? 'reader_cover' as c from public.editions where id = $1", [ed])).rows[0].c).toBe(false);
     });
+
+    it("never makes a poster the browser could not read the cover — the first one it could read is", async () => {
+      const cover = async () => (await db.query("select settings -> 'reader_cover' as c from public.editions where id = $1", [ed])).rows[0].c;
+      expect(await cover()).toBeNull();
+      const unread = path(ed, "cover", "poster.jpg");
+      expect(await upload(ED_ADMIN, unread, "image/jpeg")).toBe("ok");
+      const bad = await register(ED_ADMIN, ed, null, unread, "פוסטר.jpg", null);
+      expect(bad).toMatchObject({ cover: true, page_count: null });
+      expect(await cover()).toBeNull(); // the build would never fetch it: no cover, the schedule page instead
+      const good = path(ed, "cover", "poster.pdf");
+      expect(await upload(ED_ADMIN, good)).toBe("ok");
+      const row = await register(ED_ADMIN, ed, null, good, "פוסטר.pdf", 1);
+      expect(await cover()).toBe(Number(row.id));
+      // the edition's next poster leaves the cover as it is
+      const next = path(ed, "cover", "poster2.pdf");
+      expect(await upload(ED_ADMIN, next)).toBe("ok");
+      await register(ED_ADMIN, ed, null, next, "פוסטר 2.pdf", 1);
+      expect(await cover()).toBe(Number(row.id));
+      for (const name of [unread, good, next]) {
+        expect(await remove(ED_ADMIN, name)).toBe(1);
+        await commitAs(ED_ADMIN, "select public.remove_source_file((select id from public.source_files where storage_path = $1))", [name]);
+      }
+      expect(await cover()).toBeNull();
+    });
   });
 
   describe("remove_source_file", () => {

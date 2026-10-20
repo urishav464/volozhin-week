@@ -13,7 +13,7 @@ import { assembleReader, jpegOrientation, orientationTurn, type ReaderJob } from
 import { stripJpegMetadata } from "./jpeg";
 import { buildSkeleton, skeletonParagraphs, skeletonRows } from "./docx";
 import { A4, chunkSchedule, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, scheduleCoverPages, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
-import { manifestTotals, readerEstimate, readerHeader, readerManifest, readerRows, unreadText, wordText } from "./model";
+import { manifestTotals, readerEstimate, readerHeader, readerManifest, readerRows, unreadForReader, unreadText, wordText } from "./model";
 import { nextLessonStep, readerFilesOf, stagesOf } from "../domain/stages";
 import type { Png, ScheduleLine, TextRenderer } from "./render";
 import { fit, wrap } from "./render";
@@ -127,6 +127,26 @@ describe("the manifest", () => {
     w.sourceFiles.push({ ...file(94, "image/jpeg", null), lesson_id: null, cover: true });
     w.edition.settings.reader_cover = 94;
     expect(readerManifest(w).cover).toBeNull();
+  });
+
+  // the third round's proof: a build named the unread files of the lessons in the reader only — a lesson marked for it
+  // whose files were all unread («צריך קובץ אחר») was named nowhere once the reader was built
+  it("names after a build every unread file of a lesson marked for the reader — in schedule order, none the build fetches", () => {
+    const w = demo();
+    const file = (l: { id: number }, id: number, page_count: number | null): SourceFile => ({
+      id, lesson_id: l.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id,
+      storage_path: `1/${l.id}/${id}`, display_name: `${id}.pdf`, mime: "application/pdf", size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+    });
+    const allUnread = at(w, 1, 930); // marked, nothing arrived yet
+    const opening = at(w, 0, 510); // in the reader, with its files
+    const slides = at(w, 0, 600); // a presentation: not marked
+    w.sourceFiles.push(file(allUnread, 90, null), file(allUnread, 91, null), file(opening, 92, null), file(slides, 93, null));
+    const m = readerManifest(w);
+    expect(m.rows.find((r) => r.lesson.id === allUnread.id)!.status).toBe("unreadable");
+    expect(unreadForReader(m).map((f) => f.id)).toEqual([92, 90, 91]);
+    const fetched = [...readerRows(m).flatMap((r) => r.printable), ...(m.cover ? [m.cover] : [])].map((f) => f.id);
+    expect(fetched.length).toBeGreaterThan(0);
+    expect(unreadForReader(m).filter((f) => fetched.includes(f.id))).toEqual([]);
   });
 
   it("says what it leaves out in one wording, the count by number", () => {

@@ -58,7 +58,8 @@ const dropped = (m: number) => (m >= 0xe1 && m <= 0xed) || m === 0xef || m === 0
  * a JPEG, a segment that runs past the end, no frame or no scan) — the reader names such a file, never prints
  * half of it. A file cut short inside its image data keeps what there is and gets its end marker back: a
  * viewer shows the same. Stray bytes between two segments are passed over to the next marker, as libjpeg
- * does («extraneous bytes before marker») — and left behind.
+ * does («extraneous bytes before marker») — and left behind; so is a marker without a length (TEM, RST0–7)
+ * outside a scan, which libjpeg ignores.
  */
 export function stripJpegMetadata(b: Uint8Array): Uint8Array | null {
   if (!looksJpeg(b)) return null;
@@ -92,7 +93,8 @@ export function stripJpegMetadata(b: Uint8Array): Uint8Array | null {
       break;
     }
     if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) {
-      keep(i, i + 2); // markers without a length
+      // a marker without a length (TEM, a restart) outside a scan: libjpeg ignores it; left behind — pdf-lib's walk
+      // to the frame would read its next two bytes as a length
       i += 2;
       continue;
     }

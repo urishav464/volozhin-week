@@ -845,7 +845,8 @@ export class Engine {
         if (next.sources_kind !== lesson.sources_kind || next.in_reader !== lesson.in_reader) {
           Object.assign(lesson, next, { version: lesson.version + 1, updated_by: this.actor.memberId });
         }
-      } else if (this.week.edition.settings.reader_cover == null) {
+      } else if (pageCount != null && this.week.edition.settings.reader_cover == null) {
+        // the first poster the browser could read is the cover (one it could not, the build never fetches)
         this.week.edition.settings = { ...this.week.edition.settings, reader_cover: row.id };
       }
       return { ...row };

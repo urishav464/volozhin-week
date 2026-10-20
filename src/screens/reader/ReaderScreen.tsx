@@ -20,7 +20,7 @@ import { download, fileName, israelDay } from "../../exports/download";
 import { useMedia } from "../../lib/useMedia";
 import { type BuildProgress, type BuildResult, buildReader, type ReaderBuild, scheduleLines } from "../../reader/build";
 import {
-  byDay, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readableFile, readerEstimate, readerManifest, readerRows, STATUS_LABEL, unreadText, wordText,
+  byDay, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readableFile, readerEstimate, readerManifest, STATUS_LABEL, unreadForReader, unreadText, wordText,
 } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
 import { OutputsTabs } from "../outputs/parts";
@@ -117,8 +117,9 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
     setFailed(null);
     setResult(null);
     setProgress({ step: "fetch", done: 0, total: 1 });
-    // the files the browser could not read on upload are not tried (the manifest says so): named with what the build left out
-    const notRead = readerRows(manifest).flatMap((r) => r.unread.map((f) => ({ name: f.display_name, reason: "unreadable" as const })));
+    // the files the browser could not read on upload are not tried (the manifest says so): named with what the build
+    // left out — a lesson's whose files were all unread too, though it is not in the reader
+    const notRead = unreadForReader(manifest).map((f) => ({ name: f.display_name, reason: "unreadable" as const }));
     try {
       job.current = buildReader(port, week, manifest, setProgress);
       const r = await job.current.promise;

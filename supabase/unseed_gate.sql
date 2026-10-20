@@ -14,7 +14,7 @@ begin
   if v_ed is not null and to_regclass('public.source_files') is not null then
     execute 'select count(*) from public.source_files where edition_id = $1' into v_n using v_ed;
     if v_n > 0 then
-      raise notice '% uploaded file(s) of the practice week stay in Storage: Storage → sources → folder %, delete it there', v_n, v_ed;
+      raise notice '% uploaded file(s) of the practice week stay in Storage: Storage → Files → sources → folder % (right-click → Delete)', v_n, v_ed;
     end if;
   end if;
 end $$;

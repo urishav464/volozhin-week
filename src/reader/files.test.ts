@@ -356,19 +356,26 @@ describe("a PDF's annotations and filled fields", () => {
 });
 
 // ---------------------------------------------------------------- one check for the upload and the build
-/** A small JPEG: the tables, a 16×8 frame and a scan (pdf-lib reads only the frame, so the scan need not decode). */
-function jpeg(scan: number[] = [0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78]): Uint8Array {
+/**
+ * A small JPEG: the tables, a 16×8 frame of `components` (1 grey, 3 colour, 4 CMYK) and a scan (pdf-lib reads
+ * only the frame, so the scan need not decode); `head`: bytes right after the SOI.
+ */
+function jpeg(scan: number[] = [0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78], components = 3, head: number[] = []): Uint8Array {
   const seg = (marker: number, body: number[]) => [0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255, ...body];
+  const ids = Array.from({ length: components }, (_, k) => k + 1);
   return Uint8Array.from([
     0xff, 0xd8,
+    ...head,
     ...seg(0xdb, [0, ...Array(64).fill(1)]),
-    ...seg(0xc0, [8, 0, 8, 0, 16, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]),
+    ...seg(0xc0, [8, 0, 8, 0, 16, components, ...ids.flatMap((id) => [id, 0x11, 0])]),
     ...seg(0xc4, [0, ...Array(16).fill(0)]),
-    ...seg(0xda, [3, 1, 0, 2, 0, 3, 0, 0, 63, 0]),
+    ...seg(0xda, [components, ...ids.flatMap((id) => [id, 0]), 0, 63, 0]),
     ...scan,
     0xff, 0xd9,
   ]);
 }
+/** APP0 (JFIF), as a camera writes it first. */
+const JFIF = [0xff, 0xe0, 0, 16, ...Buffer.from("JFIF\0", "latin1"), 1, 1, 0, 0, 1, 0, 1, 0, 0];
 
 /** Good files and bad, of every kind the reader takes: what the upload is asked about, and what the build meets. */
 async function corpus(): Promise<{ name: string; mime: ReaderMime; bytes: Uint8Array }[]> {
@@ -411,6 +418,15 @@ async function corpus(): Promise<{ name: string; mime: ReaderMime; bytes: Uint8A
     { name: "heic-named.jpg", mime: "image/jpeg", bytes: Uint8Array.from([0, 0, 0, 0x18, ...Buffer.from("ftypheic"), ...Array(32).fill(0)]) },
     { name: "not-a-jpeg.jpg", mime: "image/jpeg", bytes: new TextEncoder().encode("not a jpeg at all") },
     { name: "no-frame.jpg", mime: "image/jpeg", bytes: Uint8Array.from([0xff, 0xd8, 0xff, 0xda, 0, 2, 1, 2]) },
+    { name: "grey.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 1) },
+    { name: "cmyk.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 4) },
+    // a marker without a length before the frame (libjpeg ignores it; pdf-lib's walk would take its next two bytes
+    // for a length): a restart, TEM, and APP0's marker hit into a restart — the rest of APP0 then stray bytes
+    { name: "restart-after-soi.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 3, [0xff, 0xd0, ...JFIF]) },
+    { name: "tem-after-soi.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 3, [0xff, 0x01]) },
+    { name: "app0-hit-into-a-restart.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 3, [0xff, 0xd4, ...JFIF.slice(2)]) },
+    // a frame pdf-lib's embedder does not take: two components («Unknown JPEG channel.»)
+    { name: "two-components.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 2) },
   ];
 }
 
@@ -443,5 +459,35 @@ describe("one check for the upload and the build", () => {
     expect(await ask("heic-named.jpg")).toEqual({ ok: false, reason: "unreadable" });
     expect(await ask("a-png-named.jpg")).toEqual({ ok: true, pages: 1 });
     expect(await ask("fill-before-a-restart.jpg")).toEqual({ ok: true, pages: 1 });
+    for (const n of ["grey.jpg", "cmyk.jpg", "restart-after-soi.jpg", "tem-after-soi.jpg", "app0-hit-into-a-restart.jpg"]) expect(await ask(n), n).toEqual({ ok: true, pages: 1 });
+    expect(await ask("two-components.jpg")).toEqual({ ok: false, reason: "unreadable" });
+  });
+
+  // the third round's proof: on 30,000 mutations of five real photos, 14 were «readable» at the upload and left
+  // out by the build (13 frames of another component count, 1 restart before the frame) — here, seeded, on ours
+  it("answers as the build does on 3,000 damaged photos — bytes changed, cut short, bytes put in", { timeout: 30_000 }, async () => {
+    const seeds = [jpeg(), jpeg(undefined, 1), jpeg(undefined, 4, JFIF), jpeg([0x12, 0xff, 0xd0, 0x34, 0xff, 0xd1, 0x56], 3, JFIF)];
+    let s = 5787;
+    const rnd = (n: number) => ((s = (s * 1103515245 + 12345) & 0x7fffffff), s % n);
+    const damaged: { name: string; mime: ReaderMime; bytes: Uint8Array }[] = [];
+    for (let k = 0; k < 3000; k++) {
+      let b = seeds[k % seeds.length].slice();
+      const kind = rnd(3);
+      if (kind === 0) for (let f = 0; f <= rnd(4); f++) b[rnd(b.length)] = rnd(256);
+      else if (kind === 1) b = b.slice(0, rnd(b.length));
+      else {
+        const at = rnd(b.length);
+        b = Uint8Array.from([...b.subarray(0, at), ...Array.from({ length: 1 + rnd(8) }, () => (rnd(3) === 0 ? 0xff : rnd(256))), ...b.subarray(at)]);
+      }
+      damaged.push({ name: `damaged-${k}.jpg`, mime: "image/jpeg", bytes: b });
+    }
+    const refused: string[] = [];
+    for (const f of damaged) if (!(await readableSource(f.bytes, f.mime)).ok) refused.push(f.name);
+    const r = await assembleReader(jobOf(damaged), stub);
+    expect(r.skipped.map((x) => x.name)).toEqual(refused);
+    expect(r.pages).toBe(FIXED_PAGES + damaged.length - refused.length);
+    // both answers are given, many times over
+    expect(refused.length).toBeGreaterThan(300);
+    expect(damaged.length - refused.length).toBeGreaterThan(300);
   });
 });
