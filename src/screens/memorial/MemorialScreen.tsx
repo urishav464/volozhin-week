@@ -329,9 +329,10 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
     const s = parseClock(start);
     const t = parseClock(end);
     if (s == null || t == null || t <= s) return setProblem("צריך שעת התחלה ושעת סיום, למשל 13:00 ו-13:15.");
+    if (s % 5 !== 0 || t % 5 !== 0) return setProblem("השעות בקפיצות של 5 דקות, למשל 13:05.");
     if (s < row.start_min || t > row.end_min) return setProblem(`בתוך השורה: ${fmtRange(row.start_min, row.end_min)}.`);
     const done = await act(key, () => cmds.addMemorialSlot(day, s, t, room === "" ? null : room), "זמן הזיכרון נוסף", (code) => {
-      if (code !== "room_taken" && code !== "outside_grid" && code !== "bad_time") return false;
+      if (code !== "room_taken" && code !== "outside_grid" && code !== "bad_shape") return false;
       setProblem(errorMessage(code));
       return true;
     });
@@ -695,8 +696,8 @@ function ContactsForm({ c, name, busy, onSave, onCancel }: { c: FallenContacts; 
     e.preventDefault();
     setProblem(null);
     await onSave({ contact_name: text(d.contact_name), relation: text(d.relation), phone: text(d.phone), email: text(d.email), note: text(d.note) }, (code) => {
-      if (!code || !["bad_phone", "bad_email", "bad_contact_email", "bad_value"].includes(code)) return false;
-      setProblem(errorMessage(code));
+      if (!code || !["bad_phone", "bad_email", "bad_contact_email", "bad_value", "contacts_hidden"].includes(code)) return false;
+      setProblem(code === "contacts_hidden" ? "פרטי הקשר של המשפחה גלויים רק למדריכים של מחזור אמיתי שיש בו תוכנית לחלל/ה." : errorMessage(code));
       return true;
     });
   };
