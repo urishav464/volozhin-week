@@ -125,6 +125,16 @@ export function pendingSpeakers(week: Week): Speaker[] {
   return week.speakers.filter((s) => s.vetted === "pending" && !s.retired).sort((a, b) => a.name.localeCompare(b.name, "he") || a.id - b.id);
 }
 
+/**
+ * «אישור באצווה: מי שלימד/ה ב-<מחזור>» («הצעה», DESIGN «ייבוא תשפ"ו»): the speakers still waiting for approval who
+ * taught a closed lesson of that edition — an archive the import made — lead or co.
+ */
+export function pendingWhoTaught(pending: Speaker[], edition: Pick<Week, "lessons" | "lessonSpeakers">): Speaker[] {
+  const closed = new Set(edition.lessons.filter((l) => l.state === "closed").map((l) => l.id));
+  const taught = new Set(edition.lessonSpeakers.filter((x) => closed.has(x.lesson_id)).map((x) => x.speaker_id));
+  return pending.filter((s) => taught.has(s.id));
+}
+
 /** The one primary button of a «המרצים שלי» row. */
 export type MineStep = "accept" | "approached" | "positive" | "schedule" | LessonStep | "lesson" | null;
 

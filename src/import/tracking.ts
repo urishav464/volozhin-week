@@ -98,8 +98,12 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
   const rows = dataRows(grid, o.headerRow).map(({ row, cells }): TrackingRow => {
     const warnings: string[] = [];
     const double = cells.some((c) => DOUBLE.test(c));
-    const base = { row, warnings, double, when: null, whenProblem: null, speakerKeys: [], title: null, topic: "", sources: "", transport: "", confirmFrom: "", audience: null, notes: [] };
+    const base: Omit<TrackingRow, "skip"> = {
+      row, warnings, double, when: null, whenProblem: null, speakerKeys: [], title: null, topic: "", sources: "", transport: "", confirmFrom: "", audience: null, notes: [],
+    };
     if (cells.some((c) => MEMORIAL.test(c))) return { ...base, skip: "זמן זיכרון — לא מיובא (זמני הזיכרון נבנים במסך «זמני זיכרון»)" };
+    // the title first: a row skipped for its time is still recognized by it in the preview
+    base.title = oneLine(value(cellOf(cells, m, "title"))) || null;
     const whenCell = oneLine(cellOf(cells, m, "when"));
     const w = whenCell ? parseWhen(whenCell) : "no_time";
     const when = typeof w === "string" ? null : w;
@@ -122,6 +126,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
       speakers.set(key, s);
     }
     if (speakerKeys.length === 0 && !double) return { ...base, when, whenProblem, skip: "אין מרצה" };
+    base.speakerKeys = speakerKeys;
     // the phone: to the speaker's contacts, when the row has exactly one
     const phone = normalizePhone(cellOf(cells, m, "phone"));
     if (phone.problem) warnings.push("הטלפון לא נשמר: לא נראה כמו מספר");
@@ -129,8 +134,8 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
       const s = speakers.get(speakerKeys[0])!;
       if (!s.phone) Object.assign(s, { phone: phone.value, phoneKey: phone.key });
     } else if (phone.value) warnings.push("הטלפון לא נשמר: יש בשורה יותר ממרצה אחד/ת");
-    const title = oneLine(value(cellOf(cells, m, "title"))) || null;
-    if (title && chars(title) > IMPORT_RULES.lesson_title) return { ...base, skip: `הכותרת ארוכה מ-${IMPORT_RULES.lesson_title} תווים` };
+    const title = base.title;
+    if (title && chars(title) > IMPORT_RULES.lesson_title) return { ...base, title: null, skip: `הכותרת ארוכה מ-${IMPORT_RULES.lesson_title} תווים` };
     notes.push(...noteLines(labelledCells(cells, m, "note", names)));
     const audience = cells.some((c) => PARENTS.test(c)) ? "שיעור להורים" : null;
     return {
@@ -263,10 +268,15 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
   const byRow = new Map(read.rows.map((r) => [r.row, r]));
   const inGroup = new Map(groups.flatMap((g) => g.rows.map((n) => [n, g] as const)));
   const plans: LessonPlan[] = [];
-  const skipped = (rows: number[], why: string, at?: When | null): LessonPlan => ({
-    rows, skip: why, warnings: [], day: (at?.day ?? 0) as Day, start_min: at?.start ?? 0, end_min: at?.end ?? 0, rangeSuggested: false, room: 0,
-    title: null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakerKeys: [],
-  });
+  /** A row (or group) that makes no lesson — its title and speakers kept, so the preview names it. */
+  const skipped = (rows: number[], why: string, at?: When | null): LessonPlan => {
+    const rs = rows.map((n) => byRow.get(n)).filter((r): r is TrackingRow => !!r);
+    return {
+      rows, skip: why, warnings: rs.flatMap((r) => r.warnings), day: (at?.day ?? 0) as Day, start_min: at?.start ?? 0, end_min: at?.end ?? 0, rangeSuggested: false, room: 0,
+      title: rs.find((r) => r.title)?.title ?? null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null,
+      import_note: null, speakerKeys: [...new Set(rs.flatMap((r) => r.speakerKeys))],
+    };
+  };
 
   /** One lesson from some rows of the sheet (one row, or a merged group). */
   const lessonOf = (rs: TrackingRow[], at: { day: Day; start: number; end: number; suggested: boolean }): LessonPlan => {

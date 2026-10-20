@@ -9,14 +9,14 @@ import { useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
 import { LIMITS } from "../../data/speakerRules";
 import type { Me } from "../../data/types";
-import { type PaymentRow, pendingPayments, pendingSpeakers } from "../../domain/mine";
+import { type PaymentRow, pendingPayments, pendingSpeakers, pendingWhoTaught } from "../../domain/mine";
 import { requestText } from "../../domain/stages";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import { STAGE_LIMITS } from "../../data/stageRules";
 import { byGender, displayName } from "../../domain/names";
-import type { Lesson, Speaker, Week } from "../../domain/types";
+import type { Edition, Lesson, Speaker, Week } from "../../domain/types";
 import { useMedia } from "../../lib/useMedia";
-import { Button, Field, GENDER_LABEL, INPUT, Panel, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, GENDER_LABEL, INPUT, Panel, useRunner } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
 import { useToast } from "./parts";
 import { SpeakerSheet } from "./SpeakerSheet";
@@ -71,6 +71,18 @@ export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-ink-soft">מרצה שאושר/ה אפשר לסגור איתו/ה שיעור. עד אז הצוות יכול להציע, אבל רק כמועמד/ת.</p>
+            {store.editions
+              .filter((e) => e.kind === "archive")
+              .map((e) => (
+                <TaughtBatch
+                  key={e.id}
+                  port={port}
+                  edition={e}
+                  pending={pending}
+                  busy={busy}
+                  onApprove={(ids) => vet(`taught:${e.id}`, ids, "approved", note.trim() || null, ids.length === 1 ? "מרצה אחד/ת אושר/ה" : `${ids.length} מרצים אושרו`)}
+                />
+              ))}
             <Field id={noteId} label="הערה לאישור (לא חובה, גלויה לצוות)">
               <input id={noteId} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
             </Field>
@@ -122,6 +134,69 @@ export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
         <SpeakerSheet key={open} port={port} me={me} week={week} speakerId={open} wide={wide} onClose={() => setOpen(null)} notify={notify} clear={clear} reload={store.reload} />
       )}
       {node}
+    </div>
+  );
+}
+
+/**
+ * «אישור באצווה: מי שלימד/ה ב-<archive>» («הצעה»): one confirm approves every waiting speaker who taught a closed lesson
+ * in that archive edition (the import of last year's tracking sheet) — the same vet_speakers as one tap, all or nothing.
+ */
+function TaughtBatch({
+  port,
+  edition,
+  pending,
+  busy,
+  onApprove,
+}: {
+  port: DataPort;
+  edition: Edition;
+  pending: Speaker[];
+  busy: string | null;
+  onApprove: (ids: number[]) => Promise<boolean>;
+}) {
+  const [archive, setArchive] = useState<Week | null>(null);
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    let live = true;
+    port.loadWeek(edition.id).then(
+      (w) => live && setArchive(w),
+      () => live && setArchive(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [port, edition.id]);
+  const who = archive ? pendingWhoTaught(pending, archive) : [];
+  if (who.length === 0) return null;
+  const count = who.length === 1 ? "מרצה אחד/ת" : `${who.length} מרצים`;
+  return (
+    <div role="group" aria-label={`אישור באצווה: מי שלימד/ה ב-${edition.label}`} className="rounded-lg border border-line bg-paper p-3">
+      <p className="text-sm">
+        <b>
+          אישור באצווה: מי שלימד/ה ב-{edition.label}
+        </b>{" "}
+        <Badge tone="accent">הצעה</Badge>
+      </p>
+      <p className="mb-2 text-sm text-ink-soft">
+        {count} {who.length === 1 ? "שממתין/ה" : "שממתינים"} לאישור לימדו שיעור במחזור «{edition.label}»: {who.map((s) => displayName(s)).join(", ")}.
+      </p>
+      {asking ? (
+        <Confirm
+          danger={false}
+          text={`לאשר ${count} שלימדו ב-${edition.label}? אחר כך אפשר לסגור איתם/ן שיעורים.`}
+          confirm={`אישור ${count}`}
+          busy={busy === `taught:${edition.id}`}
+          onConfirm={async () => {
+            if (await onApprove(who.map((s) => s.id))) setAsking(false);
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      ) : (
+        <Button kind="primary" onClick={() => setAsking(true)}>
+          אישור {count} שלימדו ב-{edition.label}
+        </Button>
+      )}
     </div>
   );
 }
