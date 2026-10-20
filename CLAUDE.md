@@ -19,7 +19,8 @@ Supabase (Postgres + Auth + Realtime + Storage), no server code — all logic is
 
 The approved plan is `docs/DESIGN.md` — read it before building anything. Implementation-time
 decisions that differ from it are in `docs/DECISIONS.md`. The owner's setup steps are in
-`docs/SETUP.he.md`.
+`docs/SETUP.he.md`; the team's one-page guide is `docs/GUIDE.he.md` (also the site's «עזרה» page —
+keep it to markdown-lite).
 
 ## Commands
 
@@ -99,6 +100,19 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   also in the speaker sheet), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
   a live preview, the duty phrases), and the approvals queue's payment section. The escort
   picker warns through `escortClashes` (`src/rules/warnings.ts`), the same rule as `escort_gap`.
+- **Outputs and knowledge (milestone 4, schema v8):** `src/exports/` — pure, unit-tested builders of
+  every output from a loaded Week: the tracking table (`tracking.ts`), the escorts' list (`escorts.ts`),
+  the designer's public schedule and its diff (`designer.ts`), the archive zip (`archive.ts`), and the
+  file writers — CSV with BOM/CRLF (`csv.ts`) and our own small xlsx on `fflate` (`xlsx.ts`; no
+  SheetJS). Every cell passes `guardCell` (the formula-injection guard). Nothing is uploaded but a
+  designer export's snapshot. `port.outputs` (`src/data/outputs.ts`): phones in one invoker call,
+  `get_contacts_for` (never more than `get_speaker_contacts`), the snapshots, the archive's extras;
+  `port.knowledge` (`src/data/knowledge.ts`): notes and milestones — direct writes under RLS with guard
+  triggers (CONTRACT «Outputs and knowledge»). Screens: `src/screens/outputs/` (/tracking,
+  /print/escorts, /export/designer), `src/screens/knowledge/` (/knowledge), the archive in
+  «הגדרות ← מחזור» (`ArchivePanel.tsx`), «עזרה» (/help) rendering `docs/GUIDE.he.md` itself through
+  markdown-lite (`src/domain/markdown.ts` — text nodes only, never HTML). Last year's stage colours:
+  `src/domain/progress.ts`, one definition for the lens, the table and the xlsx.
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
