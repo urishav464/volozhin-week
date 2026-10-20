@@ -853,8 +853,9 @@ not null), else null; null for Word. **A PDF or picture with no page count was n
 `pending` → `sheet` (a file arrived); and when it is the current speaker's first file and the kind
 prints something (not `pending none presentation`), `in_reader` := true — only then, so a lesson
 someone unmarked stays unmarked. `version + 1` when either changed. **A poster:** the edition's first
-becomes the cover (`settings.reader_cover`). Engine: `Engine.registerSourceFile` (`arrived`,
-`pagesFor`).
+one the browser read (`page_count` not null) becomes the cover (`settings.reader_cover`), when none
+is marked; one it could not read never does (the build would not fetch it). Engine:
+`Engine.registerSourceFile` (`arrived`, `pagesFor`).
 
 A registration the database refuses (a `CommandError`) removes the uploaded object again (the
 browser, under the delete policy), and the refusal is shown. A registration with no answer (a
@@ -921,17 +922,22 @@ entry with the page it starts on); then each day: every `included` row — a hea
 files' pages, each scaled to fit A4 with its aspect and rotation kept — and every memorial slot; a
 «סיכום יום» page closes every day. Running headers `[left, right]` alternate (an odd page the left
 one); page numbers count from the cover's first page as 1; the cover carries neither. Hebrew is drawn on an OffscreenCanvas and
-embedded as PNG. Only read files are fetched (an unread one the screen names at once, under «לא
-נכנסו (צריך להעלות קובץ אחר):»). Every file is opened — `openSource` (`src/reader/readable.ts`), the
-same steps as the upload's `readableSource` — and embedded before the pages are planned; a file that
+embedded as PNG. Only read files are fetched; the screen names the unread ones at once, under «לא
+נכנסו (צריך להעלות קובץ אחר):» — every one of every lesson marked `in_reader`, a row left out
+(`unreadable`) as well as an `included` one (`unreadForReader`, `src/reader/model.ts`), in schedule
+order, then what the build left out (never the same file: it fetches only read ones). Every file is
+opened — `openSource` (`src/reader/readable.ts`), the same steps as the upload's `readableSource` —
+and embedded before the pages are planned; a file that
 cannot be read — a PDF that does not open or is protected, has no pages, or one whose pages pdf-lib
 cannot decode (all its pages or none), a picture that is neither PNG nor JPEG by its bytes, a PNG
 whose image data does not inflate to its end (`src/reader/png.ts`, before pdf-lib's decoder, which
-never returns on data cut short), a JPEG whose structure cannot be followed — is left out and named,
-and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
+never returns on data cut short), a JPEG whose structure cannot be followed or whose frame pdf-lib
+does not take (its own header read, `JpegEmbedder.for`, on the cleaned bytes: not 1, 3 or 4
+components) — is left out and named, and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
 JPEG goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame
 and the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the
-image are dropped; its EXIF orientation is read first and honoured. A PDF's pages are copied with
+image are dropped, and so is a marker without a length (RST0–7, TEM) outside a scan, which libjpeg
+ignores; its EXIF orientation is read first and honoured. A PDF's pages are copied with
 **their printing annotations and filled form fields painted in** (`src/reader/annotations.ts`, as a
 viewer prints, PDF 32000-1 §12.5.5: the Print flag and not Hidden, never a Popup or a Link; the
 normal appearance — a check box's by its /AS — its /BBox through its /Matrix onto its /Rect; one
