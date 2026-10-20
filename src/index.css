@@ -47,3 +47,25 @@ body {
     padding-inline-end: 24rem;
   }
 }
+
+/* Print (the outputs: the tracking table, the escorts' list): the page itself,
+   on white, in its colours — the stage tints are the point of the table — with
+   a table's header row repeated on every page and no row split across two. The
+   page size is each screen's own (PrintSetup in src/screens/outputs/parts.tsx). */
+@media print {
+  html,
+  body {
+    background: #fff;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr,
+  li {
+    break-inside: avoid;
+  }
+}

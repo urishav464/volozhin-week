@@ -118,6 +118,7 @@ export function SettingsScreen({
       case "edition":
         return (
           <EditionsTab
+            data={port}
             editions={editions}
             reload={loadEditions}
             onStarted={(id) => {

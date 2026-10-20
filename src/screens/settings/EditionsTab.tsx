@@ -3,10 +3,12 @@
 // until someone knows them: nothing here is ever guessed.
 import { type FormEvent, useId, useState } from "react";
 import { Link } from "react-router";
+import type { DataPort } from "../../data/port";
 import { fmt, hebrewDate } from "../../domain/time";
 import type { Edition } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { hebrewYearLabel } from "../../settings/hebrewYear";
+import { ArchivePanel } from "./ArchivePanel";
 import { Badge, Button, Confirm, Field, INPUT, KIND_LABEL, Panel, Row, Rows, STATUS_LABEL, useAction, useSettings } from "./kit";
 
 const FORM_REFUSALS = ["label_required", "edition_exists", "not_sunday", "bad_time", "bad_value"];
@@ -25,7 +27,7 @@ function clockToMin(s: string): number | null {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
-export function EditionsTab({ editions, reload, onStarted }: { editions: Edition[]; reload: () => Promise<void>; onStarted: (id: number) => void }) {
+export function EditionsTab({ editions, reload, onStarted, data }: { editions: Edition[]; reload: () => Promise<void>; onStarted: (id: number) => void; data: DataPort }) {
   const { me } = useSettings();
   const list = (
     <Panel title="המחזורים" aside={editions.length === 1 ? "מחזור אחד" : `${editions.length} מחזורים`}>
@@ -55,6 +57,7 @@ export function EditionsTab({ editions, reload, onStarted }: { editions: Edition
     <>
       {list}
       {start}
+      {me.global_admin && <ArchivePanel data={data} editions={editions} />}
     </>
   );
 }
