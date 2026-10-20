@@ -200,7 +200,7 @@ describe("«fill empty only» — what a match would fill", () => {
   const row = { title: "הרב", gender: "m" as const, affiliation: "מוסד לדוגמה", topics: ["תנ\"ך"], phone: "0111111111", email: null, notes: "טווח ימים: א-ב" };
 
   it("every field the pool speaker lacks and the row has", () => {
-    expect(fillPlan(sp(1, "x"), { phone: false, email: false, secretary_note: false, notes: false }, row)).toEqual(["תואר", "מגדר (הצעה, מהתואר)", "מוסד", "נושאים", "טלפון", "הערות"]);
+    expect(fillPlan(sp(1, "x"), { phone: false, email: false, secretary_note: false, notes: false }, row)).toEqual(["תואר", "מגדר: זכר (הצעה, מהתואר)", "מוסד", "נושאים", "טלפון", "הערות"]);
   });
 
   it("never a field the pool speaker has — its own record or its contacts", () => {

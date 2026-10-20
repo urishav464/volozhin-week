@@ -7,7 +7,7 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { mergeTransport, STAGE_LIMITS, TRANSPORTS } from "../../data/stageRules";
 import { telHref } from "../../domain/contactLinks";
-import { APPROVAL_LABEL, requestText, shekels, TRANSPORT_LABEL } from "../../domain/stages";
+import { APPROVAL_LABEL, IMPORTED_PAY, requestText, shekels, TRANSPORT_LABEL } from "../../domain/stages";
 import type { Lesson, Transport, TransportDetails } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Chip } from "../../grid/bits";
@@ -35,7 +35,7 @@ export function PaymentStage(ctx: StageCtx) {
           <>
             <dt className="text-ink-soft">אישור</dt>
             <dd className="flex flex-wrap items-center gap-1.5">
-              <Chip tone={tone}>{APPROVAL_LABEL[l.approval]}</Chip>
+              <Chip tone={tone}>{l.approval === "none" ? IMPORTED_PAY : APPROVAL_LABEL[l.approval]}</Chip>
               {decider && (
                 <span className="text-ink-soft">
                   {decider}
@@ -67,7 +67,7 @@ export function PaymentStage(ctx: StageCtx) {
         </Button>
       )}
 
-      {mine ? (
+      {week.edition.kind === "archive" ? null : mine ? (
         formOpen ? (
           <RequestForm
             key={l.version}

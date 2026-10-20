@@ -18,13 +18,13 @@ const NO_LOOKUP = contextOf(POOL, { phones: [], contacts: [] });
 describe("(a) the candidates", () => {
   const grid = [
     ["מרצה", "מוסד", "נושאים", "טלפון", "טווח ימים", "העדפה", "חניך/ה", "הערות"],
-    ["הרב מרצה לדוגמה 1", "מוסד לדוגמה", "תנ\"ך, פילוסופיה", "000-000-0001", "א-ב", "", "", ""],
-    ["הרבנית מרצה לדוגמה 2", "", "", "", "נסגר", "", "חניך/ה לדוגמה", "הערה לדוגמה"],
+    ["הרב דוגמה אלף", "מוסד לדוגמה", "תנ\"ך, פילוסופיה", "000-000-0001", "א-ב", "", "", ""],
+    ["הרבנית דוגמה בית", "", "", "", "נסגר", "", "חניך/ה לדוגמה", "הערה לדוגמה"],
     ["ד\"ר מרצה-07", "מוסד לדוגמה", "", "", "", "", "", ""],
     ["מרצה 07ב", "", "", "", "", "", "", ""],
     ["", "שורה בלי שם", "", "", "", "", "", ""],
-    ["הרב מרצה לדוגמה 1", "", "", "", "", "", "", ""],
-    ["מרצה לדוגמה 3", "", "", "טלפון לדוגמה", "", "", "", ""],
+    ["הרב דוגמה אלף", "", "", "", "", "", "", ""],
+    ["דוגמה גימל", "", "", "טלפון לדוגמה", "", "", "", ""],
   ];
   const m = defaultMapping("candidates", grid[0], grid[0].length);
   m[1] = "affiliation";
@@ -35,7 +35,7 @@ describe("(a) the candidates", () => {
     const read = readCandidates(grid, m, { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(read[0]).toEqual({
       row: 2, skip: null, warnings: [],
-      data: { title: "הרב", name: "מרצה לדוגמה 1", key: "מרצה לדוגמה 1", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך", "פילוסופיה"], phone: "0000000001", phoneKey: "0000000001", email: null, notes: "טווח ימים: א-ב" },
+      data: { title: "הרב", name: "דוגמה אלף", key: "דוגמה אלף", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך", "פילוסופיה"], phone: "0000000001", phoneKey: "0000000001", email: null, notes: "טווח ימים: א-ב" },
     });
     expect(read[1].data).toMatchObject({ title: "הרבנית", gender: "f", notes: "טווח ימים: נסגר\nהערות: הערה לדוגמה" });
     expect(read[1].data!.notes).not.toContain("חניך/ה לדוגמה"); // an unmapped column (the trainee) is never read
@@ -81,16 +81,16 @@ describe("(b) the tracking sheet", () => {
   const H = ["מרצה", "שיעור ב", "כותרת", "מקורות (נשלח?)", "הסעה/תשלום", "טלפון", "קיבל הודעת סיכום מ", "נושא"];
   const grid = [
     H,
-    ["הרב מרצה לדוגמה 1", "ראשון 8:30", "שיעור לדוגמה א", "כן", "300", "000-000-0001", "חניך/ה לדוגמה", "תנ\"ך"],
+    ["הרב דוגמה אלף", "ראשון 8:30", "שיעור לדוגמה א", "כן", "300", "000-000-0001", "חניך/ה לדוגמה", "תנ\"ך"],
     ["מרצה 07", "ראשון 8:30", "שיעור לדוגמה ב", "כן+סרטון", "הסעה הלוך וחזור, נהג 000-000-0009", "", "", "פילוסופיה"],
-    ["מרצה לדוגמה 3", "שני 10:00 כפולה", "שיעור לדוגמה ג", "להדפיס לפני", "", "", "", "משהו אחר"],
-    ["מרצה לדוגמה 4", "שני 10:00 כפולה", "שיעור לדוגמה ד", "", "", "", "", ""],
-    ["מרצה לדוגמה 5", "שישי 8:30", "שיעור בשישי", "", "", "", "", ""],
+    ["דוגמה גימל", "שני 10:00 כפולה", "שיעור לדוגמה ג", "להדפיס לפני", "", "", "", "משהו אחר"],
+    ["דוגמה דלת", "שני 10:00 כפולה", "שיעור לדוגמה ד", "", "", "", "", ""],
+    ["דוגמה הא", "שישי 8:30", "שיעור בשישי", "", "", "", "", ""],
     ["זמן זיכרון", "שלישי 13:00", "", "", "", "", "", ""],
-    ["מרצה לדוגמה 6", "חמישי 17:30", "שיעור להורים", "נשלח במייל", "", "", "", ""],
-    ["הרב מרצה לדוגמה 1", "ראשון 8:30", "פעם שנייה באותה שעה", "", "", "", "", ""],
-    ["מרצה לדוגמה 7", "רביעי 00:30", "שיעור לילה", "", "", "", "", ""],
-    ["מרצה לדוגמה 8", "רביעי 9:15", "", "", "", "", "", ""],
+    ["דוגמה וו", "חמישי 17:30", "שיעור להורים", "נשלח במייל", "", "", "", ""],
+    ["הרב דוגמה אלף", "ראשון 8:30", "פעם שנייה באותה שעה", "", "", "", "", ""],
+    ["דוגמה זין", "רביעי 00:30", "שיעור לילה", "", "", "", "", ""],
+    ["דוגמה חית", "רביעי 9:15", "", "", "", "", "", ""],
   ];
   const m = defaultMapping("tracking", H, H.length);
   const opts = { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true };
@@ -102,14 +102,14 @@ describe("(b) the tracking sheet", () => {
   it("reads rows: the speakers once each (the phone to its speaker), memorial and out-of-week rows skipped with reasons", () => {
     const read = readTracking(grid, m, opts);
     expect(read.speakers.map((s) => [s.key, s.title, s.gender, s.phone, s.rows])).toEqual([
-      ["מרצה לדוגמה 1", "הרב", "m", "0000000001", [2, 9]],
+      ["דוגמה אלף", "הרב", "m", "0000000001", [2, 9]],
       ["מרצה 07", null, null, null, [3]],
-      ["מרצה לדוגמה 3", null, null, null, [4]],
-      ["מרצה לדוגמה 4", null, null, null, [5]],
-      ["מרצה לדוגמה 5", null, null, null, [6]],
-      ["מרצה לדוגמה 6", null, null, null, [8]],
-      ["מרצה לדוגמה 7", null, null, null, [10]],
-      ["מרצה לדוגמה 8", null, null, null, [11]],
+      ["דוגמה גימל", null, null, null, [4]],
+      ["דוגמה דלת", null, null, null, [5]],
+      ["דוגמה הא", null, null, null, [6]],
+      ["דוגמה וו", null, null, null, [8]],
+      ["דוגמה זין", null, null, null, [10]],
+      ["דוגמה חית", null, null, null, [11]],
     ]);
     expect(read.rows.find((r) => r.row === 6)!.skip).toBe("יום מחוץ לשבוע (ראשון עד חמישי)");
     expect(read.rows.find((r) => r.row === 7)!.skip).toMatch(/^זמן זיכרון/);
@@ -148,7 +148,7 @@ describe("(b) the tracking sheet", () => {
   it("a «כפולה» group merged: one lesson, the speakers together, one slot → it and the next («הצעה»)", () => {
     const plans = planLessons(readTracking(grid, m, opts), input("merge"))!;
     const merged = plans.find((p) => p.rows.includes(4))!;
-    expect(merged).toMatchObject({ rows: [4, 5], start_min: 600, end_min: 780, rangeSuggested: true, speakerKeys: ["מרצה לדוגמה 3", "מרצה לדוגמה 4"], title: "שיעור לדוגמה ג", import_note: "כותרת נוספת: שיעור לדוגמה ד" });
+    expect(merged).toMatchObject({ rows: [4, 5], start_min: 600, end_min: 780, rangeSuggested: true, speakerKeys: ["דוגמה גימל", "דוגמה דלת"], title: "שיעור לדוגמה ג", import_note: "כותרת נוספת: שיעור לדוגמה ד" });
   });
 
   it("the payload: speakers once, as matched or chosen; a lesson whose speakers were all skipped is left out", () => {
@@ -157,13 +157,13 @@ describe("(b) the tracking sheet", () => {
     const speakers = previewTrackingSpeakers(read, NO_LOOKUP);
     expect(speakers.find((s) => s.speaker.key === "מרצה 07")).toMatchObject({ status: "match", match: { target: 1 } });
     const meta = { label: "תשפ\"ו", start_date: null, source: "tracking-5786", titles_from: null };
-    const p = archivePayload(plans, speakers, new Map([["מרצה לדוגמה 4", { action: "skip" }]]), meta)!;
+    const p = archivePayload(plans, speakers, new Map([["דוגמה דלת", { action: "skip" }]]), meta)!;
     expect(p.speakers.map((s) => [s.name, s.action, s.speaker_id])).toEqual([
-      ["מרצה לדוגמה 1", "new", null],
+      ["דוגמה אלף", "new", null],
       ["מרצה 07", "merge", 1],
-      ["מרצה לדוגמה 3", "new", null],
-      ["מרצה לדוגמה 6", "new", null],
-      ["מרצה לדוגמה 7", "new", null],
+      ["דוגמה גימל", "new", null],
+      ["דוגמה וו", "new", null],
+      ["דוגמה זין", "new", null],
     ]);
     expect(p.lessons.map((l) => [l.row, l.speakers])).toEqual([
       [2, [0]],

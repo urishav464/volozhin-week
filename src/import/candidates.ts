@@ -9,7 +9,7 @@ import { LIMITS } from "../data/speakerRules";
 import { nameKey } from "../domain/nameKey";
 import type { Gender, Speaker } from "../domain/types";
 import type { Mapping } from "./fields";
-import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
+import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import { normalizeEmail, normalizePhone } from "./phone";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { pickTitleCell, splitTitle, titleGender } from "./speakerName";
@@ -142,23 +142,39 @@ export function contextOf(pool: readonly Speaker[], lookup: { phones: { key: str
 }
 
 export function previewCandidates(rows: CandidateRead[], ctx: MatchContext): CandidatePreview[] {
-  return rows.map((r) => {
+  const out = rows.map((r): CandidatePreview => {
     if (!r.data) return { ...r, status: "skip" as const, match: null, fills: [] };
     const match = matchSpeaker(r.data.key, r.data.phoneKey, ctx.pool, ctx.phones);
     const target = match.status === "match" ? ctx.pool.find((s) => s.id === match.target) : undefined;
     return { ...r, status: match.status, match, fills: target ? fillPlan(target, ctx.flags.get(target.id), r.data) : [] };
   });
+  // the rows new to the pool, against the earlier ones of the table: the same phone, or a name 0.6 alike
+  const fresh = out.filter((r) => r.status === "new" && r.data);
+  const sheet = sheetMatches(fresh.map((r) => ({ ref: String(r.row), key: r.data!.key, phoneKey: r.data!.phoneKey, label: `שורה ${r.row} · ${nameOf(r.data!)}` })));
+  return out.map((r) => (sheet.has(String(r.row)) && r.match ? { ...r, status: "ambiguous" as const, match: ambiguousInSheet(r.match, sheet.get(String(r.row))) } : r));
 }
 
-/** A row's commit line (null: left out). */
-export function speakerRowOf(row: number, d: CandidateData, a: Choice): SpeakerRow | null {
+const nameOf = (d: CandidateData) => `${d.title ? `${d.title} ` : ""}${d.name}`;
+
+/** Each row's action as the commit takes it — «כמו שורה N» followed (null: undecided). */
+export function resolvedRows(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>): Map<number, Resolved | null> {
+  const by = new Map(rows.map((r) => [String(r.row), r]));
+  const own = (ref: string) => {
+    const r = by.get(ref);
+    return r && r.data ? actionOf(r.status, r.match, choices.get(r.row)) : null;
+  };
+  return new Map(rows.filter((r) => r.data).map((r) => [r.row, resolveChoice(String(r.row), own)]));
+}
+
+/** A row's commit line (null: left out). «כמו שורה N»: a new row under row N's name (`as`) — the commit completes that speaker. */
+export function speakerRowOf(row: number, d: CandidateData, a: Resolved, as: CandidateData | null = null): SpeakerRow | null {
   if (a.action === "skip") return null;
   return {
     row,
     action: a.action,
     speaker_id: a.action === "merge" ? a.target : null,
     title: d.title,
-    name: d.name,
+    name: as?.name ?? d.name,
     gender: d.gender,
     affiliation: d.affiliation,
     topics: d.topics,
@@ -168,19 +184,22 @@ export function speakerRowOf(row: number, d: CandidateData, a: Choice): SpeakerR
   };
 }
 
-/** The «עמום» rows still waiting for the admin's choice. */
+/** The «עמום» rows still waiting for the admin's choice — or whose «כמו שורה N» names a row left out. */
 export function undecided(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>): CandidatePreview[] {
-  return rows.filter((r) => r.data && actionOf(r.status, r.match, choices.get(r.row)) == null);
+  const res = resolvedRows(rows, choices);
+  return rows.filter((r) => r.data && res.get(r.row) == null);
 }
 
 /** The commit's payload — null while an «עמום» row waits for a choice. */
 export function candidatesPayload(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>, source: string, titlesFrom: number | null): CandidatesPayload | null {
-  if (undecided(rows, choices).length) return null;
+  const res = resolvedRows(rows, choices);
+  if (rows.some((r) => r.data && res.get(r.row) == null)) return null;
+  const by = new Map(rows.map((r) => [String(r.row), r]));
   const out: SpeakerRow[] = [];
   for (const r of rows) {
     if (!r.data) continue;
-    const a = actionOf(r.status, r.match, choices.get(r.row))!;
-    const line = speakerRowOf(r.row, r.data, a);
+    const a = res.get(r.row)!;
+    const line = speakerRowOf(r.row, r.data, a, a.action === "new" && a.as != null ? (by.get(a.as)?.data ?? null) : null);
     if (line) out.push(line);
   }
   return { source, titles_from: titlesFrom, rows: out };

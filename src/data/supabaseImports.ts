@@ -39,7 +39,7 @@ export class SupabaseImports implements ImportPort {
     }
     const r = data as ImportResult;
     return {
-      created: Number(r.created), merged: Number(r.merged), filled: Number(r.filled), contacts: Number(r.contacts), lessons: Number(r.lessons), replaced: Number(r.replaced),
+      created: Number(r.created), merged: Number(r.merged), filled: Number(r.filled), contacts: Number(r.contacts), notes: Number(r.notes ?? 0), lessons: Number(r.lessons), replaced: Number(r.replaced),
       edition_id: r.edition_id == null ? null : Number(r.edition_id),
       speakers: (r.speakers ?? []).map((s) => ({ row: Number(s.row), speaker_id: Number(s.speaker_id), created: !!s.created })),
     };

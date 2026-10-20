@@ -2,7 +2,7 @@
 // cells, as text, in document order — a paragraph is a row (its tabs split it into cells, as a list typed with tabs
 // is a table), a table row is a row. Nothing else: no headers or footers, no comments, no deleted text of tracked
 // changes, a text box once (never its fallback copy). The same limits as an .xlsx (src/import/limits.ts).
-import { badFile } from "./limits";
+import { badFile, IMPORT_LIMITS, tooBig } from "./limits";
 import { cleanGrid, type Grid } from "./table";
 import { attr, local, xmlEvents } from "./xml";
 import { newBudget, readText, zipEntries } from "./zip";
@@ -34,7 +34,8 @@ export function documentGrid(xml: string): Grid {
   let paraDepth = 0; // a text box's paragraphs inside a paragraph are lines of it
   let inText = false;
   let skip = 0; // deleted text, a text box's fallback copy, fields' instructions
-  const SKIPPED = new Set(["delText", "Fallback", "instrText", "del"]);
+  // «tabs»: a paragraph's tab STOPS (<w:pPr><w:tabs><w:tab w:pos=…/>) — the same name as a tab typed in a run, never one
+  const SKIPPED = new Set(["delText", "Fallback", "instrText", "del", "tabs"]);
   const sink = () => tables[tables.length - 1]?.cell ?? para;
   for (const e of xmlEvents(xml)) {
     if (e.t === "open") {
@@ -72,6 +73,7 @@ export function documentGrid(xml: string): Grid {
           paraDepth = 0;
           if (para) rows.push(para.join("").split("\t"));
           para = null;
+          if (rows.length > IMPORT_LIMITS.rows * 4) tooBig(); // millions of empty paragraphs: refused as they come
         }
       } else if (n === "tc" && tables.length) {
         const t = tables[tables.length - 1];
@@ -85,7 +87,10 @@ export function documentGrid(xml: string): Grid {
       } else if (n === "tr" && tables.length) {
         const t = tables[tables.length - 1];
         if (t.row) {
-          if (tables.length === 1) rows.push(t.row);
+          if (tables.length === 1) {
+            rows.push(t.row);
+            if (rows.length > IMPORT_LIMITS.rows * 4) tooBig();
+          }
           // a nested table's rows are lines of the outer cell
           else tables[tables.length - 2].cell?.push("\n", t.row.join(" "));
           t.prev = t.row;

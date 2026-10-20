@@ -11,7 +11,7 @@ import type { DataPort } from "../../data/port";
 import { titlesOf } from "../../data/speakerRules";
 import type { Category, Edition } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { candidatesPayload, contextOf, lookupFor, type MatchContext, previewCandidates, readCandidates } from "../../import/candidates";
+import { candidatesPayload, contextOf, lookupFor, type MatchContext, previewCandidates, readCandidates, resolvedRows } from "../../import/candidates";
 import { gridFromClipboard } from "../../import/clipboard";
 import { readDocx } from "../../import/docxRead";
 import { ESCORT_COLUMN, escortsPayload, phrasesOf, previewEscorts, readEscorts } from "../../import/escorts";
@@ -22,7 +22,10 @@ import { columnNames, dataRows } from "../../import/rows";
 import { sampleGrid } from "../../import/sample";
 import { defaultSourcesRule, type SourcesRule } from "../../import/sources";
 import type { Grid, GridSource } from "../../import/table";
-import { archivePayload, doubleGroups, type GroupDecision, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, sourcesValuesOf, topicsOf } from "../../import/tracking";
+import {
+  archivePayload, doubleGroups, type GroupDecision, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf, speakerAliases, topicsOf,
+} from "../../import/tracking";
+import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
 import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, PhrasesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
 import { Badge, Button, Confirm, Field, INPUT, Panel, useSettings } from "./kit";
@@ -208,17 +211,24 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
 
   // ---- the preview and the payload
   const candPreview = useMemo(() => (cand && ctx ? previewCandidates(cand, ctx.match) : null), [cand, ctx]);
-  const plans = useMemo(() => (track && ctx ? planLessons(track, { decisions, categories: topics, sources }) : null), [track, ctx, decisions, topics, sources]);
+  // the sheet's speakers first (the pool, then each other), «כמו …» as the lessons' own speakers, then the lessons
+  const allTrackSpeakers = useMemo(() => (track && ctx ? previewTrackingSpeakers(track, ctx.match) : null), [track, ctx]);
+  const alias = useMemo(() => (allTrackSpeakers ? speakerAliases(allTrackSpeakers, choices) : new Map<string, string>()), [allTrackSpeakers, choices]);
+  const plans = useMemo(() => (track && ctx ? planLessons(track, { decisions, categories: topics, sources, alias }) : null), [track, ctx, decisions, topics, sources, alias]);
   const usedKeys = useMemo(() => new Set((plans ?? []).filter((p) => !p.skip).flatMap((p) => p.speakerKeys)), [plans]);
   const trackSpeakers = useMemo(
-    () => (track && ctx ? previewTrackingSpeakers(track, ctx.match).filter((s) => !plans || usedKeys.has(s.speaker.key)) : null),
-    [track, ctx, plans, usedKeys],
+    () => allTrackSpeakers?.filter((s) => !plans || usedKeys.has(alias.get(s.speaker.key) ?? s.speaker.key)) ?? null,
+    [allTrackSpeakers, plans, usedKeys, alias],
   );
   const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ticked, ctx.match) : null), [esc, ctx, ticked]);
   const groups = useMemo(() => (track ? doubleGroups(track) : []), [track]);
 
-  const labelTrim = label.trim();
-  const sameLabel = editions.find((e) => e.label === labelTrim);
+  const labelTrim = labelKey(label);
+  // compared as the commit compares it (app.label_key): quote marks and spaces aside
+  const sameLabels = editions.filter((e) => labelTrim !== "" && labelKey(e.label) === labelTrim);
+  const sameLabel = sameLabels.length === 1 ? sameLabels[0] : undefined;
+  const archiveLabels = editions.filter((e) => e.kind === "archive").map((e) => e.label);
+  const replacing = kind === "tracking" && sameLabel?.kind === "archive";
   const meta = { label: labelTrim, start_date: startDate || null, source: source.trim(), titles_from: titlesEdition?.id ?? null };
   const rowChoices = useMemo(() => new Map([...choices].map(([k, v]) => [Number(k), v])), [choices]);
   const commit: ImportCommit | null = useMemo(() => {
@@ -235,9 +245,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
     return p ? { kind, payload: p } : null;
   }, [ctx, kind, candPreview, rowChoices, plans, trackSpeakers, choices, escPreview, meta.label, meta.start_date, meta.source, meta.titles_from]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const candResolved = useMemo(() => (candPreview ? resolvedRows(candPreview, rowChoices) : null), [candPreview, rowChoices]);
+  const trackResolved = useMemo(() => (trackSpeakers ? resolvedSpeakers(allTrackSpeakers ?? [], choices) : null), [trackSpeakers, allTrackSpeakers, choices]);
   const undecidedCount =
-    kind === "candidates" ? (candPreview ?? []).filter((r) => r.status === "ambiguous" && !choices.has(String(r.row))).length
-    : kind === "tracking" ? (trackSpeakers ?? []).filter((s) => s.status === "ambiguous" && !choices.has(s.speaker.key)).length
+    kind === "candidates" ? (candPreview ?? []).filter((r) => r.data && candResolved?.get(r.row) == null).length
+    : kind === "tracking" ? (trackSpeakers ?? []).filter((s) => trackResolved?.get(s.speaker.key) == null).length
     : (escPreview ?? []).filter((r) => r.status === "ambiguous" && !choices.has(r.key)).length;
   const groupsOpen = kind === "tracking" ? groups.filter((g) => !decisions.has(g.id)).length : 0;
   const blockers = [
@@ -245,6 +257,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
     groupsOpen > 0 && (groupsOpen === 1 ? "קבוצת «כפולה» אחת מחכה להחלטה" : `${groupsOpen} קבוצות «כפולה» מחכות להחלטה`),
     kind === "tracking" && !labelTrim && "צריך שם למחזור בארכיון",
     kind === "tracking" && sameLabel && sameLabel.kind !== "archive" && "יש כבר מחזור פעיל בשם הזה — צריך שם אחר",
+    kind === "tracking" && sameLabels.length > 1 && "יותר ממחזור אחד עונה לשם הזה (במירכאות ובגרשיים) — צריך שם אחר",
     kind !== "escorts" && !source.trim() && "צריך מקור למרצים החדשים",
   ].filter((x): x is string => !!x);
   const rowsInCommit =
@@ -296,7 +309,16 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
         <Panel title="הטבלה" aside={table ? `${rows.length === 1 ? "שורה אחת" : `${rows.length} שורות`} ו-${grid[0]?.length ?? 0} עמודות ${SOURCE_SAID[table.source]}${table.file ? ` (${table.file})` : ""}` : undefined}>
           {!table ? (
             <div className="space-y-3">
-              <Field id={`${id}-paste`} label="הדבקת טבלה" hint="מסמנים את הטבלה ב-Excel, ב-Google Sheets, ב-Google Docs או ב-Word, מעתיקים, ומדביקים כאן (Ctrl+V). רק הטקסט של התאים נקרא.">
+              <Field
+                id={`${id}-paste`}
+                label="הדבקת טבלה"
+                hint={
+                  <>
+                    מסמנים את הטבלה <span className="whitespace-nowrap">ב-Excel</span>, <span className="whitespace-nowrap">ב-Google Sheets</span>,{" "}
+                    <span className="whitespace-nowrap">ב-Google Docs</span> או <span className="whitespace-nowrap">ב-Word</span>, מעתיקים, ומדביקים כאן (Ctrl+V). רק הטקסט של התאים נקרא.
+                  </>
+                }
+              >
                 <textarea
                   id={`${id}-paste`}
                   rows={3}
@@ -310,7 +332,8 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               </Field>
               <div className="flex flex-wrap items-center gap-2">
                 {typed.trim() && <Button onClick={readTyped}>קריאת הטקסט שהוקלד</Button>}
-                <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-paper px-3 font-semibold hover:bg-line/50">
+                {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
+                <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-paper px-3 font-semibold hover:bg-line/50 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
                   העלאת קובץ xlsx או docx
                   <input type="file" accept=".xlsx,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => void onFile(e)} className="sr-only" />
                 </label>
@@ -398,8 +421,21 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {kind === "tracking" && (
               <>
-                <Field id={`${id}-label`} label="שם המחזור בארכיון" hint={sameLabel?.kind === "archive" ? "מחזור בשם הזה כבר בארכיון — הייבוא יחליף את כל השיעורים שלו (לא אם נכתב על אחד מהם «איך עבר»)." : "למשל: תשפ״ו. נשמר כמחזור ארכיון, לקריאה בלבד."}>
-                  <input id={`${id}-label`} value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} className={INPUT} aria-describedby={`${id}-label-hint`} />
+                <Field
+                  id={`${id}-label`}
+                  label="שם המחזור בארכיון"
+                  hint={
+                    sameLabel?.kind === "archive"
+                      ? `מחזור בשם הזה כבר בארכיון («${sameLabel.label}») — הייבוא יחליף את כל השיעורים שלו (לא אם נכתב על אחד מהם «איך עבר»).`
+                      : 'למשל: תשפ"ו. נשמר כמחזור ארכיון, לקריאה בלבד לצוות. מירכאות או גרשיים — אותו שם.'
+                  }
+                >
+                  <input id={`${id}-label`} value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} className={INPUT} aria-describedby={`${id}-label-hint`} list={`${id}-archives`} />
+                  <datalist id={`${id}-archives`}>
+                    {archiveLabels.map((l) => (
+                      <option key={l} value={l} />
+                    ))}
+                  </datalist>
                 </Field>
                 <Field id={`${id}-date`} label="תאריך הפתיחה של אשתקד (יום ראשון, לא חובה)">
                   <input id={`${id}-date`} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={INPUT} />
@@ -419,6 +455,12 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                   <span className="block text-xs text-ink-soft">בלי תואר כזה המגדר נשאר לא ידוע. לעולם לא מנחשים לפי שם.</span>
                 </span>
               </label>
+            )}
+            {kind === "tracking" && (
+              <p className="text-sm sm:col-span-2">
+                שעה לפני 06:30 שייכת ללילה שאחרי היום שנכתב («שלישי 00:30» ← ליל שלישי–רביעי) <Badge tone="accent">הצעה</Badge>
+                <span className="block text-xs text-ink-soft">«ליל» ויום אחד בלבד לא נקרא — לא ברור איזה לילה. «ליל שלישי–רביעי» נקרא.</span>
+              </p>
             )}
           </div>
 
@@ -442,10 +484,10 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       )}
       {kind === "escorts" && ctx && <PhrasesTable phrases={phrases} ticked={ticked} onToggle={(k) => setTicked((cur) => { const n = new Set(cur); if (!n.delete(k)) n.add(k); return n; })} />}
 
-      {ctx && kind === "candidates" && candPreview && <CandidatesPreview rows={candPreview} pool={ctx.match} choices={choices} onChoose={choose} />}
+      {ctx && kind === "candidates" && candPreview && candResolved && <CandidatesPreview rows={candPreview} pool={ctx.match} choices={choices} resolved={candResolved} onChoose={choose} />}
       {ctx && kind === "tracking" && trackSpeakers && (
         <>
-          <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} onChoose={choose} />
+          <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} resolved={trackResolved ?? new Map()} onChoose={choose} />
           {plans ? <LessonsPreview plans={plans} categories={ctx.categories} speakers={trackSpeakers} choices={choices} /> : <Panel title="השיעורים"><p className="text-ink-soft">אחרי ההחלטה על כל קבוצות «כפולה» יופיעו כאן השיעורים.</p></Panel>}
         </>
       )}
@@ -458,18 +500,37 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               {blockers.map((b) => (
                 <li key={b}>{b}</li>
               ))}
+              {(undecidedCount > 0 || groupsOpen > 0) && (
+                <li className="list-none">
+                  <Button
+                    kind="quiet"
+                    onClick={() => {
+                      const el = document.querySelector<HTMLElement>("[data-undecided]");
+                      el?.scrollIntoView({ block: "center" });
+                      el?.querySelector<HTMLElement>("input")?.focus();
+                    }}
+                  >
+                    לראשונה שמחכה להחלטה
+                  </Button>
+                </li>
+              )}
             </ul>
           ) : (
             <p className="mb-2 text-sm text-ink-soft">
               {kind === "tracking" ? `${rowsInCommit} שיעורים במחזור «${labelTrim}»` : kind === "candidates" ? `${rowsInCommit} שורות למאגר` : `${rowsInCommit} מרצים יושלמו`}
-              {kind === "tracking" && sameLabel?.kind === "archive" && " — במקום השיעורים שכבר שם"}.
+              {replacing && " — במקום השיעורים שכבר שם"}.
             </p>
           )}
           {confirming ? (
             <Confirm
-              danger={false}
-              text={kind === "tracking" && sameLabel?.kind === "archive" ? `לייבא ולהחליף את כל השיעורים של «${labelTrim}»?` : "לייבא? הכול נשמר בפעולה אחת."}
-              confirm="ייבוא"
+              // replacing an archive's lessons deletes them: styled as such, the focus on «ביטול» (a first import only adds)
+              danger={replacing}
+              text={
+                replacing
+                  ? `השיעורים שכבר במחזור «${sameLabel!.label}» יימחקו ויוחלפו בשיעורים מהגיליון הזה. אין ביטול — כדי לחזור, מייבאים שוב את הגיליון הקודם.`
+                  : "לייבא? הכול נשמר בפעולה אחת."
+              }
+              confirm={replacing ? "כן, להחליף" : "ייבוא"}
               busy={committing}
               onConfirm={() => void doCommit()}
               onCancel={() => setConfirming(false)}
@@ -490,14 +551,20 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   );
 }
 
+/** «מרצה אחד/ת <one>» or «N <many>». */
+const count = (n: number, one: string, many: string) => (n === 1 ? `מרצה אחד/ת ${one}` : `${n} ${many}`);
+
 function ResultPanel({ r }: { r: { kind: ImportKind; res: ImportResult; label: string | null } }) {
   const { res } = r;
   const parts = [
     res.created > 0 && (res.created === 1 ? "נוסף/ה מרצה אחד/ת למאגר (ממתין/ה לאישור)" : `נוספו ${res.created} מרצים למאגר (ממתינים לאישור)`),
     res.merged > 0 && (res.merged === 1 ? "מרצה אחד/ת כבר במאגר" : `${res.merged} כבר במאגר`),
-    res.filled > 0 && `${res.filled} הושלמו בפרטים שהיו חסרים`,
-    res.contacts > 0 && `${res.contacts} קיבלו פרטי קשר שהיו חסרים`,
-    r.kind === "tracking" && `${res.lessons} שיעורים במחזור «${r.label}»${res.replaced ? ` (במקום ${res.replaced} שהיו)` : ""}`,
+    res.filled > 0 && count(res.filled, "הושלם/ה בפרטים שהיו חסרים", "הושלמו בפרטים שהיו חסרים"),
+    // a phone or an e-mail apart from a note (the escorts' file: «איך פונים»)
+    res.contacts > 0 && (r.kind === "escorts" ? count(res.contacts, "קיבל/ה «איך פונים»", "קיבלו «איך פונים»") : count(res.contacts, "קיבל/ה טלפון או מייל", "קיבלו טלפון או מייל")),
+    res.notes > 0 && count(res.notes, "קיבל/ה הערה", "קיבלו הערה"),
+    r.kind === "tracking" &&
+      `${res.lessons === 1 ? "שיעור אחד" : `${res.lessons} שיעורים`} במחזור «${r.label}»${res.replaced ? ` (במקום ${res.replaced === 1 ? "השיעור שהיה" : `${res.replaced} שהיו`})` : ""}`,
   ].filter(Boolean);
   return (
     <Panel title="הייבוא נשמר">

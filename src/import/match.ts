@@ -3,12 +3,16 @@
 //   the same phone (by its key, public.import_lookup answers which pool speaker has it) → «תואם»;
 //   a name key at least 0.6 alike (pg_trgm's similarity, «הצעה» — the pool's own SIMILAR_THRESHOLD) → «עמום»,
 //   the admin chooses per row: complete one of the candidates, a new speaker, or skip it;
-//   nothing → «חדש».
-// A match only FILLS what the pool speaker lacks — never overwrites — and the preview says what it would fill.
+//   nothing → «חדש» — unless an EARLIER row of the same table, also new to the pool, has the same phone or a name
+//   0.6 alike (sheetMatches): then «עמום» too, the admin choosing «אותו/ה מרצה כמו שורה N», a new speaker (a couple
+//   on one line are two people), or skip.
+// A match only FILLS what the pool speaker lacks — never overwrites, never a gender the speaker's own title
+// contradicts — and the preview says what it would fill.
 import { SIMILAR_THRESHOLD } from "../data/speakerRules";
 import type { ContactFlags } from "../data/imports";
 import { displayName } from "../domain/names";
-import { similarity } from "../domain/trigram";
+import { titleGender } from "./speakerName";
+import { similarity, trigrams } from "../domain/trigram";
 import type { ContactPref, Gender, Speaker } from "../domain/types";
 
 export type RowStatus = "new" | "match" | "ambiguous" | "skip";
@@ -22,8 +26,20 @@ export interface MatchCandidate {
   similarity: number | null;
 }
 
+/** An earlier row of the same table a row may be the same speaker as. */
+export interface SheetCandidate {
+  /** The row's reference: its row number (the candidates) or its speaker's key (the tracking sheet). */
+  ref: string;
+  /** «שורה 3 · הרב מרצה לדוגמה». */
+  label: string;
+  via: "phone" | "similar";
+  similarity: number | null;
+}
+
 export interface SpeakerMatch {
   status: "new" | "match" | "ambiguous";
+  /** «ambiguous» within the table: the earlier rows it may be (empty: none). */
+  sheet?: SheetCandidate[];
   /** «match»: the pool speaker it completes. */
   target: number | null;
   via: "name" | "phone" | "similar" | null;
@@ -32,8 +48,8 @@ export interface SpeakerMatch {
   allowNew: boolean;
 }
 
-/** What the admin chose for a row: complete a pool speaker, add a new one, or leave the row out. */
-export type Choice = { action: "merge"; target: number } | { action: "new" } | { action: "skip" };
+/** What the admin chose for a row: complete a pool speaker, add a new one, be an earlier row's speaker, or leave the row out. */
+export type Choice = { action: "merge"; target: number } | { action: "new" } | { action: "same"; ref: string } | { action: "skip" };
 
 const label = (s: Speaker) => `${displayName(s)}${s.disambiguator ? ` (${s.disambiguator})` : ""}`;
 
@@ -61,6 +77,65 @@ export function matchSpeaker(key: string, phone: string | null, pool: readonly S
   return { status: "new", target: null, via: null, candidates: [], allowNew: true };
 }
 
+/** pg_trgm's similarity of two trigram sets made once (similarity() makes them on every call). */
+function setSimilarity(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const t of a) if (b.has(t)) shared++;
+  return Math.fround(shared / (a.size + b.size - shared));
+}
+
+export interface SheetItem {
+  ref: string;
+  key: string;
+  phoneKey: string | null;
+  label: string;
+}
+
+/**
+ * The rows the pool left «חדש», each against the EARLIER such rows of the same table: the same phone, or a name key
+ * at least 0.6 alike (the pool's threshold) — two rows the commit would otherwise make two speakers of, or one, without
+ * the admin seeing it. ref → its candidates (at most five; none: not there).
+ */
+export function sheetMatches(items: readonly SheetItem[]): Map<string, SheetCandidate[]> {
+  const min = Math.fround(SIMILAR_THRESHOLD);
+  const sets = items.map((i) => trigrams(i.key));
+  const out = new Map<string, SheetCandidate[]>();
+  items.forEach((it, i) => {
+    const found: SheetCandidate[] = [];
+    for (let j = 0; j < i; j++) {
+      const o = items[j];
+      if (it.phoneKey != null && it.phoneKey === o.phoneKey) found.push({ ref: o.ref, label: o.label, via: "phone", similarity: null });
+      else {
+        const sim = setSimilarity(sets[i], sets[j]);
+        if (sim >= min) found.push({ ref: o.ref, label: o.label, via: "similar", similarity: sim });
+      }
+    }
+    if (found.length) out.set(it.ref, found.sort((a, b) => (a.via === b.via ? (b.similarity ?? 0) - (a.similarity ?? 0) : a.via === "phone" ? -1 : 1)).slice(0, 5));
+  });
+  return out;
+}
+
+/** A pool «חדש» made «עמום» by the earlier rows of its table it may be. */
+export const ambiguousInSheet = (m: SpeakerMatch, sheet: SheetCandidate[] | undefined): SpeakerMatch =>
+  sheet?.length ? { ...m, status: "ambiguous", via: null, sheet, allowNew: true } : m;
+
+/** What the commit does for a row — «אותו/ה מרצה כמו …» followed to the row it names (null: still undecided). */
+export type Resolved = { action: "skip" } | { action: "merge"; target: number } | { action: "new"; as: string | null };
+
+/**
+ * A row's action with the earlier rows it may name followed: «כמו שורה N» is a new speaker under row N's name (the
+ * commit completes the speaker row N makes — filling only what is empty), or nothing when row N is left out.
+ */
+export function resolveChoice(ref: string, own: (ref: string) => Choice | null, depth = 0): Resolved | null {
+  const a = own(ref);
+  if (a == null || depth > 50) return null;
+  if (a.action !== "same") return a.action === "new" ? { action: "new", as: null } : a;
+  const to = resolveChoice(a.ref, own, depth + 1);
+  if (to == null || to.action === "skip") return null;
+  return to.action === "new" ? { action: "new", as: to.as ?? a.ref } : to;
+}
+
 /** What a row brings for a speaker (what a match could fill). */
 export interface SpeakerFill {
   title: string | null;
@@ -79,7 +154,12 @@ export function fillPlan(existing: Speaker, flags: ContactFlags | undefined, d: 
   const c = flags ?? { phone: false, email: false, secretary_note: false, notes: false };
   const out: string[] = [];
   if (existing.title == null && d.title) out.push("תואר");
-  if (existing.gender == null && d.gender) out.push("מגדר (הצעה, מהתואר)");
+  if (existing.gender == null && d.gender) {
+    // the pool's own title says the other gender: never filled (app.import_speaker)
+    const own = titleGender(existing.title);
+    if (own != null && own !== d.gender) out.push(`מגדר: לא ימולא — במאגר התואר ${existing.title}`);
+    else out.push(`מגדר: ${d.gender === "m" ? "זכר" : "נקבה"} (הצעה, מהתואר)`);
+  }
   if (existing.affiliation == null && d.affiliation) out.push("מוסד");
   if (existing.topics.length === 0 && d.topics.length) out.push("נושאים");
   if (existing.contact_pref == null && d.contact_pref) out.push("ערוץ קשר");
@@ -96,6 +176,7 @@ export function actionOf(status: RowStatus, m: SpeakerMatch | null, choice: Choi
   if (status === "match" && m?.target != null) return { action: "merge", target: m.target };
   if (status === "new") return { action: "new" };
   if (!choice) return null;
+  if (choice.action === "same") return m?.sheet?.some((c) => c.ref === choice.ref) ? choice : null;
   if (choice.action === "new" && !m?.allowNew) return null;
   if (choice.action === "merge" && !m?.candidates.some((c) => c.id === choice.target)) return null;
   return choice;

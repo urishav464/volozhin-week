@@ -20,7 +20,8 @@ export const ESCORT_COLUMN = /מלוו/;
 
 const CHANNELS: [RegExp, ContactPref][] = [
   [/מזכיר/, "secretary"],
-  [/ו{1,2}א?[טצ]?[סצ]א?פ|whats\s?app/i, "whatsapp"],
+  // the word's spellings, whole (וואטסאפ, ווטסאפ, וואצאפ, ווצאפ…) — never «וספ» inside נוספות, תוספת, הוספה
+  [/(?<![א-ת])[בלוה]?ו{1,2}א?(?:טס|טצ|צ|ס)א?[פף](?![א-ת])|whats\s?app/i, "whatsapp"],
   [/מייל|אימייל|דוא["״]?ל|e-?mail/i, "email"],
   [/טלפון|להתקשר|בנייד|נייד|שיחה/, "phone"],
 ];

@@ -192,7 +192,7 @@ test.describe("demo build", () => {
     await expect(option).toContainText("הצעה");
     await page.getByRole("button", { name: "הרצה יבשה" }).click();
     await expect(page.locator("[data-dry=archive]")).toHaveText("מחזור לדוגמה");
-    await expect(page.locator("[data-dry=deactivate]")).toContainText("1 חברי צוות (תוכן ולוגיסטיקה)");
+    await expect(page.locator("[data-dry=deactivate]")).toContainText("חבר/ת צוות אחד/ת (תוכן או לוגיסטיקה)");
     // the option off: nobody
     await page.getByRole("checkbox", { name: /להשבית את חברי הצוות/ }).first().uncheck();
     await page.getByRole("button", { name: "הרצה יבשה" }).click();

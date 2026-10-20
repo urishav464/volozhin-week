@@ -35,6 +35,9 @@ export interface CleanPhone {
 export function normalizePhone(raw: string | null | undefined): CleanPhone {
   const t = cleanCell(raw ?? "").replace(/\n/g, " ");
   if (!t) return { value: null, key: null, problem: false };
+  // two numbers in one cell («050… / 052…», «…, …», «… או …»): kept as typed, compared by the first — never one key of both
+  const parts = t.split(/\s*(?:[/,;]|\sאו\s)\s*/).filter((x) => phoneKey(x) != null);
+  if (parts.length > 1) return [...t].length <= 40 ? { value: t, key: phoneKey(parts[0]), problem: false } : { value: null, key: null, problem: true };
   const key = phoneKey(t);
   if (!key) return { value: null, key: null, problem: true };
   const digits = t.replace(/[^0-9]/g, "");
@@ -56,6 +59,9 @@ export function normalizeEmail(raw: string | null | undefined): { value: string 
 const PHONE_IN_TEXT = /\+?[0-9][0-9\s().\-–־]{5,}[0-9]/g;
 const EMAIL_IN_TEXT = /[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+/g;
 
+/** A date («12.3.2026», «05/03/26») or a range of years («1948-1967») — digits that are no phone. */
+const NOT_A_PHONE = /^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})|(?:1[89]|20)[0-9]{2}\s*[-–־]\s*(?:1[89]|20)[0-9]{2})$/;
+
 /** Free text with every phone and e-mail in it replaced — what the team may read of last year's notes. */
 export function scrubContacts(text: string): { text: string; scrubbed: boolean } {
   let scrubbed = false;
@@ -65,7 +71,7 @@ export function scrubContacts(text: string): { text: string; scrubbed: boolean }
       return "[מייל הוסר]";
     })
     .replace(PHONE_IN_TEXT, (m) => {
-      if (m.replace(/[^0-9]/g, "").length < 7) return m;
+      if (m.replace(/[^0-9]/g, "").length < 7 || NOT_A_PHONE.test(m.trim())) return m;
       scrubbed = true;
       return "[טלפון הוסר]";
     });

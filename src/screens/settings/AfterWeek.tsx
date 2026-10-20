@@ -28,9 +28,16 @@ function moment(iso: string): string {
   return new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", day: "numeric", month: "numeric", year: "numeric" }).format(new Date(iso));
 }
 
-/** The edition a year closes: the live real one, else the newest. */
+/**
+ * The edition a year closes: the live real one, else the newest that is not an import's archive (an archive the
+ * import made was never open — it has no week to close). Null when there is none.
+ */
 export function closingEdition(editions: Edition[]): Edition | null {
-  return editions.find((e) => e.kind === "real" && e.status !== "archived") ?? [...editions].sort((a, b) => b.id - a.id)[0] ?? null;
+  return (
+    editions.find((e) => e.kind === "real" && e.status !== "archived") ??
+    [...editions].filter((e) => e.kind !== "archive").sort((a, b) => b.id - a.id)[0] ??
+    null
+  );
 }
 
 const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -171,11 +178,17 @@ function DryRun({ deactivate, setDeactivate }: { deactivate: boolean; setDeactiv
           </dd>
           <dt className="text-ink-soft">יושבתו</dt>
           <dd data-dry="deactivate">
-            {preview!.deactivate ? `${p.deactivate} חברי צוות (תוכן ולוגיסטיקה)` : "אף אחד (האפשרות כבויה)"} · {p.admins_stay} אדמינים של המחזור נשארים
+            {preview!.deactivate ? (p.deactivate === 1 ? "חבר/ת צוות אחד/ת (תוכן או לוגיסטיקה)" : `${p.deactivate} חברי צוות (תוכן ולוגיסטיקה)`) : "אף אחד (האפשרות כבויה)"} ·{" "}
+            {p.admins_stay === 1 ? "אדמין אחד/ת של המחזור נשאר/ת" : `${p.admins_stay} אדמינים של המחזור נשארים`}
           </dd>
           <dt className="text-ink-soft">נשארים לכל השנים</dt>
           <dd data-dry="stays">
-            {p.stays.speakers} מרצים · {p.stays.categories} קטגוריות · {p.stays.fallen} חללים · {p.stays.notes} הערות ידע
+            {[
+              p.stays.speakers === 1 ? "מרצה אחד/ת" : `${p.stays.speakers} מרצים`,
+              p.stays.categories === 1 ? "קטגוריה אחת" : `${p.stays.categories} קטגוריות`,
+              p.stays.fallen === 1 ? "חלל אחד" : `${p.stays.fallen} חללים`,
+              p.stays.notes === 1 ? "הערת ידע אחת" : `${p.stays.notes} הערות ידע`,
+            ].join(" · ")}
           </dd>
         </dl>
       )}
@@ -187,7 +200,8 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
   const { port } = useSettings();
   const { busy, run } = useAction();
   const id = useId();
-  const pick = closingEdition(editions);
+  // the purge's default: the edition the year closes — an archive only when there is nothing else (its notes, too, can go)
+  const pick = closingEdition(editions) ?? [...editions].sort((a, b) => b.id - a.id)[0] ?? null;
   const [chosen, setChosen] = useState<number | null>(pick?.id ?? null);
   const e = editions.find((x) => x.id === chosen) ?? pick;
   const [typed, setTyped] = useState("");
@@ -249,11 +263,12 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               <li>פרטי ההסעה של כל השיעורים: כתובות איסוף, שעות איסוף, שמות הנהגים והטלפונים שלהם.</li>
               {e.kind === "archive" && (
                 <li data-purge-import-notes>
-                  ההערות שהייבוא הביא מגיליון המעקב («מגיליון המעקב של אשתקד» בלוח השיעור): מה שנכתב שם על הסעה ותשלום, מי שלח/ה את הודעת הסיכום ושאר ההערות.
+                  ההערות שהייבוא הביא מגיליון המעקב («מגיליון המעקב של אשתקד» בלוח השיעור): מה שנכתב שם על הסעה ותשלום, מי שלח/ה את הודעת הסיכום ושאר ההערות.{" "}
+                  <Badge tone="accent">הצעה</Badge>
                 </li>
               )}
               <li>כל הקישורים של המחזור מבוטלים: קישורי המלווים, ההרשמה למכריכה לכריכה והלו"ז. הם לא ייפתחו יותר.</li>
-              <li>מוני מגבלת הקצב של הקישורים (טביעות חד-כיווניות של כתובות ה-IP של מי שפתח אותם).</li>
+              <li>מוני מגבלת הקצב של הקישורים (טביעות חד-כיווניות של כתובות ה-IP של מי שפתח/ה אותם).</li>
             </ul>
             <p className="mt-2 font-semibold">מה נשאר:</p>
             <ul className="list-disc ps-5">
@@ -277,7 +292,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
             <>
               <p className="rounded-lg border border-bad/40 bg-bad/5 px-3 py-2">
                 <b>קודם מייצאים את הארכיון</b> (למטה, «ייצוא ארכיון»): אחרי המחיקה פרטי ההסעה כבר לא יהיו בשום מקום.{" "}
-                <button type="button" className="underline" onClick={() => scrollTo("archive-panel")}>
+                <button type="button" className="inline-flex min-h-11 items-center underline" onClick={() => scrollTo("archive-panel")}>
                   לייצוא הארכיון
                 </button>
               </p>
@@ -301,10 +316,12 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
             <div role="status" data-purge-report className="rounded-lg bg-ok/10 px-3 py-2">
               <p className="font-semibold">נמחק המידע האישי של {report.edition}:</p>
               <ul className="list-disc ps-5">
-                <li>פרטי הסעה של {report.r.transport_details} שיעורים נמחקו.</li>
-                {report.r.import_notes > 0 && <li>ההערות מגיליון המעקב של {report.r.import_notes} שיעורים נמחקו.</li>}
-                <li>{report.r.links_revoked} קישורים בוטלו.</li>
-                <li>{report.r.link_hits} מונים של מגבלת הקצב נמחקו.</li>
+                <li>{report.r.transport_details === 1 ? "פרטי הסעה של שיעור אחד נמחקו." : `פרטי הסעה של ${report.r.transport_details} שיעורים נמחקו.`}</li>
+                {report.r.import_notes > 0 && (
+                  <li>{report.r.import_notes === 1 ? "ההערות מגיליון המעקב של שיעור אחד נמחקו." : `ההערות מגיליון המעקב של ${report.r.import_notes} שיעורים נמחקו.`}</li>
+                )}
+                <li>{report.r.links_revoked === 1 ? "קישור אחד בוטל." : `${report.r.links_revoked} קישורים בוטלו.`}</li>
+                <li>{report.r.link_hits === 1 ? "מונה אחד של מגבלת הקצב נמחק." : `${report.r.link_hits} מונים של מגבלת הקצב נמחקו.`}</li>
               </ul>
               <p className="text-xs text-ink-soft">נרשם ביומן הפעולות של המחזור, עם המספרים בלבד.</p>
             </div>

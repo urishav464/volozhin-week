@@ -130,12 +130,12 @@ describe("SupabaseImports on the wire", () => {
   it("calls import_lookup and import_commit by their parameter names, and reads the answers", async () => {
     const { s, sent } = wire([
       [200, { phones: [{ key: "0000000001", speaker_id: "41" }], contacts: [{ speaker_id: 41, phone: true, email: false, secretary_note: false, notes: true }] }],
-      [200, { created: 1, merged: 0, filled: 0, contacts: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: "42", created: true }] }],
+      [200, { created: 1, merged: 0, filled: 0, contacts: 1, notes: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: "42", created: true }] }],
       [200, [{ id: 41, name: "מרצה לדוגמה", name_key: "מרצה לדוגמה", topics: null, version: 1 }]],
     ]);
     expect(await s.lookup([41], ["0000000001"])).toEqual({ phones: [{ key: "0000000001", speaker_id: 41 }], contacts: [{ speaker_id: 41, phone: true, email: false, secretary_note: false, notes: true }] });
     const payload = { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה לדוגמה")] };
-    expect(await s.commit({ kind: "candidates", payload })).toEqual({ created: 1, merged: 0, filled: 0, contacts: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: 42, created: true }] });
+    expect(await s.commit({ kind: "candidates", payload })).toEqual({ created: 1, merged: 0, filled: 0, contacts: 1, notes: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: 42, created: true }] });
     expect((await s.pool())[0]).toMatchObject({ id: 41, topics: [] });
     expect(sent.slice(0, 2).map((r) => [r.path, r.body])).toEqual([
       ["/rest/v1/rpc/import_lookup", { p_speakers: [41], p_phone_keys: ["0000000001"] }],

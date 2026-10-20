@@ -59,7 +59,9 @@ export function SpeakerReviews({ port, s, actor, edition }: { port: DataPort; s:
           ))}
         </ul>
       )}
-      <p className="mt-1 text-xs text-ink-soft">גלוי למדריך/ה ולצוות התוכן של המחזור, לא לצוות הלוגיסטי ולא בשום קישור או ייצוא.</p>
+      <p className="mt-1 text-xs text-ink-soft">
+        גלוי למדריך/ה ולצוות התוכן של המחזור — לא לצוות הלוגיסטי, לא בקישורים ולא בייצוא למעצבת. «איך עבר» של כל מחזור נכלל בסיכום המחזור שלו ובארכיון.
+      </p>
     </Section>
   );
 }

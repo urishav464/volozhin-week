@@ -2,15 +2,17 @@
 // categories, the sources' words, the escorts' phrases, and the preview «חדש · תואם · עמום · מדולג» — a choice for
 // every «עמום», and what a match would fill. Lists, one card per row, the same at every width.
 import { useId } from "react";
-import { DAY_NAMES, fmtRange } from "../../domain/time";
+import { fmtRange } from "../../domain/time";
+import { dayLabel } from "../../reader/model";
 import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
 import type { Category, PrintWhen, SourcesKind } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import type { CandidatePreview, MatchContext } from "../../import/candidates";
 import type { EscortsPreview as EscortsRowPreview, Phrase } from "../../import/escorts";
-import { actionOf, type Choice, fillPlan, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
+import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
 import { DESIGN_SOURCES, sourcesKey, type SourcesRule, SUGGESTED_SOURCES } from "../../import/sources";
-import { parallelRoomName } from "../../data/importRules";
+import { ARCHIVE_ROOM, parallelRoomName } from "../../data/importRules";
+import { scrubContacts } from "../../import/phone";
 import type { DoubleGroup, GroupDecision, LessonPlan, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
 import { Badge, INPUT, Panel } from "./kit";
@@ -47,6 +49,7 @@ function SpeakerDecision({
   pool,
   choice,
   onChoose,
+  blocked = null,
 }: {
   name: string;
   status: RowStatus;
@@ -55,10 +58,14 @@ function SpeakerDecision({
   pool: MatchContext | null;
   choice: Choice | undefined;
   onChoose: (c: Choice | null) => void;
+  /** «כמו …» names a row that is left out (or itself undecided): why the choice cannot stand. */
+  blocked?: string | null;
 }) {
   const id = useId();
   const action = actionOf(status, match, choice);
   const target = action?.action === "merge" && pool ? pool.pool.find((s) => s.id === action.target) : undefined;
+  const sheet = match?.sheet ?? [];
+  const inSheet = sheet.length > 0 && (match?.candidates.length ?? 0) === 0;
   const fills = target && fill ? fillPlan(target, pool?.flags.get(target.id), fill) : [];
   return (
     <div className="mt-1 space-y-1 text-sm">
@@ -69,8 +76,26 @@ function SpeakerDecision({
       )}
       {status === "ambiguous" && match && (
         <fieldset className="min-w-0 rounded-lg border border-line bg-paper p-2">
-          <legend className="px-1 font-semibold">מי זה/זו? {match.via === "similar" ? "יש במאגר שם דומה" : match.via === "phone" ? "כמה מרצים עם הטלפון הזה" : "כמה מרצים בשם הזה"}</legend>
+          <legend className="px-1 font-semibold">
+            מי זה/זו?{" "}
+            {inSheet
+              ? sheet.some((c) => c.via === "phone")
+                ? "באותה טבלה יש שורה עם אותו טלפון"
+                : "באותה טבלה יש שורה עם שם דומה"
+              : match.via === "similar"
+                ? "יש במאגר שם דומה"
+                : match.via === "phone"
+                  ? "כמה מרצים עם הטלפון הזה"
+                  : "כמה מרצים בשם הזה"}
+          </legend>
           <div className="flex flex-col gap-1">
+            {sheet.map((c) => (
+              <label key={`sheet-${c.ref}`} className="inline-flex min-h-11 cursor-pointer items-center gap-2">
+                <input type="radio" name={`${id}-who`} checked={choice?.action === "same" && choice.ref === c.ref} onChange={() => onChoose({ action: "same", ref: c.ref })} className="accent-ink" />
+                אותו/ה מרצה כמו {c.label}
+                <span className="text-ink-soft">{c.via === "phone" ? "(אותו טלפון)" : `(דמיון ${c.similarity?.toFixed(2)})`}</span>
+              </label>
+            ))}
             {match.candidates.map((c) => (
               <label key={c.id} className="inline-flex min-h-11 cursor-pointer items-center gap-2">
                 <input type="radio" name={`${id}-who`} checked={choice?.action === "merge" && choice.target === c.id} onChange={() => onChoose({ action: "merge", target: c.id })} className="accent-ink" />
@@ -81,7 +106,7 @@ function SpeakerDecision({
             {match.allowNew && (
               <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
                 <input type="radio" name={`${id}-who`} checked={choice?.action === "new"} onChange={() => onChoose({ action: "new" })} className="accent-ink" />
-                {name} — מרצה חדש/ה
+                {name} — מרצה חדש/ה{sheet.some((c) => c.via === "phone") ? " (גם אם הטלפון משותף — למשל זוג או משרד)" : ""}
               </label>
             )}
             <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
@@ -94,6 +119,8 @@ function SpeakerDecision({
       {action?.action === "merge" && (
         <p className="text-ink-soft">{fills.length ? `יושלם (רק מה שחסר): ${fills.join(", ")}` : "אין מה להשלים — שום דבר לא נדרס."}</p>
       )}
+      {action?.action === "same" && blocked && <p className="text-bad">{blocked}</p>}
+      {action?.action === "same" && !blocked && <p className="text-ink-soft">מרצה אחד/ת עם השורה ההיא: מה שחסר שם יושלם מכאן.</p>}
       {(status === "new" || status === "match") && (
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-ink-soft">
           <input type="checkbox" checked={choice?.action === "skip"} onChange={(e) => onChoose(e.target.checked ? { action: "skip" } : null)} className="size-5 accent-ink" />
@@ -127,11 +154,14 @@ export function CandidatesPreview({
   rows,
   pool,
   choices,
+  resolved,
   onChoose,
 }: {
   rows: CandidatePreview[];
   pool: MatchContext;
   choices: Map<string, Choice>;
+  /** Each row's action as the commit takes it (null: undecided). */
+  resolved: Map<number, Resolved | null>;
   onChoose: (key: string, c: Choice | null) => void;
 }) {
   return (
@@ -141,8 +171,10 @@ export function CandidatesPreview({
         {rows.map((r) => {
           const d = r.data;
           const name = d ? `${d.title ? `${d.title} ` : ""}${d.name}` : "—";
+          const c = choices.get(String(r.row));
+          const open = !!d && resolved.get(r.row) == null;
           return (
-            <li key={r.row} data-row={r.row} className="py-2">
+            <li key={r.row} data-row={r.row} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm text-ink-soft">שורה {r.row}</span>
                 <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
@@ -152,7 +184,16 @@ export function CandidatesPreview({
               {d && (
                 <>
                   <Facts items={[genderSaid(d.gender), d.affiliation, d.topics.join(", "), d.phone && "יש טלפון", d.email && "יש מייל", d.notes && "יש הערות"]} />
-                  <SpeakerDecision name={name} status={r.status} match={r.match} fill={d} pool={pool} choice={choices.get(String(r.row))} onChoose={(c) => onChoose(String(r.row), c)} />
+                  <SpeakerDecision
+                    name={name}
+                    status={r.status}
+                    match={r.match}
+                    fill={d}
+                    pool={pool}
+                    choice={c}
+                    onChoose={(x) => onChoose(String(r.row), x)}
+                    blocked={c?.action === "same" && open ? `שורה ${c.ref} לא מיובאת (או עוד מחכה להחלטה) — בוחרים אחרת.` : null}
+                  />
                 </>
               )}
               <Warnings items={r.warnings} />
@@ -175,7 +216,7 @@ export function DoubleGroups({ groups, read, decisions, onDecide }: { groups: Do
           const rs = g.rows.map((n) => read.rows.find((r) => r.row === n)!);
           const one = g.rows.length === 1;
           return (
-            <li key={g.id} className="rounded-lg border border-line bg-paper p-2.5">
+            <li key={g.id} data-undecided={!decisions.has(g.id) || undefined} className="rounded-lg border border-line bg-paper p-2.5">
               <p className="text-sm font-semibold">{rowsSaid(g.rows)}</p>
               <div className="mb-1 text-sm text-ink-soft">
                 {rs.map((r) => (
@@ -242,10 +283,13 @@ export function SourcesTable({ read, value, onChange }: { read: TrackingRead; va
           const rule = value.get(v.key) ?? { kind: "pending" as const, print: "none" as const };
           const k = sourcesKey(v.text);
           const origin = !k ? "תא ריק: טרם התקבלו" : DESIGN_SOURCES[k] ? null : SUGGESTED_SOURCES[k] ? "הצעה" : "לא מוכר — המילים נשמרות בהערת המקורות";
+          // a phone or an e-mail in the words: taken out of the note (scrubContacts) — said before the commit
+          const contact = scrubContacts(v.text).scrubbed;
           return (
             <li key={v.key} className="rounded-lg border border-line bg-paper p-2.5">
               <p className="text-sm font-semibold break-words">
-                «{v.text || "ריק"}» <span className="font-normal text-ink-soft">({v.count})</span> {origin && <Badge tone={origin === "הצעה" ? "accent" : "muted"}>{origin}</Badge>}
+                «{v.text || "ריק"}» <span className="font-normal text-ink-soft">({v.count})</span> {origin && <Badge tone={origin === "הצעה" ? "accent" : "muted"}>{origin}</Badge>}{" "}
+                {contact && <Badge tone="bad">יש כאן טלפון או מייל — לא יישמרו</Badge>}
               </p>
               <div className="mt-1 grid gap-2 sm:grid-cols-2">
                 <div>
@@ -285,11 +329,14 @@ export function SpeakersPreview({
   rows,
   pool,
   choices,
+  resolved,
   onChoose,
 }: {
   rows: TrackingSpeakerPreview[];
   pool: MatchContext;
   choices: Map<string, Choice>;
+  /** Each speaker's action as the commit takes it (null: undecided). */
+  resolved: Map<string, Resolved | null>;
   onChoose: (key: string, c: Choice | null) => void;
 }) {
   return (
@@ -299,8 +346,10 @@ export function SpeakersPreview({
         {rows.map((r) => {
           const s = r.speaker;
           const name = `${s.title ? `${s.title} ` : ""}${s.name}`;
+          const c = choices.get(s.key);
+          const open = resolved.get(s.key) == null;
           return (
-            <li key={s.key} className="py-2">
+            <li key={s.key} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>
@@ -313,8 +362,9 @@ export function SpeakersPreview({
                 match={r.match}
                 fill={{ title: s.title, gender: s.gender, affiliation: null, topics: [], phone: s.phone, email: null, notes: null }}
                 pool={pool}
-                choice={choices.get(s.key)}
-                onChoose={(c) => onChoose(s.key, c)}
+                choice={c}
+                onChoose={(x) => onChoose(s.key, x)}
+                blocked={c?.action === "same" && open ? "המרצה ההוא/ההיא לא מיובא/ת (או עוד מחכה להחלטה) — בוחרים אחרת." : null}
               />
             </li>
           );
@@ -352,14 +402,20 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
               ) : (
                 <>
                   <p className="text-sm">
-                    {DAY_NAMES[p.day]} <bdi dir="ltr">{fmtRange(p.start_min, p.end_min)}</bdi>
+                    {dayLabel(p.day, p.start_min)} <bdi dir="ltr">{fmtRange(p.start_min, p.end_min)}</bdi>
+                    {p.start_min >= 1440 && p.day < 4 && (
+                      <>
+                        {" "}
+                        <Badge tone="accent">הצעה: לילה אחרי היום שנכתב</Badge>
+                      </>
+                    )}
                     {p.rangeSuggested && (
                       <>
                         {" "}
-                        <Badge tone="accent">הצעה: שתי משבצות</Badge>
+                        <Badge tone="accent">הצעה: {p.rangeSlots === 2 || p.rangeSlots == null ? "שתי משבצות" : `${p.rangeSlots} משבצות`}</Badge>
                       </>
                     )}{" "}
-                    · {p.room === 0 ? "חדר ברירת המחדל" : parallelRoomName(p.room)} · {p.speakerKeys.map((k) => nameOf(k) + (skippedSpeaker(k) ? " (דולג/ה)" : "")).join(" + ")}
+                    · {p.room === 0 ? ARCHIVE_ROOM : parallelRoomName(p.room)} · {p.speakerKeys.map((k) => nameOf(k) + (skippedSpeaker(k) ? " (דולג/ה)" : "")).join(" + ")}
                   </p>
                   <Facts
                     items={[
@@ -429,7 +485,7 @@ export function EscortsPreview({ rows, choices, onChoose }: { rows: EscortsRowPr
       <Counts statuses={rows.map((r) => r.status)} />
       <ul aria-label="תצוגה מקדימה" className="divide-y divide-line border-y border-line">
         {rows.map((r) => (
-          <li key={`${r.key}-${r.rows[0]}`} className="py-2">
+          <li key={`${r.key}-${r.rows[0]}`} data-undecided={(r.status === "ambiguous" && !choices.has(r.key)) || undefined} className="py-2">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="min-w-0 flex-1 font-semibold break-words">{r.name || "—"}</span>
               <span className="text-sm text-ink-soft">{rowsSaid(r.rows)}</span>

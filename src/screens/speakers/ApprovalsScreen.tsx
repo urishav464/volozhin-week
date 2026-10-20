@@ -172,6 +172,10 @@ function TaughtBatch({
   const one = who.length === 1;
   const count = one ? "מרצה אחד/ת" : `${who.length} מרצים`;
   const taught = one ? "לימד/ה" : "לימדו";
+  // a lesson closes only with a speaker's gender (gender_unknown): the import takes it from הרב / הרבנית alone
+  const noGender = who.filter((s) => s.gender == null).length;
+  const genderNote =
+    noGender === 0 ? "" : noGender === 1 && one ? " (חסר/ה לו/ה מגדר — משלימים בפרופיל לפני סגירה)" : ` (ל-${noGender} מהם חסר מגדר — משלימים בפרופיל לפני סגירה)`;
   return (
     <div role="group" aria-label={`אישור באצווה: מי שלימד/ה ב-${edition.label}`} className="rounded-lg border border-line bg-paper p-3">
       <p className="text-sm">
@@ -186,7 +190,7 @@ function TaughtBatch({
       {asking ? (
         <Confirm
           danger={false}
-          text={`לאשר ${count} ש${taught} ב-${edition.label}? אחר כך אפשר לסגור ${one ? "איתו/ה" : "איתם/ן"} שיעורים.`}
+          text={`לאשר ${count} ש${taught} ב-${edition.label}? אחר כך אפשר לסגור ${one ? "איתו/ה" : "איתם/ן"} שיעורים${genderNote}.`}
           confirm={`אישור ${count}`}
           busy={busy === `taught:${edition.id}`}
           onConfirm={async () => {

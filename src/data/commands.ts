@@ -69,6 +69,12 @@ export interface WeekCommands {
   transport(lessonId: number): Promise<TransportDetails | null>;
   /** The same people only; all five fields replaced (null clears). */
   setTransport(lessonId: number, d: TransportDetails): Promise<void>;
+  /**
+   * What last year's tracking sheet said about an imported lesson that has no field of its own (its transport and
+   * payment words among them) — null when there is none or the caller may not see it: the transport details' rule
+   * (public.get_import_note; for an archive, a global admin). Never part of a Week.
+   */
+  importNote(lessonId: number): Promise<string | null>;
 
   // ---- memorial times and logistics (milestone 5ב-2; CONTRACT.md «Memorial times and logistics»)
   /**

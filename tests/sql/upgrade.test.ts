@@ -112,8 +112,10 @@ describe.each<Regime>(["old", "new"])("re-running schema.sql on a v11 database, 
   it("is v12 and keeps every row v11 held — nothing is imported, purged, deactivated or reviewed by the upgrade", async () => {
     expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(12);
     expect((await db.query("select count(*)::int as n from public.roster where edition_id = $1", [ed])).rows[0].n).toBe(1);
-    // v12: lessons.import_note, empty on every lesson the import did not write
-    expect((await db.query("select kind, title, import_note from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון", import_note: null }]);
+    // v12: the imported lessons' notes have a table of their own (lesson_import_notes) — empty; lessons gained no column
+    expect((await db.query("select kind, title from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון" }]);
+    expect((await db.query("select count(*)::int as n from public.lesson_import_notes")).rows[0].n).toBe(0);
+    expect((await db.query("select count(*)::int as n from information_schema.columns where table_schema = 'public' and table_name = 'lessons' and column_name = 'import_note'")).rows[0].n).toBe(0);
     expect((await db.query("select display_name, fallen_id from public.source_files")).rows).toEqual([{ display_name: "שער.pdf", fallen_id: null }]);
     expect((await db.query("select count(*)::int as n from public.grid_rows where edition_id = $1 and kind = 'memorial'", [ed])).rows[0].n).toBe(2);
     for (const t of ["fallen", "fallen_contacts", "memorial_plans", "lesson_reviews"]) {

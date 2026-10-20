@@ -75,6 +75,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.shared = {
       contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
       fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
+      importNotes: {},
     };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
@@ -289,6 +290,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       setSources: (lessonId, version, x: SourcesPatch) => run(() => e.setSources(lessonId, version, x)),
       setPaid: (lessonId, paid) => run(() => e.setPaid(lessonId, paid)),
       transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
+      importNote: async (lessonId) => e.importNoteOf(lessonId),
       setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
       // milestone 5ב-2
       transports: async () => structuredClone(e.transportsOf()),

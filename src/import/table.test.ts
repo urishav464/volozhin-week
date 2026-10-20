@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { CommandError } from "../data/commands";
 import { gridFromClipboard } from "./clipboard";
 import { gridFromHtml, gridFromNodes, type MiniNode } from "./html";
+import { DEFAULT_TITLES } from "../data/speakerRules";
+import { defaultMapping } from "./fields";
+import { readTracking } from "./tracking";
 import { IMPORT_LIMITS } from "./limits";
 import { cleanCell, cleanGrid, tsvGrid } from "./table";
 
@@ -129,6 +132,24 @@ describe("gridFromNodes — a pasted table's cells, text only", () => {
     expect(gridFromNodes(doc(h("body", null, h("p", null, "מרצה\tהערות"), h("div", null, "מרצה לדוגמה 1\tדרך המזכירה"))))).toEqual([
       ["מרצה", "הערות"],
       ["מרצה לדוגמה 1", "דרך המזכירה"],
+    ]);
+  });
+
+  it("never reads Word's list marker («·», «1.» in an mso-list:Ignore span, a line break in its spacing) as the cell's text", () => {
+    const marker = (m: string) => h("span", { style: "mso-list:Ignore" }, m, h("span", { style: 'font:7.0pt "Times New Roman"' }, "\u00a0\u00a0\u00a0\n"));
+    const t = h(
+      "table",
+      null,
+      h("tr", null, h("td", null, "מרצה"), h("td", null, "שיעור ב")),
+      h("tr", null, h("td", null, h("p", { class: "MsoListParagraph", style: "mso-list:l0 level1 lfo1" }, comment("[if !supportLists]"), marker("·"), comment("[endif]"), "הרב בדיקה בתבליט")), h("td", null, "ראשון 8:30")),
+      h("tr", null, h("td", null, h("p", { class: "MsoListParagraph" }, marker("2."), "הרבנית בדיקה ממוספרת")), h("td", null, "ראשון 10:00")),
+    );
+    const grid = gridFromNodes(doc(h("body", null, t)));
+    expect(grid.slice(1).map((row) => row[0])).toEqual(["הרב בדיקה בתבליט", "הרבנית בדיקה ממוספרת"]);
+    const read = readTracking(grid, defaultMapping("tracking", grid[0], grid[0].length), { headerRow: true, titles: DEFAULT_TITLES, genderFromTitle: true });
+    expect(read.speakers.map((x) => [x.name, x.title])).toEqual([
+      ["בדיקה בתבליט", "הרב"],
+      ["בדיקה ממוספרת", "הרבנית"],
     ]);
   });
 

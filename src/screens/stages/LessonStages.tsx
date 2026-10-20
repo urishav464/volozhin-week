@@ -112,6 +112,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
           {!open.has("msg") && <Button onClick={() => show("msg")}>להודעה</Button>}
         </div>
       )}
+      {week.edition.kind === "archive" && <ImportNote cmds={cmds} lessonId={l.id} />}
       {stages.map((s) => (
         <StageSection key={s.key} stage={s} open={open.has(s.key)} onToggle={() => toggle(s.key)}>
           {body(s.key)}
@@ -121,6 +122,35 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
       {actor.role !== "logistics" && l.kind === "lesson" && (
         <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
       )}
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ last year's sheet
+
+/**
+ * What last year's tracking sheet said about an imported lesson that has no field of its own (v12, the import of
+ * 5786): read one lesson at a time, under the transport details' rule — for an archive, a global admin's only. Its
+ * transport words are personal data: never in the Week, Realtime or the offline copy; the purge deletes them.
+ */
+function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: number }) {
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    cmds.importNote(lessonId).then(
+      (n) => live && setNote(n),
+      () => live && setNote(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [cmds, lessonId]);
+  if (!note) return null;
+  return (
+    <section aria-label="מגיליון המעקב של אשתקד" className="rounded-lg border border-line bg-paper p-2.5">
+      <h4 className="mb-1 text-sm font-semibold">מגיליון המעקב של אשתקד</h4>
+      <p className="text-sm whitespace-pre-line break-words">{note}</p>
+      <p className="mt-1 text-xs text-ink-soft">כמו פרטי ההסעה: רק אדמין כללי/ת רואה, ונמחק במחיקת המידע האישי של המחזור.</p>
     </section>
   );
 }

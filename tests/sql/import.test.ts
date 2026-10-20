@@ -5,6 +5,7 @@
 // Synthetic people and numbers only — no phone here has a real shape.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
+import { jsonbText, labelKey } from "../../src/data/importRules";
 import { phoneKey } from "../../src/import/phone";
 import { SCHEMA, as, dropDatabase, freshDatabase, google } from "./db";
 
@@ -127,13 +128,13 @@ describe("the import of 5786", () => {
           row(2, "מרצה לדוגמה 1", { title: "הרב", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך"], phone: "0000000002", email: "someone@example.org", notes: "טווח ימים: א-ב" }),
           // the same name key as a pool speaker: completes it — never a second «מרצה קיים/ת»
           row(3, "מרצה  קיים/ת", { affiliation: "מוסד אחר", topics: ["נושא אחר"], phone: "0000000009", notes: "הערה חדשה", email: "other@example.org" }),
-          // a phone the pool has, another name: completes that speaker
-          row(4, "שם אחר לגמרי", { phone: "+972 (0)00 000 0001" }),
+          // a phone the pool has, another name: the preview showed «אותו טלפון כמו …», and the row comes as a merge
+          row(4, "שם אחר לגמרי", { action: "merge", speaker_id: sp.full, phone: "+972 (0)00 000 0001" }),
           // chosen by the admin («עמום» → this one)
           row(5, "מרצה רקה", { action: "merge", speaker_id: sp.bare, title: "ד״ר", affiliation: "מוסד לדוגמה" }),
         ],
       });
-      expect(res).toMatchObject({ created: 1, merged: 3, filled: 1, contacts: 2, lessons: 0, edition_id: null });
+      expect(res).toMatchObject({ created: 1, merged: 3, filled: 1, contacts: 2, notes: 1, lessons: 0, edition_id: null });
       const created = (await db.query("select * from public.speakers where name = 'מרצה לדוגמה 1'")).rows[0];
       expect(created).toMatchObject({ title: "הרב", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך"], vetted: "pending", source: "brainstorm-5786", vetted_by: null });
       const admin = Number((await db.query("select id from public.members where email = $1 and edition_id is null", [ADMIN])).rows[0].id);
@@ -154,7 +155,7 @@ describe("the import of 5786", () => {
       const log = JSON.stringify((await db.query("select detail from public.activity where entity in ('speakers', 'import')")).rows);
       expect(log).not.toMatch(/0000000002|0000000009|example\.org|טווח ימים|הערה|מרצה/);
       expect((await db.query("select kind, detail from public.activity where entity = 'import'")).rows).toEqual([
-        { kind: "candidates", detail: { rows: 4, created: 1, merged: 3, filled: 1, contacts: 2, lessons: 0, replaced: 0, source: "brainstorm-5786" } },
+        { kind: "candidates", detail: { rows: 4, created: 1, merged: 3, filled: 1, contacts: 2, notes: 1, lessons: 0, replaced: 0, source: "brainstorm-5786" } },
       ]);
     });
 
@@ -216,7 +217,13 @@ describe("the import of 5786", () => {
         { name: "בית מדרש", is_default: true },
         { name: "מקביל 2", is_default: false },
       ]);
-      const ls = (await db.query("select l.*, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1 order by l.day, l.start_min, r.sort", [e.id])).rows;
+      const ls = (
+        await db.query(
+          `select l.*, r.name as room, n.note as import_note from public.lessons l join public.rooms r on r.id = l.room_id
+             left join public.lesson_import_notes n on n.lesson_id = l.id where l.edition_id = $1 order by l.day, l.start_min, r.sort`,
+          [e.id],
+        )
+      ).rows;
       expect(ls.map((l) => [l.state, l.kind, l.day, l.start_min, l.end_min, l.room, l.pay_amount, l.sources_kind, l.print_when, l.audience, l.import_note])).toEqual([
         ["closed", "lesson", 0, 510, 600, "בית מדרש", 300, "sheet", "none", null, "קיבל הודעת סיכום מ: חניך/ה לדוגמה"],
         ["closed", "lesson", 0, 510, 600, "מקביל 2", null, "sheet_video", "none", null, null],
@@ -292,6 +299,158 @@ describe("the import of 5786", () => {
         "import_bad_row 3:stale",
       );
       expect(await refusal(commit("escorts", { rows: [{ row: 4, speaker_id: sp.bare, contact_pref: "sms", secretary_note: null }] }))).toBe("import_bad_row 4:bad_value");
+    });
+  });
+
+  // the review of the import and milestone 6 (DECISIONS «ביקורת: ייבוא ואבן דרך 6»)
+  describe("what the review found", () => {
+    const speakerByName = async (name: string) => (await db.query("select s.*, c.phone, c.email, c.notes from public.speakers s left join public.speaker_contacts c on c.speaker_id = s.id where s.name = $1", [name])).rows;
+
+    it("two names on one line are two people: a 'new' row never completes a speaker by a phone alone", async () => {
+      const res = await commit("candidates", {
+        source: "brainstorm-5786",
+        titles_from: null,
+        rows: [
+          row(2, "בודק אלף", { title: "הרב", gender: "m", phone: "000-000-0077" }),
+          row(3, "בודקת בית", { title: "הרבנית", gender: "f", phone: "+972 (0)00 000 0077", email: "beit@example.org", notes: "רק בבוקר", topics: ["נושא ב"] }),
+        ],
+      });
+      expect(res).toMatchObject({ created: 2, merged: 0 });
+      const [a] = await speakerByName("בודק אלף");
+      const [b] = await speakerByName("בודקת בית");
+      expect([a.title, a.gender, a.topics, a.phone, a.email, a.notes]).toEqual(["הרב", "m", [], "000-000-0077", null, null]);
+      expect([b.title, b.gender, b.topics, b.phone, b.email, b.notes]).toEqual(["הרבנית", "f", ["נושא ב"], "+972 (0)00 000 0077", "beit@example.org", "רק בבוקר"]);
+    });
+
+    it("a phone an earlier row's merge just gave a pool speaker does not take a 'new' row of another name", async () => {
+      const veteran = Number((await db.query("insert into public.speakers (name, vetted) values ('מרצה ותיק/ה לבדיקה', 'approved') returning id")).rows[0].id);
+      const res = await commit("candidates", {
+        source: "brainstorm-5786",
+        titles_from: null,
+        rows: [row(2, "מרצה ותיק/ה לבדיקה", { action: "merge", speaker_id: veteran, phone: "0000000088" }), row(3, "אדם אחר לגמרי", { phone: "0000000088", email: "other.person@example.org" })],
+      });
+      expect(res).toMatchObject({ created: 1, merged: 1 });
+      expect((await speakerByName("מרצה ותיק/ה לבדיקה"))[0]).toMatchObject({ phone: "0000000088", email: null });
+      expect((await speakerByName("אדם אחר לגמרי"))[0]).toMatchObject({ phone: "0000000088", email: "other.person@example.org" });
+    });
+
+    it("the tracking sheet too: two speakers with one phone keep their own lessons", async () => {
+      const res = await commit("tracking", {
+        label: "בדיקת טלפון משותף", start_date: null, source: "tracking-5786", titles_from: null,
+        speakers: [row(2, "בודק גימל", { phone: "000-000-0066" }), row(3, "בודקת דלת", { phone: "0000000066" })],
+        lessons: [
+          { row: 2, day: 0, start_min: 510, end_min: 600, room: 0, title: "שיעור בדיקה 2", category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakers: [0] },
+          { row: 3, day: 1, start_min: 510, end_min: 600, room: 0, title: "שיעור בדיקה 3", category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakers: [1] },
+        ],
+      });
+      expect(res).toMatchObject({ created: 2, merged: 0, lessons: 2 });
+      const who = (
+        await db.query(
+          `select l.title, s.name from public.lessons l join public.lesson_speakers x on x.lesson_id = l.id join public.speakers s on s.id = x.speaker_id
+            where l.edition_id = $1 order by l.title`,
+          [res.edition_id],
+        )
+      ).rows;
+      expect(who).toEqual([{ title: "שיעור בדיקה 2", name: "בודק גימל" }, { title: "שיעור בדיקה 3", name: "בודקת דלת" }]);
+    });
+
+    it("never fills a gender the speaker's own title contradicts — a title that says none (ד״ר) still takes the row's", async () => {
+      const id = async (name: string, title: string) => Number((await db.query("insert into public.speakers (title, name, vetted) values ($1, $2, 'approved') returning id", [title, name])).rows[0].id);
+      const f = await id("מרצה בתואר הרבנית", "הרבנית");
+      const g = await id("מרצה בתואר הרבנית ב", "הרבנית");
+      const dr = await id("מרצה בתואר דוקטור", "ד״ר");
+      const res = await commit("candidates", {
+        source: "brainstorm-5786",
+        titles_from: null,
+        rows: [
+          row(2, "מרצה בתואר הרבנית", { title: "הרב", gender: "m" }), // by its name key
+          row(3, "מרצה בתואר הרבנית ב", { action: "merge", speaker_id: g, title: "הרב", gender: "m" }), // chosen («עמום»)
+          row(4, "מרצה בתואר דוקטור", { title: "הרב", gender: "m" }),
+        ],
+      });
+      expect(res).toMatchObject({ created: 0, merged: 3, filled: 1 });
+      const read = async (x: number) => (await db.query("select title, gender from public.speakers where id = $1", [x])).rows[0];
+      expect([await read(f), await read(g), await read(dr)]).toEqual([
+        { title: "הרבנית", gender: null },
+        { title: "הרבנית", gender: null },
+        { title: "ד״ר", gender: "m" },
+      ]);
+    });
+
+    it("a match keeps the speaker's own title and gender while it fills an empty field — never overwrites them", async () => {
+      const x = Number((await db.query("insert into public.speakers (title, name, gender, vetted) values ('ד״ר', 'מרצה עם תואר ומגדר', 'f', 'approved') returning id")).rows[0].id);
+      const read = async () => (await db.query("select title, gender, affiliation, topics, version from public.speakers where id = $1", [x])).rows[0];
+      await commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה עם תואר ומגדר", { title: "הרב", gender: "m", affiliation: "מוסד לבדיקה" })] });
+      expect(await read()).toEqual({ title: "ד״ר", gender: "f", affiliation: "מוסד לבדיקה", topics: [], version: 2 });
+      await commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "אחר", { action: "merge", speaker_id: x, title: "הרבנית", gender: "f", topics: ["נושא לבדיקה"] })] });
+      expect(await read()).toEqual({ title: "ד״ר", gender: "f", affiliation: "מוסד לבדיקה", topics: ["נושא לבדיקה"], version: 3 });
+    });
+
+    it("counts a phone or an e-mail apart from a note: a note alone is no contact detail", async () => {
+      const res = await commit("candidates", {
+        source: "brainstorm-5786",
+        titles_from: null,
+        rows: [row(2, "מרצה עם הערה בלבד", { notes: "טווח ימים: נסגר" }), row(3, "מרצה עם טלפון בלבד", { phone: "0000000042" })],
+      });
+      expect(res).toMatchObject({ created: 2, contacts: 1, notes: 1 });
+    });
+
+    it("an imported lesson's note is not the lesson's: its own table, read one lesson at a time under the transport details' rule", async () => {
+      const archive = Number((await db.query("select id from public.editions where label = 'תשפ\"ו'")).rows[0].id);
+      const noted = Number((await db.query("select n.lesson_id from public.lesson_import_notes n where n.edition_id = $1", [archive])).rows[0].lesson_id);
+      const NOTE = "קיבל הודעת סיכום מ: חניך/ה לדוגמה";
+      // a global admin reads it — in the lesson panel, never in the Week
+      expect(await commitAs(ADMIN, "select public.get_import_note($1)", [noted])).toBe(NOTE);
+      const week = JSON.stringify(await commitAs(ADMIN, "select public.load_week($1)", [archive]));
+      expect(week).not.toContain("import_note");
+      expect(week).not.toContain(NOTE);
+      // anyone else: nothing — this year's team, an all-editions content member, a content member of the archive itself
+      const EVERY = "every.content@example.org";
+      const OLD = "archive.content@example.org";
+      await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $1, 'content', null), ($2, $2, 'content', $3)", [EVERY, OLD, archive]);
+      for (const who of [A, ED_ADMIN, EVERY, OLD]) {
+        expect(await commitAs(who, "select public.get_import_note($1)", [noted]), who).toBeNull();
+        expect(await commitAs(who, "select count(*)::int from public.lesson_import_notes"), who).toBe(0);
+      }
+      await db.query("delete from public.members where email in ($1, $2)", [EVERY, OLD]);
+    });
+
+    it("an archive's label is one archive whatever its quote marks: «תשפ״ו» and «תשפ”ו» replace «תשפ\"ו», a live edition's is refused", async () => {
+      const sample = ["תשפ\"ו", "תשפ״ו", "תשפ”ו", "תשפ“ו", "  תשפ׳ו  ב ", "שנה ‘א’", "תשפ″ו", ""];
+      const r = await db.query("select x, app.label_key(x) as k from unnest($1::text[]) as x", [sample]);
+      expect(r.rows.map((x) => [x.x, x.k])).toEqual(sample.map((x) => [x, labelKey(x)]));
+      const editions = async () => (await db.query("select label from public.editions where app.label_key(label) = 'תשפ\"ו'")).rows.map((x) => x.label);
+      const lessons = (title: string) => [{ row: 2, day: 2, start_min: 870, end_min: 960, room: 0, title, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakers: [0] }];
+      const payload = (label: string, title: string) => ({ label, start_date: null, source: "tracking-5786", titles_from: null, speakers: [row(2, "מרצה לדוגמה 1")], lessons: lessons(title) });
+      const before = await count("select count(*) as n from public.lessons l join public.editions e on e.id = l.edition_id where e.label = 'תשפ\"ו'");
+      expect(await commit("tracking", payload("תשפ״ו", "בגרשיים"))).toMatchObject({ lessons: 1, replaced: before });
+      expect(await commit("tracking", payload(" תשפ”ו ", "במירכאות מעוגלות"))).toMatchObject({ lessons: 1, replaced: 1 });
+      expect(await editions()).toEqual(["תשפ\"ו"]);
+      // the live edition, typed with gershayim: still the live edition's label
+      expect(await refusal(commit("tracking", payload("תשפ״ז", "x")))).toBe("edition_exists");
+      // a new archive is stored in the key's form
+      const made = await commit("tracking", payload("ארכיון ״בדיקה״", "x"));
+      expect((await db.query("select label from public.editions where id = $1", [made.edition_id])).rows[0].label).toBe("ארכיון \"בדיקה\"");
+      // an edition stored with gershayim (made before the key, or by start_edition): found by its key all the same
+      await db.query("insert into public.editions (label, kind, status) values ('ארכיון ״ישן״', 'archive', 'archived'), ('תרגול ״ישן״', 'practice', 'planning')");
+      expect(await commit("tracking", payload('ארכיון "ישן"', "x"))).toMatchObject({ lessons: 1, replaced: 0 });
+      expect((await db.query("select count(*)::int as n from public.editions where app.label_key(label) = 'ארכיון \"ישן\"'")).rows[0].n).toBe(1);
+      expect(await refusal(commit("tracking", payload('תרגול "ישן"', "x")))).toBe("edition_exists");
+      // two editions that already answer to one key (made before it) are not guessed between
+      await db.query("insert into public.editions (label, kind, status) values ('כפול\"ה', 'archive', 'archived'), ('כפול״ה', 'archive', 'archived')");
+      expect(await refusal(commit("tracking", payload("כפול\"ה", "x")))).toBe("label_ambiguous");
+    });
+
+    it("the engine measures the payload as the database does: the bytes of its jsonb text", async () => {
+      const samples: unknown[] = [
+        { a: 1, b: [1, 2] },
+        { rows: [{ row: 2, action: "new", name: "שם עם \"מירכאות\" ו\\לוכסן", notes: "שורה\nשנייה\tטאב", topics: [], phone: null, ok: true }], source: "x" },
+        { e: {}, f: [], g: -5, h: 300, i: 1.5, j: "😀 ✓", k: [null, false, [{}]] },
+      ];
+      for (const x of samples) {
+        const pg = Number((await db.query("select octet_length($1::jsonb::text) as n", [JSON.stringify(x)])).rows[0].n);
+        expect(Buffer.byteLength(jsonbText(x)), JSON.stringify(x)).toBe(pg);
+      }
     });
   });
 });

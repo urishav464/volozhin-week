@@ -962,13 +962,32 @@ export const SCENARIOS: Record<string, Step[]> = {
         { row: 5, action: "merge", speaker: "אלפא", name: "אלפא", phone: "0000000007", email: "alpha@example.org", notes: "הערה לדוגמה" },
       ],
     },
-    // another name, a phone the pool has now: completes «מועמד/ת לדוגמה»
+    // another name, a phone the pool has now: a 'new' row is a new speaker — a phone alone never merges (the preview
+    // shows «אותו טלפון כמו …» and sends such a row as a merge, the next step)
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "שם אחר לגמרי", affiliation: "מוסד שני" }, { row: 3, action: "new", name: "עוד שם", phone: "+972 (0)00 000 0005" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "מועמד/ת לדוגמה", name: "שם שלישי", phone: "+972 (0)00 000 0005", email: "candidate@example.org" }] },
+    // two names on one line, both new, in one import: two people, each with their own contacts
+    {
+      as: "admin",
+      importCandidates: [
+        { row: 2, action: "new", name: "בודק אלף", title: "הרב", gender: "m", phone: "000-000-0077" },
+        { row: 3, action: "new", name: "בודקת בית", title: "הרבנית", gender: "f", phone: "0000000077", email: "beit@example.org", topics: ["נושא ב"] },
+      ],
+    },
+    // a phone an earlier row's merge just gave a pool speaker: a 'new' row of another name is still someone new
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "זין", name: "זין", phone: "0000000088" }, { row: 3, action: "new", name: "אדם אחר לגמרי", phone: "0000000088", email: "other.person@example.org" }] },
+    // a note alone is counted as a note, not as a contact detail
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "רק הערה", notes: "טווח ימים: נסגר" }] },
     { as: "admin", importLookup: { speakers: ["בטא", "גמא"], phones: ["0000000005", "0000000006", "9999999999"] } },
     // the first rows again: nothing new, nothing more to fill
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת לדוגמה", title: "הרב", gender: "m" }, { row: 3, action: "new", name: "בטא" }] },
     // «בטא» again, with another affiliation: its empty title and topics filled, its affiliation kept
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "בטא", title: "ד״ר", affiliation: "מוסד שלישי", topics: ["נושא לדוגמה"] }] },
+    // «גמא» (ד״ר, f) with another title and gender while its empty affiliation is filled: both kept
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "גמא", title: "הרב", gender: "m", affiliation: "מוסד לגמא" }] },
+    // «דלתא» given the title הרבנית and no gender; then a row «הרב דלתא»: the gender its own title contradicts is never filled
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "דלתא", name: "דלתא", title: "הרבנית" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "דלתא", title: "הרב", gender: "m" }] },
     // all or nothing, the row and the reason named
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 3, action: "new", name: "טלפון שגוי", phone: "12-34" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 7, action: "new", name: "מגדר מנוחש", title: "ד״ר", gender: "f" }] },
@@ -1006,7 +1025,20 @@ export const SCENARIOS: Record<string, Step[]> = {
     },
     // the same label, fewer lessons: replaced — no second edition, no second speaker
     { as: "admin", importArchive: { label: "תשפ\"ו", start_date: "2026-02-15", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
+    // the same label with gershayim and with spaces around: the same archive, replaced — never a second one
+    { as: "admin", importArchive: { label: " תשפ״ו ", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 3, start: 870, end: 960, speakers: [0] }] } },
+    { as: "admin", importArchive: { label: "תשפ”ו", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
     { as: "admin", importArchive: { label: EDITION.label, speakers: [], lessons: [] } }, // a live edition's label
+    { as: "admin", importArchive: { label: ` ${EDITION.label.replace(" ", "  ")} `, speakers: [], lessons: [] } }, // …spaced otherwise
+    // two speakers with one phone keep their own lessons
+    {
+      as: "admin",
+      importArchive: {
+        label: "בדיקת טלפון משותף",
+        speakers: [{ row: 2, action: "new", name: "בודק גימל", phone: "000-000-0066" }, { row: 3, action: "new", name: "בודקת דלת", phone: "0000000066" }],
+        lessons: [{ row: 2, day: 0, start: 510, end: 600, speakers: [0] }, { row: 3, day: 1, start: 510, end: 600, speakers: [1] }],
+      },
+    },
     { as: "admin", importArchive: { label: FOREIGN_EDITION, speakers: [], lessons: [] } },
     { as: "admin", importArchive: { label: "  ", speakers: [], lessons: [] } },
     { as: "admin", importArchive: { label: "בדיקה", start_date: "2026-02-16", speakers: [], lessons: [] } }, // a Monday
@@ -1138,6 +1170,12 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", speakerReviews: "אלפא" }, // a past year's review, read by this year's content team
     { as: "L", speakerReviews: "אלפא" },
     { as: "A", speakerReviews: "גמא" }, // the year's other speaker: nothing written
+    // the sheet's note: its own table, under the transport details' rule — for an archive, a global admin only
+    { as: "admin", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "admin", importNote: [1, 600], edition: "תשפ\"ו" },
+    { as: "A", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "E", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "L", importNote: [0, 510], edition: "תשפ\"ו" },
     // the same label again would replace its lessons, the review with them: refused, nothing changed
     { as: "admin", importArchive: { label: "תשפ\"ו", speakers: [{ row: 2, action: "merge", speaker: "אלפא", name: "אלפא" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
     // the purge of an imported archive: a global admin's, the label typed, no date needed — the sheet's notes go
@@ -1145,6 +1183,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", purge: "בדיקת התאמה", edition: "תשפ\"ו" },
     { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" },
     { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" }, // again: nothing more
+    { as: "admin", importNote: [0, 510], edition: "תשפ\"ו" }, // gone with the purge
     { as: "A", speakerReviews: "אלפא" }, // the review stays
     { as: "A", returning: true }, // and so does the year
     // a new import under another label: no review there, so it may be replaced at will

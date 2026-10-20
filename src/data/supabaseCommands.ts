@@ -78,6 +78,10 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
         ? null
         : { pickup_address: t.pickup_address ?? null, pickup_time: t.pickup_time ?? null, driver_name: t.driver_name ?? null, driver_phone: t.driver_phone ?? null, arranged: t.arranged === true };
     },
+    importNote: async (lessonId) => {
+      const n = await call("get_import_note", { p_lesson: lessonId });
+      return typeof n === "string" ? n : null;
+    },
     setTransport: async (lessonId, d) =>
       void (await call("set_transport_details", {
         p_lesson: lessonId,

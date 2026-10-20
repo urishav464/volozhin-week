@@ -184,6 +184,14 @@ describe("readXlsx — a workbook's cells as text", () => {
     expect(code(() => readXlsx(zipSync({ "a.txt": strToU8("x") })))).toBe("import_bad_file");
   });
 
+  it("refuses a small file of very many merges (each a column down a sheet) instead of freezing on them", () => {
+    const head = '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>שני</t></is></c></row></sheetData>';
+    const many = `${head}<mergeCells>${'<mergeCell ref="A1:A3000"/>'.repeat(30)}</mergeCells>`;
+    expect(code(() => readXlsx(workbook([["גיליון", many]])).read(0))).toBe("import_too_big");
+    const few = `${head}<mergeCells><mergeCell ref="A1:A3"/></mergeCells>`;
+    expect(readXlsx(workbook([["גיליון", few]])).read(0)).toEqual([["שני"], ["שני"], ["שני"]]);
+  });
+
   it("a styled empty sheet far down costs nothing: only cells with a value count", () => {
     const sheet = '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>x</t></is></c></row><row r="900000"><c r="XFD900000" s="1"/></row></sheetData>';
     expect(readXlsx(workbook([["x", sheet]])).read()).toEqual([["x"]]);
@@ -240,6 +248,25 @@ describe("readDocx — paragraphs and table cells as text", () => {
       ["מרצה", "מלווה", "הערות"],
       ["מרצה לדוגמה 1", "חניך/ה לדוגמה", "דרך המזכירה"],
     ]);
+  });
+
+  it("a paragraph's tab STOPS are not tabs: a header without them and lines with them (a list, a tracked change) line up", () => {
+    const stops = '<w:pPr><w:tabs><w:tab w:val="num" w:pos="720"/><w:tab w:val="clear" w:pos="1440"/></w:tabs><w:bidi/></w:pPr>';
+    const changed = '<w:pPr><w:pPrChange w:id="1"><w:pPr><w:tabs><w:tab w:val="right" w:pos="4320"/></w:tabs></w:pPr></w:pPrChange></w:pPr>';
+    const row = (pr: string, a: string, b: string) => `<w:p>${pr}<w:r>${t(a)}</w:r><w:r><w:tab/></w:r><w:r>${t(b)}</w:r></w:p>`;
+    const xml = `<w:document ${W}><w:body>${row("", "שם", "הערה")}${row(stops, "מרצה א לדוגמה", "דרך המזכירה")}${row(changed, "מרצה ב לדוגמה", "רק בוואטסאפ")}<w:p><w:pPr><w:tabs/></w:pPr></w:p></w:body></w:document>`;
+    expect(documentGrid(xml)).toEqual([
+      ["שם", "הערה"],
+      ["מרצה א לדוגמה", "דרך המזכירה"],
+      ["מרצה ב לדוגמה", "רק בוואטסאפ"],
+    ]);
+  });
+
+  it("refuses millions of empty paragraphs as they come — not after building them all", () => {
+    // past the limit, then a broken tag: refused at the limit, before the reader ever gets to the end
+    const xml = `<w:document ${W}><w:body>${"<w:p></w:p>".repeat(IMPORT_LIMITS.rows * 4 + 1)}<w:p><w:r`;
+    expect(code(() => documentGrid(xml))).toBe("import_too_big");
+    expect(code(() => documentGrid(`<w:document ${W}><w:body><w:p></w:p><w:p><w:r`))).not.toBe("import_too_big");
   });
 
   it("refuses a package with no document, and a document past the limits", () => {

@@ -13,6 +13,7 @@
 // engine and the SQL held to one contract.)
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
+import { reviewOpensOn } from "../../src/domain/reviews";
 import { WEEK_KEYS } from "../../src/offline/snapshot";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "./db";
 
@@ -267,6 +268,24 @@ describe("after the week", () => {
           expect(await code(run(who, "delete from public.lesson_reviews")), who).toBe("42501");
         }
       });
+    });
+  });
+
+  describe("app.review_opens_on ≡ reviewOpensOn (src/domain/reviews.ts)", () => {
+    it("on every slot of the grid — 22:30–24:00 and the night rows among them — and at the edges, across a month's and a year's end", async () => {
+      const ends = (await db.query("select distinct end_min from public.grid_template order by 1")).rows.map((r) => Number(r.end_min));
+      expect(ends).toContain(1440); // the 22:30–24:00 lesson row: opens the next day, as the panel says
+      const diffs: string[] = [];
+      for (const start of ["2027-02-14", "2027-02-28", "2026-12-28"]) {
+        for (let day = 0; day <= 4; day++) {
+          for (const end of [...ends, 1439, 1440, 1441, 2880]) {
+            const sql = (await db.query("select app.review_opens_on($1::date, $2, $3)::text as d", [start, day, end])).rows[0].d;
+            const ts = reviewOpensOn(start, day, end);
+            if (sql !== ts) diffs.push(`${start} d${day} end${end}: sql=${sql} ts=${ts}`);
+          }
+        }
+      }
+      expect(diffs).toEqual([]);
     });
   });
 

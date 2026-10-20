@@ -17,7 +17,10 @@ export type ImportKind = "candidates" | "tracking" | "escorts";
 export interface SpeakerRow {
   /** The row of the sheet it came from (a refusal names it). */
   row: number;
-  /** «new»: unless the pool already has this name key (or this phone) — then it completes that one, never a second copy. */
+  /**
+   * «new»: unless the pool already has this name key — then it completes that one, never a second copy. A phone the
+   * pool has is never a match by itself at the commit: the preview shows it, and the row travels as «merge».
+   */
   action: "new" | "merge";
   /** The pool speaker to complete («merge»). */
   speaker_id: number | null;
@@ -58,7 +61,10 @@ export interface ArchiveLessonRow {
   sources_note: string | null;
   /** Only when the sheet's «הסעה/תשלום» was a plain number — else its words are in import_note. */
   pay_amount: number | null;
-  /** What the sheet said that has no field of its own (transport/payment words, who sent the summary message…) — no phone, no e-mail. */
+  /**
+   * What the sheet said that has no field of its own (transport/payment words, who sent the summary message…) — no
+   * phone, no e-mail. Kept apart from the lesson (lesson_import_notes), under the transport details' rule.
+   */
   import_note: string | null;
   /** Indexes into the payload's `speakers`: the first leads, the rest co-teach. */
   speakers: number[];
@@ -100,8 +106,10 @@ export interface ImportResult {
   merged: number;
   /** Pool speakers whose own record got a field. */
   filled: number;
-  /** Pool speakers whose contacts got a field. */
+  /** Pool speakers that got a phone or an e-mail (the escorts' file: «איך פונים», the secretary note). */
   contacts: number;
+  /** Pool speakers whose private note was filled (the sheet's notes and statuses). */
+  notes: number;
   /** (b) The archive's lessons now, the ones a re-run replaced, and the edition. */
   lessons: number;
   replaced: number;

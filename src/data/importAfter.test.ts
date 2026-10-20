@@ -37,6 +37,19 @@ async function imported() {
   return { d, archive: Number(res.edition_id) };
 }
 
+describe("the archive's label by its key, in the demo (app.label_key ≡ labelKey)", () => {
+  it("an edition stored with gershayim answers to the label typed with an ASCII quote — and with curly ones", async () => {
+    const d = new DemoPort();
+    await d.settings.startEdition({ label: "מחזור ״בדיקה״", start_date: null, first_day_from: null });
+    const payload = (label: string) => ({ label, start_date: null, source: "tracking-5786", titles_from: null, speakers: [merge(2, 1)], lessons: [lesson(2, 510, [0])] });
+    expect(await code(d.imports.commit({ kind: "tracking", payload: payload('מחזור "בדיקה"') }))).toBe("edition_exists");
+    const first = await d.imports.commit({ kind: "tracking", payload: payload("ארכיון ״בדיקה״") });
+    const again = await d.imports.commit({ kind: "tracking", payload: payload("ארכיון “בדיקה”") });
+    expect([again.edition_id, again.replaced]).toEqual([first.edition_id, 1]);
+    expect((await d.editions()).filter((e) => e.kind === "archive").map((e) => e.label)).toEqual(['ארכיון "בדיקה"']);
+  });
+});
+
 describe("the import of 5786 meets after the week, in the demo", () => {
   it("the imported year is a past year: a returning speaker in the summary, its review on the speaker's sheet", async () => {
     const { d, archive } = await imported();
@@ -72,11 +85,16 @@ describe("the import of 5786 meets after the week, in the demo", () => {
 
   it("the purge of the imported archive: no date needed, the sheet's notes cleared, reported; the lessons kept", async () => {
     const { d, archive } = await imported();
-    expect((await d.loadWeek(archive)).lessons.map((l) => l.import_note)).toEqual([NOTE, null]);
+    const before = await d.loadWeek(archive);
+    const cmds = d.commands(archive);
+    expect(await Promise.all(before.lessons.map((l) => cmds.importNote(l.id)))).toEqual([NOTE, null]);
+    // never in the Week (nor so in the offline copy): read one lesson at a time, under the transport details' rule
+    expect(JSON.stringify(before)).not.toContain(NOTE);
     const report = await d.settings.purgeEdition(archive, LABEL);
     expect(report).toMatchObject({ transport_details: 0, import_notes: 1, links_revoked: 0, link_hits: 0 });
     const w = await d.loadWeek(archive);
-    expect(w.lessons.map((l) => [l.state, l.import_note])).toEqual([["closed", null], ["closed", null]]);
+    expect(w.lessons.map((l) => l.state)).toEqual(["closed", "closed"]);
+    expect(await Promise.all(w.lessons.map((l) => cmds.importNote(l.id)))).toEqual([null, null]);
     expect((await d.editions()).find((e) => e.id === archive)?.purged_at).toBe(report.purged_at);
     expect((await d.settings.purgeEdition(archive, LABEL)).import_notes).toBe(0);
   });

@@ -178,6 +178,8 @@ export type Step =
   | { as: ActorKey; importLookup: { speakers: string[]; phones: string[] } }
   /** import_commit with a payload as it is (a wrong kind, a wrong shape). */
   | { as: ActorKey; importRaw: { kind: string; payload: unknown } }
+  /** get_import_note: an archive lesson's note (the archive of that label, the lesson by its day and start, the default room). */
+  | { as: ActorKey; importNote: [number, number]; edition: string }
   // after the week (milestone 6) — a review by its lesson's place; the speaker by label
   /** «איך עבר» on a lesson of the edition — or, with `edition`, of the archive edition of that label (the import's). */
   | { as: ActorKey; review: At; edition?: string; fields: { went_well?: string | null; issues?: string | null; invite_again?: string | null; overran?: boolean | null; rating?: number | null }; staleBy?: number }
@@ -251,8 +253,8 @@ export function archivePayloadOf(a: ImportArchiveStep, idOf: (label: string) => 
 }
 
 /** An import's answer as one comparable string: the counts, and each speaker row by the label it resolved to. */
-export function importRead(r: { created: number; merged: number; filled: number; contacts: number; lessons: number; replaced: number; speakers: { row: number; speaker_id: number; created: boolean }[] }, label: (id: number) => string): string {
-  const head = `created=${r.created}|merged=${r.merged}|filled=${r.filled}|contacts=${r.contacts}|lessons=${r.lessons}|replaced=${r.replaced}`;
+export function importRead(r: { created: number; merged: number; filled: number; contacts: number; notes: number; lessons: number; replaced: number; speakers: { row: number; speaker_id: number; created: boolean }[] }, label: (id: number) => string): string {
+  const head = `created=${r.created}|merged=${r.merged}|filled=${r.filled}|contacts=${r.contacts}|notes=${r.notes}|lessons=${r.lessons}|replaced=${r.replaced}`;
   return `${head}|${r.speakers.map((s) => `${s.row}:${label(s.speaker_id)}${s.created ? "+" : ""}`).join(",")}`;
 }
 

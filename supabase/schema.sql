@@ -35,10 +35,12 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 -- Schema version. The app compares it with EXPECTED_SCHEMA_VERSION
 -- (src/lib/schema.ts) and shows «צריך להריץ שוב את schema.sql» on a mismatch.
--- Bump BOTH in the same commit as any structural change.
+-- Bump BOTH in the same commit as any structural change. v12: its search_path
+-- pinned too (Security Advisor, lint 0011) — every function here pins one
+-- (tests/sql/schema.test.ts).
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
-  language sql immutable
+  language sql immutable set search_path = ''
   as $$ select 12 $$;
 
 -- -----------------------------------------------------------------------------
@@ -207,9 +209,11 @@ create policy members_admin_write on public.members
 -- -----------------------------------------------------------------------------
 
 -- The keep-alive ping (GitHub Actions, daily). With the public links' six
--- functions (v9, below), the whole of what anon may run.
+-- functions (v9, below), the whole of what anon may run. It reads nothing, so
+-- since v12 it runs as the caller (SECURITY INVOKER): anon's SECURITY DEFINER
+-- functions are exactly the six token-gated link functions.
 create or replace function public.ping() returns text
-  language sql stable security definer set search_path = ''
+  language sql stable security invoker set search_path = ''
   as $$ select 'ok'::text $$;
 
 -- Who am I? One round trip that decides which screen a signed-in browser
@@ -4700,19 +4704,50 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
 --                                  (`archive_reviewed`: a review goes with its
 --                                  lesson, and is never lost to a re-run)
 --                   'escorts'    → contact_pref and speaker_contacts.secretary_note
--- Re-runnable: a 'new' speaker whose name key — or phone — the pool already has
--- completes that speaker instead of adding a second one. A match only FILLS what
--- is empty, never overwrites. Gender only as the title says (הרב m, הרבנית f).
--- Phones and e-mails only in speaker_contacts. The log keeps ids, counts and
--- field names — never a name, a phone or a note.
--- lessons.import_note: what last year's sheet said that has no field of its
--- own (transport/payment words, who sent the summary message), cleared of
--- phones and e-mails in the browser (scrubContacts); written by this import only,
--- and cleared by purge_edition_private (Milestone 6, below) with the transport
--- details it may name.
+-- Re-runnable: a 'new' speaker whose name key the pool already has completes
+-- that speaker instead of adding a second one. A phone is never a reason to
+-- merge on its own: the preview shows a phone the pool has («אותו טלפון כמו …»)
+-- and the browser sends that row as an explicit 'merge' — two people who share
+-- a line (a couple, an office) are two speakers. A match only FILLS what is
+-- empty, never overwrites — and never a gender the speaker's own title
+-- contradicts. Gender only as the title says (הרב m, הרבנית f). Phones and
+-- e-mails only in speaker_contacts. The log keeps ids, counts and field names —
+-- never a name, a phone or a note. An archive's label is compared by
+-- app.label_key (quote marks and spaces aside) and stored in that form.
+-- lesson_import_notes: what last year's sheet said about a lesson that has no
+-- field of its own (transport/payment words, who sent the summary message),
+-- cleared of phones and e-mails in the browser (scrubContacts). Transport words
+-- are personal data: the table has the transport details' rule
+-- (app.may_see_transport — for an archive, a global admin only), is read one
+-- lesson at a time (get_import_note), never in load_week, Realtime or the
+-- device's offline copy, and purge_edition_private (Milestone 6) deletes it.
 -- =============================================================================
 
-alter table public.lessons add column if not exists import_note text;
+create table if not exists public.lesson_import_notes (
+  lesson_id  bigint primary key references public.lessons (id) on delete cascade,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  note       text not null check (char_length(note) between 1 and 1000)
+);
+create index if not exists lesson_import_notes_edition on public.lesson_import_notes (edition_id);
+alter table public.lesson_import_notes enable row level security;
+drop policy if exists lesson_import_notes_read on public.lesson_import_notes;
+create policy lesson_import_notes_read on public.lesson_import_notes for select to authenticated
+  using (app.may_see_transport(lesson_import_notes.lesson_id));
+
+-- A lesson's import note, through the policy (invoker): NULL when there is none
+-- or it is not the caller's to see (get_transport_details' rule).
+create or replace function public.get_import_note(p_lesson bigint) returns text
+  language sql stable security invoker set search_path = ''
+  as $$ select n.note from public.lesson_import_notes n where n.lesson_id = p_lesson and app.may_see_transport(p_lesson) $$;
+
+-- An archive edition's label as the import compares (and stores) it: the
+-- Hebrew and typographic quote marks as ASCII (״ “ ” ″ → ", ׳ ‘ ’ → '), spaces
+-- single (src/data/importRules.ts labelKey holds the same).
+create or replace function app.label_key(p text) returns text
+  language sql immutable set search_path = ''
+  as $$
+    select btrim(regexp_replace(translate(coalesce(p, ''), '״“”″׳‘’', '""""'''''''), '[ \t\n\r\f\v]+', ' ', 'g'))
+  $$;
 
 -- A phone's comparison key (src/import/phone.ts phoneKey holds the same):
 -- digits; 972 / 00972 (and a 0 after it) as a leading 0; a leading 0 a number
@@ -4769,9 +4804,12 @@ create or replace function app.refuse_row(p_item jsonb, p_reason text) returns v
 -- One speaker row: cleaned and checked (as src/data/importRules.ts cleanSpeakerRow,
 -- in its order), then resolved — 'merge' completes the speaker named; 'new'
 -- completes the one speaker with this name key (two: disambiguator_required),
--- else the one speaker with this phone, else adds a speaker (vetted pending,
--- source as typed). Completing fills ONLY what is empty — the speaker's title,
--- gender, affiliation, topics, and the contacts' phone, e-mail, notes.
+-- else adds a speaker (vetted pending, source as typed) — never by a phone
+-- alone (two names, one line, are two people; the preview turns a phone the
+-- pool has into an explicit 'merge'). Completing fills ONLY what is empty — the
+-- speaker's title, gender (not one its own title contradicts), affiliation,
+-- topics, and the contacts' phone, e-mail, notes. 'contacts' says a phone or an
+-- e-mail was filled, 'notes' the private note.
 create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -4786,7 +4824,6 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
     v_phone   text;
     v_email   text;
     v_notes   text;
-    v_pkey    text;
     v_n       integer;
     v_s       public.speakers;
     v_c       public.speaker_contacts;
@@ -4817,16 +4854,13 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
       if v_n > 1 then perform app.refuse('disambiguator_required'); end if;
       if v_n = 1 then
         select * into v_s from public.speakers where name_key = v_key for update;
-      else
-        v_pkey := app.phone_key(v_phone);
-        if v_pkey is not null then
-          select count(distinct c.speaker_id) into v_n from public.speaker_contacts c where app.phone_key(c.phone) = v_pkey;
-          if v_n = 1 then
-            select s.* into v_s from public.speakers s join public.speaker_contacts c on c.speaker_id = s.id
-             where app.phone_key(c.phone) = v_pkey for update of s;
-          end if;
-        end if;
       end if;
+    end if;
+
+    -- the pool's own title says the other gender: that gender is never filled from the row's title
+    if v_s.id is not null and v_gender is not null and app.title_gender(v_s.title) is not null
+       and app.title_gender(v_s.title) <> v_gender then
+      v_gender := null;
     end if;
 
     if v_s.id is null then
@@ -4871,7 +4905,8 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
             notes = coalesce(speaker_contacts.notes, excluded.notes);
       perform app.log_event(null, 'speakers', v_s.id, 'contacts', jsonb_build_object('fields', to_jsonb(v_cfields)));
     end if;
-    return jsonb_build_object('speaker_id', v_s.id, 'created', v_created, 'filled', cardinality(v_fields) > 0, 'contacts', cardinality(v_cfields) > 0);
+    return jsonb_build_object('speaker_id', v_s.id, 'created', v_created, 'filled', cardinality(v_fields) > 0,
+                              'contacts', 'phone' = any (v_cfields) or 'email' = any (v_cfields), 'notes', 'notes' = any (v_cfields));
   end
   $$;
 
@@ -4951,6 +4986,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
     v_merged   integer := 0;
     v_filled   integer := 0;
     v_contacts integer := 0;
+    v_notes    integer := 0;
     v_lessons  integer := 0;
     v_replaced integer := 0;
     v_rows     jsonb := '[]';
@@ -4973,8 +5009,8 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       if jsonb_typeof(p_payload -> 'speakers') is distinct from 'array' or jsonb_typeof(p_payload -> 'lessons') is distinct from 'array' then
         perform app.refuse('bad_value');
       end if;
-      v_label := app.clean_line(case when jsonb_typeof(p_payload -> 'label') = 'string' then p_payload ->> 'label' end, 60);
-      if v_label is null then perform app.refuse('label_required'); end if;
+      v_label := app.label_key(app.clean_line(case when jsonb_typeof(p_payload -> 'label') = 'string' then p_payload ->> 'label' end, 60));
+      if v_label = '' then perform app.refuse('label_required'); end if;
       if jsonb_typeof(p_payload -> 'start_date') = 'string' and p_payload ->> 'start_date' <> '' then
         if p_payload ->> 'start_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then perform app.refuse('bad_value'); end if;
         begin
@@ -4987,7 +5023,10 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       elsif jsonb_typeof(p_payload -> 'start_date') not in ('null', 'string') then
         perform app.refuse('bad_value');
       end if;
-      select * into v_ed from public.editions where label = v_label for update;
+      -- the label as the key compares it: «תשפ״ו», «תשפ"ו» and «תשפ”ו» are one archive; two editions already
+      -- answering to it (made before the key) are not guessed between
+      if (select count(*) from public.editions where app.label_key(label) = v_label) > 1 then perform app.refuse('label_ambiguous'); end if;
+      select * into v_ed from public.editions where app.label_key(label) = v_label for update;
       if v_ed.id is not null and v_ed.kind <> 'archive' then perform app.refuse('edition_exists'); end if;
       -- the replace deletes the lessons, and «איך עבר» (Milestone 6, below) with them: an archive with a review is kept
       if v_ed.id is not null and exists (select 1 from public.lesson_reviews r where r.edition_id = v_ed.id) then
@@ -5063,10 +5102,13 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
           if cardinality(v_refs) = 0 then perform app.refuse('bad_value'); end if;
 
           insert into public.lessons (edition_id, kind, state, day, start_min, end_min, room_id, title, category_id, audience,
-                                      sources_kind, print_when, sources_note, pay_amount, import_note, updated_by)
+                                      sources_kind, print_when, sources_note, pay_amount, updated_by)
           values (v_ed.id, 'lesson', 'closed', v_day, v_start, v_end, app.import_room(v_ed.id, v_room::integer), v_title, v_cat, v_aud,
-                  v_kind, v_print, v_snote, v_pay, v_inote, v_me)
+                  v_kind, v_print, v_snote, v_pay, v_me)
           returning id into v_lid;
+          if v_inote is not null then
+            insert into public.lesson_import_notes (lesson_id, edition_id, note) values (v_lid, v_ed.id, v_inote);
+          end if;
           -- its speakers: the first leads; two rows that became one pool speaker are one speaker here
           v_seen := '{}';
           foreach v_sid in array v_refs loop
@@ -5097,7 +5139,7 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
           if v_s.id is null then perform app.refuse('stale'); end if;
           v_pref := app.pick_contact_pref(v_item ->> 'contact_pref');
           v_sec := app.clean_block(v_item ->> 'secretary_note', 300);
-          v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false);
+          v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false, 'notes', false);
           if v_s.contact_pref is null and v_pref is not null then
             update public.speakers set contact_pref = v_pref, version = version + 1 where id = v_s.id;
             perform app.log_event(null, 'speakers', v_s.id, 'update', jsonb_build_object('fields', jsonb_build_array('contact_pref')));
@@ -5126,14 +5168,15 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       if (v_r ->> 'created')::boolean then v_created := v_created + 1; else v_merged := v_merged + 1; end if;
       if (v_r ->> 'filled')::boolean then v_filled := v_filled + 1; end if;
       if (v_r ->> 'contacts')::boolean then v_contacts := v_contacts + 1; end if;
+      if (v_r ->> 'notes')::boolean then v_notes := v_notes + 1; end if;
       v_rows := v_rows || jsonb_build_object('row', coalesce(app.jint(v_item -> 'row'), -1), 'speaker_id', (v_r ->> 'speaker_id')::bigint,
                                              'created', (v_r ->> 'created')::boolean);
     end loop;
     -- the log: counts and the label — never a name, a phone or a note
     perform app.log_event(v_ed.id, 'import', v_ed.id, p_kind, jsonb_build_object(
-      'rows', cardinality(v_res), 'created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts,
+      'rows', cardinality(v_res), 'created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts, 'notes', v_notes,
       'lessons', v_lessons, 'replaced', v_replaced) || case when v_source is not null then jsonb_build_object('source', v_source) else '{}' end);
-    return jsonb_build_object('created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts,
+    return jsonb_build_object('created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts, 'notes', v_notes,
                               'lessons', v_lessons, 'replaced', v_replaced, 'edition_id', v_ed.id, 'speakers', v_rows);
   end
   $$;
@@ -5195,7 +5238,7 @@ create or replace function public.import_lookup(p_speakers bigint[], p_phone_key
 --                         or the edition is archived, with the edition's label
 --                         typed: deletes its transport details (pickup addresses,
 --                         drivers' names and phones) — and, in an edition the
---                         import of 5786 made, the sheet's notes (import_note:
+--                         import of 5786 made, the sheet's notes (lesson_import_notes:
 --                         its transport and payment words) —, revokes every link of it
 --                         and deletes the links' rate-limit counts (hashed
 --                         addresses); keeps everything else (DECISIONS «אבן דרך
@@ -5426,9 +5469,10 @@ create trigger editions_purged_guard before insert or update on public.editions
 -- `stale`; the label not typed exactly `confirm_mismatch`; the week not over yet
 -- (Israel time, before Friday 00:00 = start_date + 5; the date TBD) and the
 -- edition not archived `week_not_over`. Then: the transport details of its
--- lessons deleted, its lessons' import notes cleared (the import of 5786 keeps
--- last year's transport and payment words there: an archive it made is purged
--- of them as a live edition is of its transport details), its links revoked
+-- lessons deleted, its lessons' import notes deleted (lesson_import_notes: the
+-- import of 5786 keeps last year's transport and payment words there — an
+-- archive it made is purged of them as a live edition is of its transport
+-- details), its links revoked
 -- (the anon functions answer `link_invalid` from now on) and their rate-limit
 -- counts deleted. Returns the counts; logs
 -- them (and nothing else) in the edition's activity.
@@ -5453,7 +5497,7 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     end if;
     delete from public.transport_details t using public.lessons l where l.id = t.lesson_id and l.edition_id = p_edition;
     get diagnostics v_t = row_count;
-    update public.lessons set import_note = null where edition_id = p_edition and import_note is not null;
+    delete from public.lesson_import_notes where edition_id = p_edition;
     get diagnostics v_n = row_count;
     delete from public.share_link_hits h using public.share_links s where s.token_hash = h.token_hash and s.edition_id = p_edition;
     get diagnostics v_h = row_count;
@@ -5679,9 +5723,13 @@ grant execute on function public.set_memorial_policy(bigint, text, integer, bool
 
 -- Import 5786 (v12): a global admin's two functions (each checks it) — the lookup (which pool speaker has a
 -- phone, which contact fields are filled: booleans) and the commit. Every helper (app.phone_key,
--- app.import_speaker, …) stays in app, out of the browser's reach; no new table, nothing new in Realtime.
+-- app.import_speaker, app.label_key, …) stays in app, out of the browser's reach. lesson_import_notes is read
+-- through its policy (may_see_transport, granted above) one lesson at a time by get_import_note (invoker), and is
+-- never in Realtime; only the commit writes it, only the purge deletes it.
 grant execute on function public.import_lookup(bigint[], text[]) to authenticated;
 grant execute on function public.import_commit(text, jsonb) to authenticated;
+grant select on public.lesson_import_notes to authenticated;
+grant execute on function public.get_import_note(bigint) to authenticated;
 
 -- After the week (v12). lesson_reviews is read under RLS (an edition's admins and
 -- content members; load_reviews is invoker) and written only by save_lesson_review;
@@ -5713,7 +5761,9 @@ grant execute on function public.start_edition_preview(boolean) to authenticated
 -- v10 the sources' files (file names; the week reloads after an upload); v11 the
 -- fallen, their families' contacts, and the memorial plans (the memorial screen
 -- reloads after each action; the grid on return to the tab); v12 the lessons'
--- «איך עבר» (opinions about a person; read when the panel or the summary opens).
+-- «איך עבר» (opinions about a person; read when the panel or the summary opens),
+-- and the imported lessons' notes (last year's transport words; read one lesson
+-- at a time).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -5731,7 +5781,7 @@ begin
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
-                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews'] loop
+                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

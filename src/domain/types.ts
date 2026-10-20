@@ -142,11 +142,6 @@ export interface Lesson {
   /** http(s) only. */
   presentation_url: string | null;
   in_reader: boolean;
-  /**
-   * v12: what last year's tracking sheet said that has no field of its own (transport/payment words, who sent the
-   * summary message) — written by the import of 5786 only, cleared of phones and e-mails; null (or absent) elsewhere.
-   */
-  import_note?: string | null;
   version: number;
   updated_by: number | null;
 }

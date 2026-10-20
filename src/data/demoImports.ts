@@ -2,6 +2,7 @@
 // so the wizard refuses, matches and replaces exactly as production does. An archive edition becomes one more of the
 // demo's engines (its own edition, the 2026 grid, the shared pool), so «לימד/ה אצלנו» shows it at once. The demo
 // user is the global admin. Nothing leaves the tab; the sample tables are synthetic (src/import/sample.ts).
+import { labelKey } from "./importRules";
 import { titlesOf } from "./speakerRules";
 import type { Category, Week } from "../domain/types";
 import type { Engine, ImportHost } from "./engine";
@@ -33,10 +34,10 @@ export class DemoImports implements ImportPort {
   private host(): ImportHost {
     return {
       titles: (id) => titlesOf(id == null ? null : this.s.engines.get(id)?.week.edition.settings),
-      byLabel: (label) => {
-        const w = this.weeks().find((x) => x.edition.label === label);
-        return w ? { kind: w.edition.kind, week: w.edition.kind === "archive" ? w : null } : null;
-      },
+      byLabel: (key) =>
+        this.weeks()
+          .filter((x) => labelKey(x.edition.label) === key)
+          .map((w) => ({ kind: w.edition.kind, week: w.edition.kind === "archive" ? w : null })),
       categoryIds: () => new Set(this.s.categories.map((c) => c.id)),
       nextEditionId: () => nextId(this.weeks().map((w) => w.edition)),
       nextRoomId: () => nextId(this.weeks().flatMap((w) => w.rooms)),

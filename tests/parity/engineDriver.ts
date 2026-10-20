@@ -2,7 +2,7 @@
 import { CommandError } from "../../src/data/commands";
 import { emptyShared, Engine, type ImportHost, type PoolShared } from "../../src/data/engine";
 import { ImportRowError } from "../../src/data/imports";
-import { ARCHIVE_ROOM } from "../../src/data/importRules";
+import { ARCHIVE_ROOM, labelKey } from "../../src/data/importRules";
 import { titlesOf } from "../../src/data/speakerRules";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
@@ -80,11 +80,10 @@ export function engineDriver(): Driver {
   const archives: Week[] = [];
   const host: ImportHost = {
     titles: (id) => titlesOf(id === week.edition.id ? week.edition.settings : null),
-    byLabel: (label) => {
-      if (label === week.edition.label) return { kind: week.edition.kind, week: null };
-      if (label === FOREIGN_EDITION) return { kind: "practice", week: null };
-      const a = archives.find((x) => x.edition.label === label);
-      return a ? { kind: "archive", week: a } : null;
+    byLabel: (key) => {
+      if (key === labelKey(week.edition.label)) return [{ kind: week.edition.kind, week: null }];
+      if (key === labelKey(FOREIGN_EDITION)) return [{ kind: "practice", week: null }];
+      return archives.filter((x) => labelKey(x.edition.label) === key).map((a) => ({ kind: "archive" as const, week: a }));
     },
     categoryIds: () => new Set(week.categories.map((c) => c.id)),
     nextEditionId: () => 100 + archives.length,
@@ -263,6 +262,12 @@ export function engineDriver(): Driver {
           return importRead(e.importCommit("escorts", { rows }, host), speakerName);
         } else if ("importLookup" in step) return lookupRead(e.importLookup(step.importLookup.speakers.map(speakerId), step.importLookup.phones), speakerName);
         else if ("importRaw" in step) return importRead(e.importCommit(step.importRaw.kind, step.importRaw.payload, host), speakerName);
+        else if ("importNote" in step) {
+          const on = onArchive(step.edition);
+          const [day, start] = step.importNote;
+          const l = on.week.lessons.find((x) => x.day === day && x.start_min === start && on.week.rooms.find((r) => r.id === x.room_id)?.name === ARCHIVE_ROOM);
+          return `note=${on.importNoteOf(l?.id ?? -1) ?? "-"}`;
+        }
         // ---- from placement to arrival
         else if ("pay" in step) {
           const l = at(step.pay, step.staleBy);
@@ -433,7 +438,8 @@ export function engineDriver(): Driver {
             ...a.rooms.map((r) => `room|${a.edition.label}|${r.name}|${r.sort}|${r.is_default}`),
             ...a.lessons.map((l) => {
               const who = a.lessonSpeakers.filter((x) => x.lesson_id === l.id).map((x) => `${speakerName(x.speaker_id)}:${x.role}`).sort().join(",");
-              return archiveLessonLine(a.edition.label, l, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
+              const note = shared.importNotes[`${a.edition.id}:${l.id}`] ?? null;
+              return archiveLessonLine(a.edition.label, { ...l, import_note: note }, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
             }),
             // «איך עבר» on an archive's lessons (a global admin's), by the lesson's place
             ...shared.reviews

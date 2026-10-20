@@ -492,6 +492,15 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         return r === "ok" ? lookupRead(answer as Parameters<typeof lookupRead>[0], await speakerNames()) : r;
       }
       if ("importRaw" in step) return importCall(step.as, step.importRaw.kind, step.importRaw.payload);
+      if ("importNote" in step) {
+        const [day, start] = step.importNote;
+        const l = await one(
+          `select l.id from public.lessons l join public.rooms r on r.id = l.room_id join public.editions e on e.id = l.edition_id
+            where e.label = $1 and e.kind = 'archive' and l.day = $2 and l.start_min = $3 and r.name = $4`,
+          [step.edition, day, start, ARCHIVE_ROOM],
+        );
+        return call(step.as, "select public.get_import_note($1)", [l?.id ?? -1], (v) => `note=${v ?? "-"}`);
+      }
       if ("readTransports" in step) {
         lessonKeys = (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
           (r) => [Number(r.id), lessonKey(r)] as [number, string],
@@ -555,7 +564,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
             from public.editions e where e.kind = 'archive'`)).rows;
         const rooms = (await db.query("select r.*, e.label from public.rooms r join public.editions e on e.id = r.edition_id where e.kind = 'archive'")).rows;
         const ls = (await db.query(`
-          select l.*, e.label, r.name as room, c.name as cat,
+          select l.*, e.label, r.name as room, c.name as cat, (select n.note from public.lesson_import_notes n where n.lesson_id = l.id) as import_note,
                  (select string_agg(s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role, ',' order by s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role collate "C")
                     from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id where x.lesson_id = l.id) as who
             from public.lessons l join public.editions e on e.id = l.edition_id join public.rooms r on r.id = l.room_id

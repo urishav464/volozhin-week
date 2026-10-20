@@ -174,6 +174,7 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
         const from = cellRef(a);
         const to = cellRef(b ?? a);
         if (from && to) merges.push([from[0], from[1], to[0], to[1]]);
+        if (merges.length > IMPORT_LIMITS.cells) tooBig(); // a tiny file of a million merges: refused, not read
       }
     } else if (e.t === "close") {
       const n = local(e.name);
@@ -210,10 +211,15 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
       else if (inT && inIs && !phonetic) cell.is.push(e.v);
     }
   }
+  // a merged cell's text down its rows — the work counted: past a table's cells, the file is refused
+  let work = 0;
   for (const [r0, c0, r1] of merges) {
     const v = cells.get(r0)?.get(c0);
     if (v == null) continue;
-    for (let r = r0 + 1; r <= Math.min(r1, IMPORT_LIMITS.rows - 1); r++) if (!cells.get(r)?.get(c0)) put(r, c0, v);
+    const last = Math.min(r1, IMPORT_LIMITS.rows - 1);
+    work += Math.max(0, last - r0);
+    if (work > IMPORT_LIMITS.cells) tooBig();
+    for (let r = r0 + 1; r <= last; r++) if (!cells.get(r)?.get(c0)) put(r, c0, v);
   }
   const rows = Math.max(-1, ...cells.keys()) + 1;
   const cols = Math.max(-1, ...[...cells.values()].flatMap((m) => [...m.keys()])) + 1;

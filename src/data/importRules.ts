@@ -35,6 +35,8 @@ export const IMPORT_KINDS: readonly ImportKind[] = ["candidates", "tracking", "e
 export const parallelRoomName = (index: number) => `מקביל ${index + 1}`;
 /** The archive's default room, as public.start_edition names a new edition's. */
 export const ARCHIVE_ROOM = "בית מדרש";
+/** An archive edition's last_day_until: Thursday ends at 19:00 (the column's default; last year's week too). */
+export const ARCHIVE_LAST_DAY_UNTIL = 1140;
 
 export interface CleanSpeakerRow {
   row: number;
@@ -119,11 +121,24 @@ export function cleanPrefsRow(p: PrefsRow): { row: number; speaker_id: number; c
   return { row: p.row, speaker_id: p.speaker_id, contact_pref: pickContactPref(p.contact_pref), secretary_note: cleanBlock(p.secretary_note, LIMITS.secretary_note) };
 }
 
-/** An archive's label: one line ≤ 60, required (label_required). */
+/**
+ * An archive edition's label as the import compares — and stores — it (app.label_key): the Hebrew and typographic
+ * quote marks as ASCII («תשפ״ו», «תשפ”ו» → «תשפ"ו», the form hebrewYearLabel writes), spaces single. A re-run typed
+ * with the other quote mark replaces the same archive instead of making a second one.
+ */
+export function labelKey(v: string | null | undefined): string {
+  return (v ?? "")
+    .replace(/[״“”″]/g, '"')
+    .replace(/[׳‘’]/g, "'")
+    .replace(/[ \t\n\r\f\v]+/g, " ")
+    .trim();
+}
+
+/** An archive's label: one line ≤ 60, required (label_required) — in its key's form (labelKey). */
 export function cleanLabel(v: unknown): string {
   const l = cleanLine(typeof v === "string" ? v : null, IMPORT_RULES.label);
   if (l == null) fail("label_required");
-  return l!;
+  return labelKey(l);
 }
 
 /** The archive's opening Sunday: yyyy-mm-dd (bad_value), a Sunday (not_sunday) — or null. */
@@ -143,7 +158,21 @@ export function cleanSource(v: unknown): string {
   return s!;
 }
 
-/** The payload's size, as both sides count it: its rows — and, as a guard, its JSON text (import_too_big). */
-export function checkPayloadSize(rows: number, json: string): void {
-  if (rows > IMPORT_RULES.rows || new TextEncoder().encode(json).length > IMPORT_RULES.bytes) fail("import_too_big");
+/**
+ * A JSON value written as PostgreSQL writes a jsonb (`p_payload::text`): «, » between items and «: » after a key —
+ * the text whose bytes import_commit counts. (jsonb also sorts an object's keys; the length is the same.)
+ */
+export function jsonbText(v: unknown): string {
+  if (v === null || v === undefined || typeof v === "function" || typeof v === "symbol") return "null";
+  if (typeof v === "number") return Number.isFinite(v) ? JSON.stringify(v) : "null";
+  if (typeof v === "string" || typeof v === "boolean") return JSON.stringify(v);
+  if (typeof v === "bigint") return String(v);
+  if (Array.isArray(v)) return `[${v.map(jsonbText).join(", ")}]`;
+  const items = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined && typeof x !== "function" && typeof x !== "symbol");
+  return `{${items.map(([k, x]) => `${JSON.stringify(k)}: ${jsonbText(x)}`).join(", ")}}`;
+}
+
+/** The payload's size, as both sides count it: its rows — and, as a guard, the bytes of its jsonb text (import_too_big). */
+export function checkPayloadSize(rows: number, payload: unknown): void {
+  if (rows > IMPORT_RULES.rows || new TextEncoder().encode(jsonbText(payload)).length > IMPORT_RULES.bytes) fail("import_too_big");
 }

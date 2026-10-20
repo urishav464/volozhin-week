@@ -30,11 +30,12 @@ async function paste(page: Page, html: string, text: string) {
 const CANDIDATES_HTML = `<html><head><style>td{color:red}</style><script>window.__pwned = 1</script></head><body>
 <google-sheets-html-origin><table>
 <tr><td>מרצה</td><td>מוסד</td><td>טווח ימים</td><td>העדפה</td><td>חניך/ה</td></tr>
-<tr><td>הרב מרצה לבדיקה 1<img src="x" onerror="window.__pwned = 2"></td><td>מוסד לבדיקה</td><td>א-ב</td><td></td><td>חניך/ה לבדיקה</td></tr>
-<tr><td>הרבנית מרצה לבדיקה 2</td><td></td><td>נסגר</td><td></td><td></td></tr>
+<tr><td>הרב בדיקה אלף<img src="x" onerror="window.__pwned = 2"></td><td>מוסד לבדיקה</td><td>א-ב</td><td></td><td>חניך/ה לבדיקה</td></tr>
+<tr><td>הרבנית בדיקה בית</td><td></td><td>נסגר</td><td></td><td></td></tr>
 <tr><td>מרצה-07</td><td>מוסד אחר</td><td></td><td></td><td></td></tr>
 <tr><td>מרצה 07ב</td><td></td><td></td><td></td><td></td></tr>
 <tr><td></td><td>שורה בלי שם</td><td></td><td></td><td></td></tr>
+<tr><td>בדיקה אלפ</td><td></td><td></td><td></td><td></td></tr>
 </table></google-sheets-html-origin></body></html>`;
 
 test.describe("demo build — the import of 5786", () => {
@@ -43,7 +44,7 @@ test.describe("demo build — the import of 5786", () => {
     await expect(page.getByRole("tab", { name: "ייבוא" })).toHaveAttribute("aria-selected", "true");
     await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
     await paste(page, CANDIDATES_HTML, "plain text that must not be read");
-    await expect(page.getByText(/5 שורות ו-5 עמודות מהדבקה/)).toBeVisible();
+    await expect(page.getByText(/6 שורות ו-5 עמודות מהדבקה/)).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
     await expect(page.getByLabel("הדבקת טבלה")).toHaveCount(0); // the paste field gave way to the table
     await noSidewaysScroll(page);
@@ -66,16 +67,24 @@ test.describe("demo build — the import of 5786", () => {
     await expect(row(5)).toContainText("עמום");
     await expect(row(6)).toContainText("מדולג");
     await expect(row(6)).toContainText("אין שם");
-    await expect(page.getByText("מרצה אחד/ת «עמום/ה» מחכה להחלטה")).toBeVisible();
+    // the same person spelled otherwise, in the same table: «עמום» — never a second speaker without the admin seeing it
+    await expect(row(7)).toContainText("עמום");
+    await expect(row(7)).toContainText("באותה טבלה יש שורה עם שם דומה");
+    await expect(page.getByText("2 מרצים «עמומים» מחכים להחלטה")).toBeVisible();
     await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeDisabled();
     await noSidewaysScroll(page);
 
+    // «לראשונה שמחכה להחלטה»: to the first undecided row, its first choice focused
+    await page.getByRole("button", { name: "לראשונה שמחכה להחלטה" }).click();
+    await expect(row(5).getByRole("radio").first()).toBeFocused();
     await row(5).getByRole("radio", { name: /להשלים את .*מרצה 07/ }).check();
     await expect(row(5)).toContainText("אין מה להשלים");
+    await row(7).getByRole("radio", { name: /אותו\/ה מרצה כמו שורה 2/ }).check();
+    await expect(page.getByText("מרצה אחד/ת «עמום/ה» מחכה להחלטה")).toHaveCount(0);
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
     await expect(toast(page, "הייבוא נשמר")).toBeVisible();
-    await expect(page.getByText("נוספו 2 מרצים למאגר (ממתינים לאישור) · 2 כבר במאגר")).toBeVisible();
+    await expect(page.getByText("נוספו 2 מרצים למאגר (ממתינים לאישור) · 3 כבר במאגר")).toBeVisible();
     await expect(page.getByRole("list", { name: "תצוגה מקדימה" })).toHaveCount(0); // the rows went with the commit
     await noSidewaysScroll(page);
 
@@ -84,13 +93,14 @@ test.describe("demo build — the import of 5786", () => {
       const dbs = (await indexedDB.databases?.()) ?? [];
       return JSON.stringify({ l: { ...localStorage }, s: { ...sessionStorage }, dbs: dbs.map((d) => d.name) });
     });
-    for (const piece of ["מרצה לבדיקה", "טווח ימים", "מוסד לבדיקה", "חניך/ה לבדיקה", "plain text that must not be read"]) expect(stored).not.toContain(piece);
+    for (const piece of ["בדיקה אלף", "טווח ימים", "מוסד לבדיקה", "חניך/ה לבדיקה", "plain text that must not be read"]) expect(stored).not.toContain(piece);
 
-    // the new speakers wait for approval
+    // the new speakers wait for approval — two of them, «בדיקה אלפ» being «בדיקה אלף»
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();
     const pending = page.getByRole("list", { name: "ממתינים לאישור" });
-    await expect(pending.getByText("הרב מרצה לבדיקה 1")).toBeVisible();
-    await expect(pending.getByText("הרבנית מרצה לבדיקה 2")).toBeVisible();
+    await expect(pending.getByText("הרב בדיקה אלף")).toBeVisible();
+    await expect(pending.getByText("הרבנית בדיקה בית")).toBeVisible();
+    await expect(pending.getByText("בדיקה אלפ", { exact: true })).toHaveCount(0);
   });
 
   test("the tracking sheet: an .xlsx made here, «כפולה» decided, an archive edition — «אישור באצווה» of who taught in it", async ({ page }, info) => {
@@ -99,18 +109,20 @@ test.describe("demo build — the import of 5786", () => {
         name: "מעקב",
         headers: ["מרצה", "שיעור ב", "כותרת", "מקורות (נשלח?)", "הסעה/תשלום", "טלפון", "קיבל הודעת סיכום מ", "נושא"],
         rows: [
-          ["הרב מרצה ארכיון 1", "ראשון 8:30", "שיעור ארכיון א", "כן", "300", "000-000-0003", "חניך/ה לדוגמה 1", "תנ\"ך"],
-          ["מרצה ארכיון 2", "ראשון 8:30", "שיעור ארכיון ב", "כן+סרטון", "הסעה הלוך וחזור", "", "", "פילוסופיה"],
-          ["מרצה ארכיון 3", "שני 10:00 כפולה", "שיעור ארכיון ג", "להדפיס לפני", "", "", "", ""],
-          ["מרצה ארכיון 4", "שני 10:00 כפולה", "שיעור ארכיון ד", "", "", "", "", ""],
-          ["מרצה ארכיון 5", "שישי 8:30", "שיעור בשישי", "", "", "", "", ""],
+          ["הרב ארכיון אלף", "ראשון 8:30", "שיעור ארכיון א", "כן", "300", "000-000-0003", "חניך/ה לדוגמה 1", "תנ\"ך"],
+          ["ארכיון בית", "ראשון 8:30", "שיעור ארכיון ב", "כן+סרטון", "הסעה הלוך וחזור", "", "", "פילוסופיה"],
+          ["ארכיון גימל", "שני 10:00 כפולה", "שיעור ארכיון ג", "להדפיס לפני", "", "", "", ""],
+          ["ארכיון דלת", "שני 10:00 כפולה", "שיעור ארכיון ד", "", "", "", "", ""],
+          ["ארכיון הא", "שישי 8:30", "שיעור בשישי", "", "", "", "", ""],
+          ["ארכיון וו", "שלישי 00:30", "שיעור לילה בארכיון", "", "", "", "", ""],
+          ["ארכיון זין", "חמישי 02:00", "שיעור בלילה של חמישי", "", "", "", "", ""],
         ],
       },
     ]);
     await page.goto(`${demoUrl()}/settings/import`);
     await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
     await page.locator('input[type="file"]').setInputFiles({ name: "מעקב לדוגמה.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(bytes) });
-    await expect(page.getByText(/5 שורות ו-8 עמודות מקובץ Excel \(מעקב לדוגמה\.xlsx\)/)).toBeVisible();
+    await expect(page.getByText(/7 שורות ו-8 עמודות מקובץ Excel \(מעקב לדוגמה\.xlsx\)/)).toBeVisible();
     for (const [h, v] of [["מרצה", "speaker"], ["שיעור ב", "when"], ["כותרת", "title"], ["מקורות (נשלח?)", "sources"], ["הסעה/תשלום", "transport"], ["טלפון", "phone"], ["קיבל הודעת סיכום מ", "confirmFrom"], ["נושא", "topic"]]) {
       await expect(page.getByLabel(h, { exact: true })).toHaveValue(v);
     }
@@ -127,41 +139,65 @@ test.describe("demo build — the import of 5786", () => {
     await expect(lessons.getByRole("listitem").filter({ hasText: "שיעור ארכיון א" })).toContainText("קיבל הודעת סיכום מ: חניך/ה לדוגמה 1");
     await expect(lessons.getByRole("listitem").filter({ hasText: "שיעור ארכיון א" })).toContainText("תשלום 300 ₪");
     await expect(lessons.getByRole("listitem").filter({ hasText: "שיעור בשישי" })).toContainText("יום מחוץ לשבוע");
+    // the night rule shown as what it is: «הצעה», the night after the day written, as the rest of the app says it
+    const night = lessons.getByRole("listitem").filter({ hasText: "שיעור לילה בארכיון" });
+    await expect(night).toContainText("ליל שלישי–רביעי");
+    await expect(night).toContainText("הצעה: לילה אחרי היום שנכתב");
+    await expect(lessons.getByRole("listitem").filter({ hasText: "שיעור בלילה של חמישי" })).toContainText("נגמר בחמישי ב-19:00");
+    await expect(lessons.getByRole("listitem").filter({ hasText: "שיעור ארכיון א" })).toContainText("בית מדרש");
     await expect(page.getByRole("list", { name: "נושאים" }).getByLabel(/תנ"ך/)).not.toHaveValue("");
     await noSidewaysScroll(page);
 
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
-    await expect(page.getByText(/4 שיעורים במחזור «תשפ״ו לדוגמה»/)).toBeVisible();
+    // the label kept in its key's form (ASCII quote marks, as the app writes a year)
+    await expect(page.getByText(/5 שיעורים במחזור «תשפ"ו לדוגמה»/)).toBeVisible();
+
+    // the same year typed with other quote marks is the same archive: replacing it deletes its lessons — the confirm
+    // says so, and its focus is on «ביטול»: Enter, Enter never replaces it
+    await page.locator('input[type="file"]').setInputFiles({ name: "מעקב לדוגמה.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(bytes) });
+    await page.getByLabel("שם המחזור בארכיון").fill("תשפ”ו  לדוגמה");
+    await expect(page.getByText(/מחזור בשם הזה כבר בארכיון/)).toBeVisible();
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    await page.getByRole("list", { name: "קבוצות כפולה" }).getByRole("radio", { name: "מקבילים — כל שורה בחדר משלה" }).check();
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    const replace = page.getByRole("group", { name: "אישור" });
+    await expect(replace).toContainText("יימחקו ויוחלפו");
+    await expect(replace.getByRole("button", { name: "ביטול" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(replace).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeVisible(); // nothing was replaced
+    await page.getByRole("button", { name: "ניקוי — טבלה אחרת" }).click();
 
     // the archive is an edition now: in «מחזור»
     await page.getByRole("tab", { name: "מחזור" }).click();
-    await expect(page.getByText("תשפ״ו לדוגמה").first()).toBeVisible();
+    await expect(page.getByText('תשפ"ו לדוגמה').first()).toBeVisible();
 
     // after the week (v12, both parts): an archive is purged without a date, and the purge clears what the sheet said
     // on its lessons — the transport words of one, who sent the summary on another
     const purge = page.locator("#purge-panel");
-    await purge.getByLabel("מוחקים את המידע של").selectOption({ label: "תשפ״ו לדוגמה (בארכיון)" });
+    await purge.getByLabel("מוחקים את המידע של").selectOption({ label: 'תשפ"ו לדוגמה (בארכיון)' });
     await expect(purge.locator("[data-purge-import-notes]")).toContainText("ההערות שהייבוא הביא מגיליון המעקב");
-    await purge.getByLabel(/כדי למחוק, מקלידים את שם המחזור/).fill("תשפ״ו לדוגמה");
-    await purge.getByRole("button", { name: "מחיקת המידע האישי של תשפ״ו לדוגמה" }).click();
+    await purge.getByLabel(/כדי למחוק, מקלידים את שם המחזור/).fill('תשפ"ו לדוגמה');
+    await purge.getByRole("button", { name: 'מחיקת המידע האישי של תשפ"ו לדוגמה' }).click();
     await expect(purge.locator("[data-purge-report]")).toContainText("ההערות מגיליון המעקב של 2 שיעורים נמחקו");
     await expect(purge.locator("[data-purged]")).toContainText("נמחק ב-");
 
-    // the approvals queue: one confirm approves the four who taught in it
+    // the approvals queue: one confirm approves the five who taught in it — and says who still lacks a gender
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();
-    const batch = page.getByRole("group", { name: "אישור באצווה: מי שלימד/ה ב-תשפ״ו לדוגמה" });
-    await expect(batch).toContainText("4 מרצים שממתינים לאישור לימדו שיעור");
+    const batch = page.getByRole("group", { name: 'אישור באצווה: מי שלימד/ה ב-תשפ"ו לדוגמה' });
+    await expect(batch).toContainText("5 מרצים שממתינים לאישור לימדו שיעור");
     if (info.project.name === "desktop") {
       // «לימד/ה אצלנו» on the sheet shows the archive
-      await page.getByRole("list", { name: "ממתינים לאישור" }).getByRole("button", { name: "מרצה ארכיון 2", exact: true }).click();
-      await expect(page.getByRole("dialog", { name: "מרצה ארכיון 2" })).toContainText("תשפ״ו לדוגמה");
+      await page.getByRole("list", { name: "ממתינים לאישור" }).getByRole("button", { name: "ארכיון בית", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "ארכיון בית" })).toContainText('תשפ"ו לדוגמה');
       await page.keyboard.press("Escape");
     }
-    await batch.getByRole("button", { name: "אישור 4 מרצים שלימדו ב-תשפ״ו לדוגמה" }).click();
-    await batch.getByRole("button", { name: "אישור 4 מרצים" }).click();
-    await expect(toast(page, "4 מרצים אושרו")).toBeVisible();
-    await expect(page.getByRole("list", { name: "ממתינים לאישור" }).getByText("מרצה ארכיון 2")).toHaveCount(0);
+    await batch.getByRole("button", { name: 'אישור 5 מרצים שלימדו ב-תשפ"ו לדוגמה' }).click();
+    await expect(batch).toContainText("ל-4 מהם חסר מגדר");
+    await batch.getByRole("button", { name: "אישור 5 מרצים" }).click();
+    await expect(toast(page, "5 מרצים אושרו")).toBeVisible();
+    await expect(page.getByRole("list", { name: "ממתינים לאישור" }).getByText("ארכיון בית")).toHaveCount(0);
     await noSidewaysScroll(page);
   });
 
@@ -185,7 +221,7 @@ test.describe("demo build — the import of 5786", () => {
     await expect(preview.getByRole("listitem").filter({ hasText: "מרצה 12" })).toContainText("אין ניסוח מסומן על ערוץ הקשר");
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
-    await expect(page.getByText("מרצה אחד/ת כבר במאגר · 1 הושלמו בפרטים שהיו חסרים · 1 קיבלו פרטי קשר שהיו חסרים")).toBeVisible();
+    await expect(page.getByText("מרצה אחד/ת כבר במאגר · מרצה אחד/ת הושלם/ה בפרטים שהיו חסרים · מרצה אחד/ת קיבל/ה «איך פונים»")).toBeVisible();
     await noSidewaysScroll(page);
   });
 
@@ -196,6 +232,12 @@ test.describe("demo build — the import of 5786", () => {
     await page.locator('input[type="file"]').setInputFiles({ name: "לא באמת.xlsx", mimeType: "application/octet-stream", buffer: Buffer.from("not a zip at all") });
     await expect(page.getByRole("alert")).toContainText("לא הצלחנו לקרוא את הקובץ");
     await expect(page.getByLabel("הדבקת טבלה")).toBeVisible();
+    // the upload's focus ring: the 1px input is clipped, so the label that looks like the button draws it
+    await page.getByLabel("הדבקת טבלה").focus();
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => (document.activeElement as HTMLInputElement).type)).toBe("file");
+    const ring = await page.locator("label", { hasText: "העלאת קובץ xlsx או docx" }).evaluate((el) => getComputedStyle(el).outlineStyle);
+    expect(ring).toBe("solid");
     await noSidewaysScroll(page);
   });
 });
@@ -215,7 +257,7 @@ test.describe("mock build — on the wire", () => {
     sb.tables.set("speakers", week.speakers);
     sb.tables.set("categories", week.categories);
     sb.answers.set("import_lookup", { phones: [], contacts: [] });
-    sb.answers.set("import_commit", { created: 1, merged: 0, filled: 0, contacts: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: 99, created: true }] });
+    sb.answers.set("import_commit", { created: 1, merged: 0, filled: 0, contacts: 1, notes: 1, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: 99, created: true }] });
     await sb.attach(page);
     const session = await signIn(page, "admin@example.org");
     sb.token = session.access_token;

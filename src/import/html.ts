@@ -52,6 +52,8 @@ export function gridFromNodes(root: MiniNode): Grid {
     if (n.nodeType !== 1 && n.nodeType !== 9 && n.nodeType !== 11) return ""; // comments, processing instructions
     const name = n.nodeType === 1 ? n.nodeName.toUpperCase() : "";
     if (SKIP.has(name)) return "";
+    // Word's list marker («·», «1.» and its spacing) in a span of its own: not the cell's text
+    if (name && /mso-list\s*:\s*ignore/i.test(n.getAttribute?.("style") ?? "")) return "";
     if (name === "BR") return "\n";
     const inner = kids(n).map(textOf).join("");
     if (name === "TD" || name === "TH") return `${inner}\t`;

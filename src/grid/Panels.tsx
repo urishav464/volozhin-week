@@ -355,13 +355,6 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
         </div>
       </Section>
 
-      {/* v12: what last year's tracking sheet said that has no field of its own (the import of 5786), read only */}
-      {l.import_note && (
-        <Section title="מגיליון המעקב של אשתקד">
-          <p className="text-sm whitespace-pre-line break-words">{l.import_note}</p>
-        </Section>
-      )}
-
       {stages ? (
         stages(l)
       ) : (

@@ -37,6 +37,7 @@ import type {
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { phoneKey } from "../import/phone";
+import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
@@ -50,7 +51,7 @@ import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type Li
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import { type ArchiveLessonRow, type ImportKind, type ImportLookup, type ImportResult, ImportRowError, type SpeakerRow } from "./imports";
-import { ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName } from "./importRules";
+import { ARCHIVE_LAST_DAY_UNTIL, ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName } from "./importRules";
 import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
 import type { PurgeReport } from "./settings";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
@@ -103,6 +104,11 @@ export interface PoolShared {
   fallenContacts: Record<number, FallenContacts>;
   /** lesson_reviews (v12), every edition's — «איך עבר», opinions about a person: never in a Week. */
   reviews: (LessonReview & { edition_id: number })[];
+  /**
+   * lesson_import_notes (v12), by `${edition id}:${lesson id}`: what last year's tracking sheet said that has no field
+   * of its own — its transport words among them, so the transport details' rule (mayTransport): never in a Week.
+   */
+  importNotes: Record<string, string>;
 }
 
 /** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
@@ -113,7 +119,7 @@ export interface StoredObject {
   owner: string;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [] });
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {} });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -140,15 +146,18 @@ interface SpeakerResult {
   speaker_id: number;
   created: boolean;
   filled: boolean;
+  /** A phone or an e-mail filled (the escorts' file: the secretary note). */
   contacts: boolean;
+  /** The private note filled. */
+  notes: boolean;
 }
 
 /** What the import of the tracking sheet needs from outside the engine: the other editions, and where the archive goes. */
 export interface ImportHost {
   /** app.titles: that edition's settings.titles when it lists any, else the default four. */
   titles(editionId: number | null): readonly string[];
-  /** The edition with this label: its kind, and its week when it is an archive. */
-  byLabel(label: string): { kind: Week["edition"]["kind"]; week: Week | null } | null;
+  /** Every edition whose label has this key (labelKey): its kind, and its week when it is an archive. */
+  byLabel(key: string): { kind: Week["edition"]["kind"]; week: Week | null }[];
   /** The categories that exist. */
   categoryIds(): ReadonlySet<number>;
   nextEditionId(): number;
@@ -758,6 +767,12 @@ export class Engine {
     return this.handlerOf(l) === this.actor.memberId;
   }
 
+  /** public.get_import_note: what last year's sheet said about an imported lesson — the transport details' rule (mayTransport). */
+  importNoteOf(lessonId: number): string | null {
+    if (!this.week.lessons.some((l) => l.id === lessonId) || !this.mayTransport(lessonId)) return null;
+    return this.shared.importNotes[this.transportKey(lessonId)] ?? null;
+  }
+
   /** public.get_transport_details: null when they are not the caller's to see. */
   transportOf(lessonId: number): TransportDetails | null {
     if (!this.mayTransport(lessonId)) return null;
@@ -1305,9 +1320,9 @@ export class Engine {
         }
       }
       let notes = 0;
-      for (const l of this.week.lessons) {
-        if (l.import_note != null) {
-          l.import_note = null;
+      for (const k of Object.keys(this.shared.importNotes)) {
+        if (k.startsWith(`${e.id}:`)) {
+          delete this.shared.importNotes[k];
           notes++;
         }
       }
@@ -1755,7 +1770,7 @@ export class Engine {
       if (payload == null || typeof payload !== "object" || Array.isArray(payload)) fail("bad_value");
       const p = payload as Record<string, unknown>;
       const len = (v: unknown) => (Array.isArray(v) ? v.length : 0);
-      checkPayloadSize(kind === "tracking" ? len(p.speakers) + len(p.lessons) : len(p.rows), JSON.stringify(payload));
+      checkPayloadSize(kind === "tracking" ? len(p.speakers) + len(p.lessons) : len(p.rows), payload);
       const titles = host.titles(jint(p.titles_from));
       let res: SpeakerResult[] = [];
       let source: string | null = null;
@@ -1770,7 +1785,10 @@ export class Engine {
         if (!Array.isArray(p.speakers) || !Array.isArray(p.lessons)) fail("bad_value");
         const label = cleanLabel(p.label);
         const start = typeof p.start_date === "string" || p.start_date == null ? cleanArchiveDate(p.start_date) : fail("bad_value");
-        const existing = host.byLabel(label);
+        // the label as its key compares it; two editions already answering to it are not guessed between
+        const found = host.byLabel(label);
+        if (found.length > 1) fail("label_ambiguous");
+        const existing = found[0] ?? null;
         if (existing && existing.kind !== "archive") fail("edition_exists");
         // the replace deletes the lessons, and «איך עבר» with them (on delete cascade): an archive with a review is kept
         if (existing?.week && this.shared.reviews.some((r) => r.edition_id === existing.week!.edition.id)) fail("archive_reviewed");
@@ -1781,7 +1799,7 @@ export class Engine {
         const draft: Week = existing?.week
           ? { ...structuredClone({ ...existing.week, speakers: [] }), speakers: this.week.speakers, lessons: [], lessonSpeakers: [], pitches: [], escortTicks: [] }
           : {
-              edition: { id: host.nextEditionId(), label, kind: "archive", start_date: start, first_day_from: null, last_day_until: 1140, status: "archived", settings: {} },
+              edition: { id: host.nextEditionId(), label, kind: "archive", start_date: start, first_day_from: null, last_day_until: ARCHIVE_LAST_DAY_UNTIL, status: "archived", settings: {} },
               rows: structuredClone(TEMPLATE_2026), rooms: [{ id: host.nextRoomId(), name: ARCHIVE_ROOM, sort: 1, is_default: true }], categories: structuredClone(this.week.categories),
               speakers: this.week.speakers, approaches: [], availability: [], lessons: [], lessonSpeakers: [], pitches: [], team: [], roster: [], escortTicks: [], sourceFiles: [],
               memorialPlans: [], fallen: [],
@@ -1805,6 +1823,7 @@ export class Engine {
           return r.id;
         };
         const categories = host.categoryIds();
+        const notes: Record<number, string> = {};
         for (const item of p.lessons as unknown[]) {
           try {
             if (item == null || typeof item !== "object" || Array.isArray(item)) fail("bad_value");
@@ -1814,10 +1833,11 @@ export class Engine {
             const lesson: Lesson = {
               id: this.nextId(draft.lessons), kind: "lesson", state: "closed", day: l.day as Day, start_min: l.start_min, end_min: l.end_min, room_id: room,
               title: l.title, category_id: l.category_id, audience: l.audience, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS,
-              sources_kind: l.sources_kind, print_when: l.print_when, sources_note: l.sources_note, pay_amount: l.pay_amount, import_note: l.import_note,
+              sources_kind: l.sources_kind, print_when: l.print_when, sources_note: l.sources_note, pay_amount: l.pay_amount,
               version: 1, updated_by: this.actor.memberId,
             };
             draft.lessons.push(lesson);
+            if (l.import_note != null) notes[lesson.id] = l.import_note;
             const seen: number[] = [];
             for (const ref of l.speakers) {
               const sid = ids[ref];
@@ -1834,6 +1854,9 @@ export class Engine {
             throw rowError(item, e);
           }
         }
+        // the notes: the archive's old ones go with its old lessons (on delete cascade)
+        for (const k of Object.keys(this.shared.importNotes)) if (k.startsWith(`${draft.edition.id}:`)) delete this.shared.importNotes[k];
+        for (const [id, n] of Object.entries(notes)) this.shared.importNotes[`${draft.edition.id}:${id}`] = n;
         host.install(draft);
       } else {
         if (!Array.isArray(p.rows)) fail("bad_value");
@@ -1844,7 +1867,7 @@ export class Engine {
             const s = this.week.speakers.find((x) => x.id === jint(it.speaker_id)) ?? fail("stale");
             const pref = pickContactPref(text(it.contact_pref));
             const sec = cleanBlock(text(it.secretary_note), LIMITS.secretary_note);
-            const r: SpeakerResult = { speaker_id: s.id, created: false, filled: false, contacts: false };
+            const r: SpeakerResult = { speaker_id: s.id, created: false, filled: false, contacts: false, notes: false };
             if (s.contact_pref == null && pref != null) {
               Object.assign(s, { contact_pref: pref, version: s.version + 1 });
               this.log(null, "speakers", s.id, "update", { fields: ["contact_pref"] });
@@ -1867,11 +1890,11 @@ export class Engine {
       const created = res.filter((r) => r.created).length;
       const out: ImportResult = {
         created, merged: res.length - created, filled: res.filter((r) => r.filled).length, contacts: res.filter((r) => r.contacts).length,
-        lessons, replaced, edition_id: editionId,
+        notes: res.filter((r) => r.notes).length, lessons, replaced, edition_id: editionId,
         speakers: res.map((r, i) => ({ row: jint((src[i] as Record<string, unknown> | null)?.row) ?? -1, speaker_id: r.speaker_id, created: r.created })),
       };
       this.log(editionId, "import", editionId, kind, {
-        rows: res.length, created: out.created, merged: out.merged, filled: out.filled, contacts: out.contacts, lessons, replaced, ...(source != null ? { source } : {}),
+        rows: res.length, created: out.created, merged: out.merged, filled: out.filled, contacts: out.contacts, notes: out.notes, lessons, replaced, ...(source != null ? { source } : {}),
       });
       return out;
     });
@@ -1888,7 +1911,10 @@ export class Engine {
     });
   }
 
-  /** app.import_speaker: checked in its order, resolved (merge / the name key / the phone / new), filled where empty. */
+  /**
+   * app.import_speaker: checked in its order, resolved (merge / the name key / new — never a phone alone: two names on
+   * one line are two people), filled where empty — never a gender the speaker's own title contradicts.
+   */
   private importSpeaker(item: unknown, titles: readonly string[], source: string): SpeakerResult {
     const it = (item != null && typeof item === "object" && !Array.isArray(item) ? item : {}) as Record<string, unknown>;
     const r = cleanSpeakerRow(
@@ -1905,14 +1931,10 @@ export class Engine {
       const same = pool.filter((x) => x.name_key === r.key);
       if (same.length > 1) fail("disambiguator_required");
       if (same.length === 1) s = same[0];
-      else {
-        const k = phoneKey(r.phone);
-        if (k != null) {
-          const byPhone = Object.entries(this.shared.contacts).filter(([id, c]) => phoneKey(c.phone) === k && pool.some((x) => x.id === Number(id)));
-          if (byPhone.length === 1) s = pool.find((x) => x.id === Number(byPhone[0][0]));
-        }
-      }
     }
+    // the pool's own title says the other gender: that gender is never filled from the row's title
+    const own = s ? titleGender(s.title) : null;
+    if (own != null && r.gender != null && own !== r.gender) r.gender = null;
     let created = false;
     let fields: string[] = [];
     if (!s) {
@@ -1944,7 +1966,7 @@ export class Engine {
       this.shared.contacts[s.id] = { phone: old?.phone ?? r.phone, email: old?.email ?? r.email, secretary_note: old?.secretary_note ?? null, notes: old?.notes ?? r.notes };
       this.log(null, "speakers", s.id, "contacts", { fields: [...cfields] });
     }
-    return { speaker_id: s.id, created, filled: fields.length > 0, contacts: cfields.length > 0 };
+    return { speaker_id: s.id, created, filled: fields.length > 0, contacts: cfields.some((f) => f !== "notes"), notes: cfields.includes("notes") };
   }
 
   // ---------------------------------------------------------------- helpers
@@ -1956,6 +1978,7 @@ export class Engine {
       const out = fn();
       this.reconfirm(snapshot.week.lessons);
       this.dropStaleTicks(snapshot.week.lessons);
+      this.dropStaleNotes();
       this.syncFallen();
       return out;
     } catch (e) {
@@ -1981,6 +2004,13 @@ export class Engine {
   }
 
   /** app.lessons_escort_ticks: a lesson whose escort changed (or that is gone) loses the last escort's ticks. */
+  /** lesson_import_notes … on delete cascade: a note goes with its lesson. */
+  private dropStaleNotes() {
+    const prefix = `${this.week.edition.id}:`;
+    const ids = new Set(this.week.lessons.map((l) => String(l.id)));
+    for (const k of Object.keys(this.shared.importNotes)) if (k.startsWith(prefix) && !ids.has(k.slice(prefix.length))) delete this.shared.importNotes[k];
+  }
+
   private dropStaleTicks(before: Lesson[]) {
     const now = new Map(this.week.lessons.map((l) => [l.id, l.escort_roster_id]));
     const old = new Map(before.map((l) => [l.id, l.escort_roster_id]));

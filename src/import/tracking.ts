@@ -15,7 +15,7 @@
 //   * memorial times are not imported («זמן זיכרון» rows: the fallen are entered in the app only).
 // Rooms: lessons that overlap get «מקביל 2», «מקביל 3»… (the sheet does not say where).
 import type { ArchiveLessonRow, ArchivePayload, SpeakerRow } from "../data/imports";
-import { IMPORT_RULES } from "../data/importRules";
+import { ARCHIVE_LAST_DAY_UNTIL, IMPORT_RULES } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
 import { STAGE_LIMITS } from "../data/stageRules";
 import { nameKey } from "../domain/nameKey";
@@ -23,7 +23,7 @@ import { TEMPLATE_2026 } from "../domain/template2026";
 import { type Day, overlaps } from "../domain/time";
 import type { Category, Gender, PrintWhen, SourcesKind } from "../domain/types";
 import type { Mapping } from "./fields";
-import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
+import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import type { MatchContext } from "./candidates";
 import { normalizePhone, scrubContacts } from "./phone";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
@@ -37,11 +37,17 @@ export const WHEN_PROBLEM: Record<WhenProblem, string> = {
   not_in_week: "יום מחוץ לשבוע (ראשון עד חמישי)",
   no_time: "לא כתובה שעה",
   bad_time: "השעה לא נקראה (צריך למשל 8:30 או 8:30-10:00, בכפולות של 5 דקות)",
+  two_days: "בתא כתובים שני ימים — לא מנחשים איזה מהם",
+  ambiguous_night: "«ליל» ויום אחד — לא ברור אם הלילה שלפני היום או שאחריו (כותבים «ליל שני–שלישי» או «שני 00:30»)",
 };
 
-const DOUBLE = /כפולה/;
+/** «כפולה» as a word of its own — never inside one («הכפולה», «כפולות»). */
+const DOUBLE = /(?<![א-ת])כפולה(?![א-ת])/;
+/** The marker with the dash, comma or brackets around it, on one line («הרב פלוני - כפולה», «(כפולה)»). */
+const DOUBLE_MARK = /[ \t\-–—־,]*\(?[ \t]*(?<![א-ת])כפולה(?![א-ת])[ \t]*\)?[ \t\-–—־,]*/g;
 const PARENTS = /שיעור להורים/;
-const MEMORIAL = /זמן\s*זיכרון/;
+/** A memorial row: a speaker, title or time cell that BEGINS with «זמן זיכרון» («זמן זיכרון א», «זמן זיכרון – …»). */
+const MEMORIAL = /^\s*זמן\s*זיכרון/;
 const chars = (s: string) => [...s].length;
 const oneLine = (s: string) => s.replace(/\n/g, " ").trim();
 
@@ -91,29 +97,38 @@ export interface TrackingOptions {
 
 /** A cell that only says «כפולה» marks the row; it is not a value. */
 const value = (s: string) => (DOUBLE.test(s) && s.replace(DOUBLE, "").replace(/[\s()'"-]/g, "") === "" ? "" : s);
+/** A name or a title with the «כפולה» marker beside it: the marker out, the lines kept. */
+export const withoutMark = (s: string) =>
+  s
+    .split("\n")
+    .map((line) => line.replace(DOUBLE_MARK, " ").replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
 
 export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): TrackingRead {
   const names = columnNames(grid, o.headerRow);
   const speakers = new Map<string, TrackingSpeaker>();
   const rows = dataRows(grid, o.headerRow).map(({ row, cells }): TrackingRow => {
     const warnings: string[] = [];
-    const double = cells.some((c) => DOUBLE.test(c));
+    // the markers are read in the mapped columns only — a column left «לא לייבא» is not read at all
+    const mapped = cells.filter((_, i) => m[i] != null);
+    const double = mapped.some((c) => DOUBLE.test(c));
     const base: Omit<TrackingRow, "skip"> = {
       row, warnings, double, when: null, whenProblem: null, speakerKeys: [], title: null, topic: "", sources: "", transport: "", confirmFrom: "", audience: null, notes: [],
     };
-    if (cells.some((c) => MEMORIAL.test(c))) return { ...base, skip: "זמן זיכרון — לא מיובא (זמני הזיכרון נבנים במסך «זמני זיכרון»)" };
-    // the title first: a row skipped for its time is still recognized by it in the preview
-    base.title = oneLine(value(cellOf(cells, m, "title"))) || null;
+    // the title first: a row skipped (a memorial time, its time unread) is still recognized by it in the preview
+    base.title = oneLine(withoutMark(cellOf(cells, m, "title"))) || null;
+    if (["speaker", "title", "when"].some((f) => MEMORIAL.test(cellOf(cells, m, f)))) return { ...base, skip: "זמן זיכרון — לא מיובא (זמני הזיכרון נבנים במסך «זמני זיכרון»)" };
     const whenCell = oneLine(cellOf(cells, m, "when"));
     const w = whenCell ? parseWhen(whenCell) : "no_time";
     const when = typeof w === "string" ? null : w;
     const whenProblem = typeof w === "string" ? WHEN_PROBLEM[w] : null;
     const notes: string[] = [];
-    const rest = when?.rest.replace(DOUBLE, "").replace(PARENTS, "").replace(/[\s,.()-]+/g, " ").trim();
+    const rest = when?.rest.replace(new RegExp(DOUBLE, "g"), "").replace(PARENTS, "").replace(/[\s,.()-]+/g, " ").trim();
     if (rest) notes.push(`שיעור ב: ${whenCell}`);
     // the speakers
     const speakerKeys: string[] = [];
-    const list = splitSpeakers(value(cellOf(cells, m, "speaker")));
+    const list = splitSpeakers(withoutMark(cellOf(cells, m, "speaker")));
     for (const raw of list) {
       const { title, name } = splitTitle(raw, o.titles);
       const key = nameKey(name);
@@ -137,7 +152,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
     const title = base.title;
     if (title && chars(title) > IMPORT_RULES.lesson_title) return { ...base, title: null, skip: `הכותרת ארוכה מ-${IMPORT_RULES.lesson_title} תווים` };
     notes.push(...noteLines(labelledCells(cells, m, "note", names)));
-    const audience = cells.some((c) => PARENTS.test(c)) ? "שיעור להורים" : null;
+    const audience = mapped.some((c) => PARENTS.test(c)) ? "שיעור להורים" : null;
     return {
       row,
       skip: when || double ? null : whenProblem,
@@ -164,16 +179,26 @@ export interface DoubleGroup {
   rows: number[];
 }
 
-/** Consecutive rows marked «כפולה» (the same day, when both say one): one group each. */
+/**
+ * Consecutive rows marked «כפולה» (the same day, when both say one): one group each — until a row names speakers the
+ * group has none of AND starts at a time none of its rows starts at: that is the next double lesson, not this one
+ * (two double lessons one after the other). One speaker all night («כל הלילה», three rows) and two speakers in one
+ * slot stay one group.
+ */
 export function doubleGroups(read: TrackingRead): DoubleGroup[] {
   const out: DoubleGroup[] = [];
+  const byRow = new Map(read.rows.map((r) => [r.row, r]));
   let cur: { g: DoubleGroup; day: Day | null } | null = null;
   for (const r of read.rows) {
     if (r.skip || !r.double) {
       cur = null;
       continue;
     }
-    if (cur && (cur.day == null || r.when == null || r.when.day === cur.day)) {
+    const members = cur ? cur.g.rows.map((n) => byRow.get(n)!) : [];
+    const shares = r.speakerKeys.some((k) => members.some((x) => x.speakerKeys.includes(k)));
+    const sameSlot = r.when == null || members.some((x) => x.when?.start === r.when!.start);
+    const another = cur != null && r.speakerKeys.length > 0 && !shares && !sameSlot;
+    if (cur && !another && (cur.day == null || r.when == null || r.when.day === cur.day)) {
       cur.g.rows.push(r.row);
       cur.day ??= r.when?.day ?? null;
       continue;
@@ -237,8 +262,10 @@ export interface LessonPlan {
   day: Day;
   start_min: number;
   end_min: number;
-  /** Its range was inferred (a merged group in one slot → two slots): «הצעה». */
+  /** Its range was inferred (a merged group in one slot → that slot and the next; three rows → three slots): «הצעה». */
   rangeSuggested: boolean;
+  /** How many of the grid's lesson slots an inferred range spans (null when it was not inferred). */
+  rangeSlots: number | null;
   room: number;
   title: string | null;
   category_id: number | null;
@@ -253,6 +280,8 @@ export interface LessonPlan {
 
 export interface PlanInput {
   decisions: ReadonlyMap<number, GroupDecision>;
+  /** A speaker the admin said is another row's speaker («אותו/ה מרצה כמו …»): its key → that speaker's key. */
+  alias?: ReadonlyMap<string, string>;
   /** topic key → category id (null: none). */
   categories: ReadonlyMap<string, number | null>;
   sources: ReadonlyMap<string, SourcesRule>;
@@ -261,6 +290,9 @@ export interface PlanInput {
 /** The lesson rows of the template that day, in order. */
 const lessonRows = () => TEMPLATE_2026.filter((r) => r.kind === "lesson").sort((a, b) => a.start_min - b.start_min);
 
+/** Thursday ended at 19:00 last year (DESIGN, «הסיום בחמישי ב-19:00»; an archive edition's last_day_until). */
+const THURSDAY_ENDED = ARCHIVE_LAST_DAY_UNTIL;
+
 /** The lessons the sheet makes, with the admin's decisions — null while a «כפולה» group waits for one. */
 export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] | null {
   const groups = doubleGroups(read);
@@ -268,27 +300,37 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
   const byRow = new Map(read.rows.map((r) => [r.row, r]));
   const inGroup = new Map(groups.flatMap((g) => g.rows.map((n) => [n, g] as const)));
   const plans: LessonPlan[] = [];
+  /** A row's speakers as the commit will have them: each through the admin's «אותו/ה מרצה כמו …». */
+  const keysOf = (rs: TrackingRow[]) => [...new Set(rs.flatMap((r) => r.speakerKeys.map((k) => input.alias?.get(k) ?? k)))];
   /** A row (or group) that makes no lesson — its title and speakers kept, so the preview names it. */
   const skipped = (rows: number[], why: string, at?: When | null): LessonPlan => {
     const rs = rows.map((n) => byRow.get(n)).filter((r): r is TrackingRow => !!r);
     return {
-      rows, skip: why, warnings: rs.flatMap((r) => r.warnings), day: (at?.day ?? 0) as Day, start_min: at?.start ?? 0, end_min: at?.end ?? 0, rangeSuggested: false, room: 0,
-      title: rs.find((r) => r.title)?.title ?? null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null,
-      import_note: null, speakerKeys: [...new Set(rs.flatMap((r) => r.speakerKeys))],
+      rows, skip: why, warnings: rs.flatMap((r) => r.warnings), day: (at?.day ?? 0) as Day, start_min: at?.start ?? 0, end_min: at?.end ?? 0, rangeSuggested: false,
+      rangeSlots: null, room: 0, title: rs.find((r) => r.title)?.title ?? null, category_id: null, audience: null, sources_kind: "pending", print_when: "none", sources_note: null,
+      pay_amount: null, import_note: null, speakerKeys: keysOf(rs),
     };
   };
 
   /** One lesson from some rows of the sheet (one row, or a merged group). */
-  const lessonOf = (rs: TrackingRow[], at: { day: Day; start: number; end: number; suggested: boolean }): LessonPlan => {
+  const lessonOf = (rs: TrackingRow[], at: { day: Day; start: number; end: number; suggested: boolean; slots?: number }): LessonPlan => {
     const warnings = rs.flatMap((r) => r.warnings);
-    const speakerKeys = [...new Set(rs.flatMap((r) => r.speakerKeys))];
-    if (speakerKeys.length === 0) return skipped(rs.map((r) => r.row), "אין מרצה", { day: at.day, start: at.start, end: at.end, rest: "" });
+    const speakerKeys = keysOf(rs);
+    const where = { day: at.day, start: at.start, end: at.end, rest: "" };
+    if (speakerKeys.length === 0) return skipped(rs.map((r) => r.row), "אין מרצה", where);
+    if (at.day === 4 && at.end > THURSDAY_ENDED) return skipped(rs.map((r) => r.row), "השבוע של אשתקד נגמר בחמישי ב-19:00 — לא היה שיעור בשעה הזו", where);
     const titles = [...new Set(rs.map((r) => r.title).filter((t): t is string => !!t))];
     const notes: string[] = [];
     if (titles.length > 1) notes.push(...titles.slice(1).map((t) => `כותרת נוספת: ${t}`));
     const topicRow = rs.find((r) => r.topic);
     const sourcesRow = rs.find((r) => r.sources.trim()) ?? rs[0];
     const src = translateSources(sourcesRow.sources, input.sources);
+    // the sources' own words («אחר») are read by the team too: no phone, no e-mail in them
+    if (src.sources_note) {
+      const sc = scrubContacts(src.sources_note);
+      if (sc.scrubbed) warnings.push("הוסר טלפון או מייל מהערת המקורות");
+      src.sources_note = sc.text.trim() || null;
+    }
     let pay: number | null = null;
     for (const r of rs) {
       if (!r.transport.trim()) continue;
@@ -313,6 +355,7 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
       start_min: at.start,
       end_min: at.end,
       rangeSuggested: at.suggested,
+      rangeSlots: at.suggested ? (at.slots ?? null) : null,
       room: 0,
       title: titles[0] ?? null,
       category_id: topicRow ? (input.categories.get(topicKey(topicRow.topic)) ?? null) : null,
@@ -358,7 +401,8 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
       }
       continue;
     }
-    // one merged lesson: from the first start to the last end; one slot only → it and the next one («הצעה»)
+    // one merged lesson: from the first start to the last end; every row the same slot → that slot and the next ones,
+    // one more per row past the first, at least one («הצעה» — «כל הלילה» was three such rows)
     const ranges = rs.map((x) => rangeOf(x, first));
     const ok = ranges.filter((x): x is { day: Day; start: number; end: number } => typeof x !== "string");
     if (ok.length === 0) {
@@ -368,14 +412,17 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
     const start = Math.min(...ok.map((x) => x.start));
     let end = Math.max(...ok.map((x) => x.end));
     let suggested = false;
+    let slots = 1;
     if (ok.every((x) => x.start === ok[0].start && x.end === ok[0].end)) {
-      const next = lessonRows().find((x) => x.start_min >= end);
-      if (next) {
+      for (let k = 0; k < Math.max(1, ok.length - 1); k++) {
+        const next = lessonRows().find((x) => x.start_min >= end);
+        if (!next) break;
         end = next.end_min;
+        slots++;
         suggested = true;
       }
     }
-    plans.push(lessonOf(rs, { day: ok[0].day, start, end, suggested }));
+    plans.push(lessonOf(rs, { day: ok[0].day, start, end, suggested, slots }));
   }
 
   // rooms: a lesson takes the first room free at its time; a speaker is never in two lessons at once
@@ -407,12 +454,35 @@ export interface TrackingSpeakerPreview {
 }
 
 export function previewTrackingSpeakers(read: TrackingRead, ctx: MatchContext): TrackingSpeakerPreview[] {
-  return read.speakers.map((s) => {
+  const out = read.speakers.map((s): TrackingSpeakerPreview => {
     const match = matchSpeaker(s.key, s.phoneKey, ctx.pool, ctx.phones);
     const target = match.status === "match" ? ctx.pool.find((x) => x.id === match.target) : undefined;
     const d = { title: s.title, gender: s.gender, affiliation: null, topics: [], phone: s.phone, email: null, notes: null };
     return { speaker: s, status: match.status, match, fills: target ? fillPlan(target, ctx.flags.get(target.id), d) : [] };
   });
+  // the speakers new to the pool, against the earlier ones of the sheet: the same phone, or a name 0.6 alike
+  const fresh = out.filter((x) => x.status === "new");
+  const sheet = sheetMatches(
+    fresh.map((x) => ({ ref: x.speaker.key, key: x.speaker.key, phoneKey: x.speaker.phoneKey, label: `${x.speaker.title ? `${x.speaker.title} ` : ""}${x.speaker.name} (שורה ${x.speaker.rows[0]})` })),
+  );
+  return out.map((x) => (sheet.has(x.speaker.key) ? { ...x, status: "ambiguous" as const, match: ambiguousInSheet(x.match, sheet.get(x.speaker.key)) } : x));
+}
+
+/** Each sheet speaker's action as the commit takes it — «כמו …» followed (null: undecided). */
+export function resolvedSpeakers(speakers: TrackingSpeakerPreview[], choices: ReadonlyMap<string, Choice>): Map<string, Resolved | null> {
+  const by = new Map(speakers.map((s) => [s.speaker.key, s]));
+  const own = (k: string) => {
+    const s = by.get(k);
+    return s ? actionOf(s.status, s.match, choices.get(k)) : null;
+  };
+  return new Map(speakers.map((s) => [s.speaker.key, resolveChoice(s.speaker.key, own)]));
+}
+
+/** «אותו/ה מרצה כמו …»: a speaker's key → the key of the one it is (its lessons are that speaker's). */
+export function speakerAliases(speakers: TrackingSpeakerPreview[], choices: ReadonlyMap<string, Choice>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [k, r] of resolvedSpeakers(speakers, choices)) if (r?.action === "new" && r.as != null) out.set(k, r.as);
+  return out;
 }
 
 export interface ArchiveMeta {
@@ -427,19 +497,28 @@ export interface ArchiveMeta {
  * choice. A lesson whose every speaker was skipped is left out.
  */
 export function archivePayload(plans: LessonPlan[], speakers: TrackingSpeakerPreview[], choices: ReadonlyMap<string, Choice>, meta: ArchiveMeta): ArchivePayload | null {
-  const action = new Map<string, Choice | null>(speakers.map((s) => [s.speaker.key, actionOf(s.status, s.match, choices.get(s.speaker.key))]));
+  const action = resolvedSpeakers(speakers, choices);
   const lessons = plans.filter((p) => !p.skip);
   const used = lessons.flatMap((p) => p.speakerKeys);
+  // a speaker the admin said is another's («כמו …»): its lessons are that one's (planLessons, `alias`); it still
+  // goes — under that speaker's name — so the commit completes that speaker with what it brings (its phone)
+  const aliasOf = (s: TrackingSpeakerPreview) => {
+    const a = action.get(s.speaker.key);
+    return a?.action === "new" && a.as != null ? a.as : null;
+  };
   if (used.some((k) => action.get(k) == null)) return null;
+  if (speakers.some((s) => action.get(s.speaker.key) == null && used.includes(s.speaker.key))) return null;
+  const byKey = new Map(speakers.map((s) => [s.speaker.key, s.speaker]));
   const rows: SpeakerRow[] = [];
   const ref = new Map<string, number>();
   for (const s of speakers) {
-    const a = action.get(s.speaker.key)!;
-    if (a.action === "skip" || !used.includes(s.speaker.key)) continue;
-    ref.set(s.speaker.key, rows.length);
+    const a = action.get(s.speaker.key);
+    const as = aliasOf(s);
+    if (a == null || a.action === "skip" || !used.includes(as ?? s.speaker.key)) continue;
+    if (!as) ref.set(s.speaker.key, rows.length);
     rows.push({
       row: s.speaker.rows[0], action: a.action, speaker_id: a.action === "merge" ? a.target : null,
-      title: s.speaker.title, name: s.speaker.name, gender: s.speaker.gender, affiliation: null, topics: [], phone: s.speaker.phone, email: null, notes: null,
+      title: s.speaker.title, name: as ? byKey.get(as)!.name : s.speaker.name, gender: s.speaker.gender, affiliation: null, topics: [], phone: s.speaker.phone, email: null, notes: null,
     });
   }
   const out: ArchiveLessonRow[] = [];

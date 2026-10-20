@@ -183,8 +183,8 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
                 <ul aria-label={INVITE_TITLE[k]} className="space-y-1">
                   {s.invite[k].map((l) => (
                     <li key={l.lesson_id} className="rounded-md bg-paper px-2 py-1">
-                      <LessonLink l={l} open={open} />
-                      {l.rating != null && <span className="text-ink-soft"> · ציון {l.rating}/5</span>}
+                      {/* the rating inside the lesson's button: at 390 it never wraps away from its lesson */}
+                      <LessonLink l={l} open={open} rating={l.rating} />
                       {(l.went_well || l.issues) && <span className="block whitespace-pre-line break-words text-ink-soft">{[l.went_well, l.issues].filter(Boolean).join(" · ")}</span>}
                     </li>
                   ))}
@@ -213,10 +213,11 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
   );
 }
 
-function LessonLink({ l, open }: { l: SummaryLesson; open: (id: number) => void }) {
+function LessonLink({ l, open, rating = null }: { l: SummaryLesson; open: (id: number) => void; rating?: number | null }) {
   return (
     <button type="button" onClick={() => open(l.lesson_id)} className="min-h-11 text-start underline-offset-2 hover:underline print:min-h-0">
       <b>{l.speaker}</b> · <bdi>{l.when}</bdi> · {l.title ?? "TBD"}
+      {rating != null && <span className="whitespace-nowrap font-normal text-ink-soft"> · ציון {rating}/5</span>}
     </button>
   );
 }

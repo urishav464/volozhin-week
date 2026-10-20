@@ -57,7 +57,8 @@ describe("the import of 5786 meets after the week", () => {
     sources_kind: "pending", print_when: "none", sources_note: null, pay_amount: null, import_note: null, speakers, ...extra,
   });
   const payload = (lessons: unknown[]) => ({ label: LABEL, start_date: "2026-02-15", source: "tracking-5786", titles_from: null, speakers: [row(2, sp.taught), row(3, sp.other)], lessons });
-  const notes = async () => (await db.query("select import_note from public.lessons where edition_id = $1 order by day, start_min", [archive])).rows.map((r) => r.import_note);
+  const notes = async () =>
+    (await db.query("select n.note from public.lessons l left join public.lesson_import_notes n on n.lesson_id = l.id where l.edition_id = $1 order by l.day, l.start_min", [archive])).rows.map((r) => r.note);
 
   beforeAll(async () => {
     db = await freshDatabase(dbName, "new");
