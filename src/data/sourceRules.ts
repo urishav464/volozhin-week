@@ -91,11 +91,16 @@ export function sourcePath(edition: number, lesson: number | null, uuid: string,
   return `${edition}/${lesson ?? "cover"}/${uuid.toLowerCase()}-${safeName(original, mime)}`;
 }
 
-/** What a picked file must be before it is sent: a type we take (bad_file), at most 25 MB (bad_file); the poster never a Word file. */
+/**
+ * What a picked file must be before it is sent, each with its own reason: a type we take (bad_file; the poster —
+ * a PDF or a picture, never Word: cover_bad_file), then at most 25 MB (file_too_big).
+ */
 export function checkPicked(f: { name: string; type: string; size: number }, cover: boolean): SourceMime {
-  const mime = mimeOfFile(f) ?? fail("bad_file");
-  if (f.size > MAX_SOURCE_BYTES || (cover && mime === DOCX)) fail("bad_file");
-  return mime;
+  const mime = mimeOfFile(f);
+  if (cover && (mime == null || !printableMime(mime))) fail("cover_bad_file");
+  if (mime == null) fail("bad_file");
+  if (f.size > MAX_SOURCE_BYTES) fail("file_too_big");
+  return mime!;
 }
 
 /**

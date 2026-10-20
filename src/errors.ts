@@ -73,7 +73,9 @@ export const ERRORS: Record<string, string> = {
   // the sources' files and the reader (milestone 5ב-1)
   bad_path: "הקובץ לא נשמר במקום של השיעור הזה. מעלים אותו שוב מלוח השיעור.",
   no_file: "הקובץ לא הגיע לשרת. מעלים אותו שוב.",
-  bad_file: "אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG), עד 25MB. לשער: PDF או תמונה בלבד.",
+  bad_file: "אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG).",
+  cover_bad_file: "לשער אפשר להעלות רק PDF או תמונה (PNG/JPG).",
+  file_too_big: "הקובץ גדול מ-25MB. אפשר לכווץ אותו או לפצל ולהעלות שוב.",
   not_uploader: "רק מי שהעלה/תה את הקובץ, או המדריך/ה, יכולים להסיר אותו.",
   file_present: "הקובץ עוד שמור בשרת. מנסים להסיר שוב.",
   upload_failed: "ההעלאה לא הושלמה. בודקים את החיבור ומנסים שוב.",

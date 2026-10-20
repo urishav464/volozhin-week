@@ -6,8 +6,8 @@
 // and their rules, the path convention, the reader's settings, and Realtime.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type pg from "pg";
-import { SCHEMA, as, dropDatabase, freshDatabase, type Claims } from "./db";
+import pg from "pg";
+import { SCHEMA, adminUrl, as, dropDatabase, freshDatabase, type Claims } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
 const ED_ADMIN = "edition.admin@example.org";
@@ -120,6 +120,24 @@ describe("the sources' files", () => {
     await commitAs(email, "select public.close_lesson($1)", [p]);
     return { lesson: Number((await db.query("select lesson_id from public.pitches where id = $1", [p])).rows[0].lesson_id), pitch: p, speaker: s2 };
   }
+  /** A connection of its own, in an open transaction as `email` — for two callers at once (it rolls back when ended). */
+  async function session(email: string): Promise<pg.Client> {
+    const c = new pg.Client({ connectionString: Object.assign(new URL(adminUrl()), { pathname: `/${dbName}` }).toString() });
+    await c.connect();
+    await c.query("begin");
+    await c.query("set local role authenticated");
+    await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(claims(email))]);
+    return c;
+  }
+  /** Until that connection's statement waits on a lock another transaction holds. */
+  async function waitingOnALock(c: pg.Client): Promise<void> {
+    const pid = (c as unknown as { processID: number }).processID;
+    for (let i = 0; i < 500; i++) {
+      if ((await db.query("select wait_event_type from pg_stat_activity where pid = $1", [pid])).rows[0]?.wait_event_type === "Lock") return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("the second caller never waited on the lock");
+  }
   const lessonRow = async (id: number) => (await db.query("select sources_kind, in_reader, version from public.lessons where id = $1", [id])).rows[0];
   const visible = (email: string | null, name: string) =>
     as(db, email ? "authenticated" : "anon", email ? claims(email) : null, async (q) => (await q("select count(*)::int as n from storage.objects where name = $1", [name])).rows[0].n as number);
@@ -166,6 +184,60 @@ describe("the sources' files", () => {
       const again = (await db.query("select public, file_size_limit from storage.buckets where id = 'sources'")).rows[0];
       expect(again).toEqual({ public: false, file_size_limit: "10485760" }); // the owner's own limit stays
       await db.query("update storage.buckets set file_size_limit = $1 where id = 'sources'", [25 * MB]);
+    });
+
+    // the review's probe: the update to private sat in one block with the policies — a policy statement refused rolled
+    // the bucket back to public after the run had warned «it is private again»
+    it("goes private on a re-run even when the policies cannot be (re)created — which then stay as they were — and the other way round", async () => {
+      const warnings: string[] = [];
+      const listen = (n: { severity?: string; message?: string }) => {
+        if (n.severity === "WARNING" && n.message?.includes("«sources»")) warnings.push(n.message);
+      };
+      const policies = async () => (await db.query("select polname from pg_policy where polrelid = 'storage.objects'::regclass order by 1")).rows.map((r) => r.polname);
+      const all = await policies();
+      db.on("notice", listen);
+      try {
+        // the owner may write storage.buckets but may not touch the policies on storage.objects (privileges withdrawn)
+        await db.query(`
+          create schema refusals;
+          create function refusals.policy_made() returns event_trigger language plpgsql as $f$
+          begin
+            if exists (select 1 from pg_event_trigger_ddl_commands() where object_identity like '% on storage.objects') then
+              raise exception 'must be owner of table objects' using errcode = 'insufficient_privilege';
+            end if;
+          end $f$;
+          create function refusals.policy_dropped() returns event_trigger language plpgsql as $f$
+          begin
+            if exists (select 1 from pg_event_trigger_dropped_objects() where object_identity like '% on storage.objects') then
+              raise exception 'must be owner of table objects' using errcode = 'insufficient_privilege';
+            end if;
+          end $f$;
+          create function refusals.bucket_written() returns trigger language plpgsql as $f$
+          begin
+            raise exception 'permission denied for table buckets' using errcode = 'insufficient_privilege';
+          end $f$;
+          create event trigger refuse_policy_made on ddl_command_end when tag in ('CREATE POLICY') execute function refusals.policy_made();
+          create event trigger refuse_policy_dropped on sql_drop when tag in ('DROP POLICY') execute function refusals.policy_dropped();`);
+        await db.query("update storage.buckets set public = true where id = 'sources'"); // someone ticked «Public» in the dashboard
+        await db.query(SCHEMA);
+        expect((await db.query("select public from storage.buckets where id = 'sources'")).rows[0].public).toBe(false);
+        expect(await policies()).toEqual(all);
+        expect(warnings).toHaveLength(2);
+        expect(warnings[0]).toMatch(/^the «sources» bucket was public — it is private again .*send this whole message to Claude$/);
+        expect(warnings[1]).toMatch(/^the «sources» policies could not be \(re\)created \(must be owner of table objects\) — the previous ones, if any, are unchanged .*send this whole message to Claude \(docs\/SETUP\.he\.md, גרסה 10\)$/);
+        // and the other way round: the bucket cannot be written, the policies are (re)created all the same
+        await db.query("drop event trigger refuse_policy_made; drop event trigger refuse_policy_dropped");
+        await db.query("create trigger refuse_bucket_written before insert or update on storage.buckets for each statement execute function refusals.bucket_written()");
+        await db.query("drop policy sources_cap_anon on storage.objects");
+        warnings.length = 0;
+        await db.query(SCHEMA);
+        expect(await policies()).toEqual(all);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toMatch(/^the «sources» bucket could not be created or made private \(permission denied for table buckets\) — .*send this whole message to Claude \(docs\/SETUP\.he\.md, גרסה 10\)$/);
+      } finally {
+        db.off("notice", listen);
+        await db.query("drop trigger if exists refuse_bucket_written on storage.buckets; drop event trigger if exists refuse_policy_made; drop event trigger if exists refuse_policy_dropped; drop schema if exists refusals cascade");
+      }
     });
 
     it("has exactly its policies on storage.objects: three to allow, five to cap (anon included)", async () => {
@@ -409,6 +481,42 @@ describe("the sources' files", () => {
       await commitAs(A, "select public.reopen_lesson($1)", [l]);
       expect(await refusal(register(A, ed, l, name))).toBe("not_closed");
       expect(await remove(A, name)).toBe(1);
+    });
+
+    // the review's probe: the closed check ran before the lesson's lock, so a reopen committed while register waited
+    // on it let the file in on the draft — sources_kind «sheet» and in_reader on, the stages reopen had just emptied
+    it("takes the lesson's lock before it checks: a reopen committed while it waits refuses it, and the draft stays empty", async () => {
+      const l = (await closedLesson(A, 4, 870)).lesson;
+      const name = path(ed, l);
+      expect(await upload(B, name)).toBe("ok");
+      const [reopen, reg] = [await session(A), await session(B)];
+      try {
+        await reopen.query("select public.reopen_lesson($1)", [l]); // A's reopen, in flight: it holds the lesson's row
+        const pending = reg.query("select public.register_source_file($1, $2, $3, 'מקורות.pdf', 2)", [ed, l, name]).then(() => "ok", (e: Error) => e.message);
+        await waitingOnALock(reg);
+        await reopen.query("commit");
+        expect(await pending).toBe("not_closed");
+      } finally {
+        await reopen.end();
+        await reg.end();
+      }
+      expect((await db.query("select state, sources_kind, in_reader from public.lessons where id = $1", [l])).rows[0]).toEqual({ state: "draft", sources_kind: "pending", in_reader: false });
+      expect((await db.query("select count(*)::int as n from public.source_files where storage_path = $1", [name])).rows[0].n).toBe(0);
+      expect(await remove(B, name)).toBe(1); // the object stays B's to delete
+    });
+
+    it("answers a retry with the row it made, even after the lesson was reopened — the browser lost the first answer", async () => {
+      const l = (await closedLesson(A, 0, 1350)).lesson;
+      const name = path(ed, l);
+      expect(await upload(A, name)).toBe("ok");
+      const row = await register(A, ed, l, name);
+      await commitAs(A, "select public.reopen_lesson($1)", [l]);
+      const before = await lessonRow(l);
+      expect(await register(A, ed, l, name, "שוב.pdf", 9)).toEqual(row);
+      expect(await lessonRow(l)).toEqual(before); // nothing set again on the draft
+      expect(await refusal(register(A, ed, l, path(ed, l)))).toBe("not_closed"); // a new file still refused
+      expect(await refusal(register(L, ed, l, name))).toBe("ok"); // the early answer gives nobody more than source_files' RLS: L reads the row anyway
+      expect(await refusal(register(STRANGER, ed, l, name))).toBe("not_member");
     });
 
     it("makes the first poster the cover; set_reader_cover takes only a poster of the edition", async () => {

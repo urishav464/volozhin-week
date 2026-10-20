@@ -18,7 +18,8 @@ export interface SourcesPort {
   /**
    * Upload a picked file to Storage at <edition>/<lesson|cover>/<uuid>-<safe name>, then register it
    * (register_source_file). lessonId null: the edition's poster. A registration the database refuses removes
-   * the stored object again, and the refusal is thrown.
+   * the stored object again, and the refusal is thrown; one that gets no answer is asked once more (the same path
+   * answers the row it made), and its object is kept unless that second call is refused.
    */
   upload(editionId: number, lessonId: number | null, file: File, opts: UploadOptions): Promise<SourceFile>;
   /** The stored object first (the Storage API, under the same rule), then the row (remove_source_file). */

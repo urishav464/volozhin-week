@@ -96,7 +96,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   /** The Storage API, as the caller: its own checks first (the bucket's types and size), then the INSERT the policies decide. */
   async function store(actor: string, path: string, mime: string, size: number): Promise<string> {
     const b = await one("select file_size_limit, allowed_mime_types from storage.buckets where id = 'sources'", []);
-    if (!(b.allowed_mime_types as string[]).includes(mime) || size > Number(b.file_size_limit)) return "bad_file";
+    if (!(b.allowed_mime_types as string[]).includes(mime)) return "bad_file"; // its 415
+    if (size > Number(b.file_size_limit)) return "file_too_big"; // its 413
     const c = claimsOf(actor);
     await db.query("begin");
     try {

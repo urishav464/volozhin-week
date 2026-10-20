@@ -3,8 +3,9 @@
 // checks, the rule that turns a lesson's reader on; SupabaseSources on the wire
 // (the real supabase-js client and a stub fetch, a stub upload): the upload to
 // /storage/v1/object/sources/<path> with the member's bearer, register by its
-// parameter names, a refused registration that cleans the object up, removal
-// in its order, signed URLs; and DemoSources running the same rules.
+// parameter names, a refused registration that cleans the object up, a lost
+// answer asked again (never a registered file deleted), removal in its order,
+// signed URLs; and DemoSources running the same rules.
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import {
   arrived, checkPicked, cleanDisplayName, DISPLAY_NAME_MAX, displayNameOf, DOCX, MAX_SOURCE_BYTES, mimeMatches, mimeOfFile, pagesFor, parseSourcePath, safeName, SOURCE_PATH_RE, sourcePath,
 } from "./sourceRules";
 import { SupabaseSources, uploadRefusal, type UploadRequest } from "./supabaseSources";
+import { PortError } from "./types";
 
 const code = async (p: Promise<unknown> | (() => unknown)) => {
   try {
@@ -47,15 +49,21 @@ describe("the path convention", () => {
     for (const bad of [`7/42/${UUID}-מקורות.pdf`, `7/42/x-file.pdf`, `07/42/${UUID}-a.pdf`, `7/42/9/${UUID}-a.pdf`, `7/42/${UUID}-a.exe`]) expect(parseSourcePath(bad), bad).toBeNull();
   });
 
-  it("takes PDF, Word, PNG and JPEG up to 25 MB — by the browser's type, or the name when the browser gives none", async () => {
+  it("takes PDF, Word, PNG and JPEG up to 25 MB — by the browser's type, or the name when the browser gives none; each refusal its own reason", async () => {
     expect(mimeOfFile({ name: "a.pdf", type: "application/pdf" })).toBe("application/pdf");
     expect(mimeOfFile({ name: "a.docx", type: "" })).toBe(DOCX);
     expect(mimeOfFile({ name: "a.JPG", type: "application/octet-stream" })).toBe("image/jpeg");
     expect(mimeOfFile({ name: "a.pdf", type: "text/plain" })).toBeNull();
     expect(mimeOfFile({ name: "a.exe", type: "" })).toBeNull();
     expect(checkPicked({ name: "a.pdf", type: "application/pdf", size: MAX_SOURCE_BYTES }, false)).toBe("application/pdf");
-    expect(await code(() => checkPicked({ name: "a.pdf", type: "application/pdf", size: MAX_SOURCE_BYTES + 1 }, false))).toBe("bad_file");
-    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true))).toBe("bad_file"); // never a Word poster
+    expect(await code(() => checkPicked({ name: "a.pdf", type: "application/pdf", size: MAX_SOURCE_BYTES + 1 }, false))).toBe("file_too_big");
+    expect(await code(() => checkPicked({ name: "a.txt", type: "text/plain", size: 10 }, false))).toBe("bad_file");
+    expect(await code(() => checkPicked({ name: "a.txt", type: "text/plain", size: MAX_SOURCE_BYTES + 1 }, false))).toBe("bad_file"); // the type first
+    expect(checkPicked({ name: "a.docx", type: DOCX, size: 10 }, false)).toBe(DOCX);
+    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true))).toBe("cover_bad_file"); // never a Word poster
+    expect(await code(() => checkPicked({ name: "a.txt", type: "text/plain", size: 10 }, true))).toBe("cover_bad_file"); // the poster's own rule
+    expect(await code(() => checkPicked({ name: "a.png", type: "image/png", size: MAX_SOURCE_BYTES + 1 }, true))).toBe("file_too_big");
+    expect(checkPicked({ name: "a.png", type: "image/png", size: MAX_SOURCE_BYTES }, true)).toBe("image/png");
     expect(mimeMatches("image/jpeg", "jpeg")).toBe(true);
     expect(mimeMatches("image/png", "pdf")).toBe(false);
   });
@@ -102,15 +110,19 @@ interface Sent {
   auth: string | null;
 }
 
-function wire(answers: [number, unknown][], upload: { status: number; body: string } = { status: 200, body: "{}" }) {
+/** An answer that never comes back: fetch throws, as it does when the connection drops after the call reached the server. */
+const LOST = "lost" as const;
+
+function wire(answers: ([number, unknown] | typeof LOST)[], upload: { status: number; body: string } = { status: 200, body: "{}" }) {
   const sent: Sent[] = [];
   const uploads: UploadRequest[] = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
     const text = await req.text();
     sent.push({ method: req.method, path: new URL(req.url).pathname, body: text ? JSON.parse(text) : null, auth: req.headers.get("authorization") });
-    const [status, body] = answers.shift() ?? [404, {}];
-    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    const a = answers.shift() ?? [404, {}];
+    if (a === LOST) throw new TypeError("Failed to fetch");
+    return new Response(JSON.stringify(a[1]), { status: a[0], headers: { "content-type": "application/json" } });
   };
   const sb = createClient("https://stub.supabase.co", "stub-publishable-key", { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch } });
   const sources = new SupabaseSources(sb, "https://stub.supabase.co", "stub-publishable-key", async (r) => (uploads.push(r), upload), () => UUID, async () => "member-access-token");
@@ -147,11 +159,15 @@ describe("SupabaseSources on the wire", () => {
   it("checks the file before sending it, and reads the Storage API's refusals", async () => {
     const { sources, uploads } = wire([]);
     expect(await code(sources.upload(7, 42, new File(["x"], "a.exe", { type: "application/x-msdownload" }), { pages: null }))).toBe("bad_file");
+    expect(await code(sources.upload(7, 42, pdf("גדול.pdf", MAX_SOURCE_BYTES + 1), { pages: null }))).toBe("file_too_big");
+    expect(await code(sources.upload(7, null, new File(["x"], "a.docx", { type: DOCX }), { pages: null }))).toBe("cover_bad_file");
     expect(uploads).toHaveLength(0);
     expect(uploadRefusal(400, JSON.stringify({ statusCode: "403", error: "Unauthorized", message: "new row violates row-level security policy" }))).toBe("upload_refused");
     expect(uploadRefusal(403, "")).toBe("upload_refused");
-    expect(uploadRefusal(413, JSON.stringify({ statusCode: "413", error: "Payload too large" }))).toBe("bad_file");
+    expect(uploadRefusal(413, JSON.stringify({ statusCode: "413", error: "Payload too large" }))).toBe("file_too_big");
+    expect(uploadRefusal(400, JSON.stringify({ statusCode: "413", error: "Payload too large" }))).toBe("file_too_big");
     expect(uploadRefusal(400, JSON.stringify({ statusCode: "415", error: "invalid_mime_type" }))).toBe("bad_file");
+    expect(uploadRefusal(415, "")).toBe("bad_file");
     expect(uploadRefusal(500, "oops")).toBe("upload_failed");
     const refused = wire([], { status: 400, body: JSON.stringify({ statusCode: "403", message: "new row violates row-level security policy" }) });
     expect(await code(refused.sources.upload(7, 42, pdf(), { pages: 1 }))).toBe("upload_refused");
@@ -165,6 +181,32 @@ describe("SupabaseSources on the wire", () => {
       ["POST", "/rest/v1/rpc/register_source_file", expect.anything()],
       ["DELETE", "/storage/v1/object/sources", { prefixes: [`7/42/${UUID}-file.pdf`] }],
     ]);
+  });
+
+  // the review's probe: register committed, its answer lost (a dropped connection) — the catch deleted the file of a
+  // registered row (the manifest «התקבל» for a file nobody could open, and a second upload next to a phantom row)
+  it("asks register_source_file once more when its answer is lost — the row it made comes back, and the file stays", async () => {
+    const { sources, sent } = wire([LOST, [200, ROW]]);
+    const row = await sources.upload(7, 42, pdf(), { pages: 3 });
+    expect(row).toMatchObject({ id: 5, storage_path: ROW.storage_path });
+    const register = ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: ROW.storage_path, p_display_name: "מקורות.pdf", p_pages: 3 }];
+    expect(sent.map((r) => [r.method, r.path, r.body])).toEqual([register, register]); // the same call again; nothing deleted
+  });
+
+  it("deletes its upload only when the second call is a refusal; a second lost answer keeps it", async () => {
+    const refused = wire([LOST, [400, { code: "P0001", message: "not_closed" }], [200, [{ name: ROW.storage_path }]]]);
+    expect(await code(refused.sources.upload(7, 42, pdf(), { pages: 1 }))).toBe("not_closed");
+    expect(refused.sent.map((r) => `${r.method} ${r.path}`)).toEqual([
+      "POST /rest/v1/rpc/register_source_file", "POST /rest/v1/rpc/register_source_file", "DELETE /storage/v1/object/sources",
+    ]);
+    const lostTwice = wire([LOST, LOST]);
+    const err = await lostTwice.sources.upload(7, 42, pdf(), { pages: 1 }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(PortError);
+    expect(lostTwice.sent.map((r) => `${r.method} ${r.path}`)).toEqual(["POST /rest/v1/rpc/register_source_file", "POST /rest/v1/rpc/register_source_file"]);
+    // a server error is no refusal either: asked again, and the row comes back
+    const failed = wire([[503, { code: "PGRST000", message: "Could not connect" }], [200, ROW]]);
+    expect((await failed.sources.upload(7, 42, pdf(), { pages: 1 })).id).toBe(5);
+    expect(failed.sent).toHaveLength(2);
   });
 
   it("removes the stored object first, then the row; reads by signed URL; sets the reader's headers and cover", async () => {
@@ -223,6 +265,19 @@ describe("DemoSources", () => {
     expect(await code(member.sources.remove(1, seeded))).toBe("not_uploader");
     expect(member.engine(1).week.sourceFiles.some((f) => f.id === seeded.id)).toBe(true);
     expect(await code(member.sources.setHeaders(1, "x", "y"))).toBe("forbidden");
+  });
+
+  it("answers a registration's retry with the row it made, even after the lesson was reopened (register_source_file's order)", async () => {
+    const port = new DemoPort();
+    const l = closedPending(port);
+    const row = await port.sources.upload(1, l.id, pdf(), { pages: 1 });
+    const e = port.engine(1);
+    e.reopenLesson(l.id);
+    expect(e.week.lessons.find((x) => x.id === l.id)).toMatchObject({ state: "draft", sources_kind: "pending", in_reader: false });
+    expect(e.registerSourceFile(l.id, row.storage_path, "שוב.pdf", 9)).toEqual(row); // the answer the first call lost
+    expect(e.week.lessons.find((x) => x.id === l.id)).toMatchObject({ sources_kind: "pending", in_reader: false }); // nothing set again
+    // a new file for the draft is refused, as before
+    expect(await code(port.sources.upload(1, l.id, pdf(), { pages: 1 }))).toBe("upload_refused");
   });
 
   it("keeps the reader's headers and cover as the admin set them", async () => {

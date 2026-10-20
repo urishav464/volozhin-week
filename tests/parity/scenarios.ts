@@ -767,6 +767,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", readerHeaders: ["  כותרת   שמאל ", null] },
     { as: "E", readerHeaders: [" ", ""] }, // both empty: removed
     { as: "A", reopen: [1, 510] }, // the files stay — the speaker who left is theirs
+    { as: "A", register: "a1", display: "שוב", pages: 9 }, // a retry whose first answer was lost: the row it made, nothing set on the draft
     { as: "A", store: [1, 510], file: "a2" }, // a draft now
     { as: "A", propose: "גמא", at: [1, 510] },
     { as: "A", close: "גמא", at: [1, 510] }, // another speaker

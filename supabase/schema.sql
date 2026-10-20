@@ -3798,7 +3798,7 @@ create or replace function app.source_refusal(p_name text) returns text
 -- of any type the bucket takes, behind that row's name, uploader and type.
 -- A real upload always has a new uuid in its path, so nothing legitimate is
 -- refused. (register_source_file's retry, the same path again, does not
--- upload: it reads app.source_refusal alone.)
+-- upload: it answers the row it made.)
 create or replace function app.may_upload_source(p_name text) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -3858,6 +3858,10 @@ create or replace function app.source_object(p_name text) returns jsonb
   end
   $$;
 
+-- Two blocks, each with its own handler: a failure in one rolls back that
+-- block alone, so the bucket goes private even when the policies cannot be
+-- (re)created, and the policies are kept up to date even when the bucket
+-- cannot be written. Each warning says it all — the owner sends it to Claude.
 do $$
 begin
   -- Private, 25 MB, the four types. A re-run never rewrites the size or the
@@ -3869,8 +3873,16 @@ begin
           array['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
   on conflict (id) do nothing;
   update storage.buckets set public = false where id = 'sources' and public is distinct from false;
-  if found then raise warning 'the «sources» bucket was public — it is private again'; end if;
+  if found then
+    raise warning 'the «sources» bucket was public — it is private again (a public bucket lets anyone with a file''s address read the file); nothing more to do, but if you did not expect it, send this whole message to Claude';
+  end if;
+exception
+  when insufficient_privilege or undefined_table or invalid_schema_name then
+    raise warning 'the «sources» bucket could not be created or made private (%) — it is as it was before this run: if Storage shows it as Public, anyone with a file''s address can read the file; send this whole message to Claude (docs/SETUP.he.md, גרסה 10)', sqlerrm;
+end $$;
 
+do $$
+begin
   drop policy if exists sources_read on storage.objects;
   create policy sources_read on storage.objects for select to authenticated
     using (bucket_id = 'sources' and app.may_read_source(name));
@@ -3899,8 +3911,10 @@ begin
     using (bucket_id is distinct from 'sources') with check (bucket_id is distinct from 'sources');
 exception
   when insufficient_privilege or undefined_table or invalid_schema_name then
-    -- Uploads stay closed (no policy = nothing allowed), the rest of the file applies.
-    raise warning 'the «sources» bucket or its policies could not be set up (%) — uploads stay closed; docs/SETUP.he.md «אבן דרך 5ב-1» has the steps', sqlerrm;
+    -- The block rolls back whole: the policies as they were before this run
+    -- (on a first run none — nothing is allowed, uploads stay closed); the
+    -- rest of the file applies.
+    raise warning 'the «sources» policies could not be (re)created (%) — the previous ones, if any, are unchanged (on a first run there are none, and uploads stay closed); send this whole message to Claude (docs/SETUP.he.md, גרסה 10)', sqlerrm;
 end $$;
 
 -- ------------------------------------------------------------- source_files
@@ -3934,8 +3948,10 @@ create policy source_files_read on public.source_files for select to authenticat
 -- extension and at most 25 MB (bad_file) — from objects.metadata: the size as
 -- Storage measured it, the type as the uploader declared it (Content-Type,
 -- held by Storage to the bucket's four types; it never sniffs the bytes — the
--- reader checks those). The same path again returns the row it already made
--- (a retry; app.may_upload_source refuses a new upload at a registered path).
+-- reader checks those). The same path again returns the row it already made,
+-- checked before the rest (a retry — the browser lost the first answer — is
+-- answered even if the lesson was reopened since; app.may_upload_source
+-- refuses a new upload at a registered path).
 -- A lesson's file: «טרם התקבלו» becomes «דף מקורות» (a file arrived), and the
 -- current speaker's first file puts the lesson in the reader when its kind
 -- has something to print (in_reader's own rule — never a presentation alone).
@@ -3962,17 +3978,21 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
   begin
     if app.my_role(p_edition) is null or not exists (select 1 from public.editions where id = p_edition) then perform app.refuse('not_member'); end if;
     if m is null or m[1] <> p_edition::text or m[2] <> coalesce(p_lesson::text, 'cover') then perform app.refuse('bad_path'); end if;
-    v_code := app.source_refusal(p_path);
-    if v_code is not null then perform app.refuse(v_code); end if;
-    v_me := app.my_member_id(p_edition);
+    -- The lesson's row lock before any check: one registration at a time per lesson (its first file), and a
+    -- reopen_lesson that commits while this waits is seen by every statement after it (each takes a fresh
+    -- snapshot) — a draft refuses (not_closed), never a file and the stages set on the draft reopen just emptied.
     if p_lesson is not null then
-      select * into v_l from public.lessons where id = p_lesson for update;   -- one registration at a time per lesson (its first file)
+      select * into v_l from public.lessons where id = p_lesson and edition_id = p_edition for update;
     end if;
+    -- A retry (the browser lost the first answer) answers the row that call made, whatever changed since.
     select * into v_row from public.source_files where storage_path = p_path;
     if v_row.id is not null then
       if v_row.edition_id <> p_edition or v_row.lesson_id is distinct from p_lesson then perform app.refuse('bad_path'); end if;
       return to_jsonb(v_row);
     end if;
+    v_code := app.source_refusal(p_path);
+    if v_code is not null then perform app.refuse(v_code); end if;
+    v_me := app.my_member_id(p_edition);
     v_obj := app.source_object(p_path);
     if v_obj is null or (v_obj ->> 'owner_id') is distinct from (auth.jwt() ->> 'sub') then perform app.refuse('no_file'); end if;
     v_mime := v_obj -> 'metadata' ->> 'mimetype';

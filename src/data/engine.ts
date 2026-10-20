@@ -793,12 +793,13 @@ export class Engine {
   }
 
   /**
-   * An upload through the Storage API: the bucket takes the four types up to 25 MB (bad_file — the API's 415/413),
-   * then the INSERT policy decides (upload_refused — the API's 403). Never replaces an object.
+   * An upload through the Storage API: the bucket takes the four types (bad_file — the API's 415) up to 25 MB
+   * (file_too_big — its 413), then the INSERT policy decides (upload_refused — the API's 403). Never replaces an object.
    */
   storeObject(path: string, mime: string, size: number): void {
     this.tx(() => {
-      if (!(SOURCE_MIMES as readonly string[]).includes(mime) || !(size >= 0) || size > MAX_SOURCE_BYTES) fail("bad_file");
+      if (!(SOURCE_MIMES as readonly string[]).includes(mime)) fail("bad_file");
+      if (!(size >= 0) || size > MAX_SOURCE_BYTES) fail("file_too_big");
       if (!this.mayUploadSource(path)) fail("upload_refused");
       if (this.shared.objects[path]) fail("upload_failed");
       this.shared.objects[path] = { mime, size, owner: this.ownerKey() };
@@ -817,13 +818,14 @@ export class Engine {
     return this.tx(() => {
       const p = parseSourcePath(path);
       if (!p || p.edition !== this.week.edition.id || p.lesson !== lessonId) fail("bad_path");
-      const code = this.sourceRefusal(path);
-      if (code) fail(code);
+      // a retry (the first answer lost) answers the row that call made, whatever changed since
       const existing = this.week.sourceFiles.find((f) => f.storage_path === path);
       if (existing) {
         if (existing.lesson_id !== lessonId) fail("bad_path");
         return { ...existing };
       }
+      const code = this.sourceRefusal(path);
+      if (code) fail(code);
       const obj = this.shared.objects[path];
       if (!obj || obj.owner !== this.ownerKey()) fail("no_file");
       if (!mimeMatches(obj!.mime, p!.ext) || obj!.size > MAX_SOURCE_BYTES) fail("bad_file");

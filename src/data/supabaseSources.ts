@@ -1,7 +1,8 @@
 // The sources' files against the real project (milestone 5ב-1): the bytes go
 // straight to Supabase Storage — a POST to /storage/v1/object/sources/<path>
 // with the member's own session token (never a service key), so the policies
-// on storage.objects decide — and the row through register_source_file. The
+// on storage.objects decide — and the row through register_source_file (asked
+// again when its answer is lost: the same path answers the row it made). The
 // upload is an XMLHttpRequest, for its progress events (fetch has none for a
 // request body). Reading is by signed URL, a few minutes long — the bucket is
 // private, there is no public URL to give. Removing: the stored object first,
@@ -42,8 +43,8 @@ export const xhrSend: Send = (req) =>
 
 /**
  * What the Storage API's refusal means (its body is {statusCode, error, message}, sent under HTTP 400 by older
- * versions): 403 — the policies said no (upload_refused); 413 / 415 — the bucket's size or types (bad_file);
- * anything else — the upload did not complete (upload_failed).
+ * versions): 403 — the policies said no (upload_refused); 413 — over the bucket's size (file_too_big); 415 — not
+ * one of its types (bad_file); anything else — the upload did not complete (upload_failed).
  */
 export function uploadRefusal(status: number, body: string): string {
   let code = status;
@@ -55,7 +56,8 @@ export function uploadRefusal(status: number, body: string): string {
     // not JSON — the HTTP status says it
   }
   if (code === 401 || code === 403) return "upload_refused";
-  if (code === 413 || code === 415) return "bad_file";
+  if (code === 413) return "file_too_big";
+  if (code === 415) return "bad_file";
   return "upload_failed";
 }
 
@@ -103,14 +105,23 @@ export class SupabaseSources implements SourcesPort {
       signal: opts.signal,
     });
     if (res.status < 200 || res.status >= 300) throw new CommandError(uploadRefusal(res.status, res.body));
-    try {
-      const row = await callRpc(this.sb, "register_source_file", {
+    const register = async () =>
+      toFile((await callRpc(this.sb, "register_source_file", {
         p_edition: editionId, p_lesson: lessonId, p_path: path, p_display_name: displayNameOf(file.name), p_pages: opts.pages,
-      });
-      return toFile(row as Record<string, unknown>);
+      })) as Record<string, unknown>);
+    try {
+      try {
+        return await register();
+      } catch (e) {
+        // no answer is no refusal: the row may have been made and its answer lost (a dropped connection) — ask once
+        // more; the same path again answers the row it made, or registers it now, or refuses
+        if (e instanceof CommandError) throw e;
+        return await register();
+      }
     } catch (e) {
-      // the row was refused: the stored object is the uploader's to delete (app.may_delete_source) — leave nothing behind
-      await this.bucket().remove([path]).catch(() => undefined);
+      // refused: the stored object is the uploader's to delete (app.may_delete_source) — leave nothing behind. Still
+      // no answer: keep it — deleting it could leave a registered row without its file
+      if (e instanceof CommandError) await this.bucket().remove([path]).catch(() => undefined);
       throw e;
     }
   }
