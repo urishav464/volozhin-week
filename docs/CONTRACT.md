@@ -604,9 +604,11 @@ Never an amount, an approval or its note, an e-mail, the pickup address or time,
 
 ### `escortTick(token, lesson, item, on)` — `escort_tick` → `jsonb` (the lesson's four ticks)
 
-The lesson as above (`link_invalid`); `item ∈ {reminded, met, introduced, gift}`, `on` a boolean
-(`bad_value`). On → `escort_ticks(lesson, item, at = now)` unless there (the first time is kept);
-off → deleted.
+The lesson as above (`link_invalid`); `item ∈ {reminded, met, introduced, gift}`, `on` a boolean,
+and a lesson, not a memorial slot (`bad_value` — the four are a speaker's escort's; a liaison's slot
+has none, and answers as an item that does not exist, after the link's one refusal: nothing the page
+does not show already). On → `escort_ticks(lesson, item, at = now)` unless there (the first time is
+kept); off → deleted.
 
 ### `escortPickup(token, lesson, address)` — `escort_pickup` → `void`
 
@@ -1034,7 +1036,10 @@ refused (`reshape` `merge_next` → `merge_blocked`; `split_time`/`reset` treat 
 
 ### `addMemorialPlan(fallen)` — `add_memorial_plan(p_edition, p_fallen)` → `bigint`
 An admin. The fallen is not active (or does not exist) → `bad_value`; already planned in this
-edition → `duplicate`. In the tray (`lesson_id` null), `not_contacted`. Logged in the edition's activity
+edition → `duplicate`. The fallen's row is locked (`for share`) before that check, so a
+`delete_fallen` or a deactivation on another connection either lands first (→ `bad_value`, never a
+raw foreign-key error, never a plan for an inactive fallen) or waits for the plan and sees it
+(`in_use`). In the tray (`lesson_id` null), `not_contacted`. Logged in the edition's activity
 (`memorial_plans`, `insert`, `{fallen}`, the caller's member id): a plan is what opens the family's
 contact to the edition's admins.
 
@@ -1061,16 +1066,20 @@ on a memorial slot only an admin of the edition (`forbidden`), only once a plan 
 the slot (the fallen's name in the list; the link shows «זמן זיכרון») — never a family's contact.
 Neither shows the speaker's four ticks for it (`ticksApply`, `src/domain/escorts.ts`: a lesson's
 only): the link says the liaison's role in their gender instead, and counts lessons and memorial times
-apart. `escort_tick` itself still accepts a memorial slot (nothing calls it there); a tick set for the
-liaison is the instructor's to decide, if ever.
+apart. `escort_tick` refuses a memorial slot too (`bad_value`, as an unknown item — never a wider
+answer to anon); a tick of the liaison's own is the instructor's to decide, if ever.
 
 ### Materials
 `app.source_refusal`: a memorial slot with a plan placed on it takes uploads from content and admins
 (else `no_plan`); `register_source_file` writes the plan's `fallen_id` on the row and leaves the
 lesson alone. The reader (`memorialFiles`) takes the files of the plan's fallen wherever the plan is
-placed now: `memorial_received` (a printable file), `memorial_missing` (a plan, nothing printable),
-`memorial` (no plan); the header «זמן זיכרון – <name>». Files of another fallen on a slot are listed
-for removal («מתוכנית שכבר לא כאן»), never in the reader.
+placed now, with a lesson's verdicts: `memorial_received` (a printable file), `memorial_needs_pdf`
+(Word only), `memorial_unreadable` (only files the browser could not read), `memorial_missing` (a
+plan, nothing yet), `memorial` (no plan); the header «זמן זיכרון – <name>» is in the reader in every
+one of them. A plan in the tray keeps its files — `Manifest.waiting`, «ממתין לשיבוץ», shown on its
+card in «זמני זיכרון» and on «מקראה» — never for removal. Only the files of a fallen with no plan in
+the edition (the plan deleted) are a slot's leftovers (`memorialLeftovers`: «מתוכנית שנמחקה
+מהמחזור»), never in the reader.
 
 ## The policy — `setMemorialPolicy(policy)` — `set_memorial_policy(p_edition, p_placement, p_max_minutes, p_warn_adjacent_meal)` → `void`
 An admin. `settings.memorial = {placement?, max_minutes?, warn_adjacent_meal?}` — never seeded; the
