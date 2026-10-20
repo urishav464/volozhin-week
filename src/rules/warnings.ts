@@ -4,7 +4,7 @@
 // «מכוון» and stay quiet.
 import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
-import type { Lesson, Week } from "../domain/types";
+import type { GridRow, Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { categoryLoad } from "./balance";
 
@@ -18,7 +18,10 @@ export type WarningKind =
   | "fixed_overlap"
   | "outside_window"
   | "missing_info"
-  | "escort_gap";
+  | "escort_gap"
+  | "memorial_over_slot"
+  | "memorial_too_long"
+  | "memorial_near_meal";
 
 export interface Warning {
   key: string;
@@ -54,6 +57,11 @@ export function escortClashes(week: Pick<Week, "lessons">, lesson: Timed & { id:
     .map((l) => ({ lesson: l, gap: weekGap(lesson, l) }))
     .filter((x) => x.gap < ESCORT_MIN_GAP)
     .sort((a, b) => a.lesson.day - b.lesson.day || a.lesson.start_min - b.lesson.start_min || a.lesson.id - b.lesson.id);
+}
+
+/** A meal on the grid: a fixed row whose label begins «ארוחת» (the 2026 poster's four: בוקר, צהריים, ערב, חצות). */
+export function isMealRow(r: Pick<GridRow, "kind" | "label">): boolean {
+  return r.kind === "fixed" && r.label.trim().startsWith("ארוחת");
 }
 
 export function warningsFor(week: Week): Warning[] {
@@ -180,6 +188,33 @@ export function warningsFor(week: Week): Warning[] {
             ? `${who} מלווה שני שיעורים צמודים, בלי הפסקה ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP} דקות)`
             : `${who} מלווה שני שיעורים עם ${gap} דקות ביניהם (${when}; הצעה: לפחות ${ESCORT_MIN_GAP})`;
       push({ kind: "escort_gap", severity: "warn", day: b.day, lessonIds: [a.id, b.id], message });
+    }
+  }
+
+  // Memorial times. A plan longer than the slot it is placed on — a fact, always. And only once the staff meeting
+  // has set them (settings.memorial — never seeded): a plan longer than the most minutes, and a slot next to a meal.
+  const policy = week.edition.settings?.memorial;
+  const fallenName = new Map((week.fallen ?? []).map((f) => [f.id, f.name]));
+  const byId = new Map(live.map((l) => [l.id, l]));
+  for (const p of week.memorialPlans ?? []) {
+    const l = p.lesson_id == null ? undefined : byId.get(p.lesson_id);
+    if (!l || p.planned_minutes == null) continue;
+    const who = `«${fallenName.get(p.fallen_id) ?? "זמן זיכרון"}»`;
+    const when = `${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)}`;
+    const len = l.end_min - l.start_min;
+    if (p.planned_minutes > len) {
+      push({ kind: "memorial_over_slot", severity: "warn", day: l.day, lessonIds: [l.id], message: `${who}: ${p.planned_minutes} דקות מתוכננות, והמשבצת ${len} דקות (${when})` });
+    }
+    if (policy?.max_minutes != null && p.planned_minutes > policy.max_minutes) {
+      push({ kind: "memorial_too_long", severity: "warn", day: l.day, lessonIds: [l.id], message: `${who}: ${p.planned_minutes} דקות מתוכננות, יותר מ-${policy.max_minutes} שנקבעו במדיניות (${when})` });
+    }
+  }
+  if (policy?.warn_adjacent_meal === true) {
+    for (const l of live.filter((x) => x.kind === "memorial")) {
+      const meal = week.rows.find((r) => isMealRow(r) && rowActive(r, l.day, week.edition) && (r.end_min === l.start_min || r.start_min === l.end_min));
+      if (meal) {
+        push({ kind: "memorial_near_meal", severity: "warn", day: l.day, lessonIds: [l.id], message: `זמן זיכרון צמוד ל«${meal.label}» (${DAY_NAMES[l.day]} ${fmtRange(l.start_min, l.end_min)})` });
+      }
     }
   }
 

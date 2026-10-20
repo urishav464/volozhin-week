@@ -61,7 +61,7 @@ describe("the manifest", () => {
     const slides = at(w, 0, 600);
     slides.in_reader = true;
     w.sourceFiles.push({
-      id: 99, lesson_id: slides.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === slides.id && x.role === "lead")!.speaker_id,
+      id: 99, lesson_id: slides.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === slides.id && x.role === "lead")!.speaker_id, fallen_id: null,
       storage_path: `1/${slides.id}/x`, display_name: "שקפים.pdf", mime: "application/pdf", size_bytes: 1, page_count: 12, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
     });
     expect(readerManifest(w).rows.find((r) => r.lesson.id === slides.id)).toMatchObject({ status: "presentation_only", pages: 0 });
@@ -85,7 +85,7 @@ describe("the manifest", () => {
     const w = demo();
     const draft = w.lessons.find((l) => l.state === "draft" && l.kind === "lesson")!;
     const extra = (o: Partial<SourceFile>): SourceFile => ({
-      id: 100 + w.sourceFiles.length, lesson_id: null, cover: false, speaker_id: null, storage_path: `1/x/${w.sourceFiles.length}`, display_name: "x.pdf",
+      id: 100 + w.sourceFiles.length, lesson_id: null, cover: false, speaker_id: null, fallen_id: null, storage_path: `1/x/${w.sourceFiles.length}`, display_name: "x.pdf",
       mime: "application/pdf", size_bytes: 1, page_count: 1, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z", ...o,
     });
     w.sourceFiles.push(extra({ lesson_id: draft.id }), extra({}), extra({ cover: true, id: 500 }), extra({ cover: true, id: 501, mime: "image/png" }));
@@ -103,7 +103,7 @@ describe("the manifest", () => {
     const l = at(w, 1, 930); // marked for the reader, nothing arrived yet
     const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
     const file = (id: number, mime: SourceFile["mime"], page_count: number | null): SourceFile => ({
-      id, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/${id}`, display_name: `${id}`, mime, size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
+      id, lesson_id: l.id, cover: false, speaker_id: lead, fallen_id: null, storage_path: `1/${l.id}/${id}`, display_name: `${id}`, mime, size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
     });
     const rowOf = () => readerManifest(w).rows.find((r) => r.lesson.id === l.id)!;
     w.sourceFiles.push(file(90, "application/pdf", null), file(91, "image/png", null));
@@ -134,7 +134,7 @@ describe("the manifest", () => {
   it("names after a build every unread file of a lesson marked for the reader — in schedule order, none the build fetches", () => {
     const w = demo();
     const file = (l: { id: number }, id: number, page_count: number | null): SourceFile => ({
-      id, lesson_id: l.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id,
+      id, lesson_id: l.id, cover: false, speaker_id: w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id, fallen_id: null,
       storage_path: `1/${l.id}/${id}`, display_name: `${id}.pdf`, mime: "application/pdf", size_bytes: 1, page_count, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z",
     });
     const allUnread = at(w, 1, 930); // marked, nothing arrived yet
@@ -165,7 +165,7 @@ describe("the manifest", () => {
     const l = at(w, 0, 870);
     Object.assign(l, { sources_kind: "sheet", in_reader: true });
     const lead = w.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")!.speaker_id;
-    w.sourceFiles.push({ id: 90, lesson_id: l.id, cover: false, speaker_id: lead, storage_path: `1/${l.id}/x`, display_name: "x.pdf", mime: "application/pdf", size_bytes: 1, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z" });
+    w.sourceFiles.push({ id: 90, lesson_id: l.id, cover: false, speaker_id: lead, fallen_id: null, storage_path: `1/${l.id}/x`, display_name: "x.pdf", mime: "application/pdf", size_bytes: 1, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z" });
     const rows = readerManifest(w).rows.filter((r) => r.kind === "lesson");
     expect(rows.map((r) => r.status)).toEqual(expect.arrayContaining(["included", "missing", "needs_pdf", "unreadable"]));
     for (const r of rows) {

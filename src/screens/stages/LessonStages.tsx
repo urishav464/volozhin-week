@@ -407,6 +407,8 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
     presentation_only: "מצגת בלבד: לא נכנסת למקראה.",
     no_sources: "בלי מקורות: אין מה להדפיס במקראה.",
     memorial: "זמן זיכרון.",
+    memorial_received: "זמן זיכרון: החומרים בתוך המקראה.",
+    memorial_missing: "זמן זיכרון: החומרים עוד לא הועלו.",
   };
   // what the reader leaves out beside it, in the manifest's words (Word is the whole story of «צריך PDF», as the unread files are of «צריך קובץ אחר»)
   const besides = [

@@ -1,7 +1,8 @@
 // The grid's commands — their semantics are fixed in docs/CONTRACT.md, and
 // both SupabasePort (SQL RPCs) and DemoPort (src/data/engine.ts) follow it.
 import type { Day } from "../domain/time";
-import type { Lesson, PrintWhen, SourcesKind, Transport, TransportDetails } from "../domain/types";
+import type { Lesson, MemorialPolicy, PrintWhen, SourcesKind, Transport, TransportDetails } from "../domain/types";
+import type { PlanPatch } from "./memorial";
 
 /** An existing draft, or a cell: a range of a day in a room (null = the default room). */
 export type CellTarget = { lesson_id: number } | { day: Day; start_min: number; end_min: number; room_id: number | null };
@@ -68,7 +69,31 @@ export interface WeekCommands {
   transport(lessonId: number): Promise<TransportDetails | null>;
   /** The same people only; all five fields replaced (null clears). */
   setTransport(lessonId: number, d: TransportDetails): Promise<void>;
+
+  // ---- memorial times and logistics (milestone 5ב-2; CONTRACT.md «Memorial times and logistics»)
+  /**
+   * «הסעות»: the edition's closed lessons whose transport was approved, each with exactly what transport(lessonId) would
+   * show the caller — a lesson they may not see the details of is not listed (public.get_transports_for). Never in a Week.
+   */
+  transports(): Promise<LessonTransport[]>;
+  /** An admin of the edition: a memorial slot inside one of the day's memorial rows (null: the default room). Returns its lesson id. */
+  addMemorialSlot(day: Day, start: number, end: number, roomId: number | null): Promise<number>;
+  /** An admin of the edition: a memorial slot with no plan on it. */
+  removeMemorialSlot(lessonId: number): Promise<void>;
+  /** An admin of the edition: a plan for one of the active fallen (one per fallen). Returns its id. */
+  addMemorialPlan(fallenId: number): Promise<number>;
+  /** An admin of the edition, at the version on screen: the keys present. */
+  updateMemorialPlan(planId: number, version: number, patch: PlanPatch): Promise<void>;
+  /** An admin of the edition, at the version on screen: onto a free memorial slot of the edition, or off (null). The liaison goes with it. */
+  placeMemorialPlan(planId: number, version: number, lessonId: number | null): Promise<void>;
+  /** An admin of the edition: a plan that is not placed. */
+  deleteMemorialPlan(planId: number): Promise<void>;
+  /** An admin of the edition: settings.memorial — the parts given (all empty removes it). */
+  setMemorialPolicy(policy: MemorialPolicy): Promise<void>;
 }
+
+/** A lesson's transport details in the logistics list. */
+export type LessonTransport = TransportDetails & { lesson_id: number };
 
 /** A refusal with one of the contract's codes (src/errors.ts has the Hebrew). */
 export class CommandError extends Error {

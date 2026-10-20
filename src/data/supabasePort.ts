@@ -5,6 +5,7 @@ import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
 import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
+import { SupabaseMemorial } from "./supabaseMemorial";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
 import { SupabaseSettings } from "./supabaseSettings";
 import { SupabaseSources } from "./supabaseSources";
@@ -20,6 +21,7 @@ export class SupabasePort implements DataPort {
   readonly links: SupabaseLinks;
   readonly kk: SupabaseKk;
   readonly sources: SupabaseSources;
+  readonly memorial: SupabaseMemorial;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -34,6 +36,7 @@ export class SupabasePort implements DataPort {
     this.links = new SupabaseLinks(this.sb);
     this.kk = new SupabaseKk(this.sb);
     this.sources = new SupabaseSources(this.sb, url, key);
+    this.memorial = new SupabaseMemorial(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {
@@ -99,6 +102,8 @@ export class SupabasePort implements DataPort {
     if (w && !Array.isArray(w.roster)) w.roster = [];
     if (w && !Array.isArray(w.escortTicks)) w.escortTicks = []; // and none of the escorts' ticks before v9
     if (w && !Array.isArray(w.sourceFiles)) w.sourceFiles = []; // nor a file before v10
+    if (w && !Array.isArray(w.memorialPlans)) w.memorialPlans = []; // nor a memorial plan before v11
+    if (w && !Array.isArray(w.fallen)) w.fallen = [];
     return w;
   }
 

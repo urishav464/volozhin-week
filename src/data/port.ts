@@ -3,6 +3,7 @@ import type { WeekCommands } from "./commands";
 import type { KkPort } from "./kk";
 import type { KnowledgePort } from "./knowledge";
 import type { LinksPort } from "./links";
+import type { MemorialPort } from "./memorial";
 import type { OutputsPort } from "./outputs";
 import type { SettingsPort } from "./settings";
 import type { SourcesPort } from "./sources";
@@ -51,4 +52,6 @@ export interface DataPort {
   readonly kk: KkPort;
   /** The sources' files (upload, remove, short-lived URLs) and the reader's settings (src/data/sources.ts). */
   readonly sources: SourcesPort;
+  /** The fallen and their families' contacts (admins only), cross-year (src/data/memorial.ts); the edition's plans are commands. */
+  readonly memorial: MemorialPort;
 }

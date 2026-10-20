@@ -438,7 +438,7 @@ test.describe("mock build", () => {
     const target = week.lessons.find((l) => l.day === 0 && l.start_min === 690)!;
     const existing = `7/${opening.id}/00000000-0000-4000-8000-000000000001-sample-1.pdf`;
     week.sourceFiles = [
-      { id: 41, lesson_id: opening.id, cover: false, speaker_id: 1, storage_path: existing, display_name: "דף לדוגמה.pdf", mime: "application/pdf", size_bytes: 2000, page_count: 1, uploaded_by: 1, uploaded_at: "2026-11-01T10:00:00.000Z" },
+      { id: 41, lesson_id: opening.id, cover: false, speaker_id: 1, fallen_id: null, storage_path: existing, display_name: "דף לדוגמה.pdf", mime: "application/pdf", size_bytes: 2000, page_count: 1, uploaded_by: 1, uploaded_at: "2026-11-01T10:00:00.000Z" },
     ];
     const sb = new FakeSupabase({
       status: 200,

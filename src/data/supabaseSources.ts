@@ -66,6 +66,7 @@ const toFile = (r: Record<string, unknown>): SourceFile => ({
   lesson_id: r.lesson_id == null ? null : Number(r.lesson_id),
   cover: r.cover === true,
   speaker_id: r.speaker_id == null ? null : Number(r.speaker_id),
+  fallen_id: r.fallen_id == null ? null : Number(r.fallen_id),
   storage_path: String(r.storage_path),
   display_name: String(r.display_name),
   mime: r.mime as SourceFile["mime"],

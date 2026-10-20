@@ -12,6 +12,7 @@ import { demoToken } from "../../data/demoLinks";
 import { type IssuedLink, type LinkScope, linkState, linkUrl, type ShareLink } from "../../data/links";
 import type { DataPort } from "../../data/port";
 import { whatsappTextHref } from "../../domain/contactLinks";
+import { escortable } from "../../domain/escorts";
 import { israelMoment } from "../../domain/israelTime";
 import type { Edition, Week } from "../../domain/types";
 import { Badge, Button, Confirm, EditionPicker, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
@@ -195,11 +196,11 @@ interface RowProps {
   reload: () => Promise<void>;
 }
 
-/** A trainee who escorts a closed lesson, or still holds a live link. */
+/** A trainee who escorts a closed lesson (or a memorial slot, as its family's liaison), or still holds a live link. */
 function EscortLinks({ data, week, links, archived, issued, reload }: RowProps) {
   const lessons = useMemo(() => {
     const m = new Map<number, number>();
-    for (const l of week.lessons) if (l.state === "closed" && l.escort_roster_id != null) m.set(l.escort_roster_id, (m.get(l.escort_roster_id) ?? 0) + 1);
+    for (const l of week.lessons) if (escortable(l) && l.escort_roster_id != null) m.set(l.escort_roster_id, (m.get(l.escort_roster_id) ?? 0) + 1);
     return m;
   }, [week]);
   const escorts = [...week.roster]
@@ -356,7 +357,7 @@ function LinkRow({
 /** The demo's links, issued in advance: synthetic, opened in this tab on the demo's data (src/data/demoLinks.ts). */
 function DemoLinksPanel({ week }: { week: Week }) {
   const ed = week.edition.id;
-  const escorts = [...new Set(week.lessons.filter((l) => l.state === "closed" && l.escort_roster_id != null).map((l) => l.escort_roster_id!))]
+  const escorts = [...new Set(week.lessons.filter((l) => escortable(l) && l.escort_roster_id != null).map((l) => l.escort_roster_id!))]
     .map((id) => week.roster.find((r) => r.id === id))
     .filter((r) => !!r)
     .sort((a, b) => a!.full_name.localeCompare(b!.full_name, "he"));

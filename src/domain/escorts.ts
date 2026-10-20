@@ -15,6 +15,15 @@ export function suggestSelfIntro(l: Pick<Lesson, "start_min">): boolean {
   return l.start_min >= SELF_INTRO_FROM;
 }
 
+/**
+ * A lesson an escort goes with: a closed lesson — or a memorial slot, whose escort is the family's liaison
+ * («בזמני זיכרון, המלווה הוא איש הקשר של המשפחה»; set once a plan is placed, gone when it leaves). The escort's
+ * link, the escorts' list and the links tab list these.
+ */
+export function escortable(l: Pick<Lesson, "state" | "kind">): boolean {
+  return l.state !== "cancelled" && (l.state === "closed" || l.kind === "memorial");
+}
+
 /** How many lessons each trainee escorts (cancelled ones aside). */
 export function escortLoad(week: Pick<Week, "lessons">): Map<number, number> {
   const out = new Map<number, number>();

@@ -806,4 +806,130 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", unregister: "p2" }, // the cover's file: the mark goes with it, and no other poster takes its place
     { as: "E", readerCover: "p3" },
   ],
+
+  // ---- memorial times (milestone 5ב-2) — synthetic names only
+  "memorial times: the fallen, slots, plans, the liaison, the materials, the policy": [
+    // the fallen: one cross-year list, written by a global admin
+    { as: "A", saveFallen: null, name: "חלל/ה לבדיקה א" },
+    { as: "E", saveFallen: null, name: "חלל/ה לבדיקה א" }, // an edition's admin: forbidden
+    { as: "admin", saveFallen: null, name: "  " },
+    { as: "admin", saveFallen: null, name: "חלל/ה לבדיקה א", gender: "x" },
+    { as: "admin", saveFallen: null, name: " חלל/ה   לבדיקה א " },
+    { as: "admin", saveFallen: null, name: "חלל/ה לבדיקה ב", gender: "f", note: "הערה לבדיקה" },
+    { as: "admin", saveFallen: null, name: "חלל/ה לבדיקה ג" },
+    { as: "admin", saveFallen: "חלל/ה לבדיקה ג", name: "חלל/ה לבדיקה ג", active: false },
+    { as: "admin", saveFallen: "חלל/ה לבדיקה ג", name: "חלל/ה לבדיקה ג", active: null },
+    { as: "A", readFallen: true }, // no plan yet: none
+    { as: "E", readFallen: true }, // an admin plans: all
+    // slots: an edition's admin, inside a memorial row
+    { as: "A", addSlot: [0, 780, 795] },
+    { as: "L", addSlot: [0, 780, 795] },
+    { as: "E", addSlot: [0, 510, 600] }, // a lesson row
+    { as: "E", addSlot: [0, 780, 800] }, // past the row
+    { as: "E", addSlot: [0, 780, 795] },
+    { as: "E", addSlot: [0, 780, 790] }, // the room is taken
+    { as: "E", addSlot: [0, 780, 790, "כיתה"] },
+    { as: "E", addSlot: [1, 855, 870] },
+    // plans
+    { as: "A", addPlan: "חלל/ה לבדיקה א" },
+    { as: "E", addPlan: "חלל/ה לבדיקה ג" }, // not active
+    { as: "E", addPlan: "חלל/ה לבדיקה א" },
+    { as: "E", addPlan: "חלל/ה לבדיקה א" }, // one per fallen
+    { as: "E", addPlan: "חלל/ה לבדיקה ב" },
+    { as: "A", readFallen: true }, // the two planned here
+    { as: "L", readFallen: true },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { planned_minutes: 0 } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { planned_minutes: 1.5 } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { family_status: "maybe" } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { hard_stop: "yes" } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { hard_stop: true }, staleBy: 1 },
+    { as: "A", updatePlan: "חלל/ה לבדיקה א", patch: { hard_stop: true } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { family_status: "confirmed", speaker_text: " דובר/ת   לבדיקה ", planned_minutes: 12, materials_note: "הערה\r\nלמקראה ", other: 1 } },
+    { as: "E", updatePlan: "חלל/ה לבדיקה א", patch: { planned_minutes: 12 } }, // nothing changed
+    // placing, and the liaison going with the plan
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [1, 510] }, // no memorial slot there
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [0, 780] },
+    { as: "E", placePlan: "חלל/ה לבדיקה ב", at: [0, 780] }, // taken
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [0, 780] }, // the same slot: nothing
+    { as: "E", escort: [1, 855], trainee: "חניכה לדוגמה", selfIntro: false }, // no plan on it
+    { as: "A", escort: [0, 780], trainee: "חניכה לדוגמה", selfIntro: false }, // the liaison is an admin's to set
+    { as: "E", escort: [0, 780], trainee: "חניכה לדוגמה", selfIntro: true },
+    { as: "E", escort: [0, 780], trainee: "חניכה לדוגמה", selfIntro: false, note: "הערה למלווה" },
+    { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "liaison" },
+    { anon: "escortView", token: "liaison" }, // the slot as the page shows any: never the fallen or the plan
+    { anon: "escortTick", token: "liaison", at: [0, 780], item: "reminded", on: true },
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: [1, 855] }, // the liaison moves with it; the ticks start over
+    { anon: "escortView", token: "liaison" },
+    // the materials: a slot with a plan
+    { as: "A", store: [1, 855], file: "memorialpage" },
+    { as: "A", register: "memorialpage" },
+    { as: "A", store: [0, 780], file: "noplan" }, // no plan there now
+    { as: "L", store: [1, 855], file: "bylogistics" },
+    // a slot stays a slot
+    { as: "E", move: [1, 855], to: [1, 870, 960] },
+    { as: "A", reshape: [1, 690], op: { op: "merge_next" } }, // 11:30 into 14:30 would swallow it
+    { as: "E", removeSlot: [1, 855] }, // a plan on it
+    { as: "E", deletePlan: "חלל/ה לבדיקה א" }, // placed
+    { as: "E", placePlan: "חלל/ה לבדיקה א", at: null }, // off: the liaison leaves with it
+    { anon: "escortView", token: "liaison" },
+    { as: "A", removeSlot: [1, 855] },
+    { as: "E", removeSlot: [1, 855] }, // its file's row stays, for removal
+    { as: "E", removeSlot: [1, 510] }, // not a memorial slot
+    { as: "E", deletePlan: "חלל/ה לבדיקה א" },
+    { as: "admin", deleteFallen: "חלל/ה לבדיקה ב" }, // planned: deactivate instead
+    { as: "E", deleteFallen: "חלל/ה לבדיקה ג" },
+    { as: "admin", deleteFallen: "חלל/ה לבדיקה ג" },
+    // the policy: the staff meeting's, never seeded
+    { as: "A", policy: { placement: "לבדיקה" } },
+    { as: "E", policy: { max_minutes: 181 } },
+    { as: "E", policy: { placement: " לבדיקה: לפני הארוחה? ", max_minutes: 10 } },
+    { as: "E", policy: { warn_adjacent_meal: false } },
+    { as: "E", policy: {} },
+  ],
+
+  "a family's contact person: admins only, one fallen at a time": [
+    { as: "admin", saveFallen: null, name: "חלל/ה לבדיקה א" },
+    { as: "admin", saveFallen: null, name: "חלל/ה לבדיקה ב" },
+    { as: "admin", setFallenContacts: "חלל/ה לבדיקה א", contact: "איש/אשת קשר לבדיקה", relation: "קרבה לבדיקה", phone: "555 0100 98", email: "family@example.org" },
+    { as: "E", readFallenContacts: "חלל/ה לבדיקה א" }, // no plan in the admin's edition yet
+    { as: "E", addPlan: "חלל/ה לבדיקה א" },
+    { as: "E", readFallenContacts: "חלל/ה לבדיקה א" },
+    { as: "E", readFallenContacts: "חלל/ה לבדיקה ב" },
+    { as: "A", readFallenContacts: "חלל/ה לבדיקה א" },
+    { as: "L", readFallenContacts: "חלל/ה לבדיקה א" },
+    { as: "A", setFallenContacts: "חלל/ה לבדיקה א", contact: "לבדיקה" },
+    { as: "E", setFallenContacts: "חלל/ה לבדיקה א", phone: "12-34" },
+    { as: "E", setFallenContacts: "חלל/ה לבדיקה א", email: "not-an-email" },
+    { as: "E", setFallenContacts: "חלל/ה לבדיקה א", contact: " איש/אשת קשר   לבדיקה ", relation: "קרבה לבדיקה", phone: "555 0100 98", email: "family@example.org" }, // the same
+    { as: "E", setFallenContacts: "חלל/ה לבדיקה א", contact: "איש/אשת קשר לבדיקה", note: "הערה לבדיקה" },
+    { as: "E", readFallenContacts: "חלל/ה לבדיקה א" },
+    { as: "E", setFallenContacts: "חלל/ה לבדיקה ב" }, // nothing to write, and not theirs
+    { sandbox: true },
+    { as: "E", readFallenContacts: "חלל/ה לבדיקה א" }, // a practice week gives none
+    { as: "admin", readFallenContacts: "חלל/ה לבדיקה א" },
+  ],
+
+  "the logistics screen's transports: never more than each lesson's details": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", propose: "בטא", cell: [1, 600, 690] },
+    { as: "B", close: "בטא", at: [1, 600] },
+    { as: "A", propose: "גמא", cell: [2, 510, 600] },
+    { as: "A", close: "גמא", at: [2, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
+    { as: "B", pay: [1, 600], amount: null, transport: "one_way" },
+    { as: "A", pay: [2, 510], amount: null, transport: "one_way" }, // stays pending
+    { as: "admin", decide: [[1, 510], [1, 600]], decision: "approved" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
+    { as: "A", setTransport: [2, 510], address: "כתובת לדוגמה" },
+    { as: "A", readTransports: true }, // the pending one is not a logistics item
+    { as: "B", readTransports: true },
+    { as: "L", readTransports: true },
+    { as: "E", readTransports: true }, // the edition's admin handles none
+    { as: "admin", readTransports: true },
+    { archive: true },
+    { as: "A", readTransports: true },
+    { as: "L", readTransports: true },
+    { as: "admin", readTransports: true },
+  ],
 };

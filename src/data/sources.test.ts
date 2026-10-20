@@ -145,7 +145,7 @@ describe("SupabaseSources on the wire", () => {
     expect(sent.map((r) => [r.method, r.path, r.body])).toEqual([
       ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: `7/42/${UUID}-file.pdf`, p_display_name: "מקורות.pdf", p_pages: 3 }],
     ]);
-    expect(row).toEqual({ ...ROW, id: 5, lesson_id: 42, speaker_id: 9, size_bytes: 1234, uploaded_by: 2 });
+    expect(row).toEqual({ ...ROW, id: 5, lesson_id: 42, speaker_id: 9, fallen_id: null, size_bytes: 1234, uploaded_by: 2 });
   });
 
   it("registers a name too long for the database shortened — never refused after the bytes went up", async () => {

@@ -7,8 +7,9 @@
 //   - every closed lesson marked «במקראה» (in_reader) that has a PDF or an
 //     image from its current speaker, read in the browser on upload — a header
 //     «מרצה – כותרת», then its files;
-//   - every memorial slot (its materials come with the memorial screen, 5ב-2:
-//     memorialFiles is the hook; until then its header alone).
+//   - every memorial slot: its header — «זמן זיכרון – <the fallen>» when a plan
+//     is placed on it — then the plan's materials (memorialFiles: the PDFs and
+//     images that came for that fallen, wherever uploaded, read on upload).
 // Not in it: a lesson without sources, a presentation alone, one not marked,
 // one whose files are all Word (they cannot be merged in the browser: «צריך
 // PDF»), a file the browser could not read on upload (its page_count NULL:
@@ -16,7 +17,7 @@
 // (reopen_lesson keeps them, for removal).
 import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
-import type { Lesson, SourceFile, SourcesKind, Week } from "../domain/types";
+import type { Lesson, MemorialPlan, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { LRM } from "../exports/table";
 import { printableMime } from "../data/sourceRules";
@@ -40,8 +41,12 @@ export type ManifestStatus =
   | "presentation_only"
   /** no sources at all */
   | "no_sources"
-  /** a memorial slot: in the reader, its header (its materials: 5ב-2) */
-  | "memorial";
+  /** a memorial slot with no plan placed on it: in the reader, its header alone */
+  | "memorial"
+  /** a memorial slot with a plan, and its materials arrived (a PDF or a picture read on upload): its header and them */
+  | "memorial_received"
+  /** a memorial slot with a plan, and no materials the reader can print yet: its header alone */
+  | "memorial_missing";
 
 export const STATUS_LABEL: Record<ManifestStatus, string> = {
   included: "התקבל",
@@ -53,11 +58,13 @@ export const STATUS_LABEL: Record<ManifestStatus, string> = {
   presentation_only: "מצגת בלבד — לא במקראה",
   no_sources: "בלי מקורות",
   memorial: "זמן זיכרון",
+  memorial_received: "זמן זיכרון — התקבל",
+  memorial_missing: "זמן זיכרון — חסר",
 };
 
 /** Does the status put the lesson's pages in the reader? */
 export const IN_READER: Record<ManifestStatus, boolean> = {
-  included: true, memorial: true, needs_pdf: false, unreadable: false, missing: false, not_marked: false, pending: false, presentation_only: false, no_sources: false,
+  included: true, memorial: true, memorial_received: true, memorial_missing: true, needs_pdf: false, unreadable: false, missing: false, not_marked: false, pending: false, presentation_only: false, no_sources: false,
 };
 
 /**
@@ -91,6 +98,8 @@ export interface ManifestRow {
   previous: SourceFile[];
   /** The pages it adds: its readable files' counts. */
   pages: number;
+  /** A memorial slot: the fallen of the plan placed on it (null: no plan). */
+  fallen?: string | null;
 }
 
 export interface Manifest {
@@ -108,18 +117,40 @@ export function dayLabel(day: Day, start: number): string {
   return start >= 1440 && day < 4 ? `ליל ${DAY_NAMES[day]}–${DAY_NAMES[(day + 1) as Day]}` : DAY_NAMES[day];
 }
 
-/** The reader's header for a lesson or a memorial slot. */
+/** The reader's header for a lesson or a memorial slot (`speaker`: the fallen of the plan placed on it, or ""). */
 export function readerHeader(kind: "lesson" | "memorial", speaker: string, title: string | null): string {
-  if (kind === "memorial") return title && title.trim() && title.trim() !== "זמן זיכרון" ? `זמן זיכרון – ${title.trim()}` : "זמן זיכרון";
+  if (kind === "memorial") {
+    if (speaker.trim()) return `זמן זיכרון – ${speaker.trim()}`;
+    return title && title.trim() && title.trim() !== "זמן זיכרון" ? `זמן זיכרון – ${title.trim()}` : "זמן זיכרון";
+  }
   return `${speaker || "TBD"} – ${title?.trim() || "TBD"}`;
 }
 
+/** The plan placed on a memorial slot, and the name of its fallen. */
+export function planOn(week: Week, lessonId: number): { plan: MemorialPlan; fallen: string } | null {
+  const plan = (week.memorialPlans ?? []).find((p) => p.lesson_id === lessonId);
+  if (!plan) return null;
+  return { plan, fallen: (week.fallen ?? []).find((f) => f.id === plan.fallen_id)?.name ?? "" };
+}
+
 /**
- * The hook for the memorial slots' materials (milestone 5ב-2: a fallen's page, a family's text). None yet — so a
- * memorial slot is its header page alone.
+ * A memorial slot's materials: the files that came for the fallen of the plan placed on it (source_files.fallen_id),
+ * wherever they were uploaded — a plan moved to another slot takes them along — upload order. No plan: none.
  */
-export function memorialFiles(_week: Week, _lesson: Lesson): SourceFile[] {
-  return [];
+export function memorialFiles(week: Week, lesson: Lesson): SourceFile[] {
+  const on = planOn(week, lesson.id);
+  if (!on) return [];
+  return [...(week.sourceFiles ?? [])].filter((f) => !f.cover && f.fallen_id === on.plan.fallen_id).sort((a, b) => a.id - b.id);
+}
+
+/**
+ * A memorial slot's own files that are no plan's here any more — their fallen's plan was taken off, or another
+ * plan is on the slot now — for removal, never in the reader. A file whose fallen is placed on another slot is that
+ * slot's (memorialFiles), never listed twice.
+ */
+function memorialLeftovers(week: Week, lesson: Lesson): SourceFile[] {
+  const placed = new Set((week.memorialPlans ?? []).filter((p) => p.lesson_id != null).map((p) => p.fallen_id));
+  return [...(week.sourceFiles ?? [])].filter((f) => f.lesson_id === lesson.id && (f.fallen_id == null || !placed.has(f.fallen_id))).sort((a, b) => a.id - b.id);
 }
 
 /** In the order the lesson's «מקראה» stage says it (src/domain/stages.ts): a readable file, else Word, else an unread one. */
@@ -144,11 +175,14 @@ export function readerManifest(week: Week): Manifest {
     // the time stays left to right inside a right-to-left line (a mark before it, as the files write it)
     const when = `${dayLabel(l.day, l.start_min)} ${LRM}${fmtRange(e.start_min, e.end_min)}`;
     if (e.kind === "memorial") {
+      const on = planOn(week, l.id);
       const mine = memorialFiles(week, l);
-      const pages = mine.reduce((n, f) => n + (f.page_count ?? 1), 0);
+      const printable = mine.filter(readableFile);
+      const status: ManifestStatus = !on ? "memorial" : printable.length > 0 ? "memorial_received" : "memorial_missing";
       return {
-        lesson: l, kind: "memorial", day: l.day, when, speaker: "", title: l.title, header: readerHeader("memorial", "", l.title), sourcesKind: l.sources_kind,
-        status: "memorial", files: mine, printable: mine.filter(readableFile), word: [], unread: [], previous: [], pages: Math.max(1, pages),
+        lesson: l, kind: "memorial", day: l.day, when, speaker: "", title: l.title, header: readerHeader("memorial", on?.fallen ?? "", l.title), sourcesKind: l.sources_kind,
+        status, files: mine, printable, word: mine.filter((f) => !printableMime(f.mime)), unread: mine.filter((f) => printableMime(f.mime) && !readableFile(f)),
+        previous: memorialLeftovers(week, l), pages: printable.reduce((n, f) => n + (f.page_count ?? 1), 0), fallen: on?.fallen ?? null,
       };
     }
     const current = lead.get(l.id) ?? null;
@@ -165,7 +199,9 @@ export function readerManifest(week: Week): Manifest {
     };
   });
   const shownLessons = new Set(rows.map((r) => r.lesson.id));
-  const leftovers = files.filter((f) => !f.cover && (f.lesson_id == null || !shownLessons.has(f.lesson_id)));
+  // a memorial plan's file shows under the slot its plan is on now, whatever slot it came to (or none left)
+  const shownFiles = new Set(rows.flatMap((r) => (r.kind === "memorial" ? r.files : [])).map((f) => f.id));
+  const leftovers = files.filter((f) => !f.cover && !shownFiles.has(f.id) && (f.lesson_id == null || !shownLessons.has(f.lesson_id)));
   const covers = files.filter((f) => f.cover);
   const marked = week.edition.settings?.reader_cover;
   const cover = covers.find((f) => f.id === marked && readableFile(f)) ?? null;
@@ -183,7 +219,7 @@ export function readerRows(m: Manifest): ManifestRow[] {
  * אחר»), not in it at all — in schedule order. Never a file the build fetches (those it read), so never named twice.
  */
 export function unreadForReader(m: Manifest): SourceFile[] {
-  return m.rows.filter((r) => r.lesson.in_reader).flatMap((r) => r.unread);
+  return m.rows.filter((r) => r.kind === "memorial" || r.lesson.in_reader).flatMap((r) => r.unread);
 }
 
 export interface ManifestTotals {
@@ -207,7 +243,7 @@ export function manifestTotals(m: Manifest): ManifestTotals {
   return {
     lessons: m.rows.filter((r) => r.kind === "lesson").length,
     included: count("included"),
-    memorial: count("memorial"),
+    memorial: m.rows.filter((r) => r.kind === "memorial").length,
     missing: count("missing"),
     needsPdf: count("needs_pdf"),
     unreadable: count("unreadable"),
