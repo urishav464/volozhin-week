@@ -2,9 +2,11 @@
 // the cover, the table of contents, then each day's lessons and memorial
 // slots in schedule order with a «סיכום יום» page closing the day — the page
 // each entry starts on (so the table of contents can say it before the pages
-// exist), and the A4 framing of a source page (scaled to fit, aspect kept,
-// rotation honoured).
+// exist), the schedule cover's pages, and the A4 framing of a source page
+// (scaled to fit, aspect kept, rotation honoured). No pdf-lib here: the reader
+// screen's estimate counts with the same functions the build does.
 import { DAY_NAMES, type Day, DAYS } from "../domain/time";
+import type { ScheduleLine } from "./render";
 
 /** A4 in PDF points (1/72 inch). */
 export const A4 = { width: 595.28, height: 841.89 };
@@ -154,3 +156,23 @@ export function frame(width: number, height: number, rotation: number, box: { x:
 
 /** How many schedule lines fit one cover page made from the week (the rest go on the next). */
 export const SCHEDULE_LINES_PER_PAGE = 44;
+/** …fewer on its first page: the title. */
+export const SCHEDULE_TITLE_LINES = 3;
+
+/** The schedule cover's lines, page by page (a day's heading never alone at a page's foot). */
+export function chunkSchedule(lines: ScheduleLine[], perPage = SCHEDULE_LINES_PER_PAGE): ScheduleLine[][] {
+  const out: ScheduleLine[][] = [[]];
+  for (let i = 0; i < lines.length; i++) {
+    let cur = out[out.length - 1];
+    const room = perPage - (out.length === 1 ? SCHEDULE_TITLE_LINES : 0) - cur.length; // the first page has the title
+    if (room <= 0 || (lines[i].kind === "day" && room <= 1)) {
+      cur = [];
+      out.push(cur);
+    }
+    cur.push(lines[i]);
+  }
+  return out;
+}
+
+/** How many pages the schedule cover takes when no poster is marked — what the build draws (one, even for none). */
+export const scheduleCoverPages = (lines: ScheduleLine[]) => chunkSchedule(lines).length;

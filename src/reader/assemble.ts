@@ -5,17 +5,17 @@
 // honoured); the running headers alternate, the page numbers count from the
 // cover. A file that cannot be read (protected, damaged, no PDF or picture at all)
 // is left out and named in the result — never a silent gap, never a failed
-// build: every file is embedded as it is read, before the pages are planned.
-// A photo goes in without its metadata (src/reader/jpeg.ts).
-import {
-  PDFContentStream, PDFDocument, type PDFEmbeddedPage, type PDFFont, type PDFImage, type PDFPage, PDFRawStream, PDFStream, StandardFonts, decodePDFRawStream, degrees, rgb,
-} from "pdf-lib";
+// build: every file is opened as the upload checks it (src/reader/readable.ts)
+// and embedded as it is read, before the pages are planned. A photo goes in
+// without its metadata (src/reader/jpeg.ts); a PDF page's annotations and
+// filled fields are painted into it (src/reader/annotations.ts).
+import { PDFDocument, type PDFEmbeddedPage, type PDFFont, type PDFImage, type PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { Day } from "../domain/time";
-import { A4, contentBox, dayTitle, frame, MARGIN, NUMBER_BAND, numbered, planReader, type PlanEntry, RUNNING_BAND, runningHeader, STRIP_HEIGHT } from "./layout";
-import { jpegOrientation, looksJpeg, looksPng, orientationTurn, stripJpegMetadata } from "./jpeg";
+import { A4, chunkSchedule, contentBox, dayTitle, frame, MARGIN, NUMBER_BAND, numbered, planReader, type PlanEntry, RUNNING_BAND, runningHeader, STRIP_HEIGHT } from "./layout";
+import { openSource, type ReaderMime } from "./readable";
 import type { Png, ScheduleLine, TextRenderer } from "./render";
 
-export type ReaderMime = "application/pdf" | "image/png" | "image/jpeg";
+export type { ReaderMime } from "./readable";
 
 export interface JobFile {
   id: number;
@@ -72,68 +72,28 @@ export { jpegOrientation, orientationTurn } from "./jpeg";
 
 /**
  * Read a file and embed it in the reader `out` — here, while the page plan can still change, so a file that cannot
- * be read is left out and named instead of failing the build half way. The type is checked from the bytes, not
- * the label: a PNG saved as .jpg is drawn as the PNG it is; bytes that are neither are «unreadable». A photo goes
- * in without its metadata (src/reader/jpeg.ts). A PDF's pages are embedded together, all or none.
+ * be read is left out and named instead of failing the build half way. Opened as the upload checks it
+ * (src/reader/readable.ts: the type from the bytes, a PNG's data inflated, a photo without its metadata, a PDF's
+ * annotations painted in and its pages decoded). A PDF's pages are embedded together, all or none.
  */
 async function load(out: PDFDocument, f: JobFile): Promise<Loaded | Skipped> {
-  const bytes = new Uint8Array(f.bytes);
-  if (f.mime !== "application/pdf") {
-    try {
-      if (looksPng(bytes)) return { pages: [{ kind: "image", img: await out.embedPng(bytes), turn: 0 }] };
-      const clean = looksJpeg(bytes) ? stripJpegMetadata(bytes) : null;
-      if (!clean) return { name: f.name, reason: "unreadable" };
-      return { pages: [{ kind: "image", img: await out.embedJpg(clean), turn: orientationTurn(jpegOrientation(bytes)) }] };
-    } catch {
-      return { name: f.name, reason: "unreadable" };
-    }
-  }
-  let doc: PDFDocument;
+  const src = await openSource(new Uint8Array(f.bytes), f.mime);
+  if (!src.ok) return { name: f.name, reason: src.reason };
   try {
-    doc = await PDFDocument.load(f.bytes, { updateMetadata: false });
-  } catch (e) {
-    return { name: f.name, reason: e instanceof Error && /encrypt/i.test(e.name + e.message) ? "protected" : "unreadable" };
-  }
-  try {
-    const src = doc.getPages();
-    if (src.length === 0) return { name: f.name, reason: "unreadable" };
+    if (src.kind === "png") return { pages: [{ kind: "image", img: await out.embedPng(src.bytes), turn: 0 }] };
+    if (src.kind === "jpeg") return { pages: [{ kind: "image", img: await out.embedJpg(src.bytes), turn: src.turn }] };
     // a page with nothing on it (no Contents — pdf-lib cannot embed it) stays a blank page, kept as one
-    const drawn = src.filter((p) => p.node.Contents());
-    // pdf-lib decodes an embedded page's content only when the reader is saved — a page it cannot decode would
-    // fail the whole book there; so every page is decoded once here, and such a file is left out and named
-    if (!drawn.every(decodes)) return { name: f.name, reason: "unreadable" };
+    const drawn = src.pages.filter((p) => p.drawn);
     const embedded = await out.embedPages(
-      drawn,
-      drawn.map((p) => {
-        const c = p.getCropBox();
-        return { left: c.x, bottom: c.y, right: c.x + c.width, top: c.y + c.height };
-      }),
+      drawn.map((p) => p.page),
+      drawn.map(({ box: c }) => ({ left: c.x, bottom: c.y, right: c.x + c.width, top: c.y + c.height })),
     );
     const of = new Map(drawn.map((p, i) => [p, embedded[i]]));
     return {
-      pages: src.map((p) => {
-        const c = p.getCropBox();
-        return { kind: "pdf" as const, page: of.get(p) ?? null, width: c.width, height: c.height, rotation: p.getRotation().angle };
-      }),
+      pages: src.pages.map((p) => ({ kind: "pdf" as const, page: of.get(p) ?? null, width: p.box.width, height: p.box.height, rotation: p.rotation })),
     };
   } catch {
     return { name: f.name, reason: "unreadable" };
-  }
-}
-
-/** Can pdf-lib decode this page's content (what embedding it does when the document is saved)? */
-function decodes(p: PDFPage): boolean {
-  try {
-    const { Contents } = p.node.normalizedEntries();
-    if (!Contents) return false;
-    for (let i = 0; i < Contents.size(); i++) {
-      const s = Contents.lookup(i, PDFStream);
-      if (s instanceof PDFRawStream) decodePDFRawStream(s).decode();
-      else if (!(s instanceof PDFContentStream)) return false;
-    }
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -269,17 +229,3 @@ function drawSource(page: PDFPage, src: SourcePage, box: { x: number; y: number;
   page.drawImage(img, { x: f.x, y: f.y, width: img.width * f.scale, height: img.height * f.scale, rotate: degrees(f.rotate) });
 }
 
-/** The schedule cover's lines, page by page (a day's heading never alone at a page's foot). */
-export function chunkSchedule(lines: ScheduleLine[], perPage = 44): ScheduleLine[][] {
-  const out: ScheduleLine[][] = [[]];
-  for (let i = 0; i < lines.length; i++) {
-    let cur = out[out.length - 1];
-    const room = perPage - (out.length === 1 ? 3 : 0) - cur.length; // the first page has the title
-    if (room <= 0 || (lines[i].kind === "day" && room <= 1)) {
-      cur = [];
-      out.push(cur);
-    }
-    cur.push(lines[i]);
-  }
-  return out;
-}

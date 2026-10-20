@@ -9,13 +9,13 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFSt
 import { describe, expect, it } from "vitest";
 import { demoWeek, seedDemoSources } from "../data/demoWeek";
 import type { SourceFile, Week } from "../domain/types";
-import { assembleReader, chunkSchedule, jpegOrientation, orientationTurn, type ReaderJob } from "./assemble";
+import { assembleReader, jpegOrientation, orientationTurn, type ReaderJob } from "./assemble";
 import { stripJpegMetadata } from "./jpeg";
 import { buildSkeleton, skeletonParagraphs, skeletonRows } from "./docx";
-import { A4, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
+import { A4, chunkSchedule, contentBox, frame, MARGIN, numbered, paginateToc, planReader, runningHeader, scheduleCoverPages, TOC_LINES_PER_PAGE, TOC_TITLE_LINES } from "./layout";
 import { manifestTotals, readerHeader, readerManifest, readerRows } from "./model";
 import { nextLessonStep, readerFilesOf, stagesOf } from "../domain/stages";
-import type { Png, TextRenderer } from "./render";
+import type { Png, ScheduleLine, TextRenderer } from "./render";
 import { fit, wrap } from "./render";
 
 function demo(): Week {
@@ -240,7 +240,22 @@ describe("text that must fit", () => {
     expect(pages.map((p) => p.length)).toEqual([41, 2]);
     expect(pages[1][0].kind).toBe("day");
   });
+  it("counts the schedule cover's pages without pdf-lib (the reader screen's estimate): one even for no lines", () => {
+    expect(scheduleCoverPages([])).toBe(1);
+    expect(scheduleCoverPages(designWeek())).toBe(2);
+  });
 });
+
+/** The week the design describes: 5 days × (the day's line, 10 lessons, a memorial slot) — 60 lines, two cover pages. */
+function designWeek(): ScheduleLine[] {
+  const lines: ScheduleLine[] = [];
+  for (let d = 0; d < 5; d++) {
+    lines.push({ kind: "day", text: `יום ${d + 1}` });
+    for (let i = 0; i < 10; i++) lines.push({ kind: "row", text: "08:30–09:45", speaker: "א", title: "ב" });
+    lines.push({ kind: "row", text: "13:00–13:15", title: "זמן זיכרון", memorial: true });
+  }
+  return lines;
+}
 
 describe("the Word skeleton", () => {
   it("has the headings in schedule order, a page each, right to left, a TOC field and the running headers", async () => {
@@ -509,6 +524,64 @@ describe("the PDF assembly", () => {
     expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xda, 0, 2, 1, 2]))).toBeNull(); // a scan before any frame
     expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x40, 0, 1, 2]))).toBeNull(); // a segment past the end
     expect(stripJpegMetadata(new TextEncoder().encode("not a jpeg"))).toBeNull();
+    // no scan at all: a frame and the end; or a segment and then stray bytes to the end of the file
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 8, 0, 16, 1, 1, 0x11, 0, 0xff, 0xd9]))).toBeNull();
+    expect(stripJpegMetadata(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 1, 2, 9, 9, 9]))).toBeNull();
+  });
+
+  it("follows the two shapes libjpeg decodes that a strict walk would refuse — and still leaves no metadata", async () => {
+    const jpeg = syntheticPhoto();
+    const at = (seq: number[]) => Buffer.from(jpeg).indexOf(Buffer.from(seq));
+    const has = (b: Uint8Array, text: string) => Buffer.from(b).includes(Buffer.from(text, "latin1"));
+    // a fill byte before a restart marker inside the scan (… FF FF D0 …): still the scan's data, kept as it is
+    const rst = at(SCAN) + 5;
+    const fill = Uint8Array.from([...jpeg.subarray(0, rst), 0xff, ...jpeg.subarray(rst)]);
+    const filled = stripJpegMetadata(fill)!;
+    expect(filled).not.toBeNull();
+    expect(Buffer.from(filled).includes(Buffer.from([0x56, 0xff, 0xff, 0xd0, 0x78, 0x9a]))).toBe(true);
+    expect(Buffer.from(filled.subarray(-2)).toString("hex")).toBe("ffd9");
+    // stray bytes between two segments (libjpeg: «extraneous bytes before marker»), FF 00 among them or first: passed over, left behind
+    const dqt = at([0xff, 0xdb]);
+    const stray = Uint8Array.from([...jpeg.subarray(0, dqt), 0, 0, 0x2a, 0xff, 0x00, 7, ...jpeg.subarray(dqt)]);
+    const strayFirst = Uint8Array.from([...jpeg.subarray(0, dqt), 0xff, 0x00, 7, ...jpeg.subarray(dqt)]);
+    for (const b of [stray, strayFirst]) expect(Buffer.from(stripJpegMetadata(b)!)).toEqual(Buffer.from(stripJpegMetadata(jpeg)!));
+    await expect(PDFDocument.create().then((d) => d.embedJpg(stray))).rejects.toThrow(); // pdf-lib alone cannot read it
+    for (const b of [filled, stripJpegMetadata(stray)!]) for (const t of ["Exif\0\0", "SamsungPhone", "GPS", "a comment", "MotionPhoto"]) expect(has(b, t), t).toBe(false);
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [
+        { id: 1, name: "fill.jpg", mime: "image/jpeg", bytes: fill.buffer.slice(0) as ArrayBuffer },
+        { id: 2, name: "stray.jpg", mime: "image/jpeg", bytes: stray.buffer.slice(0) as ArrayBuffer },
+      ] }],
+    };
+    const r = await assembleReader(job, stub);
+    expect(r.skipped).toEqual([]);
+    expect(r.pages).toBe(1 + 1 + 2 + 5);
+    for (const t of ["Exif\0\0", "SamsungPhone", "a comment", "MotionPhoto"]) expect(has(r.bytes, t), t).toBe(false);
+  });
+
+  it("opens with as many schedule pages as the screen's estimate counts (scheduleCoverPages)", async () => {
+    const schedule = designWeek();
+    const r = await assembleReader({ editionLabel: "x", cover: null, schedule, scheduleTitle: "לו\"ז", entries: [] }, stub);
+    expect(r.pages).toBe(planReader([], scheduleCoverPages(schedule)).pages.length);
+    expect(r.pages).toBe(2 + 1 + 5);
+  });
+
+  it("frames a page whose box names its corners top-left first ([0 842 595 0]) upright, as every viewer shows it", async () => {
+    const d = await PDFDocument.create();
+    const p = d.addPage([595, 842]);
+    p.drawRectangle({ x: 20, y: 20, width: 100, height: 50 });
+    p.node.set(PDFName.of("MediaBox"), d.context.obj([0, 842, 595, 0]));
+    const b = await d.save();
+    const job: ReaderJob = {
+      editionLabel: "x", cover: null, schedule: [], scheduleTitle: "",
+      entries: [{ ref: 0, day: 0, header: "א – ב", when: "", files: [{ id: 1, name: "inverted.pdf", mime: "application/pdf", bytes: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }] }],
+    };
+    const out = await PDFDocument.load((await assembleReader(job, stub)).bytes);
+    expect(sources(out)[2]).toBe("595x842");
+    // drawn at a positive scale — pdf-lib's drawPage scales just before the page's Do — not turned upside down
+    const scale = /(\S+) 0 0 (\S+) 0 0 cm\s*\/\S+ Do/.exec(pageContent(out, 2));
+    expect(scale && [Number(scale[1]), Number(scale[2])].every((n) => n > 0.9 && n < 1.1), pageContent(out, 2)).toBe(true);
   });
 
   it("stops when cancelled", async () => {
