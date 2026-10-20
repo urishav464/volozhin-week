@@ -398,7 +398,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {kind === "tracking" && (
               <>
-                <Field id={`${id}-label`} label="שם המחזור בארכיון" hint={sameLabel?.kind === "archive" ? "מחזור בשם הזה כבר בארכיון — הייבוא יחליף את כל השיעורים שלו." : "למשל: תשפ״ו. נשמר כמחזור ארכיון, לקריאה בלבד."}>
+                <Field id={`${id}-label`} label="שם המחזור בארכיון" hint={sameLabel?.kind === "archive" ? "מחזור בשם הזה כבר בארכיון — הייבוא יחליף את כל השיעורים שלו (לא אם נכתב על אחד מהם «איך עבר»)." : "למשל: תשפ״ו. נשמר כמחזור ארכיון, לקריאה בלבד."}>
                   <input id={`${id}-label`} value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} className={INPUT} aria-describedby={`${id}-label-hint`} />
                 </Field>
                 <Field id={`${id}-date`} label="תאריך הפתיחה של אשתקד (יום ראשון, לא חובה)">

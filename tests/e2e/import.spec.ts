@@ -138,6 +138,16 @@ test.describe("demo build — the import of 5786", () => {
     await page.getByRole("tab", { name: "מחזור" }).click();
     await expect(page.getByText("תשפ״ו לדוגמה").first()).toBeVisible();
 
+    // after the week (v12, both parts): an archive is purged without a date, and the purge clears what the sheet said
+    // on its lessons — the transport words of one, who sent the summary on another
+    const purge = page.locator("#purge-panel");
+    await purge.getByLabel("מוחקים את המידע של").selectOption({ label: "תשפ״ו לדוגמה (בארכיון)" });
+    await expect(purge.locator("[data-purge-import-notes]")).toContainText("ההערות שהייבוא הביא מגיליון המעקב");
+    await purge.getByLabel(/כדי למחוק, מקלידים את שם המחזור/).fill("תשפ״ו לדוגמה");
+    await purge.getByRole("button", { name: "מחיקת המידע האישי של תשפ״ו לדוגמה" }).click();
+    await expect(purge.locator("[data-purge-report]")).toContainText("ההערות מגיליון המעקב של 2 שיעורים נמחקו");
+    await expect(purge.locator("[data-purged]")).toContainText("נמחק ב-");
+
     // the approvals queue: one confirm approves the four who taught in it
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();
     const batch = page.getByRole("group", { name: "אישור באצווה: מי שלימד/ה ב-תשפ״ו לדוגמה" });

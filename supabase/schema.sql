@@ -4695,7 +4695,10 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
 --   import_commit   'candidates' → the pool (source as typed, vetted pending)
 --                   'tracking'   → an archive edition of closed lessons (kind
 --                                  'archive', status 'archived'); the same label
---                                  again REPLACES that edition's lessons
+--                                  again REPLACES that edition's lessons — unless
+--                                  someone wrote «איך עבר» on one of them
+--                                  (`archive_reviewed`: a review goes with its
+--                                  lesson, and is never lost to a re-run)
 --                   'escorts'    → contact_pref and speaker_contacts.secretary_note
 -- Re-runnable: a 'new' speaker whose name key — or phone — the pool already has
 -- completes that speaker instead of adding a second one. A match only FILLS what
@@ -4704,7 +4707,9 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
 -- field names — never a name, a phone or a note.
 -- lessons.import_note: what last year's sheet said that has no field of its
 -- own (transport/payment words, who sent the summary message), cleared of
--- phones and e-mails in the browser (scrubContacts); written by this import only.
+-- phones and e-mails in the browser (scrubContacts); written by this import only,
+-- and cleared by purge_edition_private (Milestone 6, below) with the transport
+-- details it may name.
 -- =============================================================================
 
 alter table public.lessons add column if not exists import_note text;
@@ -4984,6 +4989,10 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
       end if;
       select * into v_ed from public.editions where label = v_label for update;
       if v_ed.id is not null and v_ed.kind <> 'archive' then perform app.refuse('edition_exists'); end if;
+      -- the replace deletes the lessons, and «איך עבר» (Milestone 6, below) with them: an archive with a review is kept
+      if v_ed.id is not null and exists (select 1 from public.lesson_reviews r where r.edition_id = v_ed.id) then
+        perform app.refuse('archive_reviewed');
+      end if;
       v_source := app.clean_line(p_payload ->> 'source', 60);
       if v_source is null then perform app.refuse('bad_value'); end if;
       v_res := app.import_speakers(p_payload -> 'speakers', v_titles, v_source, v_me);
@@ -5185,7 +5194,9 @@ create or replace function public.import_lookup(p_speakers bigint[], p_phone_key
 --                         Friday 00:00, start_date + 5 — when the links expire)
 --                         or the edition is archived, with the edition's label
 --                         typed: deletes its transport details (pickup addresses,
---                         drivers' names and phones), revokes every link of it
+--                         drivers' names and phones) — and, in an edition the
+--                         import of 5786 made, the sheet's notes (import_note:
+--                         its transport and payment words) —, revokes every link of it
 --                         and deletes the links' rate-limit counts (hashed
 --                         addresses); keeps everything else (DECISIONS «אבן דרך
 --                         6», table by table). editions.purged_at says when (the
@@ -5415,8 +5426,11 @@ create trigger editions_purged_guard before insert or update on public.editions
 -- `stale`; the label not typed exactly `confirm_mismatch`; the week not over yet
 -- (Israel time, before Friday 00:00 = start_date + 5; the date TBD) and the
 -- edition not archived `week_not_over`. Then: the transport details of its
--- lessons deleted, its links revoked (the anon functions answer `link_invalid`
--- from now on) and their rate-limit counts deleted. Returns the counts; logs
+-- lessons deleted, its lessons' import notes cleared (the import of 5786 keeps
+-- last year's transport and payment words there: an archive it made is purged
+-- of them as a live edition is of its transport details), its links revoked
+-- (the anon functions answer `link_invalid` from now on) and their rate-limit
+-- counts deleted. Returns the counts; logs
 -- them (and nothing else) in the edition's activity.
 create or replace function public.purge_edition_private(p_edition bigint, p_confirm text) returns jsonb
   language plpgsql security definer set search_path = ''
@@ -5426,6 +5440,7 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     v_t   integer;
     v_l   integer;
     v_h   integer;
+    v_n   integer;
     v_at  timestamptz;
   begin
     if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
@@ -5438,6 +5453,8 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     end if;
     delete from public.transport_details t using public.lessons l where l.id = t.lesson_id and l.edition_id = p_edition;
     get diagnostics v_t = row_count;
+    update public.lessons set import_note = null where edition_id = p_edition and import_note is not null;
+    get diagnostics v_n = row_count;
     delete from public.share_link_hits h using public.share_links s where s.token_hash = h.token_hash and s.edition_id = p_edition;
     get diagnostics v_h = row_count;
     update public.share_links set revoked_at = now() where edition_id = p_edition and revoked_at is null;
@@ -5447,8 +5464,8 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     update public.editions set purged_at = v_at where id = p_edition and purged_at is null;
     perform set_config('app.purging', '', true);
     perform app.log_event(p_edition, 'editions', p_edition, 'purge',
-                          jsonb_build_object('transport_details', v_t, 'links_revoked', v_l, 'link_hits', v_h));
-    return jsonb_build_object('transport_details', v_t, 'links_revoked', v_l, 'link_hits', v_h, 'purged_at', app.iso(v_at));
+                          jsonb_build_object('transport_details', v_t, 'import_notes', v_n, 'links_revoked', v_l, 'link_hits', v_h));
+    return jsonb_build_object('transport_details', v_t, 'import_notes', v_n, 'links_revoked', v_l, 'link_hits', v_h, 'purged_at', app.iso(v_at));
   end
   $$;
 

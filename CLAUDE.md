@@ -230,11 +230,17 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
   `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
   Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
-  every link, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
+  every link, clears the lessons' `import_note`, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
   `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v11 (50ff373).
+- **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
+  (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
+  label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
+  `import_note` (the sheet's transport/payment words); `start_edition`'s previous edition is `kind = 'real'` only. The
+  parity engine sees the import's archives as `elsewhere`. Tests: `tests/sql/importAfter.test.ts`,
+  `src/data/importAfter.test.ts`, parity «the import meets after the week».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

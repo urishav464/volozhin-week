@@ -2,6 +2,7 @@
 import { CommandError } from "../../src/data/commands";
 import { emptyShared, Engine, type ImportHost, type PoolShared } from "../../src/data/engine";
 import { ImportRowError } from "../../src/data/imports";
+import { ARCHIVE_ROOM } from "../../src/data/importRules";
 import { titlesOf } from "../../src/data/speakerRules";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
@@ -202,7 +203,15 @@ export function engineDriver(): Driver {
         }
       }
       const m = MEMBERS.find((x) => x.key === step.as)!;
-      const e = new Engine(week, { memberId: memberId(m.key), role: m.role, global: !!m.global }, undefined, shared);
+      const actor = { memberId: memberId(m.key), role: m.role, global: !!m.global };
+      // the other editions are the import's archives: across the years (returning speakers, reviews) as the database sees them
+      const e = new Engine(week, actor, undefined, shared, () => archives);
+      /** An engine on the archive edition of that label (the steps that name one are a global admin's). */
+      const onArchive = (label: string) => {
+        const w = archives.find((x) => x.edition.label === label);
+        if (!w) throw new Error(`no archive edition «${label}»`);
+        return new Engine(w, actor, undefined, shared, () => [week, ...archives.filter((x) => x !== w)]);
+      };
       try {
         if ("propose" in step) {
           const target = "cell" in step
@@ -334,20 +343,23 @@ export function engineDriver(): Driver {
         } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
         // ---- after the week
         else if ("review" in step) {
-          const l = lessonAt(step.review);
-          const old = shared.reviews.find((r) => r.edition_id === week.edition.id && r.lesson_id === l?.id);
+          const on = step.edition == null ? e : onArchive(step.edition);
+          const [day, start, room] = step.review;
+          const l = step.edition == null ? lessonAt(step.review) : on.week.lessons.find((x) => x.day === day && x.start_min === start && on.week.rooms.find((r) => r.id === x.room_id)?.name === (room ?? ARCHIVE_ROOM));
+          const old = shared.reviews.find((r) => r.edition_id === on.week.edition.id && r.lesson_id === l?.id);
           const f = step.fields;
-          const v = e.saveReview(l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), {
+          const v = on.saveReview(l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), {
             went_well: f.went_well ?? null, issues: f.issues ?? null, invite_again: (f.invite_again ?? null) as never, overran: f.overran as boolean, rating: f.rating ?? null,
           });
           return `v=${v}`;
         } else if ("readReviews" in step) {
           return e.reviewsOf().map((r) => reviewLine(names.lesson(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : spLabel(r.speaker_id), by: memberKey(r.written_by) })).sort().join(" ; ") || "none";
         } else if ("speakerReviews" in step) {
-          return e.speakerReviews(speakerId(step.speakerReviews)).map((r) => `${r.edition_label}|${names.lesson(r.lesson_id)}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`).join(" ; ") || "none";
+          // by the lesson's day and times as the answer gives them: a lesson id of another year means nothing here
+          return e.speakerReviews(speakerId(step.speakerReviews)).map((r) => `${r.edition_label}|${r.day}|${r.start_min}-${r.end_min}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`).join(" ; ") || "none";
         } else if ("returning" in step) {
           return e.returning().map((r) => `${spLabel(r.speaker_id)}:${r.editions.join(",")}`).join(" ; ") || "none";
-        } else if ("purge" in step) return purgeRead(e.purgePrivate(step.purge));
+        } else if ("purge" in step) return purgeRead((step.edition == null ? e : onArchive(step.edition)).purgePrivate(step.purge));
         return "ok";
       } catch (err) {
         if (err instanceof ImportRowError) return `${err.code}:${err.row}:${err.reason}`;
@@ -417,12 +429,20 @@ export function engineDriver(): Driver {
         ].sort(),
         archive: archives
           .flatMap((a) => [
-            `edition|${a.edition.label}|${a.edition.kind}|${a.edition.status}|${a.edition.start_date ?? "-"}|rows=${a.rows.length}`,
+            `edition|${a.edition.label}|${a.edition.kind}|${a.edition.status}|${a.edition.start_date ?? "-"}|rows=${a.rows.length}|purged=${a.edition.purged_at == null ? "-" : "y"}`,
             ...a.rooms.map((r) => `room|${a.edition.label}|${r.name}|${r.sort}|${r.is_default}`),
             ...a.lessons.map((l) => {
               const who = a.lessonSpeakers.filter((x) => x.lesson_id === l.id).map((x) => `${speakerName(x.speaker_id)}:${x.role}`).sort().join(",");
               return archiveLessonLine(a.edition.label, l, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
             }),
+            // «איך עבר» on an archive's lessons (a global admin's), by the lesson's place
+            ...shared.reviews
+              .filter((r) => r.edition_id === a.edition.id)
+              .map((r) => {
+                const l = a.lessons.find((x) => x.id === r.lesson_id);
+                const where = l ? `${a.edition.label}|${l.day}|${l.start_min}-${l.end_min}|${a.rooms.find((x) => x.id === l.room_id)!.name}` : `${a.edition.label}|#${r.lesson_id}`;
+                return reviewLine(where, { ...r, speaker: r.speaker_id == null ? "-" : sp(r.speaker_id), by: member(r.written_by) });
+              }),
           ])
           .sort(),
         reviews: shared.reviews

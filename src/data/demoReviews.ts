@@ -30,8 +30,11 @@ export class DemoReviews implements ReviewsPort {
   }
 
   async ofSpeaker(speakerId: number): Promise<SpeakerReview[]> {
-    // the newest edition's engine: its actor decides, as the database's app.may_read_reviews would
-    const here = this.s.engine(Math.max(...this.s.engines.keys())).speakerReviews(speakerId);
+    // the newest edition still live (the demo's own, or a real one opened in it): its actor decides, as the database's
+    // app.may_read_reviews would — never an archive the import of 5786 made, though its id is newer
+    const editions = [...this.s.engines.values()].map((e) => e.week.edition).sort((a, b) => b.id - a.id);
+    const reader = editions.find((e) => e.kind !== "archive" && e.status !== "archived") ?? editions[0];
+    const here = this.s.engine(reader.id).speakerReviews(speakerId);
     return structuredClone([...here, ...(this.s.pastReviews[speakerId] ?? [])]);
   }
 

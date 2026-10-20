@@ -1288,7 +1288,8 @@ export class Engine {
   /**
    * public.purge_edition_private: a global admin (`forbidden`), the edition's label typed (`confirm_mismatch`), once the
    * week is over or the edition archived (`week_not_over`). Deletes the edition's transport details and its links' rate
-   * counts, revokes every link of it; the first time is kept (purged_at); logged with the counts only.
+   * counts, clears its lessons' import notes (an archive the import of 5786 made keeps last year's transport and payment
+   * words there), revokes every link of it; the first time is kept (purged_at); logged with the counts only.
    */
   purgePrivate(confirm: string | null): PurgeReport {
     return this.tx(() => {
@@ -1301,6 +1302,13 @@ export class Engine {
         if (k.startsWith(`${e.id}:`)) {
           delete this.shared.transport[k];
           transport++;
+        }
+      }
+      let notes = 0;
+      for (const l of this.week.lessons) {
+        if (l.import_note != null) {
+          l.import_note = null;
+          notes++;
         }
       }
       const links = this.shared.links.filter((l) => l.edition_id === e.id);
@@ -1320,7 +1328,7 @@ export class Engine {
         }
       }
       e.purged_at = e.purged_at ?? now;
-      const counts = { transport_details: transport, links_revoked: revoked, link_hits: hits };
+      const counts = { transport_details: transport, import_notes: notes, links_revoked: revoked, link_hits: hits };
       this.log(e.id, "editions", e.id, "purge", counts);
       return { ...counts, purged_at: e.purged_at };
     });
@@ -1764,6 +1772,8 @@ export class Engine {
         const start = typeof p.start_date === "string" || p.start_date == null ? cleanArchiveDate(p.start_date) : fail("bad_value");
         const existing = host.byLabel(label);
         if (existing && existing.kind !== "archive") fail("edition_exists");
+        // the replace deletes the lessons, and «איך עבר» with them (on delete cascade): an archive with a review is kept
+        if (existing?.week && this.shared.reviews.some((r) => r.edition_id === existing.week!.edition.id)) fail("archive_reviewed");
         source = cleanSource(p.source);
         res = this.importSpeakers(p.speakers as unknown[], titles, source);
         const ids = res.map((r) => r.speaker_id);

@@ -47,6 +47,8 @@ export type EditionPatch = Partial<Pick<Edition, "start_date" | "first_day_from"
 /** What public.purge_edition_private deleted (counts — never a value), and when the edition was first purged. */
 export interface PurgeReport {
   transport_details: number;
+  /** Lessons whose import note (last year's sheet, the import of 5786 — an archive's lessons only) was cleared. */
+  import_notes: number;
   links_revoked: number;
   link_hits: number;
   purged_at: string;

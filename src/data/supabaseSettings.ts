@@ -89,7 +89,8 @@ export class SupabaseSettings implements SettingsPort {
   async purgeEdition(editionId: number, confirm: string): Promise<PurgeReport> {
     const r = (await this.rpc("purge_edition_private", { p_edition: editionId, p_confirm: confirm })) as Record<string, unknown>;
     return {
-      transport_details: Number(r.transport_details ?? 0), links_revoked: Number(r.links_revoked ?? 0), link_hits: Number(r.link_hits ?? 0), purged_at: String(r.purged_at),
+      transport_details: Number(r.transport_details ?? 0), import_notes: Number(r.import_notes ?? 0), links_revoked: Number(r.links_revoked ?? 0), link_hits: Number(r.link_hits ?? 0),
+      purged_at: String(r.purged_at),
     };
   }
 

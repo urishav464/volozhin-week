@@ -1155,7 +1155,8 @@ policies run as the browser's role (`tests/sql/schema.test.ts` pins them).
 Last year's files (תשפ"ו) into the database (DESIGN «ייבוא תשפ"ו»; DECISIONS «ייבוא תשפ"ו»). The same two
 implementations: `supabase/schema.sql` «Import 5786» and `src/data/engine.ts` (`importCommit`, `importLookup`,
 behind `DemoPort`'s `imports`); `tests/parity` runs candidates, an archive (made, then replaced) and the escorts on
-both and compares results, refusals and state. Both functions are `SECURITY DEFINER` in `public`, and both are a
+both and compares results, refusals and state — and, with after the week, an imported archive as a past year, a
+review that keeps a re-run from replacing it, and its purge («the import meets after the week»). Both functions are `SECURITY DEFINER` in `public`, and both are a
 **global admin's** (`app.require_global_admin`: not a member → `not_member`; a member who is not a global admin —
 an edition's admin included → `forbidden`).
 
@@ -1205,7 +1206,9 @@ Resolved:
 ### `tracking` — `{label, start_date, source, titles_from, speakers: SpeakerRow[], lessons: ArchiveLessonRow[]}`
 In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`;
 `start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; an edition with
-this label that is not of kind `archive` → `edition_exists`; `source` as above. Then the speakers (as above), then:
+this label that is not of kind `archive` → `edition_exists`; an archive edition with this label that has a
+`lesson_reviews` row (an admin wrote «איך עבר» on one of its lessons — after the week, below) → `archive_reviewed`: the
+replace would delete it with its lesson, so nothing is replaced; `source` as above. Then the speakers (as above), then:
 - **No edition with this label:** a new one — `kind='archive'`, `status='archived'`, `start_date` only as given; its
   grid rows copied from `grid_template` (as `start_edition` makes them), one default room «בית מדרש» (the same label
   made a moment ago by another import → `stale`).
@@ -1223,8 +1226,10 @@ this label that is not of kind `archive` → `edition_exists`; `source` as above
   record of what was, its speakers may be pending, their gender unknown.
 - `lessons.import_note` (v12): what the sheet said that has no field of its own («הסעה/תשלום» words, «קיבל הודעת
   סיכום מ» — a note, never a member), cleared of phones and e-mails in the browser. Written by this import only;
-  `load_week` carries it; the lesson panel shows it («מגיליון המעקב של אשתקד»).
-- The archive's lessons are in `speaker_history` like any edition's.
+  `load_week` carries it; the lesson panel shows it («מגיליון המעקב של אשתקד»). `purge_edition_private` clears it
+  (after the week, «The purge»).
+- The archive's lessons are in `speaker_history` like any edition's; after the week, the archive is a past year for
+  `edition_returning` and `speaker_reviews` (its kind is `archive`).
 
 ### `escorts` — `{rows: PrefsRow[]}`
 `rows` an array → else `bad_value`. Each row: an object; `speaker_id` a pool speaker → else `stale`; `contact_pref`
@@ -1244,7 +1249,7 @@ with the counts and the source. **Never a name, a phone, an e-mail or a note.**
 
 `not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `name_required bad_phone
 bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amount room_taken speaker_busy`; for
-`tracking`, `label_required not_sunday edition_exists stale`. The browser's own, before anything is sent:
+`tracking`, `label_required not_sunday edition_exists archive_reviewed stale`. The browser's own, before anything is sent:
 `import_too_big` (a file or a table past `IMPORT_LIMITS`), `import_bad_file`, `import_encrypted`.
 
 ## RPC signatures (the import)
@@ -1343,23 +1348,28 @@ and its week is not over → `week_not_over` («over»: the Israel date ≥ `sta
 the escort and schedule links expire; never while the date is TBD). Then:
 
 - deletes the edition's `transport_details` (pickup addresses and times, drivers' names and phones);
+- clears its lessons' `import_note` (the import of 5786: what last year's sheet said — its transport and payment
+  words among it — on an archive's lessons; always null elsewhere), the lessons' `version` unchanged;
 - deletes the `share_link_hits` of the edition's links (the hashed callers' addresses);
 - revokes every live `share_links` row of the edition (`revoked_at` = now) — the anon functions answer
   `link_invalid` for them from then on, and nothing un-revokes a link;
 - sets `editions.purged_at` the first time (a trigger keeps it from any other write);
-- logs `activity (entity 'editions', kind 'purge', detail {transport_details, links_revoked, link_hits})` —
+- logs `activity (entity 'editions', kind 'purge', detail {transport_details, import_notes, links_revoked, link_hits})` —
   counts only;
 
-and returns `{transport_details, links_revoked, link_hits, purged_at}`. Idempotent: a second run deletes
+and returns `{transport_details, import_notes, links_revoked, link_hits, purged_at}`. Idempotent: a second run deletes
 nothing more, returns zeros and the first `purged_at`, and is logged again. Everything else stays
-(DECISIONS «אבן דרך 6» has each table and why). In the engine: `shared.transport` keys `<edition>:…`,
-`shared.linkHits` of the edition's tokens, `shared.links`, `week.edition.purged_at`, the pool's log.
+(DECISIONS «אבן דרך 6» has each table and why; «איחוד גרסה 12» the import note). In the engine: `shared.transport`
+keys `<edition>:…`, `week.lessons[].import_note`, `shared.linkHits` of the edition's tokens, `shared.links`,
+`week.edition.purged_at`, the pool's log.
 
 ## Moving to next year
 ### `settings.startEdition(e, {deactivateTeam})` — `start_edition(p_label, p_start_date, p_first_day_from, p_room, p_deactivate_team default false)` → `bigint`
 As before, and with `p_deactivate_team`: before the live real editions are archived, their members who are
 not admins (content, logistics) become `active = false` — never deleted; admins of those editions and every
-all-editions member stay. The screen sends it on by default («הצעה»).
+all-editions member stay. The screen sends it on by default («הצעה»). «The previous edition» is always of kind
+`real`: an archive the import of 5786 made is never archived again, never carried from and never deactivated, however
+new its id (`tests/sql/importAfter.test.ts`).
 
 ### `settings.previewStart(deactivateTeam)` — `start_edition_preview(p_deactivate_team default true)` → `jsonb`
 Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:

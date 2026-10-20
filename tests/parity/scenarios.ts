@@ -1115,4 +1115,40 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", readTransport: [1, 510] },
     { as: "admin", purge: "בדיקת התאמה" }, // again: nothing more
   ],
+
+  // the two parts of v12 together: the archive the import makes is a past year for the summary and the speaker sheet;
+  // a re-run never deletes «איך עבר» with the lessons it replaces; the purge clears what last year's sheet said
+  "the import meets after the week: the imported year across the years, a review kept from a re-run, the archive purged": [
+    {
+      as: "admin",
+      importArchive: {
+        label: "תשפ\"ו",
+        speakers: [{ row: 2, action: "merge", speaker: "אלפא", name: "אלפא" }, { row: 3, action: "merge", speaker: "גמא", name: "גמא" }],
+        lessons: [
+          { row: 2, day: 0, start: 510, end: 600, speakers: [0], import_note: "הסעה/תשלום: איסוף מתחנה לדוגמה\nקיבל הודעת סיכום מ: חניך/ה לדוגמה" },
+          { row: 3, day: 1, start: 600, end: 690, speakers: [1], pay_amount: 250 },
+        ],
+      },
+    },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", returning: true }, // «אלפא» taught in the imported year — its date unknown: a past year
+    { as: "L", returning: true },
+    { as: "admin", review: [0, 510], edition: "תשפ\"ו", fields: { went_well: "עבר טוב באשתקד", invite_again: "yes", rating: 5 } },
+    { as: "A", speakerReviews: "אלפא" }, // a past year's review, read by this year's content team
+    { as: "L", speakerReviews: "אלפא" },
+    { as: "A", speakerReviews: "גמא" }, // the year's other speaker: nothing written
+    // the same label again would replace its lessons, the review with them: refused, nothing changed
+    { as: "admin", importArchive: { label: "תשפ\"ו", speakers: [{ row: 2, action: "merge", speaker: "אלפא", name: "אלפא" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
+    // the purge of an imported archive: a global admin's, the label typed, no date needed — the sheet's notes go
+    { as: "E", purge: "תשפ\"ו", edition: "תשפ\"ו" },
+    { as: "admin", purge: "בדיקת התאמה", edition: "תשפ\"ו" },
+    { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" },
+    { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" }, // again: nothing more
+    { as: "A", speakerReviews: "אלפא" }, // the review stays
+    { as: "A", returning: true }, // and so does the year
+    // a new import under another label: no review there, so it may be replaced at will
+    { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 3, start: 870, end: 960, speakers: [0] }] } },
+    { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 4, start: 510, end: 600, speakers: [0], import_note: "הערה לדוגמה" }] } },
+  ],
 };

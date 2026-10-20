@@ -179,14 +179,15 @@ export type Step =
   /** import_commit with a payload as it is (a wrong kind, a wrong shape). */
   | { as: ActorKey; importRaw: { kind: string; payload: unknown } }
   // after the week (milestone 6) — a review by its lesson's place; the speaker by label
-  | { as: ActorKey; review: At; fields: { went_well?: string | null; issues?: string | null; invite_again?: string | null; overran?: boolean | null; rating?: number | null }; staleBy?: number }
+  /** «איך עבר» on a lesson of the edition — or, with `edition`, of the archive edition of that label (the import's). */
+  | { as: ActorKey; review: At; edition?: string; fields: { went_well?: string | null; issues?: string | null; invite_again?: string | null; overran?: boolean | null; rating?: number | null }; staleBy?: number }
   /** load_reviews: the edition's reviews the caller reads. */
   | { as: ActorKey; readReviews: true }
   | { as: ActorKey; speakerReviews: string }
   /** edition_returning. */
   | { as: ActorKey; returning: true }
   /** purge_edition_private, with the label typed as given (null: none). */
-  | { as: ActorKey; purge: string | null };
+  | { as: ActorKey; purge: string | null; edition?: string };
 
 /** A speaker row of an import step: as SpeakerRow, the merge target by its label. */
 export interface ImportSpeakerStep {
@@ -318,8 +319,8 @@ export function reviewLine(where: string, r: {
 }
 
 /** What a purge answers, as one comparable string (the time apart: it is the clock's). */
-export function purgeRead(r: { transport_details: number; links_revoked: number; link_hits: number; purged_at: unknown }): string {
-  return `purged|t=${r.transport_details}|l=${r.links_revoked}|h=${r.link_hits}|at=${r.purged_at == null ? "-" : "y"}`;
+export function purgeRead(r: { transport_details: number; import_notes: number; links_revoked: number; link_hits: number; purged_at: unknown }): string {
+  return `purged|t=${r.transport_details}|n=${r.import_notes}|l=${r.links_revoked}|h=${r.link_hits}|at=${r.purged_at == null ? "-" : "y"}`;
 }
 
 /** A fallen as the state compares it. */

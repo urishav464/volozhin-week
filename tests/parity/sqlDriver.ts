@@ -2,6 +2,7 @@
 // scenario, every command called as the role a browser gets, with that
 // member's Google claims — and committed, like PostgREST would.
 import type pg from "pg";
+import { ARCHIVE_ROOM } from "../../src/data/importRules";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
@@ -502,7 +503,14 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       }
       // ---- after the week
       if ("review" in step) {
-        const l = await lessonAt(step.review);
+        const [day, start, room] = step.review;
+        const l = step.edition == null
+          ? await lessonAt(step.review)
+          : await one(
+              `select l.id, l.version from public.lessons l join public.rooms r on r.id = l.room_id join public.editions e on e.id = l.edition_id
+                where e.label = $1 and e.kind = 'archive' and l.day = $2 and l.start_min = $3 and r.name = $4`,
+              [step.edition, day, start, room ?? ARCHIVE_ROOM],
+            );
         const old = l ? await one("select version from public.lesson_reviews where lesson_id = $1", [l.id]) : undefined;
         const f = step.fields;
         return call(step.as, "select public.save_lesson_review($1, $2, $3, $4, $5, $6, $7)", [
@@ -520,10 +528,9 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         );
       }
       if ("speakerReviews" in step) {
-        const keys = await lessonKeyMap();
         return call(step.as, "select public.speaker_reviews($1)", [await speakerId(step.speakerReviews)], (v) =>
-          (v as { edition_label: string; lesson_id: number; invite_again: string | null; rating: number | null; went_well: string | null }[])
-            .map((r) => `${r.edition_label}|${keys.get(Number(r.lesson_id)) ?? `#${r.lesson_id}`}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`)
+          (v as { edition_label: string; day: number; start_min: number; end_min: number; invite_again: string | null; rating: number | null; went_well: string | null }[])
+            .map((r) => `${r.edition_label}|${r.day}|${r.start_min}-${r.end_min}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`)
             .join(" ; ") || "none",
         );
       }
@@ -533,7 +540,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           (v as { speaker_id: number; editions: string[] }[]).map((r) => `${spk.get(Number(r.speaker_id))}:${r.editions.join(",")}`).join(" ; ") || "none",
         );
       }
-      if ("purge" in step) return call(step.as, "select public.purge_edition_private($1, $2)", [ed, step.purge], (v) => purgeRead(v as Parameters<typeof purgeRead>[0]));
+      if ("purge" in step) {
+        const target = step.edition == null ? ed : Number((await one("select id from public.editions where label = $1 and kind = 'archive'", [step.edition]))?.id ?? -1);
+        return call(step.as, "select public.purge_edition_private($1, $2)", [target, step.purge], (v) => purgeRead(v as Parameters<typeof purgeRead>[0]));
+      }
       throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
@@ -551,10 +561,17 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
             from public.lessons l join public.editions e on e.id = l.edition_id join public.rooms r on r.id = l.room_id
             left join public.categories c on c.id = l.category_id
            where e.kind = 'archive'`)).rows;
+        // «איך עבר» on an archive's lessons (a global admin's), by the lesson's place
+        const reviewed = (await db.query(`
+          select r.*, e.label, l.day, l.start_min, l.end_min, ro.name as room, s.name, s.disambiguator
+            from public.lesson_reviews r join public.editions e on e.id = r.edition_id join public.lessons l on l.id = r.lesson_id
+            join public.rooms ro on ro.id = l.room_id left join public.speakers s on s.id = r.speaker_id
+           where e.kind = 'archive'`)).rows;
         return [
-          ...eds.map((e) => `edition|${e.label}|${e.kind}|${e.status}|${e.start ?? "-"}|rows=${e.rows}`),
+          ...eds.map((e) => `edition|${e.label}|${e.kind}|${e.status}|${e.start ?? "-"}|rows=${e.rows}|purged=${e.purged_at == null ? "-" : "y"}`),
           ...rooms.map((r) => `room|${r.label}|${r.name}|${r.sort}|${r.is_default}`),
           ...ls.map((l) => archiveLessonLine(l.label, l, l.room, l.cat ?? "-", l.who ?? "")),
+          ...reviewed.map((r) => reviewLine(`${r.label}|${r.day}|${r.start_min}-${r.end_min}|${r.room}`, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) })),
         ].sort();
       };
       const lessons = (await db.query(`

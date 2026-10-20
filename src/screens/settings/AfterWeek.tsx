@@ -247,6 +247,11 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
             <p className="font-semibold">מה נמחק:</p>
             <ul className="list-disc ps-5">
               <li>פרטי ההסעה של כל השיעורים: כתובות איסוף, שעות איסוף, שמות הנהגים והטלפונים שלהם.</li>
+              {e.kind === "archive" && (
+                <li data-purge-import-notes>
+                  ההערות שהייבוא הביא מגיליון המעקב («מגיליון המעקב של אשתקד» בלוח השיעור): מה שנכתב שם על הסעה ותשלום, מי שלח/ה את הודעת הסיכום ושאר ההערות.
+                </li>
+              )}
               <li>כל הקישורים של המחזור מבוטלים: קישורי המלווים, ההרשמה למכריכה לכריכה והלו"ז. הם לא ייפתחו יותר.</li>
               <li>מוני מגבלת הקצב של הקישורים (טביעות חד-כיווניות של כתובות ה-IP של מי שפתח אותם).</li>
             </ul>
@@ -297,6 +302,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               <p className="font-semibold">נמחק המידע האישי של {report.edition}:</p>
               <ul className="list-disc ps-5">
                 <li>פרטי הסעה של {report.r.transport_details} שיעורים נמחקו.</li>
+                {report.r.import_notes > 0 && <li>ההערות מגיליון המעקב של {report.r.import_notes} שיעורים נמחקו.</li>}
                 <li>{report.r.links_revoked} קישורים בוטלו.</li>
                 <li>{report.r.link_hits} מונים של מגבלת הקצב נמחקו.</li>
               </ul>
