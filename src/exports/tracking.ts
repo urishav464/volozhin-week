@@ -144,7 +144,24 @@ export function filterTracking(rows: TrackingRow[], f: TrackingFilter): Tracking
 }
 
 export const TRACKING_HEADERS = ["מרצה", "יום ושעה", "כותרת", "נושא", "מקורות", "הסעה/תשלום", "מלווה", "קיבל הודעת סיכום מ"] as const;
-const WIDTHS = [30, 24, 34, 20, 26, 34, 24, 28];
+
+/**
+ * The columns' widths, in characters: the xlsx's, and the screen's and the printed table's proportions (one
+ * layout for every day). With phones, טלפון after מרצה. A printed xlsx is fitted to the page's width.
+ */
+export function trackingWidths(withPhone: boolean): number[] {
+  const w = [24, 20, 26, 16, 22, 26, 18, 22];
+  if (withPhone) w.splice(1, 0, 18);
+  return w;
+}
+
+/**
+ * A phone as a file's cell writes it: a LEFT-TO-RIGHT MARK first, so a spreadsheet opening the CSV keeps it
+ * text («0501…» does not lose its zero to a number) and lays it out left to right. Empty stays empty.
+ */
+export function phoneCell(phone: string | undefined): string {
+  return phone ? `${LRM}${phone}` : "";
+}
 
 /**
  * The table the CSV and the xlsx write. `phones` (lesson id → phone) adds a טלפון column after מרצה — pass it
@@ -154,20 +171,16 @@ const WIDTHS = [30, 24, 34, 20, 26, 34, 24, 28];
 export function trackingTable(rows: TrackingRow[], editionLabel: string, phones?: ReadonlyMap<number, string>): Table {
   const withPhone = phones != null;
   const headers: string[] = [...TRACKING_HEADERS];
-  const widths = [...WIDTHS];
-  if (withPhone) {
-    headers.splice(1, 0, "טלפון");
-    widths.splice(1, 0, 18);
-  }
+  if (withPhone) headers.splice(1, 0, "טלפון");
   return {
     name: `טבלת מעקב ${editionLabel}`,
     headers,
-    widths,
+    widths: trackingWidths(withPhone),
     landscape: true,
     fills: rows.map((r) => PROGRESS_FILL[r.tone]),
     rows: rows.map((r) => {
       const cells = [r.speaker, whenCell(r), r.title, r.category, r.sources, r.payment, r.escort, r.confirmed];
-      if (withPhone) cells.splice(1, 0, phones.get(r.lesson.id) ?? "");
+      if (withPhone) cells.splice(1, 0, phoneCell(phones.get(r.lesson.id)));
       return cells;
     }),
   };

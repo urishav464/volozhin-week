@@ -73,7 +73,14 @@ describe("xlsx", () => {
     expect(text("xl/styles.xml")).toMatch(/<font><b\/>/);
     expect(text("xl/styles.xml")).toMatch(/<cellXfs count="4"><xf[^>]*\/><xf numFmtId="0" fontId="1"/); // style 1 = the bold font
     expect(text("xl/workbook.xml")).toContain(`<definedName name="_xlnm.Print_Titles" localSheetId="0">'בדיקה'!$1:$1</definedName>`);
-    expect(sheet).toContain('<pageSetup paperSize="9" orientation="landscape"/>');
+  });
+
+  it("prints every column on one page's width, A4, as many pages down as it takes", () => {
+    const sheet = text("xl/worksheets/sheet1.xml");
+    expect(sheet).toContain('<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    // fitToPage lives in sheetPr, the worksheet's first child (before <dimension>)
+    expect(sheet).toMatch(/<worksheet [^>]*><sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr><dimension /);
+    expect(strFromU8(unzipSync(toXlsx([{ ...T, landscape: false }]))["xl/worksheets/sheet1.xml"])).toContain('orientation="portrait" fitToWidth="1" fitToHeight="0"');
   });
 
   it("sizes the columns and fills a row with its colour", () => {
@@ -94,6 +101,15 @@ describe("xlsx", () => {
     expect(xmlText("a<b>&\u0001c\uD800")).toBe("a&lt;b&gt;&amp;c");
   });
 
+  it("removes what XML forbids before the formula guard: a control character never smuggles «=» in", () => {
+    const cellText = (v: string) => /<row r="2">.*?<t xml:space="preserve">(.*?)<\/t>/.exec(xlsxParts([{ name: "s", headers: ["h"], rows: [[v]] }])["xl/worksheets/sheet1.xml"])![1];
+    expect(cellText('\u0001=HYPERLINK("http://x","y")')).toBe("'=HYPERLINK(&quot;http://x&quot;,&quot;y&quot;)");
+    expect(cellText("\u000B=1+1")).toBe("'=1+1");
+    expect(cellText("\u001F\u0002@cmd")).toBe("'@cmd");
+    expect(cellText("\uFFFE-1")).toBe("'-1");
+    expect(cellText("\u0001שיעור")).toBe("שיעור");
+  });
+
   it("names columns and sheets the way Excel accepts", () => {
     expect([0, 25, 26, 51, 52, 701, 702].map(columnName)).toEqual(["A", "Z", "AA", "AZ", "BA", "ZZ", "AAA"]);
     const taken = new Set<string>();
@@ -101,6 +117,12 @@ describe("xlsx", () => {
     expect(sheetName('לו"ז  תשפ"ז   גרסה 2', taken)).toBe('לו"ז  תשפ"ז   גרסה 2 2');
     expect([...sheetName("א".repeat(40), new Set())]).toHaveLength(31);
     expect(sheetName("   ", new Set())).toBe("גיליון");
+    // never beginning or ending with an apostrophe (Excel would repair the file): «מחזור ב'» is a natural label
+    expect(sheetName("טבלת מעקב מחזור ב'", new Set())).toBe("טבלת מעקב מחזור ב");
+    expect(sheetName("'ציטוט' ב' '", new Set())).toBe("ציטוט' ב");
+    expect(sheetName(`${"א".repeat(30)}'ב`, new Set())).toBe("א".repeat(30)); // the cut leaves one at the end
+    expect(sheetName("'".repeat(3), new Set())).toBe("גיליון");
+    expect(strFromU8(unzipSync(toXlsx([{ ...T, name: "לו\"ז מחזור ב'" }]))["xl/workbook.xml"])).toContain('<sheet name="לו&quot;ז מחזור ב" ');
   });
 
   it("writes several sheets, one fill list for all of them", () => {

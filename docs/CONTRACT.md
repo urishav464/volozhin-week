@@ -505,7 +505,7 @@ when and keeps what one statement cannot. A refusal is a code of `src/errors.ts`
 carries over (the live real one, else the newest real). `app.member_has_history` counts notes,
 milestones and snapshots. None of the three tables is ever published to Realtime.
 
-## `phones(lessons)` — `get_contacts_for(p_lessons bigint[])` → `jsonb[]`
+## `phones(lessons)` — `get_contacts_for(p_lessons bigint[])` → `jsonb` (an array of `{lesson_id, speaker_id, phone}`)
 
 `SECURITY INVOKER`: `lesson_speakers` and `speaker_contacts` are read through their policies, and every
 row also passes `app.may_see_contacts(speaker)` — the predicate of `get_speaker_contacts`. Rows

@@ -20,11 +20,14 @@ const fail = (code: string): never => {
 
 const nextId = (rows: { id: number }[]) => Math.max(0, ...rows.map((r) => r.id)) + 1;
 
+/** A milestone as the demo keeps it: with who added it (milestones.created_by, which app.member_has_history counts) — never shown. */
+export type DemoMilestone = Milestone & { created_by: number | null };
+
 /** What DemoPort shares with its outputs and knowledge base. */
 export interface DemoKnowledgeStore {
   readonly shared: PoolShared;
   notes: Note[];
-  milestones: Milestone[];
+  milestones: DemoMilestone[];
   snapshots: (ExportSnapshot & { edition_id: number })[];
   engine(editionId: number): Engine;
   /** app.is_member / app.can_see_edition / app.is_global_admin / app.my_role(e) = 'admin', for the demo user. */
@@ -37,7 +40,7 @@ export interface DemoKnowledgeStore {
 }
 
 /** The demo's notes and milestones: synthetic, and they say so. */
-export function demoKnowledge(editionId: number): { notes: Note[]; milestones: Milestone[] } {
+export function demoKnowledge(editionId: number): { notes: Note[]; milestones: DemoMilestone[] } {
   const at = "2026-11-01T10:00:00.000Z";
   return {
     notes: [
@@ -48,9 +51,9 @@ export function demoKnowledge(editionId: number): { notes: Note[]; milestones: M
       { id: 2, edition_id: editionId, section: "lessons_learned", title: "לקח לדוגמה", version: 1, created_by: 1, updated_by: 1, updated_at: at, body_md: "נתון לדוגמה, של המחזור הזה בלבד." },
     ],
     milestones: [
-      { id: 1, edition_id: editionId, title: "אבן דרך לדוגמה א׳", days_before: 42, done_at: null, done_by: null },
-      { id: 2, edition_id: editionId, title: "אבן דרך לדוגמה ב׳", days_before: 21, done_at: at, done_by: 1 },
-      { id: 3, edition_id: editionId, title: "אבן דרך לדוגמה ג׳ (אחרי השבוע)", days_before: -7, done_at: null, done_by: null },
+      { id: 1, edition_id: editionId, title: "אבן דרך לדוגמה א׳", days_before: 42, done_at: null, done_by: null, created_by: 1 },
+      { id: 2, edition_id: editionId, title: "אבן דרך לדוגמה ב׳", days_before: 21, done_at: at, done_by: 1, created_by: 1 },
+      { id: 3, edition_id: editionId, title: "אבן דרך לדוגמה ג׳ (אחרי השבוע)", days_before: -7, done_at: null, done_by: null, created_by: 1 },
     ],
   };
 }
@@ -98,19 +101,25 @@ export class DemoKnowledge implements KnowledgePort {
     this.s.notes = this.s.notes.filter((x) => x.id !== id);
   }
 
-  private milestone(id: number): Milestone {
+  private milestone(id: number): DemoMilestone {
     return this.s.milestones.find((x) => x.id === id && this.s.adminOf(x.edition_id)) ?? fail("stale");
   }
 
   async milestones(editionId: number): Promise<Milestone[]> {
     if (!this.s.canSee(editionId)) return [];
-    return structuredClone(this.s.milestones.filter((m) => m.edition_id === editionId).sort((a, b) => b.days_before - a.days_before || a.id - b.id));
+    return structuredClone(
+      this.s.milestones
+        .filter((m) => m.edition_id === editionId)
+        .sort((a, b) => b.days_before - a.days_before || a.id - b.id)
+        .map(({ created_by: _c, ...m }) => m), // MILESTONE_COLUMNS: the screen never reads who added it
+    );
   }
 
   async addMilestone(editionId: number, m: { title: string; days_before: number }): Promise<void> {
     const v = { title: cleanTitle(m.title), days_before: cleanDaysBefore(m.days_before) };
     if (!this.s.adminOf(editionId)) fail("forbidden");
-    this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: editionId, ...v, done_at: null, done_by: null });
+    // app.milestones_guard stamps who added it
+    this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: editionId, ...v, done_at: null, done_by: null, created_by: this.s.memberIdFor(editionId) });
   }
 
   async updateMilestone(id: number, patch: { title?: string; days_before?: number }): Promise<void> {

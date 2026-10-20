@@ -7,7 +7,7 @@ import { nameKey } from "../domain/nameKey";
 import { cleanColor, cleanEditionPatch, cleanGender, cleanName, cleanNewEdition, cleanNewMember } from "../settings/validate";
 import { CommandError } from "./commands";
 import type { Engine, PoolShared } from "./engine";
-import type { Milestone } from "./knowledge";
+import type { DemoMilestone } from "./demoOutputs";
 import { type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type RosterEntry, type SettingsPort, resort } from "./settings";
 
 const fail = (code: string): never => {
@@ -24,8 +24,8 @@ export interface DemoStore {
   roster: (RosterEntry & { edition_id: number })[];
   categories: Category[];
   /** The editions' milestones (start_edition carries the last real edition's over). */
-  milestones: Milestone[];
-  /** Has this member written a note, marked a milestone or saved a snapshot (app.member_has_history, v8)? */
+  milestones: DemoMilestone[];
+  /** Has this member written a note, added or marked a milestone, or saved a snapshot (app.member_has_history, v8)? */
   authored(memberId: number): boolean;
   /** A new edition's week: the 2026 grid, one default room, the shared pool. */
   addEngine(edition: Edition, room: Room): void;
@@ -95,7 +95,11 @@ export class DemoSettings implements SettingsPort {
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
     // v8: and its milestones — titles and W−n, none of them done
     const carried = this.s.milestones.filter((m) => prevEdition && m.edition_id === prevEdition.id).sort((a, b) => b.days_before - a.days_before || a.id - b.id);
-    for (const m of carried) this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: edition.id, title: m.title, days_before: m.days_before, done_at: null, done_by: null });
+    // milestones_guard stamps the starter (app.my_member_id: the new edition has no row yet — their global one)
+    const starter = this.me().find((m) => m.role === "admin" && m.edition_id == null)?.id ?? null;
+    for (const m of carried) {
+      this.s.milestones.push({ id: nextId(this.s.milestones), edition_id: edition.id, title: m.title, days_before: m.days_before, done_at: null, done_by: null, created_by: starter });
+    }
     return this.done(edition.id);
   }
 

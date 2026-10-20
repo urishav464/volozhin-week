@@ -80,6 +80,7 @@ export class SupabaseOutputs implements OutputsPort {
     return out;
   }
 
+  /** The screen's list: the newest 50 (it compares with the newest one). The archive reads them all. */
   async snapshots(editionId: number, kind: SnapshotKind): Promise<ExportSnapshot[]> {
     const got = await rows<Record<string, unknown>>(
       this.sb.from("export_snapshots").select(SNAPSHOT_COLUMNS).eq("edition_id", editionId).eq("kind", kind).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(50),
@@ -114,7 +115,12 @@ export class SupabaseOutputs implements OutputsPort {
       transport: transport.map((t) => ({ ...t, lesson_id: num(t.lesson_id) })).sort((a, b) => a.lesson_id - b.lesson_id),
       notes: await knowledge.notes(editionId),
       milestones: await knowledge.milestones(editionId),
-      snapshots: await this.snapshots(editionId, "designer"),
+      // the backup holds every designer export, not the screen's newest 50
+      snapshots: (
+        await all<Record<string, unknown>>((from, to) =>
+          this.sb.from("export_snapshots").select(SNAPSHOT_COLUMNS).eq("edition_id", editionId).eq("kind", "designer").order("id", { ascending: false }).range(from, to),
+        )
+      ).map(snapshot),
     };
   }
 }

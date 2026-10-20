@@ -11,14 +11,18 @@ const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 
-/** XML 1.0 text: the five escapes, and no character XML forbids (C0 controls but tab and line breaks, lone surrogates). */
+/** What XML 1.0 forbids in text: C0 controls but tab and line breaks, U+FFFE/U+FFFF, lone surrogates — removed. */
+export function stripXmlForbidden(s: string): string {
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** XML 1.0 text: no character XML forbids, and the five escapes. */
 export function xmlText(s: string): string {
-  return s
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return escapeXml(stripXmlForbidden(s));
 }
 
 /** 0 → A, 25 → Z, 26 → AA. */
@@ -33,9 +37,13 @@ export function columnName(i: number): string {
   return s;
 }
 
-/** A sheet name Excel accepts: no []:*?/\, not empty, 31 characters at most, unique in the workbook. */
+/**
+ * A sheet name Excel accepts: no []:*?/\, not beginning or ending with an apostrophe (an edition labelled
+ * «מחזור ב'» — Excel would offer to repair the file), not empty, 31 characters at most, unique in the workbook.
+ */
 export function sheetName(name: string, taken: Set<string>): string {
-  const base = [...(name.replace(/[[\]:*?/\\]/g, " ").trim() || "גיליון")].slice(0, 31).join("");
+  const edges = (s: string) => s.replace(/^[\s']+|[\s']+$/g, "");
+  const base = edges([...edges(name.replace(/[[\]:*?/\\]/g, " "))].slice(0, 31).join("")) || "גיליון";
   let out = base;
   for (let i = 2; taken.has(out); i++) out = `${[...base].slice(0, 28).join("")} ${i}`;
   taken.add(out);
@@ -43,7 +51,8 @@ export function sheetName(name: string, taken: Set<string>): string {
 }
 
 function cell(ref: string, value: string, style: number): string {
-  const v = xmlText(guardCell(value));
+  // what XML forbids goes first, then the guard: «\u0001=…» must not reach the sheet as «=…»
+  const v = escapeXml(guardCell(stripXmlForbidden(value)));
   return `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${v}</t></is></c>`;
 }
 
@@ -87,13 +96,15 @@ function sheetXml(t: Table, fills: string[]): string {
   return (
     XML +
     `<worksheet xmlns="${NS}" xmlns:r="${NS_R}">` +
+    // printed: every column on one page's width (as many pages down as it takes)
+    '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' +
     `<dimension ref="A1:${last}"/>` +
     '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>' +
     '<sheetFormatPr defaultRowHeight="15"/>' +
     `<cols>${widths}</cols>` +
     `<sheetData>${header}${body}</sheetData>` +
     '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>' +
-    `<pageSetup paperSize="9" orientation="${t.landscape ? "landscape" : "portrait"}"/>` +
+    `<pageSetup paperSize="9" orientation="${t.landscape ? "landscape" : "portrait"}" fitToWidth="1" fitToHeight="0"/>` +
     "</worksheet>"
   );
 }

@@ -70,6 +70,21 @@ describe("SupabaseOutputs and SupabaseKnowledge on the wire", () => {
     expect(sent[0].query.get("order")).toBe("created_at.desc,id.desc");
   });
 
+  it("puts every designer export in the archive, page by page — not the screen's newest 50", async () => {
+    const snap = (id: number) => ({ id, kind: "designer", payload: [ROW], created_by: 1, created_at: "2026-11-10T10:00:00Z" });
+    const page1 = Array.from({ length: 1000 }, (_, i) => snap(1050 - i));
+    const page2 = Array.from({ length: 50 }, (_, i) => snap(50 - i));
+    // activity (one page), notes, milestones, then the snapshots' two pages
+    const { outputs, sent } = stub([[200, []], [200, []], [200, []], [200, page1], [200, page2]]);
+    const extras = await outputs.archiveExtras(7, [], []);
+    expect(extras.snapshots).toHaveLength(1050);
+    const reads = sent.filter((r) => r.path === "/rest/v1/export_snapshots");
+    expect(reads.map((r) => [r.query.get("edition_id"), r.query.get("kind"), r.query.get("offset"), r.query.get("limit")])).toEqual([
+      ["eq.7", "eq.designer", "0", "1000"],
+      ["eq.7", "eq.designer", "1000", "1000"],
+    ]);
+  });
+
   it("saves a note at the version it saw, and reads «nothing changed» as stale", async () => {
     const { knowledge, sent } = stub([[200, [{ id: 5 }]], [200, []], [400, { code: "P0001", message: "title_required" }]]);
     await knowledge.updateNote(5, 3, { title: "  כותרת   חדשה ", body_md: "גוף\r\n" });
@@ -165,5 +180,19 @@ describe("the demo's outputs and knowledge base", () => {
     await p.knowledge.setMilestoneDone((await p.knowledge.milestones(id))[0].id, true);
     const next = await p.settings.startEdition({ label: "מחזור לדוגמה ב", start_date: null, first_day_from: null });
     expect((await p.knowledge.milestones(next)).map((m) => [m.title, m.days_before, m.done_at])).toEqual([["אבן דרך לדוגמה", 14, null]]);
+    // stamped with the starter, as milestones_guard does — and never shown
+    expect(p.milestones.filter((m) => m.edition_id === next).map((m) => m.created_by)).toEqual([1]);
+    expect(Object.keys((await p.knowledge.milestones(next))[0])).not.toContain("created_by");
+  });
+
+  it("counts who added a milestone as history, like app.member_has_history (created_by or done_by)", async () => {
+    const p = new DemoPort();
+    p.notes = [];
+    p.milestones = [];
+    p.snapshots = [];
+    expect(p.authored(1)).toBe(false);
+    await p.knowledge.addMilestone(1, { title: "אבן דרך לדוגמה", days_before: 7 }); // added, not done
+    expect(p.milestones.map((m) => [m.created_by, m.done_by])).toEqual([[1, null]]);
+    expect(p.authored(1)).toBe(true);
   });
 });

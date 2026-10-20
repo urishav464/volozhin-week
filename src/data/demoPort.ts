@@ -2,12 +2,12 @@ import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Category, Edition, Room, Week } from "../domain/types";
 import { EXPECTED_SCHEMA_VERSION } from "../lib/schema";
 import type { CellTarget, EscortPatch, LessonPatch, PaymentItem, ReshapeOp, SourcesPatch, WeekCommands } from "./commands";
-import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, DemoOutputs } from "./demoOutputs";
+import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilestone, DemoOutputs } from "./demoOutputs";
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek } from "./demoWeek";
 import { type Actor, Engine, type PoolShared } from "./engine";
-import type { Milestone, Note } from "./knowledge";
+import type { Note } from "./knowledge";
 import type { ExportSnapshot } from "./outputs";
 import type { DataPort } from "./port";
 import type { HistoryLesson } from "./speakers";
@@ -38,7 +38,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   categories: Category[];
   /** The knowledge base and the milestones (synthetic, «לדוגמה»), and the designer exports' snapshots. */
   notes: Note[];
-  milestones: Milestone[];
+  milestones: DemoMilestone[];
   snapshots: (ExportSnapshot & { edition_id: number })[] = [];
   private readonly listeners = new Set<() => void>();
 
@@ -152,7 +152,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   authored(memberId: number): boolean {
     return (
       this.notes.some((n) => n.created_by === memberId || n.updated_by === memberId) ||
-      this.milestones.some((m) => m.done_by === memberId) ||
+      this.milestones.some((m) => m.created_by === memberId || m.done_by === memberId) ||
       this.snapshots.some((x) => x.created_by === memberId)
     );
   }

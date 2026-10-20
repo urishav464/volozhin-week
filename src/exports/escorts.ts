@@ -4,7 +4,8 @@
 // speaker (the speaker themself, or the escort — each phrase in the right
 // gender), and «משהו שחשוב לדעת»: the instructor's duty phrases that apply
 // (src/domain/escorts.ts) and the lesson's own note. Closed lessons with no
-// escort close the list, so the team sees what is still open. Pure.
+// escort — and no self-introduction, which needs none — close the list, so the
+// team sees what is still open. Pure.
 import { dutyNotes } from "../domain/escorts";
 import { byGender, displayName } from "../domain/names";
 import type { Gender, Lesson, RosterMember, Week } from "../domain/types";
@@ -81,7 +82,8 @@ export function escortGroups(week: Week): EscortGroup[] {
       };
     })
     .filter((g) => g.lessons.length > 0);
-  const open = closed.filter((l) => l.escort_roster_id == null);
+  // a self-introduced lesson needs no escort (its escort stage is done — src/domain/stages.ts): not «open»
+  const open = closed.filter((l) => l.escort_roster_id == null && !l.self_intro);
   if (open.length) {
     groups.push({
       escort: null,

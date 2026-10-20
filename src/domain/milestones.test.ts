@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byDue, fmtDate, isLate, israelToday, milestoneDate, milestoneLabel } from "./milestones";
+import { byDue, fmtDate, fmtMoment, isLate, israelToday, milestoneDate, milestoneLabel } from "./milestones";
 
 describe("milestones", () => {
   it("are labelled by their distance from the week: W−n, W, W+n", () => {
@@ -26,6 +26,12 @@ describe("milestones", () => {
 
   it("know today's date in Israel, whatever the device's zone", () => {
     expect(fmtDate(israelToday(new Date("2027-01-02T22:30:00Z")))).toBe("3.1.2027");
+  });
+
+  it("write a moment (done_at, a note's updated_at) as its day in Israel, not in UTC", () => {
+    expect(fmtMoment("2026-10-19T22:30:00Z")).toBe("20.10.2026"); // 00:30 in Jerusalem (summer time)
+    expect(fmtMoment("2026-12-31T21:59:00Z")).toBe("31.12.2026"); // 23:59 in winter
+    expect(fmtMoment("2026-12-31T22:00:00Z")).toBe("1.1.2027");
   });
 
   it("sort the furthest from the week first", () => {

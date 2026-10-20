@@ -30,6 +30,14 @@ export function israelToday(now: Date = new Date()): Date {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
+/**
+ * A moment — a timestamptz such as done_at or updated_at — as its day in Israel, «20.10.2026» for
+ * 22:30Z on the 19th. (fmtDate alone is for the milestones' own dates, which are UTC midnights.)
+ */
+export function fmtMoment(iso: string): string {
+  return fmtDate(israelToday(new Date(iso)));
+}
+
 /** Not done and its date has passed («באיחור»); false while the date is TBD. */
 export function isLate(startDate: string | null, daysBefore: number, done: boolean, today: Date): boolean {
   const d = milestoneDate(startDate, daysBefore);

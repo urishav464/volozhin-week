@@ -13,7 +13,8 @@ import { fileName } from "./download";
 import { type DesignerRow, designerRows, designerTable, diffCount, diffSchedules, readSnapshot } from "./designer";
 import { escortGroups, introOf } from "./escorts";
 import { LRM } from "./table";
-import { filterTracking, israelDate, teachingWhen, TRACKING_HEADERS, trackingRows, trackingTable, whenCell } from "./tracking";
+import { toCsv } from "./csv";
+import { filterTracking, israelDate, phoneCell, teachingWhen, TRACKING_HEADERS, trackingRows, trackingTable, trackingWidths, whenCell } from "./tracking";
 
 function week() {
   const w = emptyWeek();
@@ -80,8 +81,20 @@ describe("the tracking table", () => {
     expect(trackingTable(rows, "בדיקה").headers).toEqual([...TRACKING_HEADERS]);
     const t = trackingTable(rows, "בדיקה", new Map([[a.id, "טלפון לדוגמה"]]));
     expect(t.headers.slice(0, 3)).toEqual(["מרצה", "טלפון", "יום ושעה"]);
-    expect(t.rows.map((r) => r[1])).toEqual(["טלפון לדוגמה", "", "", "", ""]);
+    expect(t.rows.map((r) => r[1])).toEqual([`${LRM}טלפון לדוגמה`, "", "", "", ""]);
     expect(t.landscape).toBe(true);
+    expect(t.widths).toEqual(trackingWidths(true));
+    expect([trackingWidths(false).length, trackingWidths(true).length, trackingWidths(true)[1]]).toEqual([8, 9, 18]);
+  });
+
+  it("keeps a phone text in the CSV: a LEFT-TO-RIGHT MARK first, so a spreadsheet keeps its leading zero", () => {
+    const { w, a } = week();
+    // digits only, as cleanPhone keeps them — synthetic, no real number
+    const digits = "0" + "1".repeat(9);
+    const line = toCsv(trackingTable(trackingRows(w), "בדיקה", new Map([[a.id, digits]]))).split("\r\n")[1];
+    expect(line.split(",")[1]).toBe(`${LRM}${digits}`);
+    expect(phoneCell("+" + "1".repeat(9))).toBe(`${LRM}+${"1".repeat(9)}`); // and a leading + is text, not a formula
+    expect([phoneCell(""), phoneCell(undefined)]).toEqual(["", ""]);
   });
 
   it("writes the date a message went out in Israel's calendar, and the teaching time by the settings", () => {
@@ -111,7 +124,7 @@ describe("the escorts' list", () => {
     const groups = escortGroups(w);
     expect(groups.map((g) => [g.heading, g.load])).toEqual([
       ["מלווה לדוגמה", "היא מלווה שיעור אחד"],
-      ["עוד בלי מלווה", "2 שיעורים סגורים בלי מלווה"],
+      ["עוד בלי מלווה", "שיעור אחד סגור בלי מלווה"],
     ]);
     expect(groups[0].escort?.id).toBe(escort.id);
     const [la] = groups[0].lessons;
@@ -119,10 +132,25 @@ describe("the escorts' list", () => {
       a.id, "ראשון 08:30–09:45", "בית מדרש", "ד״ר פלונית לדוגמה", "שיעור א", "הצגה על ידי המלווה", "מציגה את המרצה",
     ]);
     expect(la.notes).toEqual(["ניסוח לדוגמה לכל שיעור", "ניסוח לדוגמה להסעה"]);
-    const [lb, ln] = groups[1].lessons;
-    expect([lb.lesson.id, lb.intro, lb.introDetail]).toEqual([b.id, "הצגה עצמית", "המרצה מציג את עצמו"]);
+    // b introduces himself with no escort: settled (its escort stage is done), so not «עוד בלי מלווה»
+    expect(groups[1].lessons.map((x) => x.lesson.id)).toEqual([night.id]);
+    expect(groups.flatMap((g) => g.lessons).some((x) => x.lesson.id === b.id)).toBe(false);
+
+    // with an escort, a self-introduced lesson is on the escort's list, and says who introduces whom
+    b.escort_roster_id = escort.id;
+    const [mine] = escortGroups(w);
+    expect(mine.load).toBe("היא מלווה 2 שיעורים");
+    const lb = mine.lessons.find((x) => x.lesson.id === b.id)!;
+    expect([lb.intro, lb.introDetail]).toEqual(["הצגה עצמית", "המרצה מציג את עצמו"]);
     expect(lb.notes).toEqual(["ניסוח לדוגמה לכל שיעור", "ניסוח לדוגמה להצגה עצמית", "הערה לדוגמה"]); // the request waits: no transport phrase
-    expect(ln.lesson.id).toBe(night.id);
+  });
+
+  it("counts as «עוד בלי מלווה» exactly the lessons the tracking table marks «חסר/ה»", () => {
+    const w = demoWeek();
+    const open = escortGroups(w).find((g) => g.escort == null)?.lessons.map((x) => x.lesson.id) ?? [];
+    const missing = trackingRows(w).filter((r) => r.lesson.kind === "lesson" && r.escort === "חסר/ה").map((r) => r.lesson.id);
+    expect(open.length).toBeGreaterThan(0);
+    expect([...open].sort((x, y) => x - y)).toEqual([...missing].sort((x, y) => x - y));
   });
 
   it("speaks in each one's gender, and slashes while it is unknown", () => {
