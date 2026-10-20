@@ -8,8 +8,11 @@
 //   - anything sent to the Supabase project (REST, RPC, Auth, Storage, Realtime), anything carrying Authorization or
 //     apikey, anything but GET, and every other origin: NOT touched — no respondWith, the browser sends it as if there
 //     were no worker, and nothing of it is ever cached;
-//   - a navigation: the network first, for a few seconds (cfg.navigateTimeoutMs); without one — or with one that takes
-//     the request and never answers — the cached index.html (the app then shows the day from its own snapshot,
+//   - a navigation to a page of its own — a path with a file extension: /privacy.html, a picture opened in a tab —
+//     NOT touched: the network answers it as if there were no worker (offline: the browser's own «no connection»),
+//     never the app shell in its place, which would send the privacy link to the week;
+//   - any other navigation: the network first, for a few seconds (cfg.navigateTimeoutMs); without one — or with one
+//     that takes the request and never answers — the cached index.html (the app then shows the day from its own snapshot,
 //     src/offline/snapshot.ts). The network's answer is never cached: the cached index.html is always the one whose
 //     chunks this worker precached;
 //   - the build's own files (/assets/…, the precache list): the cache first; only this build's files are ever kept —
@@ -61,7 +64,8 @@ export function routeFor(req: RequestLike, origin: string, cfg: ShellConfig): Ro
   if (/^\/(rest|auth|storage|realtime|functions|graphql)\/v1(\/|$)/.test(u.pathname)) return "pass";
   if (cfg.fontOrigins.indexOf(u.origin) >= 0) return "font";
   if (u.origin !== origin) return "pass";
-  if (req.mode === "navigate") return "navigate";
+  // a page of its own (/privacy.html, a file opened in a tab): never answered with the app shell — the network's
+  if (req.mode === "navigate") return /\.[a-z0-9]+$/i.test(u.pathname.slice(u.pathname.lastIndexOf("/") + 1)) ? "pass" : "navigate";
   if (u.search === "" && (cfg.precache.indexOf(u.pathname) >= 0 || u.pathname.indexOf("/assets/") === 0)) return "asset";
   return "pass";
 }

@@ -40,8 +40,11 @@ const SLOW_FIRST_CHECK_MS = 8000;
 type State =
   | { kind: "loading" }
   | { kind: "gate"; gate: Gate; email: string | null }
-  /** `network`: no answer at all (and no snapshot here to show) — tried again when the connection returns. */
-  | { kind: "error"; message: string; network?: boolean }
+  /**
+   * `network`: no answer at all (and no snapshot here to show) — tried again when the connection returns. `newer`: a
+   * copy saved by a newer build of the site is on the device, which this one cannot show (the waiting worker can).
+   */
+  | { kind: "error"; message: string; network?: boolean; newer?: boolean }
   /** No connection: the day view from the device's snapshot, read-only, until the server answers again (src/offline/). */
   | { kind: "offline"; snapshot: WeekSnapshot; me: Me };
 
@@ -60,13 +63,15 @@ export default function App() {
   /**
    * No answer from the server: the device's snapshot, when it may be shown here (its own user's, this schema's) —
    * and only while the screen is still the one it was asked from (`still`): an answer that came meanwhile wins.
+   * "newer": a newer build's copy is here, kept — the screen says so (and offers the waiting worker's «רענון»).
    */
   const showOffline = useCallback(
-    async (still: (s: State) => boolean): Promise<boolean> => {
+    async (still: (s: State) => boolean): Promise<"shown" | "newer" | "none"> => {
       const d = offline ? await offline.decide() : null;
-      if (d?.kind !== "show" || !still(shown.current)) return false;
+      if (d?.kind === "newer") return "newer";
+      if (d?.kind !== "show" || !still(shown.current)) return "none";
       setState({ kind: "offline", snapshot: d.snapshot, me: d.me });
-      return true;
+      return "shown";
     },
     [offline],
   );
@@ -99,8 +104,9 @@ export default function App() {
       // first load shows the snapshot (no connection) or the error page.
       if (shown.current.kind === "gate" || shown.current.kind === "offline") return;
       const network = isNetworkError(e);
-      if (network && (await showOffline((s) => s.kind === "loading" || s.kind === "error"))) return;
-      setState({ kind: "error", message: e instanceof Error ? e.message : String(e), network });
+      const copy = network ? await showOffline((s) => s.kind === "loading" || s.kind === "error") : "none";
+      if (copy === "shown") return;
+      setState({ kind: "error", message: e instanceof Error ? e.message : String(e), network, newer: copy === "newer" });
     } finally {
       window.clearTimeout(slow);
     }
@@ -181,9 +187,23 @@ export default function App() {
         {state.kind === "error" && (
           <Notice
             title={state.network ? "אין חיבור לאינטרנט" : "משהו השתבש בטעינה"}
-            actions={[{ label: "לנסות שוב", onClick: () => void refresh() }, ...(demo ? [] : [{ label: "התנתקות", onClick: () => void signOut() }])]}
+            actions={[
+              // a newer build's copy is here: the waiting worker's «רענון» brings the build that shows it
+              ...(state.network && state.newer && update.ready ? [{ label: "רענון", onClick: update.apply }] : []),
+              { label: "לנסות שוב", onClick: () => void refresh() },
+              ...(demo ? [] : [{ label: "התנתקות", onClick: () => void signOut() }]),
+            ]}
           >
-            {state.network ? (
+            {state.network && state.newer ? (
+              <div data-newer-copy className="space-y-2">
+                <p>
+                  {update.ready
+                    ? "אין חיבור לאינטרנט. במכשיר יש עותק מגרסה חדשה יותר של האתר — «רענון» מציג אותו."
+                    : "אין חיבור לאינטרנט. במכשיר יש עותק מגרסה חדשה יותר של האתר, והגרסה שנפתחה עכשיו לא יכולה להציג אותו. כשהחיבור חוזר, המסך נטען לבד."}
+                </p>
+                {!demo && <p>«התנתקות» מוחקת גם את העותק הזה מהמכשיר.</p>}
+              </div>
+            ) : state.network ? (
               <p>אין חיבור לאינטרנט, ובמכשיר הזה עוד אין עותק של השבוע. העותק נשמר בכל פעם שהשבוע נטען עם חיבור. כשהחיבור חוזר, המסך נטען לבד.</p>
             ) : (
               <p>לא הצלחנו לדבר עם השרת. אם זה חוזר, כדאי לספר למדריך/ה.</p>

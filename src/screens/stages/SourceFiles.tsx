@@ -11,6 +11,8 @@
 // screen only offers. A memorial slot's materials (5ב-2) are the files that
 // came for the fallen of the plan placed on it, wherever they were uploaded
 // (src/reader/model.ts memorialFiles); they go up to a slot with a plan only.
+// Only a deleted plan's files are a memorial slot's leftovers (memorialLeftovers):
+// a plan in the tray keeps its own, shown on its card, never for removal here.
 import { type DragEvent, type ReactNode, useId, useRef, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
@@ -273,13 +275,13 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
 export function PreviousFiles({ port, week, files, actor, notify, reload, memorial = false }: Omit<SourceFilesProps, "lesson" | "clear"> & { files: SourceFile[]; memorial?: boolean }) {
   return (
     <div className="rounded-lg bg-amber-50 p-2">
-      <p className="text-sm font-semibold text-amber-900">{memorial ? "מתוכנית שכבר לא כאן" : "מהמרצה הקודם"}</p>
+      <p className="text-sm font-semibold text-amber-900">{memorial ? "מתוכנית שנמחקה מהמחזור" : "מהמרצה הקודם"}</p>
       <p className="text-xs text-amber-900">
         {memorial
-          ? "הקבצים האלה הועלו לתוכנית זיכרון שכבר לא משובצת כאן. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."
+          ? "הקבצים האלה הועלו לתוכנית זיכרון שכבר אין במחזור. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."
           : "השיעור נפתח מחדש אחרי שהקבצים האלה הועלו. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."}
       </p>
-      <ul aria-label={memorial ? "קבצים מתוכנית קודמת" : "קבצים מהמרצה הקודם"} className="divide-y divide-amber-200">
+      <ul aria-label={memorial ? "קבצים מתוכנית שנמחקה" : "קבצים מהמרצה הקודם"} className="divide-y divide-amber-200">
         {files.map((f) => (
           <FileRow key={f.id} port={port} week={week} file={f} actor={actor} notify={notify} reload={reload} previous />
         ))}

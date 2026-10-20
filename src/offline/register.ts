@@ -1,7 +1,8 @@
 // The app's side of the service worker (src/offline/sw.ts): register /sw.js in production builds — never in `vite
 // dev` — and say when a new version is waiting. The page never reloads by itself in the middle of someone's work: a
 // new worker installs and waits, the header shows «גרסה חדשה של האתר זמינה» with «רענון», and only that button lets
-// it take over (skipWaiting) and reloads. With the kill switch on (src/offline/config.ts) the app unregisters every
+// it take over (skipWaiting) and reloads — in every tab: a tab whose worker another tab already let in reloads at
+// once (applyUpdate). With the kill switch on (src/offline/config.ts) the app unregisters every
 // worker it finds and deletes this site's caches instead (`retireShellWorker`). Only the team's app registers: a link's public page (/e, /k, /s) never installs the shell,
 // and never offers a reload that would drop its token.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -45,6 +46,32 @@ export async function retireShellWorker(
   }
 }
 
+/** The worker the banner holds: a new one installed and waiting, or "reload" (another tab let the new version in). */
+export type HeldUpdate = Pick<ServiceWorker, "state" | "postMessage"> | "reload";
+
+/**
+ * «רענון», decided: let the held worker take over (it then reloads this page, on controllerchange) — or, when it is not
+ * waiting any more, reload at once. With two tabs open, the other tab's «רענון» activates the worker this one holds:
+ * a skip-waiting message to an active worker does nothing, no controllerchange follows, and the button would be dead.
+ * So: "reload" when another tab already let it in, or when the held worker is no longer 'installed' (activating,
+ * activated — or redundant, a newer one replacing it); "skip" only for a worker still waiting.
+ */
+export function applyUpdate(held: HeldUpdate | null): "none" | "reload" | "skip" {
+  if (held === null) return "none";
+  if (held === "reload" || held.state !== "installed") return "reload";
+  return "skip";
+}
+
+/**
+ * A controllerchange, decided: this page asked for it («רענון» here) → reload; otherwise, when the page already had a
+ * controller before — a worker replaced by another, not the first install's clients.claim — another tab let the new
+ * version in: the banner, and its «רענון» reloads ("reload", whatever worker was held: that one is active now).
+ */
+export function onControllerChanged(asked: boolean, hadController: boolean): "reload" | "banner" | "none" {
+  if (asked) return "reload";
+  return hadController ? "banner" : "none";
+}
+
 export interface ShellUpdate {
   /** A new version waits (or another tab already let it in): show the banner. */
   ready: boolean;
@@ -66,11 +93,15 @@ export function useShellWorker(production: boolean = import.meta.env.PROD): Shel
     }
     let live = true;
     let reg: ServiceWorkerRegistration | null = null;
-    // A first install takes control of this page too (clients.claim): that is not an update.
-    const hadController = !!sw.controller;
+    // A first install takes control of this page too (clients.claim): that is not an update. Every change after it is
+    // one — this page's first worker replaced by the next too, when this was the tab that installed the first.
+    let controlled = !!sw.controller;
     const onControllerChange = () => {
-      if (wanted.current) window.location.reload();
-      else if (hadController && live) setWaiting((cur) => cur ?? "reload"); // another tab let the new version in
+      const was = controlled;
+      controlled = !!sw.controller;
+      const d = onControllerChanged(wanted.current, was);
+      if (d === "reload") window.location.reload();
+      else if (d === "banner" && live) setWaiting("reload"); // another tab let the new version in
     };
     const watch = (w: ServiceWorker | null) => {
       if (!w) return;
@@ -106,8 +137,9 @@ export function useShellWorker(production: boolean = import.meta.env.PROD): Shel
   }, [production]);
 
   const apply = useCallback(() => {
-    if (waiting === null) return;
-    if (waiting === "reload") return window.location.reload();
+    const d = applyUpdate(waiting);
+    if (d === "reload") return window.location.reload();
+    if (d !== "skip" || waiting === null || waiting === "reload") return;
     wanted.current = true;
     waiting.postMessage({ type: SKIP_WAITING });
   }, [waiting]);

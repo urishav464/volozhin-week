@@ -134,6 +134,11 @@ export type OfflineDecision =
   | { kind: "show"; snapshot: WeekSnapshot; me: Me }
   /** Nothing to show (yet); keep what is stored. */
   | { kind: "none" }
+  /**
+   * A copy saved by a NEWER build is on the device — kept, not shown by this one: the screen says so, and offers the
+   * waiting worker's «רענון», which brings the build that shows it.
+   */
+  | { kind: "newer" }
   /** What is stored belongs to nobody signed in here, to another user, or to an older schema: delete it. */
   | { kind: "drop" };
 
@@ -154,7 +159,7 @@ export function offlineDecision(input: {
   if (!s && !w) return { kind: "none" };
   if (uid == null) return { kind: "drop" };
   if ((s && s.userId !== uid) || (w && w.userId !== uid)) return { kind: "drop" };
-  if ((s && s.schemaVersion > expectedVersion) || (w && w.me.schema_version > expectedVersion)) return { kind: "none" };
+  if ((s && s.schemaVersion > expectedVersion) || (w && w.me.schema_version > expectedVersion)) return { kind: "newer" };
   if ((s && s.schemaVersion !== expectedVersion) || (w && w.me.schema_version !== expectedVersion)) return { kind: "drop" };
   if (!s || !w) return { kind: "none" };
   const member = w.me.global_admin || w.me.memberships.some((m) => m.edition_id == null || m.edition_id === s.editionId);

@@ -134,9 +134,19 @@ describe("routeFor: what the worker answers, and what it never touches", () => {
     expect(route(`${ORIGIN}/favicon.svg`)).toBe("asset");
     expect(route(`${ORIGIN}/assets/index-AAAA.js?v=1`)).toBe("pass");
     expect(route(`${ORIGIN}/privacy.html`)).toBe("pass");
+    expect(route(`${ORIGIN}/settings/edition`, { mode: "navigate" })).toBe("navigate");
+    expect(route(`${ORIGIN}/e`, { mode: "navigate" })).toBe("navigate"); // a link's page: its token is in the hash
     expect(route(`${ORIGIN}/sw.js`)).toBe("pass");
     expect(route("https://fonts.googleapis.com/css2?family=Assistant")).toBe("font");
     expect(route("https://fonts.gstatic.com/s/assistant/v1/a.woff2")).toBe("font");
+  });
+
+  it("a navigation to a page of its own — /privacy.html, any path with a file extension — is the network's, never the app shell", () => {
+    expect(route(`${ORIGIN}/privacy.html`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/privacy.html?from=signin`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/favicon.svg`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/manifest.webmanifest`, { mode: "navigate" })).toBe("pass");
+    expect(route(`${ORIGIN}/a.dir/page`, { mode: "navigate" })).toBe("navigate"); // a dot in a folder is not an extension
   });
 });
 

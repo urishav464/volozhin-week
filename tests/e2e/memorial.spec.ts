@@ -26,6 +26,7 @@ const demoUrl = () => process.env.E2E_DEMO_URL!;
 const mockUrl = () => process.env.E2E_MOCK_URL!;
 const toast = (page: Page, text: string | RegExp) => page.getByRole("status").filter({ hasText: text });
 const nav = (page: Page) => page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" });
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 async function downloaded(page: Page, click: () => Promise<void>): Promise<{ d: Download; bytes: Buffer }> {
   const [d] = await Promise.all([page.waitForEvent("download"), click()]);
@@ -64,11 +65,13 @@ test.describe("demo build", () => {
     await form.getByLabel("דקות מתוכננות (לא חובה)").fill("12");
     await form.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "התוכנית נשמרה")).toBeVisible();
-    // placed on Monday's 13:00 slot — the picker, by keyboard or tap, no drag
-    const picker = plan.getByLabel("שיבוץ");
+    // placed on Monday's 13:00 slot — the picker, by keyboard or tap, no drag: the select picks, «שיבוץ» places
+    const picker = plan.getByLabel("שיבוץ", { exact: true });
     // (plain text: an LRM keeps «13:00–13:15» left to right among the Hebrew, in the option and the slot's heading)
     const monday = (await picker.locator("option", { hasText: `שני ${LRM}13:00–13:15` }).first().textContent())!;
     await picker.selectOption({ label: monday });
+    await expect(toast(page, "«חלל/ה לדוגמה 4» שובץ/ה")).toHaveCount(0);
+    await plan.getByRole("button", { name: "שיבוץ: חלל/ה לדוגמה 4" }).click();
     await expect(toast(page, "«חלל/ה לדוגמה 4» שובץ/ה")).toBeVisible();
     await expect(page.locator('[data-memorial-slot]').filter({ hasText: "חלל/ה לדוגמה 4" })).toContainText(`שני ${LRM}13:00–13:15`);
     await noSidewaysScroll(page);
@@ -111,7 +114,8 @@ test.describe("demo build", () => {
     await expect(toast(page, "זמן הזיכרון נוסף")).toBeVisible();
     // «חלל/ה לדוגמה 2» from the tray onto it
     const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });
-    await plan.getByLabel("שיבוץ").selectOption({ label: `ראשון ${LRM}13:05–13:10 · כיתה ג׳` });
+    await plan.getByLabel("שיבוץ", { exact: true }).selectOption({ label: `ראשון ${LRM}13:05–13:10 · כיתה ג׳` });
+    await plan.getByRole("button", { name: "שיבוץ: חלל/ה לדוגמה 2" }).click();
     await expect(toast(page, "«חלל/ה לדוגמה 2» שובץ/ה")).toBeVisible();
 
     await nav(page).getByRole("link", { name: "השבוע" }).click();
@@ -134,6 +138,103 @@ test.describe("demo build", () => {
       await expect(second).toHaveAttribute("title", /^זמן זיכרון – חלל\/ה לדוגמה 2 · /);
     }
     await noSidewaysScroll(page);
+  });
+
+  test("a memorial page in Word says «צריך PDF» on the slot and the manifest; a plan taken back to the tray keeps its page on its card, never «להסרה»", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the flow");
+    await page.goto(demoUrl());
+    // Sunday's slot holds «חלל/ה לדוגמה 1»: a Word page for the reader, uploaded on the week's panel
+    const card = page.locator("[data-memorial-card]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    await card.click();
+    const panel = page.getByRole("dialog", { name: "זמן זיכרון" });
+    await expect(panel.locator("[data-memorial-reader]")).toHaveAttribute("data-memorial-reader", "memorial_missing");
+    await panel.locator("input[type=file]").setInputFiles({ name: "דף זיכרון.docx", mimeType: DOCX_MIME, buffer: Buffer.from("PK synthetic, never opened") });
+    await expect(panel.getByRole("group", { name: "קבצי המקורות" })).toContainText("Word · צריך PDF");
+    // the slot's verdict: a lesson's words — never «not uploaded» when something was
+    const verdict = panel.locator("[data-memorial-reader]");
+    await expect(verdict).toHaveAttribute("data-memorial-reader", "memorial_needs_pdf");
+    await expect(verdict).toContainText("מקראה: זמן זיכרון — צריך PDF.");
+    await expect(verdict).toContainText("צריך להעלות PDF");
+    await expect(verdict).not.toContainText("עוד לא הועלו");
+    await page.keyboard.press("Escape");
+
+    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await page.getByRole("link", { name: "מקראה", exact: true }).first().click();
+    const row = page.locator("[data-manifest-row][data-status^=memorial]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    await expect(row).toHaveAttribute("data-status", "memorial_needs_pdf");
+    await expect(row).toContainText("זמן זיכרון — צריך PDF");
+    await expect(row).toContainText("הועלה קובץ Word, שלא נכנס למקראה — צריך PDF");
+    await expect(row).not.toContainText("החומרים עוד לא הועלו");
+    await expect(page.locator("[data-manifest-totals]")).toContainText("2 צריך PDF"); // the demo's Word-only lesson, and this slot
+
+    // the plan back in the tray: its page goes with it — on its card, «ממתין לשיבוץ» — never left at the old slot for removal
+    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    const plan = page.locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    await plan.getByLabel("שיבוץ", { exact: true }).selectOption({ label: "במגש (לא משובץ/ת)" });
+    await plan.getByRole("button", { name: "למגש: חלל/ה לדוגמה 1" }).click();
+    await expect(toast(page, "«חלל/ה לדוגמה 1» חזר/ה למגש")).toBeVisible();
+    const inTray = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    const materials = inTray.getByRole("group", { name: "החומרים של התוכנית: חלל/ה לדוגמה 1" });
+    await expect(materials).toContainText("ממתין לשיבוץ");
+    await expect(materials.locator("[data-source-file]")).toContainText(["דף זיכרון.docx"]);
+    await expect(page.getByText("מתוכנית שנמחקה מהמחזור")).toHaveCount(0);
+    await noSidewaysScroll(page);
+
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    await page.locator("[data-memorial-card]").filter({ hasText: "עוד לא שובץ/ה" }).first().click();
+    const slot = page.getByRole("dialog", { name: "זמן זיכרון" });
+    await expect(slot.getByRole("region", { name: "זמן הזיכרון" })).toContainText("עוד לא שובץ/ה כאן חלל/ה.");
+    await expect(slot.getByText("דף זיכרון.docx")).toHaveCount(0);
+    await expect(slot.getByRole("button", { name: "הסרה" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await page.getByRole("link", { name: "מקראה", exact: true }).first().click();
+    await expect(page.locator("[data-manifest-row]").filter({ hasText: "להסרה" })).toHaveCount(0);
+    const waiting = page.getByRole("list", { name: "חומרים שממתינים לשיבוץ" });
+    await expect(waiting.locator("[data-source-file]")).toContainText(["חלל/ה לדוגמה 1:"]); // whose material it is
+    await expect(waiting.locator("[data-source-file]")).toContainText(["דף זיכרון.docx"]);
+    await noSidewaysScroll(page);
+  });
+
+  test("by keyboard, the plan's «שיבוץ» and the liaison's select only pick: an ArrowDown commits nothing until «שיבוץ» / «שמירה»", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "a keyboard on a computer");
+    await page.goto(`${demoUrl()}/memorial`);
+    const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });
+    const picker = plan.getByLabel("שיבוץ", { exact: true });
+    await picker.focus();
+    await page.keyboard.press("ArrowDown"); // a closed select changes on ArrowDown, and says so (change)
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(500);
+    expect(await toast(page, "שובץ/ה").count()).toBe(0); // now, not after a toast would have faded
+    await expect(picker).toBeFocused(); // nothing re-rendered it away
+    const placed = page.locator("[data-memorial-slot]").filter({ has: page.locator("[data-memorial-plan]", { hasText: "חלל/ה לדוגמה 2" }) });
+    await expect(placed).toHaveCount(0); // still in the tray
+    const chosen = (await picker.locator("option:checked").textContent())!;
+    expect(chosen).not.toBe("במגש (לא משובץ/ת)");
+    await page.keyboard.press("Tab");
+    const place = plan.getByRole("button", { name: "שיבוץ: חלל/ה לדוגמה 2" });
+    await expect(place).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(toast(page, "«חלל/ה לדוגמה 2» שובץ/ה")).toBeVisible();
+    await expect(placed).toContainText(chosen);
+
+    // the liaison of Sunday's slot: an ArrowDown picks another trainee, «שמירה» saves
+    const sunday = page.locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 1" });
+    const liaison = sunday.getByLabel("קשר עם המשפחה (המלווה)");
+    const before = await liaison.inputValue();
+    await liaison.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(500);
+    expect(await toast(page, "המלווה נשמר/ה").count()).toBe(0);
+    await expect(liaison).toBeFocused();
+    await expect(sunday.locator("dd").filter({ hasText: "מלווה לדוגמה ד׳" })).toHaveCount(1); // still the saved one
+    const picked = await liaison.inputValue();
+    expect(picked).not.toBe(before);
+    await sunday.getByRole("button", { name: "שמירת המלווה" }).click();
+    await expect(toast(page, "המלווה נשמר/ה")).toBeVisible();
+    await expect(liaison).toHaveValue(picked);
+    await expect(sunday.getByRole("button", { name: "שמירת המלווה" })).toHaveCount(0);
   });
 
   test("a screen whose file is gone after a deploy (the old name answered with index.html): a notice with «רענון», never a blank page", async ({ page }) => {
@@ -341,7 +442,8 @@ test.describe("mock build", () => {
     ];
     sb.storageFiles.set(week.sourceFiles[0].storage_path, Buffer.from("%PDF-1.7 synthetic", "latin1"));
     sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] });
-    sb.tables.set("fallen", [{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }]);
+    // the cross-year list: fallen 3 (planned here) and fallen 9 (another year's — no plan in this edition)
+    sb.tables.set("fallen", [{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }, { id: 9, name: "חלל/ה לדוגמה 9", gender: null, note: null, active: false }]);
     sb.answers.set("get_fallen_contacts", null);
     await page.goto(`${mockUrl()}/settings/edition`);
     await page.getByRole("checkbox", { name: "כולל קבצי המקורות" }).check();
@@ -350,9 +452,10 @@ test.describe("mock build", () => {
     const files = unzipSync(new Uint8Array(zip.bytes));
     expect(Object.keys(files).filter((k) => k.startsWith("sources/"))).toEqual(["sources/1-ראשון/0830_1_קובץ א.pdf"]);
     expect(JSON.parse(strFromU8(files["sources.json"])).files.find((f: { id: number }) => f.id === 2)).toMatchObject({ not_read: true, in_zip: null });
-    expect(JSON.parse(strFromU8(files["memorial.json"])).fallen).toEqual([{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }]);
+    expect(JSON.parse(strFromU8(files["memorial.json"])).fallen.map((f: { id: number }) => f.id)).toEqual([3, 9]); // names only, every year
     expect(sb.rpc.get("load_kk")).toEqual([{ p_edition: 7 }]);
-    expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 3 }]);
+    // a family's contact asked for the fallen this edition planned for only (the demo's plans: 1, 2, 3) — never fallen 9's
+    expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 1 }, { p_fallen: 2 }, { p_fallen: 3 }]);
     expect(sb.storage.filter((s) => s.method === "POST" && s.path === "/storage/v1/object/sign/sources")).toHaveLength(1);
     await expect(page.getByRole("alert").filter({ hasText: "קובץ אחד לא נקרא ולא נכלל:" })).toContainText("קובץ ב.pdf");
   });

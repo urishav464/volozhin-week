@@ -1,7 +1,7 @@
 // When the app registers the worker: production builds only — never `vite dev` — and with the kill switch on it
 // unregisters instead (src/offline/config.ts).
 import { describe, expect, it, vi } from "vitest";
-import { retireShellWorker, shellWorkerMode } from "./register";
+import { applyUpdate, onControllerChanged, retireShellWorker, shellWorkerMode } from "./register";
 
 describe("shellWorkerMode", () => {
   it("a production build registers; the dev server and a browser without workers do nothing", () => {
@@ -44,5 +44,24 @@ describe("retireShellWorker: the kill switch from the app's side", () => {
     f.sw.getRegistrations.mockRejectedValue(new Error("SecurityError"));
     f.store.keys.mockRejectedValue(new Error("SecurityError"));
     await expect(retireShellWorker(f.sw, f.store)).resolves.toBeUndefined();
+  });
+});
+
+describe("«רענון» with two tabs open (applyUpdate, onControllerChanged)", () => {
+  const worker = (state: ServiceWorkerState) => ({ state, postMessage: vi.fn() });
+
+  it("lets a waiting worker take over — and reloads at once when another tab already did (the held worker is not waiting any more)", () => {
+    expect(applyUpdate(worker("installed"))).toBe("skip");
+    // tab B pressed «רענון» first: the worker tab A holds is active now — a skip-waiting message would do nothing
+    for (const state of ["activating", "activated", "redundant"] as const) expect(applyUpdate(worker(state)), state).toBe("reload");
+    expect(applyUpdate("reload")).toBe("reload");
+    expect(applyUpdate(null)).toBe("none");
+  });
+
+  it("a controller replaced while this tab did not ask: the banner, whose «רענון» reloads — not the first install's claim", () => {
+    expect(onControllerChanged(true, true)).toBe("reload"); // this tab's «רענון»
+    expect(onControllerChanged(true, false)).toBe("reload");
+    expect(onControllerChanged(false, true)).toBe("banner"); // another tab's
+    expect(onControllerChanged(false, false)).toBe("none"); // the first install taking this page (clients.claim)
   });
 });

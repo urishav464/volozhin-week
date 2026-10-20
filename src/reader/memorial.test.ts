@@ -7,7 +7,7 @@ import { demoWeek } from "../data/demoWeek";
 import type { Lesson, SourceFile, Week } from "../domain/types";
 import { escortGroups } from "../exports/escorts";
 import { skeletonParagraphs } from "./docx";
-import { IN_READER, manifestTotals, memorialFiles, readerEstimate, readerManifest, readerRows, unreadForReader } from "./model";
+import { IN_READER, MEMORIAL_SAID, manifestTotals, memorialFiles, memorialLeftovers, memorialWaiting, readerEstimate, readerManifest, readerRows, STATUS_LABEL, unreadForReader } from "./model";
 
 const memorialOn = (w: Week, day: number): Lesson => w.lessons.find((l) => l.kind === "memorial" && l.day === day)!;
 let n = 900;
@@ -53,24 +53,68 @@ describe("memorial times in the reader", () => {
     const w = demoWeek();
     const [sun, mon] = [memorialOn(w, 0), memorialOn(w, 1)];
     const page = file(w, sun.id, 1);
-    const stray = file(w, sun.id, 2); // came for fallen 2, whose plan is in the tray
+    const gone = file(w, sun.id, 9); // came for fallen 9, whose plan was deleted from this edition since
     expect(memorialFiles(w, sun).map((f) => f.id)).toEqual([page.id]);
-    expect(rowOf(w, sun).previous.map((f) => f.id)).toEqual([stray.id]); // for removal, never in the reader
+    expect(rowOf(w, sun).previous.map((f) => f.id)).toEqual([gone.id]); // for removal, never in the reader
     w.memorialPlans.find((p) => p.fallen_id === 1)!.lesson_id = mon.id; // the plan moved to Monday
     expect(memorialFiles(w, mon).map((f) => f.id)).toEqual([page.id]);
     expect(rowOf(w, mon)).toMatchObject({ status: "memorial_received", header: "זמן זיכרון – חלל/ה לדוגמה 1" });
     expect(rowOf(w, sun)).toMatchObject({ status: "memorial", files: [] });
-    expect(rowOf(w, sun).previous.map((f) => f.id)).toEqual([stray.id]); // fallen 1's file is Monday's now
+    expect(rowOf(w, sun).previous.map((f) => f.id)).toEqual([gone.id]); // fallen 1's file is Monday's now
     // its slot removed since (lesson_id null): still Monday's, not a leftover
     page.lesson_id = null;
     const m = readerManifest(w);
     expect(m.leftovers.map((f) => f.id)).not.toContain(page.id);
     expect(m.rows.find((r) => r.lesson.id === mon.id)!.files.map((f) => f.id)).toEqual([page.id]);
-    // off its slot: the file is no slot's — it shows where it came from, for removal
-    w.memorialPlans.find((p) => p.fallen_id === 1)!.lesson_id = null;
-    page.lesson_id = sun.id;
-    expect(rowOf(w, sun).previous.map((f) => f.id)).toEqual([page.id, stray.id]);
-    expect(readerManifest(w).rows.flatMap((r) => r.files).map((f) => f.id)).not.toContain(page.id);
+  });
+
+  it("keep a plan's materials with it in the tray: «ממתין לשיבוץ», never a leftover «להסרה» at the slot it left — wherever they were uploaded", () => {
+    const w = demoWeek();
+    const sun = memorialOn(w, 0);
+    const plan = w.memorialPlans.find((p) => p.fallen_id === 1)!;
+    const page = file(w, sun.id, 1); // uploaded to its slot, as register_source_file records it (lesson + fallen)
+    const tray2 = file(w, sun.id, 2); // came for fallen 2, whose plan was in the tray all along
+    expect(memorialLeftovers(w, sun)).toEqual([]);
+    expect(readerManifest(w).waiting.map((f) => f.id)).toEqual([tray2.id]);
+    plan.lesson_id = null; // place_memorial_plan(plan, v, null): still this edition's plan, in the tray
+    expect(memorialLeftovers(w, sun)).toEqual([]);
+    const m = readerManifest(w);
+    expect(m.rows.find((r) => r.lesson.id === sun.id)).toMatchObject({ status: "memorial", files: [], previous: [] });
+    expect(m.waiting.map((f) => f.id)).toEqual([page.id, tray2.id]);
+    expect(m.leftovers).toEqual([]);
+    expect(memorialWaiting(w, plan).map((f) => f.id)).toEqual([page.id]); // its card in «זמני זיכרון» shows it
+    // the slot it came to removed since (lesson_id null): still the plan's, never «קבצים בלי שיעור»
+    page.lesson_id = null;
+    expect(readerManifest(w)).toMatchObject({ leftovers: [], waiting: [page, tray2] });
+    // placed again, anywhere: in the reader from there
+    plan.lesson_id = memorialOn(w, 1).id;
+    expect(rowOf(w, memorialOn(w, 1))).toMatchObject({ status: "memorial_received", files: [page] });
+    expect(readerManifest(w).waiting).toEqual([tray2]);
+    // only a plan deleted from the edition leaves its files for removal
+    w.memorialPlans = w.memorialPlans.filter((p) => p.fallen_id !== 2);
+    tray2.lesson_id = sun.id;
+    expect(memorialLeftovers(w, sun)).toEqual([tray2]);
+    expect(readerManifest(w).waiting).toEqual([]);
+  });
+
+  it("give a slot a lesson's verdicts: Word only «צריך PDF», not read only «צריך קובץ אחר» — never «not uploaded» when something was", () => {
+    const w = demoWeek();
+    const slot = memorialOn(w, 0);
+    expect(rowOf(w, slot).status).toBe("memorial_missing");
+    const docx = file(w, slot.id, 1, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", page_count: null, display_name: "דף.docx" });
+    expect(rowOf(w, slot)).toMatchObject({ status: "memorial_needs_pdf", word: [docx], printable: [], pages: 0 });
+    expect(STATUS_LABEL.memorial_needs_pdf).toBe("זמן זיכרון — צריך PDF");
+    expect(MEMORIAL_SAID.memorial_needs_pdf).toContain("צריך להעלות PDF");
+    expect(manifestTotals(readerManifest(w)).needsPdf).toBe(1);
+    docx.mime = "application/pdf"; // a PDF the browser could not read on upload
+    expect(rowOf(w, slot)).toMatchObject({ status: "memorial_unreadable", unread: [docx] });
+    expect(STATUS_LABEL.memorial_unreadable).toBe("זמן זיכרון — צריך קובץ אחר");
+    expect(manifestTotals(readerManifest(w)).unreadable).toBe(1);
+    expect(unreadForReader(readerManifest(w))).toEqual([docx]);
+    docx.page_count = 1;
+    expect(rowOf(w, slot).status).toBe("memorial_received");
+    // the header page is in the reader in every one of them
+    expect(IN_READER.memorial_needs_pdf && IN_READER.memorial_unreadable).toBe(true);
   });
 });
 

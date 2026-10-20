@@ -12,6 +12,7 @@ import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
 import { checkPicked, COVER_ACCEPT } from "../../data/sourceRules";
 import type { Me } from "../../data/types";
+import { fallenName } from "../../domain/memorial";
 import { SOURCES_LABEL } from "../../domain/stages";
 import { DAY_NAMES } from "../../domain/time";
 import type { SourceFile, Week } from "../../domain/types";
@@ -33,6 +34,8 @@ const TONE: Record<ManifestStatus, "ok" | "accent" | "bad" | "muted" | "neutral"
   included: "ok",
   memorial: "accent",
   memorial_received: "ok",
+  memorial_needs_pdf: "bad",
+  memorial_unreadable: "bad",
   memorial_missing: "bad",
   needs_pdf: "bad",
   unreadable: "bad",
@@ -85,6 +88,29 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
       <ManifestPanel manifest={manifest} />
       <CoverPanel port={port} week={week} manifest={manifest} actor={actor} notify={notify} clear={clear} reload={reload} />
       <HeadersPanel port={port} week={week} actor={actor} notify={notify} clear={clear} reload={reload} />
+      {manifest.waiting.length > 0 && (
+        <Panel title="ממתין לשיבוץ" aside="חומרים של תוכניות זיכרון שבמגש — נכנסים למקראה אחרי השיבוץ">
+          <p className="mb-2 text-sm text-ink-soft">התוכניות האלה עוד לא שובצו בזמן זיכרון (במסך «זמני זיכרון»). החומרים שלהן שמורים, ועוברים עם כל תוכנית למשבצת שבה היא תשובץ.</p>
+          <ul aria-label="חומרים שממתינים לשיבוץ" className="divide-y divide-line">
+            {manifest.waiting.map((f) => (
+              <FileRow
+                key={f.id}
+                port={port}
+                week={week}
+                file={f}
+                actor={actor}
+                notify={notify}
+                reload={reload}
+                before={
+                  <span className="text-sm text-ink-soft">
+                    <bdi>{fallenName(week, f.fallen_id!)}</bdi>:
+                  </span>
+                }
+              />
+            ))}
+          </ul>
+        </Panel>
+      )}
       {manifest.leftovers.length > 0 && (
         <Panel title="קבצים בלי שיעור" aside="של משבצות שנפתחו מחדש או נמחקו — לא נכנסים למקראה">
           <ul className="divide-y divide-line">
@@ -297,11 +323,14 @@ function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void
   if (r.unread.length > 0) notes.push(unreadText(r.unread.length, included));
   if (r.previous.length > 0) {
     const n = r.previous.length === 1 ? "קובץ אחד" : `${r.previous.length} קבצים`;
-    notes.push(r.kind === "memorial" ? `מתוכנית שכבר לא כאן: ${n} להסרה` : `מהמרצה הקודם: ${n} להסרה`);
+    notes.push(r.kind === "memorial" ? `מתוכנית שנמחקה מהמחזור: ${n} להסרה` : `מהמרצה הקודם: ${n} להסרה`);
   }
   if (r.kind === "lesson" && IN_READER[r.status] && !r.title) notes.push("אין כותרת: בכותרת שבמקראה יופיע TBD");
   if (r.status === "memorial") notes.push("עמוד כותרת בלבד: עוד לא שובץ/ה כאן חלל/ה (במסך «זמני זיכרון»)");
   else if (r.status === "memorial_missing") notes.push("עמוד כותרת; החומרים עוד לא הועלו (בלוח של זמן הזיכרון)");
+  // a lesson's verdicts (the badge): what came is Word, or was not read — never «not uploaded» when something was
+  else if (r.status === "memorial_needs_pdf") notes.push(r.word.length === 1 ? "הועלה קובץ Word, שלא נכנס למקראה — צריך PDF; בינתיים עמוד כותרת בלבד" : `הועלו ${r.word.length} קבצי Word, שלא נכנסים למקראה — צריך PDF; בינתיים עמוד כותרת בלבד`);
+  else if (r.status === "memorial_unreadable") notes.push("בינתיים עמוד כותרת בלבד");
   return (
     <li data-manifest-row={r.lesson.id} data-status={r.status} className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2">
       <span className="w-full shrink-0 text-sm text-ink-soft sm:w-44">

@@ -71,7 +71,7 @@ describe("OfflineCopy", () => {
     await copy.saveWeek(1, emptyWeek());
     await copy.saveWhoami(me);
     const old = new OfflineCopy(kv, () => A, 9);
-    expect(await old.decide()).toEqual({ kind: "none" });
+    expect(await old.decide()).toEqual({ kind: "newer" }); // the screen says a newer copy is here, and offers «רענון»
     expect([...kv.data.keys()].sort()).toEqual(["week", "whoami"]);
     expect(await copy.decide()).toMatchObject({ kind: "show" }); // «רענון» brings the build that reads it
   });

@@ -5,10 +5,13 @@
 //     is always named);
 //   - the slots, day by day inside the grid's memorial rows — «+ זמן זיכרון» makes
 //     one anywhere in a row, any length; an empty one can be removed;
-//   - the tray: a plan per fallen not placed yet, and a picker (a list — tap or
-//     keyboard) that places it on a free slot; the slot's own picker the same
-//     way round. A placed plan carries its liaison (the slot's escort, the team's
-//     contact with the family) and its materials for the reader;
+//   - the tray: a plan per fallen not placed yet — with the materials already
+//     uploaded for it, «ממתין לשיבוץ» — and a picker (a list — tap or keyboard)
+//     that chooses a free slot and «שיבוץ» that places it; the slot's own picker
+//     the same way round. Every select here only picks: a button commits (an
+//     ArrowDown on a closed select changes it). A placed plan carries its liaison
+//     (the slot's escort, the team's contact with the family; picked, then
+//     «שמירה») and its materials for the reader;
 //   - each plan's details (the family's status, who speaks, minutes, «בלי
 //     חריגה», the materials note) and — for admins only, fetched on opening, one
 //     fallen at a time — the family's contact person;
@@ -24,12 +27,14 @@ import { fallenName, freeSlots, memorialRowsOf, memorialSlots, minutesText, plan
 import { DAY_NAMES, DAYS, type Day, LRM, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
 import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
+import { memorialWaiting } from "../../reader/model";
 import { warningsFor } from "../../rules/warnings";
 import { Badge, Button, Confirm, Field, GenderField, INPUT, Panel, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
-import { SourceFiles } from "../stages/SourceFiles";
+import { FileRow, SourceFiles } from "../stages/SourceFiles";
 import { Problem } from "../stages/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
+import { MemorialReaderLine } from "./SlotPanel";
 
 type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
 
@@ -390,6 +395,11 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
   const name = fallenName(week, p.fallen_id);
   const choices = freeSlots(week, p);
   const liaison = slot?.escort_roster_id != null ? (week.roster.find((r) => r.id === slot.escort_roster_id)?.full_name ?? "חניך/ה שנמחק/ה") : null;
+  // the select only picks; «שיבוץ» (or «למגש») commits — back to the saved place whenever the plan changes
+  const saved = p.lesson_id ?? "";
+  const [chosen, setChosen] = useState<number | "">(saved);
+  useEffect(() => setChosen(p.lesson_id ?? ""), [p.lesson_id, p.version]);
+  const waiting = slot ? [] : memorialWaiting(week, p);
   return (
     <article aria-labelledby={`${id}-h`} data-memorial-plan={p.id} className={slot ? "space-y-2" : "space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3"}>
       <h5 id={`${id}-h`} className="font-semibold text-amber-950">
@@ -424,23 +434,36 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
           <label htmlFor={`${id}-place`} className="text-sm font-semibold">
             שיבוץ
           </label>
-          <select
-            id={`${id}-place`}
-            value={p.lesson_id ?? ""}
-            disabled={busy === `place-${p.id}`}
-            onChange={(e) => {
-              const to = e.target.value === "" ? null : Number(e.target.value);
-              void act(`place-${p.id}`, () => cmds.placeMemorialPlan(p.id, p.version, to), to == null ? `«${name}» חזר/ה למגש` : `«${name}» שובץ/ה`);
-            }}
-            className={SELECT}
-          >
-            <option value="">במגש (לא משובץ/ת)</option>
-            {choices.map((l) => (
-              <option key={l.id} value={l.id}>
-                {slotLabel(week, l)}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              id={`${id}-place`}
+              value={chosen}
+              disabled={busy === `place-${p.id}`}
+              onChange={(e) => setChosen(e.target.value === "" ? "" : Number(e.target.value))}
+              className={`${SELECT} min-w-0 flex-1 basis-48`}
+            >
+              <option value="">במגש (לא משובץ/ת)</option>
+              {choices.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {slotLabel(week, l)}
+                </option>
+              ))}
+            </select>
+            {chosen !== saved && (
+              <Button
+                kind="primary"
+                busy={busy === `place-${p.id}`}
+                busyLabel="משבץ…"
+                aria-label={`${chosen === "" ? "למגש" : "שיבוץ"}: ${name}`}
+                onClick={() => {
+                  const to = chosen === "" ? null : chosen;
+                  void act(`place-${p.id}`, () => cmds.placeMemorialPlan(p.id, p.version, to), to == null ? `«${name}» חזר/ה למגש` : `«${name}» שובץ/ה`);
+                }}
+              >
+                {chosen === "" ? "למגש" : "שיבוץ"}
+              </Button>
+            )}
+          </div>
           {choices.length === 0 && <p className="text-xs text-ink-soft">אין זמן זיכרון פנוי. מוסיפים אחד ב«ברשת» למטה.</p>}
         </div>
       )}
@@ -463,14 +486,27 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
           </div>
         ))}
       {asking && (
-        <Confirm text={<>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.</>} confirm="כן, למחוק" busy={busy === `delete-${p.id}`} onConfirm={() => void act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה")} onCancel={() => setAsking(false)} />
+        <Confirm text={<>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.{waiting.length > 0 && " החומרים שהועלו לה לא נמחקים איתה: הם נשארים, להסרה."}</>} confirm="כן, למחוק" busy={busy === `delete-${p.id}`} onConfirm={() => void act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה")} onCancel={() => setAsking(false)} />
       )}
 
       {admin && <FamilyContacts {...props} fallenId={p.fallen_id} name={name} />}
 
       {slot && (
-        <div className="rounded-lg border border-line bg-card p-2">
+        <div className="space-y-2 rounded-lg border border-line bg-card p-2">
+          <MemorialReaderLine week={week} lesson={slot} />
           <SourceFiles port={props.port} week={week} lesson={slot} actor={props.actor} notify={props.notify} clear={props.clear} reload={props.reload} />
+        </div>
+      )}
+      {/* in the tray: the materials already uploaded for it — its own, waiting to go with it to a slot; never leftovers */}
+      {waiting.length > 0 && (
+        <div className="space-y-1 rounded-lg border border-line bg-card p-2" role="group" aria-label={`החומרים של התוכנית: ${name}`}>
+          <p className="text-sm font-semibold">החומרים · ממתין לשיבוץ</p>
+          <p className="text-xs text-ink-soft">הועלו לתוכנית הזאת. הם עוברים איתה לזמן הזיכרון שבו היא תשובץ, ונכנסים למקראה משם.</p>
+          <ul className="divide-y divide-line">
+            {waiting.map((f) => (
+              <FileRow key={f.id} port={props.port} week={week} file={f} actor={props.actor} notify={props.notify} reload={props.reload} />
+            ))}
+          </ul>
         </div>
       )}
     </article>
@@ -552,28 +588,39 @@ function PlanForm({
 function LiaisonPicker({ week, slot: l, cmds, busy, act }: Ctx & { slot: Lesson }) {
   const id = useId();
   const key = `liaison-${l.id}`;
+  // the select only picks; «שמירה» commits — back to the saved liaison whenever the slot changes
+  const saved = l.escort_roster_id ?? "";
+  const [chosen, setChosen] = useState<number | "">(saved);
+  useEffect(() => setChosen(l.escort_roster_id ?? ""), [l.escort_roster_id, l.version]);
   return (
     <div className="min-w-0">
       <label htmlFor={id} className="text-sm font-semibold">
         קשר עם המשפחה (המלווה)
       </label>
-      <select
-        id={id}
-        value={l.escort_roster_id ?? ""}
-        disabled={busy === key}
-        onChange={(e) => {
-          const roster = e.target.value === "" ? null : Number(e.target.value);
-          void act(key, () => cmds.setEscort(l.id, l.version, { roster_id: roster, self_intro: false, escort_note: l.escort_note }), roster == null ? "המלווה הוסר/ה" : "המלווה נשמר/ה");
-        }}
-        className={SELECT}
-      >
-        <option value="">עוד לא נקבע/ה</option>
-        {week.roster.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.full_name}
-          </option>
-        ))}
-      </select>
+      <div className="flex flex-wrap items-center gap-2">
+        <select id={id} value={chosen} disabled={busy === key} onChange={(e) => setChosen(e.target.value === "" ? "" : Number(e.target.value))} className={`${SELECT} min-w-0 flex-1 basis-48`}>
+          <option value="">עוד לא נקבע/ה</option>
+          {week.roster.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.full_name}
+            </option>
+          ))}
+        </select>
+        {chosen !== saved && (
+          <Button
+            kind="primary"
+            busy={busy === key}
+            busyLabel="שומר…"
+            aria-label="שמירת המלווה"
+            onClick={() => {
+              const roster = chosen === "" ? null : chosen;
+              void act(key, () => cmds.setEscort(l.id, l.version, { roster_id: roster, self_intro: false, escort_note: l.escort_note }), roster == null ? "המלווה הוסר/ה" : "המלווה נשמר/ה");
+            }}
+          >
+            שמירה
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

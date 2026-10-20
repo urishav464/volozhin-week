@@ -2,16 +2,31 @@
 // on it — the fallen, the family's status, who speaks, the minutes, «בלי
 // חריגה», the reader's materials note — its liaison (the slot's escort: the
 // team's contact person with the family), its materials (src/screens/stages/
-// SourceFiles.tsx: the plan's files, wherever they were uploaded), and the way
-// to «זמני זיכרון», where admins plan and place. Never a family's contact.
+// SourceFiles.tsx: the plan's files, wherever they were uploaded) with the
+// reader's verdict on them — a lesson's words: «צריך PDF», «צריך קובץ אחר» —
+// and the way to «זמני זיכרון», where admins plan and place. Never a family's
+// contact.
+import { useMemo } from "react";
 import { Link } from "react-router";
 import { FAMILY_STATUS_LABEL } from "../../data/memorial";
 import type { DataPort } from "../../data/port";
 import { fallenName, minutesText, planOf } from "../../domain/memorial";
 import type { Lesson, Week } from "../../domain/types";
+import { MEMORIAL_SAID, memorialLeftovers, readerManifest, STATUS_LABEL } from "../../reader/model";
 import type { Notify } from "../speakers/parts";
 import { SourceFiles } from "../stages/SourceFiles";
 import type { Actor } from "../weekStore";
+
+/** The reader's verdict on a slot with a plan: the manifest's badge and the sentence for it (MEMORIAL_SAID). */
+export function MemorialReaderLine({ week, lesson: l }: { week: Week; lesson: Lesson }) {
+  const status = useMemo(() => readerManifest(week).rows.find((r) => r.lesson.id === l.id)?.status, [week, l.id]);
+  if (!status || !(status in MEMORIAL_SAID)) return null;
+  return (
+    <p data-memorial-reader={status} className="text-sm">
+      <b>מקראה: {STATUS_LABEL[status]}.</b> {MEMORIAL_SAID[status as keyof typeof MEMORIAL_SAID]}
+    </p>
+  );
+}
 
 export function MemorialSlotPanel({ port, week, lesson: l, actor, notify, clear, reload }: { port: DataPort; week: Week; lesson: Lesson; actor: Actor; notify: Notify; clear: () => void; reload: () => Promise<void> }) {
   const plan = planOf(week, l.id);
@@ -44,7 +59,9 @@ export function MemorialSlotPanel({ port, week, lesson: l, actor, notify, clear,
       ) : (
         <p className="text-sm text-ink-soft">עוד לא שובץ/ה כאן חלל/ה.</p>
       )}
-      {(plan || (week.sourceFiles ?? []).some((f) => f.lesson_id === l.id)) && <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />}
+      {plan && <MemorialReaderLine week={week} lesson={l} />}
+      {/* a plan's files waiting in the tray are that plan's (its card in «זמני זיכרון»), never this slot's to remove */}
+      {(plan || memorialLeftovers(week, l).length > 0) && <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />}
       <Link to="/memorial" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-2">
         {actor.isAdmin ? "לתכנון ולשיבוץ במסך «זמני זיכרון»" : "למסך «זמני זיכרון»"}
       </Link>

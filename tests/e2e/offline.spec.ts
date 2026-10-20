@@ -121,6 +121,31 @@ function stored(page: Page): Promise<{ week?: { editionId: number; userId: strin
   );
 }
 
+/** What a newer build of the site would have saved: the same copy, its schema version (and whoami's) one ahead. */
+function bumpStored(page: Page): Promise<void> {
+  return page.evaluate(
+    ([db, store]) =>
+      new Promise<void>((resolve, reject) => {
+        const req = indexedDB.open(db, 1);
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const tx = req.result.transaction(store, "readwrite");
+          const s = tx.objectStore(store);
+          const w = s.get("week");
+          const m = s.get("whoami");
+          w.onsuccess = () => s.put({ ...w.result, schemaVersion: w.result.schemaVersion + 1 }, "week");
+          m.onsuccess = () => s.put({ ...m.result, me: { ...m.result.me, schema_version: m.result.me.schema_version + 1 } }, "whoami");
+          tx.oncomplete = () => {
+            req.result.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+    [OFFLINE_DB, OFFLINE_STORE] as const,
+  );
+}
+
 /** Every cache's name and every URL in it. */
 function cached(page: Page): Promise<{ name: string; urls: string[] }[]> {
   return page.evaluate(async () => {
@@ -452,6 +477,82 @@ test.describe("mock build", () => {
     await expect.poll(async () => (await cached(page)).map((c) => c.name).filter((n) => n.startsWith("volozhin-shell-"))).toEqual([`${before}-next`]);
   });
 
+  for (const reloadedFirst of [false, true]) {
+    test(`two tabs: B's «רענון» lets the new version in, and A's «רענון» then reloads A onto it (A ${reloadedFirst ? "reloaded after the install" : "installed the first worker"})`, async ({ context, page }, info) => {
+      test.skip(info.project.name !== "desktop", "one width is enough for two tabs");
+      await signedIn(context, page);
+      await page.goto(mockUrl()); // tab A
+      await readyOffline(page);
+      await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+      if (reloadedFirst) {
+        await page.reload();
+        await expect(lens(page)).toBeVisible();
+      }
+      const b = await context.newPage(); // tab B, the same browser
+      await b.goto(mockUrl());
+      await expect(lens(b)).toBeVisible();
+      const before = (await cached(page)).find((c) => c.name.startsWith("volozhin-shell-"))!.name;
+      await page.evaluate(() => ((window as unknown as { stay: number }).stay = 1));
+
+      await context.addCookies([{ name: "e2e-sw", value: "next", url: mockUrl() }]);
+      await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.update());
+      const banner = (p: Page) => p.getByRole("status").filter({ hasText: "גרסה חדשה של האתר זמינה" });
+      await expect(banner(page)).toBeVisible();
+      await expect(banner(b)).toBeVisible();
+
+      // B first: B reloads onto the new worker
+      const bReloaded = b.waitForEvent("load");
+      await banner(b).getByRole("button", { name: "רענון" }).click();
+      await bReloaded;
+      await expect(banner(b)).toHaveCount(0);
+      await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state)).toBe("activated");
+      expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1); // A was not reloaded by itself
+      await expect(banner(page)).toBeVisible();
+
+      // then A: its «רענון» is not dead — A reloads, controlled by the new worker, the old version's cache gone
+      const aReloaded = page.waitForEvent("load", { timeout: 10_000 });
+      await banner(page).getByRole("button", { name: "רענון" }).click();
+      await aReloaded;
+      expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay ?? "reloaded")).toBe("reloaded");
+      await expect(lens(page)).toBeVisible();
+      await expect(banner(page)).toHaveCount(0);
+      await expect.poll(() => page.evaluate(async () => navigator.serviceWorker.controller === (await navigator.serviceWorker.getRegistration())?.active)).toBe(true);
+      await expect.poll(async () => (await cached(page)).map((c) => c.name).filter((n) => n.startsWith("volozhin-shell-"))).toEqual([`${before}-next`]);
+      await b.close();
+    });
+  }
+
+  test("offline, a newer build's copy on the device: the notice says so and offers the waiting worker's «רענון» — and that «התנתקות» deletes it", async ({ context, page }, info) => {
+    test.skip(info.project.name === "tablet", "a phone and a desktop are enough");
+    const { offline } = await signedIn(context, page);
+    await page.goto(mockUrl());
+    await readyOffline(page);
+    // the next build waits (its worker installed while online), and a page of it already saved its copy (a plain reload)
+    await context.addCookies([{ name: "e2e-sw", value: "next", url: mockUrl() }]);
+    await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.update());
+    await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true);
+    await bumpStored(page);
+
+    await noConnection(context, true);
+    offline.on = true;
+    await page.reload();
+    const notice = page.locator("[data-newer-copy]");
+    await expect(notice).toContainText("במכשיר יש עותק מגרסה חדשה יותר של האתר — «רענון» מציג אותו.");
+    await expect(notice).toContainText("«התנתקות» מוחקת גם את העותק הזה מהמכשיר.");
+    await expect(page.getByText("ובמכשיר הזה עוד אין עותק של השבוע")).toHaveCount(0); // never untrue: the copy is here
+    expect(await stored(page)).toMatchObject({ count: 2, week: { schemaVersion: EXPECTED_SCHEMA_VERSION + 1 } }); // kept
+    await noSidewaysScroll(page);
+
+    // the notice's own «רענון»: the waiting worker takes over and the page reloads (offline, from the new worker's cache)
+    await page.evaluate(() => ((window as unknown as { stay: number }).stay = 1));
+    const reloaded = page.waitForEvent("load");
+    await page.getByRole("main").getByRole("button", { name: "רענון" }).click();
+    await reloaded;
+    expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay ?? "reloaded")).toBe("reloaded");
+    await expect.poll(() => page.evaluate(async () => navigator.serviceWorker.controller === (await navigator.serviceWorker.getRegistration())?.active)).toBe(true);
+    expect(await stored(page)).toMatchObject({ count: 2 }); // still kept
+  });
+
   test("the kill switch: its /sw.js deletes the caches and unregisters, without reloading anyone's page", async ({ context, page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough");
     await signedIn(context, page);
@@ -539,5 +640,26 @@ test.describe("demo build", () => {
     await expect(offlineBanner(page)).toHaveCount(0);
     expect(await page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name))).not.toContain(OFFLINE_DB); // no snapshot in a demo
     await noSidewaysScroll(page);
+  });
+
+  test("/privacy.html is never answered with the app shell: online it is the page itself, offline the browser's own «no connection» — never the week", async ({ context, page }, info) => {
+    test.skip(info.project.name === "tablet", "a phone and a desktop are enough");
+    await page.goto(demoUrl());
+    await expect(lens(page)).toBeVisible();
+    await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.ready).active?.state), { timeout: 15_000 }).toBe("activated");
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    await page.goto(`${demoUrl()}/privacy.html`);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("מדיניות פרטיות");
+    await page.goto(demoUrl());
+    await expect(lens(page)).toBeVisible();
+
+    await noConnection(context, true);
+    const tab = await context.newPage(); // a new tab of this site, the worker in charge of it
+    const failed = await tab.goto(`${demoUrl()}/privacy.html`).then(() => null, (e: Error) => e.message);
+    expect(failed).toMatch(/net::ERR_/); // the network's answer: none — not the cached shell
+    await expect(lens(tab)).toHaveCount(0);
+    await expect(tab.getByRole("banner")).toHaveCount(0);
+    await tab.close();
+    await noConnection(context, false);
   });
 });
