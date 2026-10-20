@@ -9,7 +9,8 @@ import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vet
 import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fileLine, filePath, FOREIGN_ROOM, FOREIGN_TRAINEE,
+  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
+  FOREIGN_ROOM, FOREIGN_TRAINEE, planLine,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -34,6 +35,8 @@ export function engineDriver(): Driver {
     roster: ROSTER.map((r, i) => ({ id: i + 1, full_name: r.name, gender: r.gender })),
     escortTicks: [],
     sourceFiles: [],
+    memorialPlans: [],
+    fallen: [],
   };
   const speakerId = (label: string) => week.speakers.find((s) => speakerLabel(s) === label)?.id ?? -1;
   for (const [i, a] of APPROACHES.entries()) {
@@ -54,6 +57,8 @@ export function engineDriver(): Driver {
     return l && a ? week.pitches.find((p) => p.lesson_id === l.id && p.approach_id === a.id) : undefined;
   };
   const approachOf = (label: string) => week.approaches.find((a) => a.speaker_id === speakerId(label));
+  const fallenId = (name: string) => shared.fallen.find((f) => f.name === name)?.id ?? -1;
+  const planOf = (name: string) => week.memorialPlans.find((p) => p.fallen_id === fallenId(name));
   const traineeId = (name: string | null) => (name == null ? null : name === FOREIGN_TRAINEE ? 999 : (week.roster.find((r) => r.full_name === name)?.id ?? -1));
   /** A lesson by place, and its version less `staleBy`. */
   const at = (place: At, staleBy = 0) => {
@@ -258,6 +263,35 @@ export function engineDriver(): Driver {
         else if ("unregister" in step) e.removeSourceFile(week.sourceFiles.find((f) => f.storage_path === pathOf(step.unregister))?.id ?? -1);
         else if ("readerHeaders" in step) e.setReaderHeaders(step.readerHeaders[0], step.readerHeaders[1]);
         else if ("readerCover" in step) e.setReaderCover(step.readerCover == null ? null : (week.sourceFiles.find((f) => f.storage_path === pathOf(step.readerCover!))?.id ?? -1));
+        // ---- memorial times and logistics
+        else if ("saveFallen" in step) {
+          const id = step.saveFallen == null ? null : fallenId(step.saveFallen);
+          e.saveFallen(id, { name: step.name, gender: (step.gender ?? null) as never, note: step.note ?? null, active: step.active === undefined ? true : (step.active as boolean) });
+        } else if ("deleteFallen" in step) e.deleteFallen(fallenId(step.deleteFallen));
+        else if ("readFallen" in step) return e.fallenList().map((f) => f.name).sort().join(",") || "none";
+        else if ("readFallenContacts" in step) {
+          const c = e.fallenContactsOf(fallenId(step.readFallenContacts));
+          return c == null ? "hidden" : fallenContactsLine("seen", c);
+        } else if ("setFallenContacts" in step) {
+          e.setFallenContacts(fallenId(step.setFallenContacts), {
+            contact_name: step.contact ?? null, relation: step.relation ?? null, phone: step.phone ?? null, email: step.email ?? null, note: step.note ?? null,
+          });
+        } else if ("addSlot" in step) {
+          const [day, start, end, room] = step.addSlot;
+          e.addMemorialSlot(day as Day, start, end, room ? roomId(room) : null);
+        } else if ("removeSlot" in step) e.removeMemorialSlot(lessonAt(step.removeSlot)?.id ?? -1);
+        else if ("addPlan" in step) e.addMemorialPlan(fallenId(step.addPlan));
+        else if ("updatePlan" in step) {
+          const p = planOf(step.updatePlan);
+          e.updateMemorialPlan(p?.id ?? -1, (p?.version ?? 0) - (step.staleBy ?? 0), step.patch);
+        } else if ("placePlan" in step) {
+          const p = planOf(step.placePlan);
+          e.placeMemorialPlan(p?.id ?? -1, (p?.version ?? 0) - (step.staleBy ?? 0), step.at == null ? null : (lessonAt(step.at)?.id ?? -1));
+        } else if ("deletePlan" in step) e.deleteMemorialPlan(planOf(step.deletePlan)?.id ?? -1);
+        else if ("policy" in step) {
+          const p = step.policy;
+          e.setMemorialPolicy({ placement: p.placement ?? undefined, max_minutes: p.max_minutes ?? undefined, warn_adjacent_meal: p.warn_adjacent_meal ?? undefined });
+        } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
         return "ok";
       } catch (err) {
         if (err instanceof CommandError) return err.code;
@@ -281,6 +315,7 @@ export function engineDriver(): Driver {
       const approachSpeaker = (id: number) => sp(week.approaches.find((a) => a.id === id)!.speaker_id);
       const trainee = (id: number | null) => (id == null ? "-" : (week.roster.find((r) => r.id === id)?.full_name ?? `#${id}`));
       const memberOf = (id: unknown) => member(id == null ? null : Number(id));
+      const fallenName = (id: number | null) => (id == null ? "-" : (shared.fallen.find((f) => f.id === id)?.name ?? `#${id}`));
       return {
         lessons: week.lessons
           .filter((l) => l.state !== "cancelled")
@@ -313,9 +348,16 @@ export function engineDriver(): Driver {
         ].sort(),
         ticks: week.escortTicks.map((t) => `${key(t.lesson_id)}|${t.item}`).sort(),
         files: week.sourceFiles
-          .map((f) => fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : key(f.lesson_id), f, f.speaker_id == null ? "-" : sp(f.speaker_id), member(f.uploaded_by)))
+          .map((f) =>
+            fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : key(f.lesson_id), f, f.speaker_id == null ? "-" : sp(f.speaker_id), member(f.uploaded_by), fallenName(f.fallen_id)),
+          )
           .sort(),
         objects: Object.entries(shared.objects).map(([path, o]) => `${labelOf(path)}|${o.mime}|${o.size}|owner=${member(Number(o.owner.split(":")[1]))}`).sort(),
+        memorial: [
+          ...shared.fallen.map(fallenLine),
+          ...Object.entries(shared.fallenContacts).map(([id, c]) => fallenContactsLine(`contacts|${fallenName(Number(id))}`, c)),
+          ...week.memorialPlans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : key(p.lesson_id), p)),
+        ].sort(),
       };
     },
 

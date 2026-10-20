@@ -4,7 +4,8 @@
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fileLine, filePath, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
+  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
+  FOREIGN_TRAINEE, type KkStepFields, planLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -57,6 +58,11 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     return p ? Number(p.id) : -1;
   };
   const approachOf = async (label: string) => one("select id, version from public.approaches where edition_id = $1 and speaker_id = $2", [ed, await speakerId(label)]);
+  const fallenId = async (name: string) => Number((await one("select id from public.fallen where name = $1", [name]))?.id ?? -1);
+  const planOf = async (name: string) =>
+    one("select p.id, p.version from public.memorial_plans p join public.fallen f on f.id = p.fallen_id where p.edition_id = $1 and f.name = $2", [ed, name]);
+  /** Every lesson's place, read before a call that answers lesson ids (the read runs as the member, in the call). */
+  let lessonKeys: [number, string][] = [];
   const traineeId = async (name: string | null) =>
     name == null ? null : name === FOREIGN_TRAINEE ? foreignTrainee : Number((await one("select id from public.roster where edition_id = $1 and full_name = $2", [ed, name]))?.id ?? -1);
   /** A lesson by place, and its version less `staleBy`. */
@@ -381,6 +387,55 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       if ("unregister" in step) return call(step.as, "select public.remove_source_file($1)", [await fileId(step.unregister)]);
       if ("readerHeaders" in step) return call(step.as, "select public.set_reader_headers($1, $2, $3)", [ed, step.readerHeaders[0], step.readerHeaders[1]]);
       if ("readerCover" in step) return call(step.as, "select public.set_reader_cover($1, $2)", [ed, step.readerCover == null ? null : await fileId(step.readerCover)]);
+      // ---- memorial times and logistics
+      if ("saveFallen" in step) {
+        return call(step.as, "select public.save_fallen($1, $2, $3, $4, $5)", [
+          step.saveFallen == null ? null : await fallenId(step.saveFallen), step.name, step.gender ?? null, step.note ?? null, step.active === undefined ? true : step.active,
+        ]);
+      }
+      if ("deleteFallen" in step) return call(step.as, "select public.delete_fallen($1)", [await fallenId(step.deleteFallen)]);
+      if ("readFallen" in step) {
+        return call(step.as, "select coalesce(string_agg(name, ',' order by name collate \"C\"), 'none') from public.fallen", [], (v) => String(v));
+      }
+      if ("readFallenContacts" in step) {
+        return call(step.as, "select public.get_fallen_contacts($1)", [await fallenId(step.readFallenContacts)], (v) =>
+          v == null ? "hidden" : fallenContactsLine("seen", v as Parameters<typeof fallenContactsLine>[1]),
+        );
+      }
+      if ("setFallenContacts" in step) {
+        return call(step.as, "select public.set_fallen_contacts($1, $2, $3, $4, $5, $6)", [
+          await fallenId(step.setFallenContacts), step.contact ?? null, step.relation ?? null, step.phone ?? null, step.email ?? null, step.note ?? null,
+        ]);
+      }
+      if ("addSlot" in step) {
+        const [day, start, end, room] = step.addSlot;
+        return call(step.as, "select public.add_memorial_slot($1, $2, $3, $4, $5)", [ed, day, start, end, room ? await roomId(room) : null]);
+      }
+      if ("removeSlot" in step) return call(step.as, "select public.remove_memorial_slot($1)", [(await lessonAt(step.removeSlot))?.id ?? -1]);
+      if ("addPlan" in step) return call(step.as, "select public.add_memorial_plan($1, $2)", [ed, await fallenId(step.addPlan)]);
+      if ("updatePlan" in step) {
+        const p = await planOf(step.updatePlan);
+        return call(step.as, "select public.update_memorial_plan($1, $2, $3::jsonb)", [p?.id ?? -1, (p?.version ?? 0) - (step.staleBy ?? 0), JSON.stringify(step.patch)]);
+      }
+      if ("placePlan" in step) {
+        const p = await planOf(step.placePlan);
+        const l = step.at == null ? null : ((await lessonAt(step.at))?.id ?? -1);
+        return call(step.as, "select public.place_memorial_plan($1, $2, $3)", [p?.id ?? -1, (p?.version ?? 0) - (step.staleBy ?? 0), l]);
+      }
+      if ("deletePlan" in step) return call(step.as, "select public.delete_memorial_plan($1)", [(await planOf(step.deletePlan))?.id ?? -1]);
+      if ("policy" in step) {
+        const p = step.policy;
+        return call(step.as, "select public.set_memorial_policy($1, $2, $3, $4)", [ed, p.placement ?? null, p.max_minutes ?? null, p.warn_adjacent_meal ?? null]);
+      }
+      if ("readTransports" in step) {
+        lessonKeys = (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
+          (r) => [Number(r.id), lessonKey(r)] as [number, string],
+        );
+        return call(step.as, "select public.get_transports_for($1)", [ed], (v) => {
+          const keys = new Map(lessonKeys);
+          return (v as (Parameters<typeof transportLine>[1] & { lesson_id: number })[]).map((t) => transportLine(keys.get(Number(t.lesson_id)) ?? `#${t.lesson_id}`, t)).sort().join(" ; ") || "none";
+        });
+      }
       throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
@@ -420,6 +475,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const ticks = (await db.query("select t.* from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed])).rows;
       const sourceFiles = (await db.query("select f.*, s.name, s.disambiguator from public.source_files f left join public.speakers s on s.id = f.speaker_id where f.edition_id = $1", [ed])).rows;
       const objects = (await db.query("select name, owner_id, metadata from storage.objects where bucket_id = 'sources' and name like $1", [`${ed}/%`])).rows;
+      const fallen = (await db.query("select * from public.fallen")).rows;
+      const fallenName = (id: unknown) => (id == null ? "-" : (fallen.find((f) => Number(f.id) === Number(id))?.name ?? `#${id}`));
+      const fallenContacts = (await db.query("select * from public.fallen_contacts")).rows;
+      const plans = (await db.query("select * from public.memorial_plans where edition_id = $1", [ed])).rows;
       const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
       const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
       const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
@@ -446,9 +505,16 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         ].sort(),
         ticks: ticks.map((t) => `${byId.get(Number(t.lesson_id))}|${t.item}`).sort(),
         files: sourceFiles
-          .map((f) => fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : byId.get(Number(f.lesson_id))!, f, f.speaker_id == null ? "-" : speakerLabel(f), member(f.uploaded_by)))
+          .map((f) =>
+            fileLine(f.lesson_id == null ? (f.cover ? "cover" : "nolesson") : byId.get(Number(f.lesson_id))!, f, f.speaker_id == null ? "-" : speakerLabel(f), member(f.uploaded_by), fallenName(f.fallen_id)),
+          )
           .sort(),
         objects: objects.map((o) => `${labelOf(o.name)}|${o.metadata.mimetype}|${o.metadata.size}|owner=${memberOfSub(o.owner_id)}`).sort(),
+        memorial: [
+          ...fallen.map(fallenLine),
+          ...fallenContacts.map((c) => fallenContactsLine(`contacts|${fallenName(c.fallen_id)}`, c)),
+          ...plans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : byId.get(Number(p.lesson_id))!, p)),
+        ].sort(),
       };
     },
 

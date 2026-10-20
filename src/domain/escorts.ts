@@ -2,7 +2,8 @@
 // self-introduction suggestion, and a lesson's «משהו שחשוב לדעת» composed from
 // the instructor's duty phrases (editions.settings.duty_phrases — pasted from
 // last year's escorts file, never ours). Pure, from a loaded Week.
-import type { DutyPhrase, DutyWhen, EscortTick, Lesson, TickItem, Week } from "./types";
+import { byGender } from "./names";
+import type { DutyPhrase, DutyWhen, EscortTick, Gender, Lesson, TickItem, Week } from "./types";
 
 /**
  * «הצגה עצמית» is suggested for lessons from 22:30 to 06:30 — DESIGN's default,
@@ -13,6 +14,42 @@ export const SELF_INTRO_FROM = 1350;
 
 export function suggestSelfIntro(l: Pick<Lesson, "start_min">): boolean {
   return l.start_min >= SELF_INTRO_FROM;
+}
+
+/**
+ * A lesson an escort goes with: a closed lesson — or a memorial slot, whose escort is the family's liaison
+ * («בזמני זיכרון, המלווה הוא איש הקשר של המשפחה»; set once a plan is placed, gone when it leaves). The escort's
+ * link, the escorts' list and the links tab list these.
+ */
+export function escortable(l: Pick<Lesson, "state" | "kind">): boolean {
+  return l.state !== "cancelled" && (l.state === "closed" || l.kind === "memorial");
+}
+
+/**
+ * Whether the escort's four ticks (TICK_LABEL: «הזכרתי למרצה», «פגשתי בחניה»…) apply: a speaker's lesson only. A
+ * memorial slot's escort is the family's liaison — no speaker to remind or meet; those ticks would be wrong there.
+ * The link and the escorts' list show the liaison's role instead. A memorial set of ticks is the instructor's to
+ * decide, if ever (never ours).
+ */
+export function ticksApply(l: { kind: Lesson["kind"] }): boolean {
+  return l.kind === "lesson";
+}
+
+/** The liaison's role on their own link, in their gender. Never a family's contact. */
+export function liaisonLine(gender: Gender | null): string {
+  return byGender(gender, "אתה איש הקשר של הצוות עם המשפחה.", "את אשת הקשר של הצוות עם המשפחה.", "את/ה איש/אשת הקשר של הצוות עם המשפחה.");
+}
+
+/** «שיעור אחד», «2 שיעורים וזמן זיכרון אחד» — an escort's page counts its lessons and its memorial times apart. */
+export function escortCount(kinds: readonly Lesson["kind"][]): string {
+  const lessons = kinds.filter((k) => k !== "memorial").length;
+  const memorial = kinds.length - lessons;
+  const parts = [
+    lessons === 0 ? "" : lessons === 1 ? "שיעור אחד" : `${lessons} שיעורים`,
+    memorial === 0 ? "" : memorial === 1 ? "זמן זיכרון אחד" : `${memorial} זמני זיכרון`,
+  ].filter(Boolean);
+  if (parts.length < 2) return parts[0] ?? "";
+  return `${parts[0]} ו${memorial === 1 ? "" : "-"}${parts[1]}`;
 }
 
 /** How many lessons each trainee escorts (cancelled ones aside). */

@@ -645,7 +645,7 @@ describe("the sources' files", () => {
         expect(await refusal(q("delete from public.source_files"))).toBe("42501");
         const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
         expect(w.sourceFiles).toHaveLength(total);
-        expect(Object.keys(w.sourceFiles[0]).sort()).toEqual(["cover", "display_name", "id", "lesson_id", "mime", "page_count", "size_bytes", "speaker_id", "storage_path", "uploaded_at", "uploaded_by"]);
+        expect(Object.keys(w.sourceFiles[0]).sort()).toEqual(["cover", "display_name", "fallen_id", "id", "lesson_id", "mime", "page_count", "size_bytes", "speaker_id", "storage_path", "uploaded_at", "uploaded_by"]);
       });
       await as(db, "anon", null, async (q) => {
         expect(await refusal(q("select * from public.source_files"))).toBe("42501");

@@ -53,3 +53,8 @@ export function managedEditionIds(me: Me, all: readonly { id: number }[]): numbe
 export function handlesSpeakers(me: Me): boolean {
   return me.global_admin || me.memberships.some((m) => m.role !== "logistics");
 }
+
+/** May this person open «לוגיסטיקה» somewhere? A global admin, or an admin or a logistics member of some edition. */
+export function handlesLogistics(me: Me): boolean {
+  return me.global_admin || me.memberships.some((m) => m.role === "admin" || m.role === "logistics");
+}

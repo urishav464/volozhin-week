@@ -238,6 +238,44 @@ export interface EditionSettings {
   reader_headers?: [string, string];
   /** The reader's cover: one of the edition's posters (a SourceFile with `cover`); absent = a schedule page made from the week. */
   reader_cover?: number;
+  /** The memorial policy — the staff meeting's (DESIGN «זמני זיכרון»); each part absent until decided, never seeded. */
+  memorial?: MemorialPolicy;
+}
+
+/** settings.memorial: where memorial times go (free text), the most minutes one may take, whether one next to a meal is warned about. */
+export interface MemorialPolicy {
+  placement?: string;
+  max_minutes?: number;
+  warn_adjacent_meal?: boolean;
+}
+
+/** What the family said: not contacted yet, invited, confirmed, cannot come, someone else speaks. */
+export type FamilyStatus = "not_contacted" | "invited" | "confirmed" | "cannot_come" | "other_speaker";
+
+/**
+ * One fallen's plan for the edition (memorial_plans): the family's status, who speaks, the planned minutes, a hard
+ * stop, the reader's materials note — and the memorial slot it is placed on. Never a family's contact detail.
+ */
+export interface MemorialPlan {
+  id: number;
+  fallen_id: number;
+  /** The memorial slot (a lesson of kind 'memorial') it is placed on; null: in the tray. */
+  lesson_id: number | null;
+  family_status: FamilyStatus;
+  /** Who speaks — as the instructor writes it, never a phone. */
+  speaker_text: string | null;
+  planned_minutes: number | null;
+  hard_stop: boolean;
+  /** What the reader takes for this time (a page, a text), as a note. */
+  materials_note: string | null;
+  version: number;
+}
+
+/** A fallen the edition has a plan for — the name the grid's yellow card shows (the full record: src/data/memorial.ts). */
+export interface FallenName {
+  id: number;
+  name: string;
+  gender: Gender | null;
 }
 
 export interface Edition {
@@ -270,6 +308,10 @@ export interface Week {
   escortTicks: EscortTick[];
   /** The sources' files (v10): their rows — the bytes are in Storage, read through short-lived URLs. */
   sourceFiles: SourceFile[];
+  /** The memorial plans (v11) — never a family's contact. */
+  memorialPlans: MemorialPlan[];
+  /** The names of the fallen those plans are for (v11). */
+  fallen: FallenName[];
 }
 
 /** The four types the sources bucket takes. */
@@ -283,6 +325,8 @@ export interface SourceFile {
   cover: boolean;
   /** The lesson's lead speaker when it arrived — another lead now: «מהמרצה הקודם», never in the reader. */
   speaker_id: number | null;
+  /** A memorial slot's file: the fallen of the plan it came for (v11) — the reader takes it wherever that plan is placed. */
+  fallen_id: number | null;
   /** <edition>/<lesson|cover>/<uuid>-<safe ascii name> — never the original name. */
   storage_path: string;
   /** The name the file had (Hebrew, usually). */

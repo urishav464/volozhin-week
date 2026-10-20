@@ -21,6 +21,8 @@ interface Props {
   nav?: NavItem[];
   /** The grid needs the whole width; notices and forms stay in a reading column (the signed-in header is always full width). */
   full?: boolean;
+  /** A quiet line under the header (a new version of the site is waiting). */
+  notice?: ReactNode;
   children: ReactNode;
 }
 
@@ -33,7 +35,7 @@ export function sectionActive(item: Pick<NavItem, "to" | "match">, path: string)
 
 const HEADER_BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-md border border-paper/40 px-3 text-sm hover:bg-paper/10";
 
-export function Shell({ demo, user, onSignOut, nav, full = false, children }: Props) {
+export function Shell({ demo, user, onSignOut, nav, full = false, notice, children }: Props) {
   const path = useLocation().pathname;
   return (
     <div className="app-shell min-h-dvh flex flex-col">
@@ -45,8 +47,10 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
       <header className="bg-ink text-paper print:hidden">
         {/* Signed in, the header keeps one width on every screen, so a section link stays under the pointer.
             Below 1024px the sections move to a row of their own, under the name and «התנתקות», and wrap
-            onto a second line when they do not fit (an admin's seven on a phone): every entry stays
-            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll. */}
+            onto a second line when they do not fit (an admin's ten on a phone): every entry stays
+            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll.
+            From 1024px the sections keep their whole width (shrink-0) and the member's name gives way
+            (truncated, the whole name on hover): an admin's ten links fit from 1024px on. */}
         <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:flex-nowrap`}>
           <h1 className="flex h-14 shrink-0 items-center font-display font-extrabold text-xl tracking-tight">
             {nav ? (
@@ -58,7 +62,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
             )}
           </h1>
           {nav && nav.length > 0 && (
-            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:flex-nowrap lg:overflow-x-auto lg:pb-0">
+            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:shrink-0 lg:flex-nowrap lg:overflow-x-auto lg:pb-0">
               {nav.map((item) => {
                 const isActive = sectionActive(item, path);
                 return (
@@ -83,7 +87,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
           )}
           <div className="ms-auto flex h-14 min-w-0 items-center gap-2 sm:gap-3">
             {user && (
-              <span className="text-sm truncate">
+              <span className="text-sm truncate" title={`${user.name} · ${user.roleLabel}`}>
                 {user.name} · <span className="opacity-80">{user.roleLabel}</span>
               </span>
             )}
@@ -95,7 +99,20 @@ export function Shell({ demo, user, onSignOut, nav, full = false, children }: Pr
           </div>
         </div>
       </header>
+      {notice}
       <main className={`flex-1 mx-auto w-full print:max-w-none print:p-0 ${full ? "max-w-none px-3 py-3" : "max-w-6xl px-4 py-6"}`}>{children}</main>
+    </div>
+  );
+}
+
+/** «גרסה חדשה של האתר זמינה» — the offline shell's update (src/offline/register.ts). Never reloads by itself. */
+export function UpdateBanner({ onApply }: { onApply: () => void }) {
+  return (
+    <div role="status" data-update-banner className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-line bg-card px-4 py-1.5 text-sm print:hidden">
+      <span>גרסה חדשה של האתר זמינה</span>
+      <button type="button" onClick={onApply} className="inline-flex min-h-11 items-center rounded-md border border-line px-3 font-semibold hover:bg-line/50">
+        רענון
+      </button>
     </div>
   );
 }

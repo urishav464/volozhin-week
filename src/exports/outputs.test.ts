@@ -242,7 +242,7 @@ describe("the archive", () => {
         transport: [{ lesson_id: a.id, pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false }],
       }),
     });
-    expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", PERSONAL_FILE, "speakers.json", "tracking.xlsx"].sort());
+    expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", "memorial.json", PERSONAL_FILE, "sources.json", "speakers.json", "tracking.xlsx"].sort());
     const json = (n: string) => JSON.parse(strFromU8(files[n]));
     expect(json("speakers.json").speakers.map((s: { id: number }) => s.id).sort()).toEqual([f.id, m.id, cand.id].sort());
     expect(touchedSpeakers(w)).not.toContain(other.id);
@@ -251,7 +251,7 @@ describe("the archive", () => {
     expect(edition.lessons).toHaveLength(w.lessons.length);
     expect(Object.keys(edition.team[0]).sort()).toEqual(["display_name", "gender", "id", "role"]);
     // the personal data is nowhere but its own file
-    for (const n of ["edition.json", "speakers.json", "README.txt"]) {
+    for (const n of ["edition.json", "speakers.json", "memorial.json", "sources.json", "README.txt"]) {
       expect(strFromU8(files[n]), n).not.toContain("טלפון לדוגמה");
       expect(strFromU8(files[n]), n).not.toContain("כתובת לדוגמה");
     }

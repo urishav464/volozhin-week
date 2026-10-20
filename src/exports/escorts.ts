@@ -5,8 +5,10 @@
 // gender), and «משהו שחשוב לדעת»: the instructor's duty phrases that apply
 // (src/domain/escorts.ts) and the lesson's own note. Closed lessons with no
 // escort — and no self-introduction, which needs none — close the list, so the
-// team sees what is still open. Pure.
-import { dutyNotes } from "../domain/escorts";
+// team sees what is still open. A memorial slot is in its liaison's group (its
+// escort is the family's contact person, 5ב-2): «זמן זיכרון – <the fallen>»,
+// never a family's contact detail. Pure.
+import { dutyNotes, escortable } from "../domain/escorts";
 import { byGender, displayName } from "../domain/names";
 import type { Gender, Lesson, RosterMember, Week } from "../domain/types";
 import { gridOrder, teachingWhen } from "./tracking";
@@ -52,8 +54,21 @@ export function escortGroups(week: Week): EscortGroup[] {
   const phrases = week.edition.settings?.duty_phrases;
   const lessonMinutes = week.edition.settings?.lesson_minutes;
   const closed = week.lessons.filter((l) => l.state === "closed" && l.kind === "lesson").sort(gridOrder(week));
+  const escorted = week.lessons.filter(escortable).sort(gridOrder(week));
+  const fallen = new Map((week.fallen ?? []).map((f) => [f.id, f.name]));
+  const planOn = new Map((week.memorialPlans ?? []).filter((p) => p.lesson_id != null).map((p) => [p.lesson_id!, p]));
 
   const line = (l: Lesson, escort: RosterMember | null): EscortLesson => {
+    if (l.kind === "memorial") {
+      const name = fallen.get(planOn.get(l.id)?.fallen_id ?? -1);
+      return {
+        lesson: l, speakerId: null, ...teachingWhen(l, lessonMinutes), room: rooms.get(l.room_id) ?? "", speaker: "",
+        title: name ? `זמן זיכרון – ${name}` : (l.title ?? "זמן זיכרון"),
+        intro: "זמן זיכרון",
+        introDetail: byGender(escort?.gender ?? null, "איש הקשר של המשפחה", "אשת הקשר של המשפחה", "איש/אשת הקשר של המשפחה"),
+        notes: [...dutyNotes(l, phrases), ...(l.escort_note ? [l.escort_note] : [])],
+      };
+    }
     const lead = week.lessonSpeakers.filter((x) => x.lesson_id === l.id).sort((a, b) => Number(a.role !== "lead") - Number(b.role !== "lead"))[0];
     const s = lead ? speakers.get(lead.speaker_id) : undefined;
     const { intro, detail } = introOf(l.self_intro, s?.gender ?? null, escort?.gender ?? null);
@@ -73,7 +88,7 @@ export function escortGroups(week: Week): EscortGroup[] {
   const groups: EscortGroup[] = [...week.roster]
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id)
     .map((r) => {
-      const mine = closed.filter((l) => l.escort_roster_id === r.id);
+      const mine = escorted.filter((l) => l.escort_roster_id === r.id);
       return {
         escort: r,
         heading: r.full_name,

@@ -133,7 +133,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `israelInstant`); the ticks show in the lesson panel's escort stage and the escorts' list (`EscortTicksLine`).
 - **Sources and the reader (milestone 5ב-1, schema v10):** a closed lesson's files live in the PRIVATE Storage
   bucket `sources`, which `schema.sql` creates with its policies on `storage.objects` (no dashboard step): upload =
-  `app.source_refusal` (the set_sources rule — content/admin, a closed lesson of kind 'lesson'; the poster
+  `app.source_refusal` (the set_sources rule — content/admin, a closed lesson, or a memorial slot with a plan placed (5ב-2); the poster
   `…/cover/…` admins only) and a path no `source_files` row holds (`app.may_upload_source` — a path is used once),
   read = the whole edition team, delete = uploader or admin, update nobody, anon nothing —
   and **restrictive** copies of each so no later policy can widen the bucket. The path convention is one regex in
@@ -147,7 +147,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   «מהמרצה הקודם», never in the reader. Never in Realtime. `port.sources` (`src/data/sources.ts`: SupabaseSources /
   DemoSources on the engine's in-memory bucket; synthetic demo files in `src/data/demoFiles.ts`).
   **The reader** is browser-only (`src/reader/`): `model.ts` the manifest «התקבל / חסר» (one status per closed lesson
-  and memorial slot; `memorialFiles` is 5ב-2's hook), `layout.ts` the pure page plan (cover, TOC with page numbers,
+  and memorial slot; a slot's materials are `memorialFiles` — the files of its plan's fallen, wherever uploaded), `layout.ts` the pure page plan (cover, TOC with page numbers,
   days, «סיכום יום»), `assemble.ts` the PDF on pdf-lib 1.17.1 inside a module worker (`worker.ts`; Hebrew drawn on
   OffscreenCanvas → PNG) — every file opened AND embedded before the plan (a file pdf-lib cannot decode is named, never
   a failed build), `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
@@ -164,6 +164,47 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
   (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
   `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
+- **Memorial times and logistics (milestone 5ב-2, schema v11):** `fallen` (one cross-year list; a global admin
+  writes it — the names are entered in the app only, the demo's are «חלל/ה לדוגמה 1…9»), `fallen_contacts` (a bereaved
+  family's contact person: **admins only**, `app.may_see_fallen_contacts` — a global admin, or an admin of a real,
+  non-archived edition with a plan for that fallen; read one fallen at a time, `get_fallen_contacts`, invoker; never in
+  `load_week`, Realtime, a link, a list or a file but the admin's archive's personal-data file), `memorial_plans` (one
+  per fallen per edition, placed on a memorial slot = `lesson_id`; the team reads them in `load_week`, admins write
+  through functions; adding and deleting one is logged). A slot is a memorial-kind draft made inside a memorial row
+  (`add_memorial_slot`), never dragged or edited (`memorial_slot`: `move_lesson`, `update_lesson`) or merged away
+  (`merge_blocked`). A change to a family's contact is logged in the edition whose plan gave access
+  (`app.fallen_contacts_edition`). The liaison is the slot's escort and moves with the plan — no speaker's ticks
+  for it (`ticksApply`, `src/domain/escorts.ts`); files
+  follow the fallen (`source_files.fallen_id`). `settings.memorial` (the staff meeting's policy) is never seeded; its
+  warnings fire only once set (`src/rules/warnings.ts`). `port.memorial` (`src/data/memorial.ts`); plans, slots and the
+  policy are `WeekCommands`; `src/domain/memorial.ts` the yellow card and the picker. A time range inside a Hebrew
+  string takes an LRM (`dayRange`/`LRM`, `src/domain/time.ts`); in JSX, its own `<bdi dir="ltr">`. Screens: `/memorial`
+  (`src/screens/memorial/`; `SlotPanel.tsx` is the week's lesson panel for a slot), `/logistics/<tab>`
+  (`src/screens/logistics/`, logistics + admins; `handlesLogistics`): transports in ONE `get_transports_for` call
+  (invoker, never more than `get_transport_details`), payments, books, prints — builders in `src/exports/logistics.ts`;
+  addresses and drivers' phones only behind «כולל כתובות וטלפונים». The archive adds kk.json, memorial.json,
+  sources.json and, on request, the files per day (`src/exports/archive.ts`, `archiveGather.ts`).
+  `tests/sql/upgrade.test.ts` re-runs the file on a v10 database read from git history (CI checks out the whole
+  history) and compares the catalog with a fresh install.
+- **Without internet (milestone 5ב-2, part B; no schema change of its own):** `src/offline/`. A hand-written service worker — `sw.ts`
+  (`shellWorker`, `killWorker`: functions of `self`, inlined into `/sw.js` by the Vite plugin `swBuild.ts`, which lists
+  every emitted file and names the cache by their digest); registered from the team's app in production builds only
+  (`register.ts`, the «גרסה חדשה של האתר זמינה» banner — never a reload by itself). It never answers or caches anything
+  sent to Supabase, or carrying Authorization/apikey (`routeFor`); a navigation waits for the network
+  `NAVIGATE_TIMEOUT_MS`, then the cached shell — but one to a static page of `public/` in either spelling Cloudflare
+  Pages answers (`/privacy.html` is a 308 to `/privacy`; `staticPages`, read from the folder by the build) or to a path
+  with a file extension is the network's alone; only this build's own files are ever cached. The kill switch is
+  `OFFLINE_SHELL_ENABLED` in `config.ts` (the app itself then unregisters and deletes the caches, `retireShellWorker`).
+  A lazy screen whose file is gone shows «רענון», not a blank page (`src/screens/ScreenBoundary.tsx`). After every load the Week (only the Week: `assertWeekOnly`, and `WEEK_KEYS` must list every key of
+  `Week` — tsc fails on a new one) and the last whoami go to IndexedDB (`store.ts` `OfflineCopy`); started offline (a
+  `PortError("network")`, `network.ts` — never a refusal) the day view shows it read-only (`src/screens/OfflineWeek.tsx`)
+  only to the device's own user (`DataPort.deviceUserId()`, `snapshot.ts` `offlineDecision`); sign-out clears it. The
+  public pages stay online-only. `playwright.config.ts` blocks workers except in `tests/e2e/offline.spec.ts`, whose
+  «offline» is `setOffline` plus the test server dropping the context's connections (`e2e-net=down`: setOffline does
+  not reach the worker's own fetches) (DECISIONS «אבן דרך 5ב-2, חלק ב: בלי רשת», «ביקורת אבן דרך 5ב-2»). With part A the snapshot holds `memorialPlans` and `fallen` (names
+  only) — never a family's contact (`PERSONAL_KEYS` has `contact_name`/`relation`; `tests/sql/memorial.test.ts` runs
+  `assertWeekOnly` on `load_week`); offline a memorial card opens its plan to read, and any other address (`/memorial`,
+  `/logistics`, …) says it needs a connection over the day view (`view.ts` `sectionNeedingConnection`).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

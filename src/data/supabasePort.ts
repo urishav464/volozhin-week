@@ -1,15 +1,35 @@
-import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, isAuthRetryableFetchError, type RealtimeChannel, type SupabaseClient, type SupportedStorage } from "@supabase/supabase-js";
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
 import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
+import { SupabaseMemorial } from "./supabaseMemorial";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
 import { SupabaseSettings } from "./supabaseSettings";
 import { SupabaseSources } from "./supabaseSources";
 import { SupabaseSpeakers } from "./supabaseSpeakers";
+import { NETWORK, portError } from "../offline/network";
 import { PortError, type WhoAmI } from "./types";
+
+/** Where supabase-js keeps the session: its own default key, named here so the device's user can be read without the network. */
+export function sessionStorageKey(url: string): string {
+  return `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
+}
+
+/** Does this address carry a return from the sign-in (a PKCE code, a token, or an error), in its query or its hash? */
+export function returnedFromAuth(href: string): boolean {
+  const u = new URL(href);
+  const hash = new URLSearchParams(u.hash.slice(1));
+  return ["code", "access_token", "error", "error_code", "error_description"].some((k) => u.searchParams.has(k) || hash.has(k));
+}
+
+/** Only the unit tests pass these: a stub fetch, and a storage in place of the browser's localStorage. */
+export interface SupabasePortOptions {
+  fetch?: typeof fetch;
+  storage?: SupportedStorage & { removeItem(key: string): unknown };
+}
 
 export class SupabasePort implements DataPort {
   readonly mode = "live" as const;
@@ -20,13 +40,27 @@ export class SupabasePort implements DataPort {
   readonly links: SupabaseLinks;
   readonly kk: SupabaseKk;
   readonly sources: SupabaseSources;
+  readonly memorial: SupabaseMemorial;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
+  private readonly sessionKey: string;
+  private readonly storage: { getItem(key: string): unknown; removeItem(key: string): unknown } | null;
+  /** Signed out here without a network: a refresh auth-js still had on its way must not sign this page back in. */
+  private signedOutOffline = false;
 
-  constructor(url: string, key: string) {
+  constructor(url: string, key: string, opts: SupabasePortOptions = {}) {
+    this.sessionKey = sessionStorageKey(url);
+    this.storage = opts.storage ?? (typeof localStorage === "undefined" ? null : localStorage);
     // PKCE: Google sends back a one-time code, never the tokens themselves, so
     // no token lands in the address bar or the browser history.
-    this.sb = createClient(url, key, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+    this.sb = createClient(url, key, {
+      auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true, storageKey: this.sessionKey, ...(opts.storage ? { storage: opts.storage } : {}) },
+      ...(opts.fetch ? { global: { fetch: opts.fetch } } : {}),
+    });
+    this.sb.auth.onAuthStateChange((event) => {
+      // outside auth-js's own callback (its lock): a session that came back after an offline sign-out goes again
+      if (this.signedOutOffline && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) setTimeout(() => void this.sb.auth.signOut({ scope: "local" }), 0);
+    });
     this.settings = new SupabaseSettings(this.sb);
     this.speakers = new SupabaseSpeakers(this.sb);
     this.outputs = new SupabaseOutputs(this.sb);
@@ -34,6 +68,7 @@ export class SupabasePort implements DataPort {
     this.links = new SupabaseLinks(this.sb);
     this.kk = new SupabaseKk(this.sb);
     this.sources = new SupabaseSources(this.sb, url, key);
+    this.memorial = new SupabaseMemorial(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {
@@ -42,11 +77,32 @@ export class SupabasePort implements DataPort {
   }
 
   async whoami(): Promise<WhoAmI> {
-    const { data: s } = await this.sb.auth.getSession();
-    if (!s.session) return { status: "signed_out" };
-    const { data, error } = await this.sb.rpc("whoami");
-    if (error) throw new PortError(error.code ?? null, error.message);
+    // No network at all: answer from the device at once — auth-js, with an expired token, keeps retrying its refresh
+    // for half a minute (holding its lock, so getSession waits too). A session here: «network»; none: signed out.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      if (this.deviceUserId() != null) throw new PortError(NETWORK, "offline");
+      return { status: "signed_out" };
+    }
+    const { data: s, error: sessionError } = await this.sb.auth.getSession();
+    if (!s.session) {
+      // An expired token that could not be refreshed for want of a network is not a sign-out: auth-js keeps the
+      // session, and the app may show the device's snapshot (src/offline/).
+      if (sessionError && isAuthRetryableFetchError(sessionError)) throw new PortError(NETWORK, sessionError.message);
+      return { status: "signed_out" };
+    }
+    const { data, error, status } = await this.sb.rpc("whoami");
+    if (error) throw portError(error, status);
     return data as WhoAmI;
+  }
+
+  deviceUserId(): string | null {
+    try {
+      const raw = this.storage?.getItem(this.sessionKey);
+      const s = typeof raw === "string" ? (JSON.parse(raw) as { refresh_token?: unknown; user?: { id?: unknown } } | null) : null;
+      return s && typeof s.refresh_token === "string" && typeof s.user?.id === "string" && s.user.id ? s.user.id : null;
+    } catch {
+      return null;
+    }
   }
 
   async signInWithGoogle(): Promise<void> {
@@ -58,9 +114,19 @@ export class SupabasePort implements DataPort {
   }
 
   async signOut(): Promise<void> {
+    // No network at all: the session goes from this device at once (auth-js would first retry an expired token's
+    // refresh for half a minute, then give up without removing it).
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      this.signedOutOffline = true;
+      this.storage?.removeItem(this.sessionKey);
+      return;
+    }
     // This browser only: a trainee signing out of a shared midrasha computer
     // must not be signed out of their phone in the middle of the week.
-    await this.sb.auth.signOut({ scope: "local" });
+    const { error } = await this.sb.auth.signOut({ scope: "local" });
+    // Without a connection, an expired token auth-js could not refresh makes it give up before removing the session:
+    // on a shared computer a sign-out must sign out all the same.
+    if (error || this.deviceUserId() != null) this.storage?.removeItem(this.sessionKey);
   }
 
   onAuthChange(cb: () => void): () => void {
@@ -79,6 +145,9 @@ export class SupabasePort implements DataPort {
   }
 
   async authError(): Promise<string | null> {
+    // Only a return from Google carries anything to report — and without one, initialize() can only say «no error»,
+    // after waiting for auth-js's start-up (offline, with an expired token, half a minute of refresh retries).
+    if (!returnedFromAuth(window.location.href)) return null;
     const { error } = await this.sb.auth.initialize(); // the cached result of the URL detection at start-up
     if (!error) return null;
     const u = new URL(window.location.href);
@@ -88,8 +157,8 @@ export class SupabasePort implements DataPort {
   }
 
   async editions(): Promise<Edition[]> {
-    const { data, error } = await this.sb.from("editions").select("*").order("id", { ascending: false });
-    if (error) throw new PortError(error.code ?? null, error.message);
+    const { data, error, status } = await this.sb.from("editions").select("*").order("id", { ascending: false });
+    if (error) throw portError(error, status);
     return data as Edition[];
   }
 
@@ -99,6 +168,8 @@ export class SupabasePort implements DataPort {
     if (w && !Array.isArray(w.roster)) w.roster = [];
     if (w && !Array.isArray(w.escortTicks)) w.escortTicks = []; // and none of the escorts' ticks before v9
     if (w && !Array.isArray(w.sourceFiles)) w.sourceFiles = []; // nor a file before v10
+    if (w && !Array.isArray(w.memorialPlans)) w.memorialPlans = []; // nor a memorial plan before v11
+    if (w && !Array.isArray(w.fallen)) w.fallen = [];
     return w;
   }
 

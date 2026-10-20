@@ -28,7 +28,7 @@ import { MessageComposer } from "./MessageComposer";
 import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 import { SourceFiles } from "./SourceFiles";
-import { readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
+import { MEMORIAL_SAID, readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
 
 export interface LessonStagesProps {
   port: DataPort;
@@ -406,7 +406,7 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
     pending: "המקורות עוד לא התקבלו.",
     presentation_only: "מצגת בלבד: לא נכנסת למקראה.",
     no_sources: "בלי מקורות: אין מה להדפיס במקראה.",
-    memorial: "זמן זיכרון.",
+    ...MEMORIAL_SAID,
   };
   // what the reader leaves out beside it, in the manifest's words (Word is the whole story of «צריך PDF», as the unread files are of «צריך קובץ אחר»)
   const besides = [

@@ -31,19 +31,27 @@ const PEER_ADMIN = "peer.admin@example.org";
 // set_reader_cover and set_reader_headers, and the three predicates the
 // policies on storage.objects call as the browser's role: may_read_source,
 // may_upload_source, may_delete_source (tests/sql/sources.test.ts).
+// v11 (memorial times and logistics) added the fallen's writes (save_fallen,
+// delete_fallen), their families' contacts (get_fallen_contacts — invoker,
+// set_fallen_contacts), the memorial slots and plans (add/remove_memorial_slot,
+// add/update/place/delete_memorial_plan, set_memorial_policy), the logistics
+// screen's transports (get_transports_for — invoker), and the two policies'
+// predicates, may_see_fallen and may_see_fallen_contacts (tests/sql/memorial.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
-  "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "get_contacts_for", "get_speaker_contacts",
-  "get_transport_details", "hand_over", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
-  "kk_update_group", "load_kk", "load_week", "mark_confirm_sent", "move_lesson", "ping", "propose", "register_source_file", "remove_source_file",
-  "reopen_lesson", "reshape", "revoke_link", "schema_version", "set_approach_status", "set_availability", "set_book_order", "set_confirm_template",
-  "set_default_room", "set_duty_phrases", "set_escort", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
+  "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
+  "delete_memorial_plan", "get_contacts_for", "get_fallen_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
+  "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
+  "kk_update_group", "load_kk", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "register_source_file",
+  "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "schema_version", "set_approach_status",
+  "set_availability", "set_book_order", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
+  "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
   "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
-  "speaker_matches", "start_edition", "team", "unpropose", "update_lesson", "update_speaker", "vet_speakers", "whoami",
+  "speaker_matches", "start_edition", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
-  "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_transport", "may_upload_source",
-  "my_email", "my_member_id", "my_role", "name_key",
+  "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_fallen", "may_see_fallen_contacts",
+  "may_see_transport", "may_upload_source", "my_email", "my_member_id", "my_role", "name_key",
 ];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
@@ -118,7 +126,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
       await db.query(
         "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones, " +
-          "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files",
+          "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files, " +
+          "public.fallen, public.fallen_contacts, public.memorial_plans",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -146,7 +155,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
-        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons"]) {
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
@@ -185,7 +194,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(10);
+        expect(w.schema_version).toBe(11);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

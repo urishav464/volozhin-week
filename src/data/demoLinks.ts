@@ -6,6 +6,7 @@
 // taken as a live link of that trainee. Nothing in a demo token is secret, and
 // a link revoked in one tab is unknown to another. The demo's books, groups,
 // leaders and window are synthetic and say «לדוגמה».
+import { escortable } from "../domain/escorts";
 import type { Day } from "../domain/time";
 import type { TickItem } from "../domain/types";
 import { CommandError } from "./commands";
@@ -175,7 +176,7 @@ export class DemoPublic implements PublicPort {
 export function seedDemoLinks(e: Engine, now = Date.now()): void {
   const day = 86_400_000;
   e.kkSetWindow(new Date(now - day).toISOString(), new Date(now + 14 * day).toISOString());
-  const escorts = [...new Set(e.week.lessons.filter((l) => l.state === "closed" && l.escort_roster_id != null).map((l) => l.escort_roster_id!))].sort((a, b) => a - b);
+  const escorts = [...new Set(e.week.lessons.filter((l) => escortable(l) && l.escort_roster_id != null).map((l) => l.escort_roster_id!))].sort((a, b) => a - b);
   for (const r of escorts) e.issueLink("escort", r);
   const kk = e.issueLink("kk_signup").token;
   e.issueLink("schedule");

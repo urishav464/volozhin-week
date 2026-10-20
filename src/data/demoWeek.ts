@@ -10,6 +10,11 @@
 // kind of sources; transport details made of placeholder words — and, for the
 // demo user, a closed lesson in every «המרצים שלי» group. No message template
 // and no duty phrases: those are the instructor's wording, never ours.
+// Milestone 5ב-2 adds memorial times: nine synthetic fallen («חלל/ה לדוגמה 1»
+// … 9 — the real names are entered by the instructor, in the app only), three
+// plans (one placed on Sunday's slot, with a liaison from the synthetic
+// roster), a family's contact made of placeholder words — and no memorial
+// policy: that is the staff meeting's.
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
 import {
@@ -18,6 +23,7 @@ import {
 } from "../domain/types";
 import type { Sample } from "./demoFiles";
 import type { StoredObject } from "./engine";
+import type { Fallen, FallenContacts } from "./memorial";
 import type { ActivityEntry, HistoryLesson } from "./speakers";
 
 export const DEMO_CATEGORIES: Category[] = [
@@ -152,6 +158,9 @@ export function demoWeek(): Week {
 
   // Memorial slots: placeholders only — names of the fallen are entered by the instructor, never seeded.
   for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 780, 795, { kind: "memorial", title: "זמן זיכרון" });
+  // Sunday's slot holds the first synthetic fallen's plan; its escort is the family's liaison (synthetic).
+  const sundayMemorial = lessons.find((l) => l.kind === "memorial" && l.day === 0)!;
+  sundayMemorial.escort_roster_id = 4;
 
   // «המרצים שלי» for the demo user (member 1): one speaker in each group the grid has not filled.
   approachOf(32, "claimed", 1); // לפנות
@@ -195,7 +204,24 @@ export function demoWeek(): Week {
       { lesson_id: 1, item: "met", at: at(14) },
     ],
     sourceFiles: [],
+    memorialPlans: [
+      {
+        id: 1, fallen_id: 1, lesson_id: sundayMemorial.id, family_status: "confirmed", speaker_text: "בן/בת משפחה (נתון לדוגמה)", planned_minutes: 10, hard_stop: true,
+        materials_note: "עמוד זיכרון למקראה (נתון לדוגמה)", version: 1,
+      },
+      { id: 2, fallen_id: 2, lesson_id: null, family_status: "invited", speaker_text: null, planned_minutes: 20, hard_stop: false, materials_note: null, version: 1 },
+      { id: 3, fallen_id: 3, lesson_id: null, family_status: "not_contacted", speaker_text: null, planned_minutes: null, hard_stop: false, materials_note: null, version: 1 },
+    ],
+    fallen: DEMO_FALLEN.slice(0, 3).map(({ id, name, gender }) => ({ id, name, gender })),
   };
+}
+
+/** The demo's fallen: nine synthetic names — the real ones are entered by the instructor, in the app only. */
+export const DEMO_FALLEN: Fallen[] = Array.from({ length: 9 }, (_, i) => ({ id: i + 1, name: `חלל/ה לדוגמה ${i + 1}`, gender: null, note: null, active: true }));
+
+/** A family's contact person in the demo: placeholder words and an example.org address (which never delivers). */
+export function demoFallenContacts(): Record<number, FallenContacts> {
+  return { 1: { contact_name: "איש/אשת קשר לדוגמה", relation: "קרבה לדוגמה", phone: "טלפון לדוגמה", email: "family1@example.org", note: null } };
 }
 
 /** The demo's trainees (names only) — escorts come from here. */
@@ -278,7 +304,7 @@ export function seedDemoSources(week: Week): { samples: Record<string, Sample>; 
     const mime = sample.kind === "pdf" ? "application/pdf" : sample.kind === "png" ? "image/png" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     const path = `${week.edition.id}/${lessonId}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}-sample-${n}.${ext}`;
     week.sourceFiles.push({
-      id: n, lesson_id: lessonId, cover: false, speaker_id: lead(lessonId), storage_path: path, display_name: display, mime: mime as SourceFile["mime"],
+      id: n, lesson_id: lessonId, cover: false, speaker_id: lead(lessonId), fallen_id: null, storage_path: path, display_name: display, mime: mime as SourceFile["mime"],
       size_bytes: size, page_count: sample.kind === "pdf" ? sample.pages : sample.kind === "png" ? 1 : null, uploaded_by: by, uploaded_at: "2026-11-15T10:00:00Z",
     });
     samples[path] = sample;

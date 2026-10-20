@@ -318,7 +318,7 @@ function TransportView({ d }: { d: TransportDetails }) {
   );
 }
 
-function TransportForm({
+export function TransportForm({
   id,
   d,
   busy,

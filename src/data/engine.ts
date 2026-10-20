@@ -16,6 +16,9 @@
 // (CONTRACT.md «From placement to arrival», milestone 3): payment and
 // transport, the summary message, the escort, sources — with transport
 // details kept in `shared`, never in a Week, as the database keeps them apart.
+// So do memorial times (CONTRACT.md «Memorial times and logistics», milestone
+// 5ב-2): the fallen and their families' contacts are cross-year (`shared`), a
+// Week holds the edition's plans and the names they are for.
 import { dayPart } from "../domain/dayParts";
 import { dutyNotes } from "../domain/escorts";
 import { addDays, israelDate } from "../domain/israelTime";
@@ -25,14 +28,15 @@ import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
 import { similarity } from "../domain/trigram";
 import type {
-  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts, Transport, TransportDetails,
-  Vetting, Week,
+  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, MemorialPlan, MemorialPolicy, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts,
+  Transport, TransportDetails, Vetting, Week,
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
-import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
+import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
+import { cleanFallen, cleanFallenContacts, cleanPlanPatch, cleanPolicy, EMPTY_FALLEN_CONTACTS, type Fallen, type FallenContacts, type FallenFields, type PlanPatch } from "./memorial";
 import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
@@ -84,6 +88,10 @@ export interface PoolShared {
   kk: KkStore;
   /** The «sources» bucket (v10), by object path: what Storage keeps of each — its type, size and uploader. The bytes are DemoPort's. */
   objects: Record<string, StoredObject>;
+  /** fallen (v11): one cross-year list. */
+  fallen: Fallen[];
+  /** fallen_contacts (v11), by fallen id — a bereaved family's contact person: never in a Week. */
+  fallenContacts: Record<number, FallenContacts>;
 }
 
 /** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
@@ -94,7 +102,7 @@ export interface StoredObject {
   owner: string;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {} });
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {} });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -240,6 +248,7 @@ export class Engine {
       this.requireEditor();
       const l = this.lesson(lessonId);
       if (l.state === "cancelled") fail("cell_closed");
+      if (l.kind === "memorial") fail("memorial_slot"); // a plan moves between slots instead
       if (l.state === "closed") this.requireLeadOwner(l);
       this.checkBounds(to.day, to.start_min, to.end_min);
       if (!this.spansLessonRows(to.day, to.start_min, to.end_min)) fail("outside_grid");
@@ -277,7 +286,7 @@ export class Engine {
           const len = row.end_min - row.start_min;
           if (op.parts.length < 2 || op.parts.some((m) => m < 15 || m % 5 !== 0) || op.parts.reduce((s, m) => s + m, 0) !== len) fail("bad_shape");
           const old = inRow();
-          if (old.some((l) => l.state === "closed")) fail("cell_closed");
+          if (old.some((l) => l.state === "closed" || l.kind === "memorial")) fail("cell_closed");
           const carried = this.livePitchesOf(old.map((l) => l.id));
           old.forEach((l) => this.deleteLesson(l.id));
           let t = row.start_min;
@@ -296,7 +305,7 @@ export class Engine {
           const next = this.lessonRows(day).filter((r) => r.start_min >= l.end_min).sort((a, b) => a.start_min - b.start_min)[0] ?? fail("outside_grid");
           const newEnd = next.end_min;
           const swallowed = this.live().filter((x) => x.id !== l.id && x.day === day && overlaps(x.start_min, x.end_min, l.end_min, newEnd));
-          if (swallowed.some((x) => x.state === "closed")) fail("merge_blocked");
+          if (swallowed.some((x) => x.state === "closed" || x.kind === "memorial")) fail("merge_blocked"); // a memorial slot is never swallowed
           const carried = this.livePitchesOf(swallowed.map((x) => x.id));
           swallowed.forEach((x) => this.deleteLesson(x.id));
           if (!this.roomFree(day, l.start_min, newEnd, l.room_id, [l.id])) fail("room_taken");
@@ -312,7 +321,7 @@ export class Engine {
         }
         case "reset": {
           const old = inRow();
-          if (old.some((l) => l.state === "closed")) fail("cell_closed");
+          if (old.some((l) => l.state === "closed" || l.kind === "memorial")) fail("cell_closed");
           const carried = this.livePitchesOf(old.map((l) => l.id));
           old.forEach((l) => this.deleteLesson(l.id));
           if (carried.length) this.adopt(this.newDraft(day, row.start_min, row.end_min, this.defaultRoom()), carried);
@@ -327,6 +336,7 @@ export class Engine {
       this.requireEditor();
       const l = this.lesson(lessonId);
       if (l.state === "cancelled") fail("cell_closed");
+      if (l.kind === "memorial") fail("memorial_slot"); // its title reaches the anon links; no screen edits one
       if (l.version !== version) fail("stale");
       if (patch.teach_min != null && (patch.teach_min <= 0 || patch.teach_min > l.end_min - l.start_min)) fail("bad_shape");
       if (patch.category_id != null && !this.week.categories.some((c) => c.id === patch.category_id)) fail("bad_shape");
@@ -637,15 +647,21 @@ export class Engine {
     });
   }
 
-  /** public.set_escort: any editor, on a closed lesson; the escort is a trainee of this edition's roster. */
+  /**
+   * public.set_escort: any editor, on a closed lesson; the escort is a trainee of this edition's roster. A memorial
+   * slot's escort is the family's liaison: an admin, on a slot with a plan (`no_plan`), never a self-introduction.
+   */
   setEscort(lessonId: number, version: number, e: EscortPatch): void {
     this.tx(() => {
       const l = this.stageLesson(lessonId);
       this.requireEditor();
-      if (l.state !== "closed") fail("not_closed");
+      if (l.kind === "memorial") {
+        if (!this.isAdmin()) fail("forbidden");
+        if (!this.week.memorialPlans.some((p) => p.lesson_id === l.id)) fail("no_plan");
+      } else if (l.state !== "closed") fail("not_closed");
       if (l.version !== version) fail("stale");
       if (e.roster_id != null && !this.week.roster.some((r) => r.id === e.roster_id)) fail("bad_escort");
-      if (typeof e.self_intro !== "boolean") fail("bad_value");
+      if (typeof e.self_intro !== "boolean" || (e.self_intro && l.kind === "memorial")) fail("bad_value");
       const note = cleanBlock(e.escort_note, STAGE_LIMITS.escort_note);
       if (e.roster_id === l.escort_roster_id && e.self_intro === l.self_intro && note === l.escort_note) return;
       Object.assign(l, { escort_roster_id: e.roster_id, self_intro: e.self_intro, escort_note: note, version: l.version + 1, updated_by: this.actor.memberId });
@@ -746,8 +762,8 @@ export class Engine {
 
   /**
    * app.source_refusal: why the actor may not upload to this path — null when they may. The rule of set_sources:
-   * content or admin of the path's edition (an archive: its admins), a closed lesson of kind 'lesson' there;
-   * the poster (…/cover/…, never Word) for the edition's admins.
+   * content or admin of the path's edition (an archive: its admins), a closed lesson there — or a memorial slot
+   * with a plan placed on it (else `no_plan`); the poster (…/cover/…, never Word) for the edition's admins.
    */
   sourceRefusal(path: string): string | null {
     const p = parseSourcePath(path);
@@ -761,7 +777,9 @@ export class Engine {
     if (p.lesson == null) return role !== "admin" ? "forbidden" : p.ext === "docx" ? "bad_file" : null;
     const l = week.lessons.find((x) => x.id === p.lesson);
     if (!l) return "bad_path";
-    if (l.state !== "closed" || l.kind !== "lesson") return "not_closed";
+    // a memorial slot's materials (v11): a slot with a plan placed on it
+    if (l.kind === "memorial") return l.state === "cancelled" || !week.memorialPlans.some((x) => x.lesson_id === l.id) ? "no_plan" : null;
+    if (l.state !== "closed") return "not_closed";
     return null;
   }
 
@@ -833,14 +851,19 @@ export class Engine {
       const name = cleanDisplayName(displayName);
       const pageCount = pagesFor(mime, pages);
       const lesson = lessonId == null ? null : this.week.lessons.find((l) => l.id === lessonId)!;
-      const lead = lesson ? (this.week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead")?.speaker_id ?? null) : null;
-      const first = lesson != null && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead);
+      // a memorial slot's file remembers the fallen of its plan (v11), no speaker; the slot's sources columns stay
+      const memorial = lesson?.kind === "memorial";
+      const fallenId = memorial ? (this.week.memorialPlans.find((x) => x.lesson_id === lesson!.id)?.fallen_id ?? null) : null;
+      const lead = lesson && !memorial ? (this.week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead")?.speaker_id ?? null) : null;
+      const first = lesson != null && !memorial && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead);
       const row: SourceFile = {
-        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null, speaker_id: lead, storage_path: path, display_name: name,
+        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null, speaker_id: lead, fallen_id: fallenId, storage_path: path, display_name: name,
         mime, size_bytes: obj!.size, page_count: pageCount, uploaded_by: this.actor.memberId, uploaded_at: this.now(),
       };
       this.week.sourceFiles.push(row);
-      if (lesson) {
+      if (memorial) {
+        // a memorial slot is always in the reader: nothing of the lesson changes
+      } else if (lesson) {
         const next = arrived(lesson, first);
         if (next.sources_kind !== lesson.sources_kind || next.in_reader !== lesson.in_reader) {
           Object.assign(lesson, next, { version: lesson.version + 1, updated_by: this.actor.memberId });
@@ -894,6 +917,211 @@ export class Engine {
       else settings.reader_cover = fileId;
       this.week.edition.settings = settings;
     });
+  }
+
+  // ---------------------------------------------------------------- memorial times and logistics (CONTRACT.md, milestone 5ב-2)
+
+  /** app.may_see_fallen: a global admin, any admin (they plan), or the team of an edition with a plan for that fallen. */
+  mayFallen(fallenId: number): boolean {
+    return !!this.actor.global || this.isAdmin() || (this.week.memorialPlans ?? []).some((p) => p.fallen_id === fallenId);
+  }
+
+  /** The fallen the caller sees (fallen_read), by id. */
+  fallenList(): Fallen[] {
+    return this.shared.fallen.filter((f) => this.mayFallen(f.id)).sort((a, b) => a.id - b.id).map((f) => ({ ...f }));
+  }
+
+  /** public.save_fallen: a global admin adds one (id null) or rewrites one. */
+  saveFallen(id: number | null, f: FallenFields): number {
+    return this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      const c = cleanFallen(f);
+      if (id == null) {
+        const row: Fallen = { id: this.nextId(this.shared.fallen), ...c };
+        this.shared.fallen.push(row);
+        return row.id;
+      }
+      const row = this.shared.fallen.find((x) => x.id === id) ?? fail("stale");
+      Object.assign(row, c);
+      return row.id;
+    });
+  }
+
+  /** public.delete_fallen: a global admin; one no edition planned for (`in_use`). Their family's contact goes with them. */
+  deleteFallen(id: number): void {
+    this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (!this.shared.fallen.some((x) => x.id === id)) fail("stale");
+      const weeks = [this.week, ...this.elsewhere().filter((w) => w !== this.week)];
+      if (weeks.some((w) => (w.memorialPlans ?? []).some((p) => p.fallen_id === id))) fail("in_use");
+      this.shared.fallen = this.shared.fallen.filter((x) => x.id !== id);
+      delete this.shared.fallenContacts[id];
+      for (const w of weeks) for (const f of w.sourceFiles) if (f.fallen_id === id) f.fallen_id = null; // on delete set null
+    });
+  }
+
+  /** app.may_see_fallen_contacts: a global admin, or an admin of a real, live edition with a plan for that fallen. */
+  mayFallenContacts(fallenId: number): boolean {
+    return this.actor.global || this.fallenContactsEdition(fallenId) != null;
+  }
+
+  /**
+   * app.fallen_contacts_edition: the newest real, live edition with a plan for that fallen in which the actor is an
+   * admin — where a change to the family's contact is logged (null: a global admin with no such plan).
+   */
+  private fallenContactsEdition(fallenId: number): number | null {
+    const weeks = this.actor.global ? [this.week, ...this.elsewhere().filter((x) => x !== this.week)] : this.isAdmin() ? [this.week] : [];
+    let found: number | null = null;
+    for (const w of weeks) {
+      const e = w.edition;
+      if (e.kind !== "real" || e.status === "archived") continue;
+      if (!(w.memorialPlans ?? []).some((p) => p.fallen_id === fallenId)) continue;
+      if (found == null || e.id > found) found = e.id;
+    }
+    return found;
+  }
+
+  /** public.get_fallen_contacts: null when it is not the caller's to see; no row yet → five nulls. */
+  fallenContactsOf(fallenId: number): FallenContacts | null {
+    if (!this.mayFallenContacts(fallenId)) return null;
+    return { ...(this.shared.fallenContacts[fallenId] ?? EMPTY_FALLEN_CONTACTS) };
+  }
+
+  /** public.set_fallen_contacts: the same people; all five replaced; the log names the fields, never the values. */
+  setFallenContacts(fallenId: number, c: FallenContacts): void {
+    this.tx(() => {
+      if (!this.shared.fallen.some((x) => x.id === fallenId)) fail("stale");
+      if (!this.mayFallenContacts(fallenId)) fail("contacts_hidden");
+      const next = cleanFallenContacts(c);
+      const old = this.shared.fallenContacts[fallenId] ?? EMPTY_FALLEN_CONTACTS;
+      const fields = (["contact_name", "relation", "phone", "email", "note"] as const).filter((k) => old[k] !== next[k]);
+      if (fields.length === 0) return;
+      this.shared.fallenContacts[fallenId] = next;
+      this.log(this.fallenContactsEdition(fallenId), "fallen", fallenId, "contacts", { fields });
+    });
+  }
+
+  /** public.add_memorial_slot: an admin of the edition, inside one of the day's memorial rows, in a room of the edition. */
+  addMemorialSlot(day: Day, start: number, end: number, roomId: number | null): number {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      this.checkBounds(day, start, end);
+      if (!this.memorialRows(day).some((r) => r.start_min <= start && end <= r.end_min)) fail("outside_grid");
+      if (roomId != null && !this.week.rooms.some((r) => r.id === roomId)) fail("bad_shape");
+      const room = roomId ?? this.defaultRoom();
+      if (!this.roomFree(day, start, end, room, [])) fail("room_taken");
+      return this.newDraft(day, start, end, room, { kind: "memorial" }).id;
+    });
+  }
+
+  /** public.remove_memorial_slot: an admin of the edition; a slot with no plan on it (`memorial_placed`). */
+  removeMemorialSlot(lessonId: number): void {
+    this.tx(() => {
+      const l = this.week.lessons.find((x) => x.id === lessonId);
+      if (!l || l.kind !== "memorial") fail("stale");
+      this.requireEditionAdmin();
+      if (this.week.memorialPlans.some((p) => p.lesson_id === lessonId)) fail("memorial_placed");
+      this.deleteLesson(lessonId);
+    });
+  }
+
+  /** public.add_memorial_plan: an admin of the edition, for an active fallen (`bad_value`), one per fallen (`duplicate`). */
+  addMemorialPlan(fallenId: number): number {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      if (!this.shared.fallen.some((f) => f.id === fallenId && f.active)) fail("bad_value");
+      if (this.week.memorialPlans.some((p) => p.fallen_id === fallenId)) fail("duplicate");
+      const p: MemorialPlan = {
+        id: this.nextId(this.week.memorialPlans), fallen_id: fallenId, lesson_id: null, family_status: "not_contacted", speaker_text: null,
+        planned_minutes: null, hard_stop: false, materials_note: null, version: 1,
+      };
+      this.week.memorialPlans.push(p);
+      this.log(this.week.edition.id, "memorial_plans", p.id, "insert", { fallen: fallenId }); // a plan opens the family's contact to the edition's admins
+      return p.id;
+    });
+  }
+
+  /** public.update_memorial_plan: at the version on screen; the keys present, each checked; nothing changed → nothing. */
+  updateMemorialPlan(planId: number, version: number, patch: PlanPatch): void {
+    this.tx(() => {
+      const p = this.memorialPlan(planId);
+      if (p.version !== version) fail("stale");
+      const c = cleanPlanPatch(patch);
+      if ((Object.keys(c) as (keyof PlanPatch)[]).every((k) => c[k] === p[k])) return;
+      Object.assign(p, c, { version: p.version + 1 });
+    });
+  }
+
+  /**
+   * public.place_memorial_plan: onto a memorial slot of the edition (`bad_value`) holding no other plan
+   * (`memorial_taken`), or off (null). The liaison (the slot's escort and note) goes with the plan.
+   */
+  placeMemorialPlan(planId: number, version: number, lessonId: number | null): void {
+    this.tx(() => {
+      const p = this.memorialPlan(planId);
+      if (p.version !== version) fail("stale");
+      if (lessonId === p.lesson_id) return;
+      let target: Lesson | undefined;
+      if (lessonId != null) {
+        target = this.week.lessons.find((l) => l.id === lessonId);
+        if (!target || target.kind !== "memorial" || target.state === "cancelled") fail("bad_value");
+        if (this.week.memorialPlans.some((x) => x.lesson_id === lessonId)) fail("memorial_taken");
+      }
+      const from = p.lesson_id == null ? undefined : this.week.lessons.find((l) => l.id === p.lesson_id);
+      const carried = { escort_roster_id: from?.escort_roster_id ?? null, escort_note: from?.escort_note ?? null };
+      Object.assign(p, { lesson_id: lessonId, version: p.version + 1 });
+      const touch = (l: Lesson, v: typeof carried) => Object.assign(l, v, { version: l.version + 1, updated_by: this.actor.memberId });
+      if (from && (from.escort_roster_id != null || from.escort_note != null)) touch(from, { escort_roster_id: null, escort_note: null });
+      if (target && (target.escort_roster_id !== carried.escort_roster_id || target.escort_note !== carried.escort_note)) touch(target, carried);
+    });
+  }
+
+  /** public.delete_memorial_plan: an admin of the edition; a plan that is not placed (`memorial_placed`). */
+  deleteMemorialPlan(planId: number): void {
+    this.tx(() => {
+      const p = this.memorialPlan(planId);
+      if (p.lesson_id != null) fail("memorial_placed");
+      this.week.memorialPlans = this.week.memorialPlans.filter((x) => x.id !== p.id);
+      this.log(this.week.edition.id, "memorial_plans", p.id, "delete", { fallen: p.fallen_id });
+    });
+  }
+
+  /** public.set_memorial_policy: an admin of the edition; the parts given — all empty removes the policy. Never seeded. */
+  setMemorialPolicy(policy: MemorialPolicy): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanPolicy(policy);
+      const settings = { ...this.week.edition.settings };
+      if (Object.keys(v).length === 0) delete settings.memorial;
+      else settings.memorial = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.get_transports_for: the closed lessons with an approved transport the caller may see the details of — each as transportOf shows it. */
+  transportsOf(): LessonTransport[] {
+    return this.week.lessons
+      .filter((l) => l.state === "closed" && l.transport !== "none" && l.approval === "approved" && this.mayTransport(l.id))
+      .sort((a, b) => a.id - b.id)
+      .map((l) => ({ lesson_id: l.id, ...(this.shared.transport[this.transportKey(l.id)] ?? EMPTY_TRANSPORT) }));
+  }
+
+  /** The Week's names of the fallen: those its plans are for (load_week's `fallen`). */
+  syncFallen(): void {
+    const ids = new Set((this.week.memorialPlans ?? []).map((p) => p.fallen_id));
+    this.week.fallen = this.shared.fallen.filter((f) => ids.has(f.id)).sort((a, b) => a.id - b.id).map(({ id, name, gender }) => ({ id, name, gender }));
+  }
+
+  /** app.memorial_plan: the plan (`stale`), and an admin of its edition. */
+  private memorialPlan(planId: number): MemorialPlan {
+    const p = this.week.memorialPlans.find((x) => x.id === planId) ?? fail("stale");
+    this.requireEditionAdmin();
+    return p;
+  }
+
+  /** app.memorial_rows: the day's memorial rows, as the edition's window allows them. */
+  private memorialRows(day: Day): GridRow[] {
+    return this.week.rows.filter((r) => r.kind === "memorial" && rowActive(r, day, this.week.edition));
   }
 
   /** The edition a path names and the actor's role there: this engine's own, or — for an admin of every edition — another one's. */
@@ -972,7 +1200,7 @@ export class Engine {
       const phones = e.kind === "real" && e.start_date != null && israelDate(this.now()) >= addDays(e.start_date, -7);
       const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
       const lessons: EscortLesson[] = this.week.lessons
-        .filter((l) => l.state === "closed" && l.escort_roster_id === link.subject_id)
+        .filter((l) => l.state !== "cancelled" && (l.state === "closed" || l.kind === "memorial") && l.escort_roster_id === link.subject_id)
         .sort(gridOrder(this.week))
         .map((l) => {
           const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
@@ -1007,11 +1235,11 @@ export class Engine {
     });
   }
 
-  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons. */
+  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons — never a memorial slot (no ticks there: bad_value, as an unknown item). */
   escortTick(token: unknown, lessonId: number, item: TickItem, on: boolean): EscortTicks {
     return this.tx(() => {
       const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
-      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean") fail("bad_value");
+      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean" || l.kind === "memorial") fail("bad_value");
       const has = this.week.escortTicks.some((t) => t.lesson_id === l.id && t.item === item);
       if (on && !has) this.week.escortTicks.push({ lesson_id: l.id, item, at: this.now() });
       if (!on) this.week.escortTicks = this.week.escortTicks.filter((t) => !(t.lesson_id === l.id && t.item === item));
@@ -1250,10 +1478,10 @@ export class Engine {
     return l;
   }
 
-  /** app.escort_lesson: closed, of this edition, escorted by the link's trainee — else `link_invalid` (no oracle). */
+  /** app.escort_lesson: closed (or a memorial slot: its escort is the liaison), of this edition, escorted by the link's trainee — else `link_invalid` (no oracle). */
   private escortLesson(link: DemoLink, lessonId: number): Lesson {
     const l = this.week.lessons.find((x) => x.id === lessonId);
-    if (!l || l.escort_roster_id !== link.subject_id || l.state !== "closed") fail("link_invalid");
+    if (!l || l.escort_roster_id !== link.subject_id || l.state === "cancelled" || (l.state !== "closed" && l.kind !== "memorial")) fail("link_invalid");
     return l!;
   }
 
@@ -1303,6 +1531,7 @@ export class Engine {
       const out = fn();
       this.reconfirm(snapshot.week.lessons);
       this.dropStaleTicks(snapshot.week.lessons);
+      this.syncFallen();
       return out;
     } catch (e) {
       Object.assign(this.week, snapshot.week);
@@ -1543,6 +1772,7 @@ export class Engine {
   private deleteLesson(id: number) {
     delete this.shared.transport[this.transportKey(id)]; // on delete cascade
     for (const f of this.week.sourceFiles) if (f.lesson_id === id) f.lesson_id = null; // on delete set null: the files stay, for removal
+    for (const p of this.week.memorialPlans ?? []) if (p.lesson_id === id) p.lesson_id = null; // on delete set null: back to the tray
     this.week.lessons = this.week.lessons.filter((l) => l.id !== id);
     this.week.lessonSpeakers = this.week.lessonSpeakers.filter((x) => x.lesson_id !== id);
     this.week.pitches = this.week.pitches.filter((p) => p.lesson_id !== id);

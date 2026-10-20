@@ -6,11 +6,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TransportDetails } from "../domain/types";
 import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp, type WeekCommands } from "./commands";
-import { PortError } from "./types";
+import { portError } from "../offline/network";
 
 /** An RPC; a refusal comes back as the contract's code (raise … message = '<code>'). */
 export async function callRpc(sb: SupabaseClient, fn: string, args: Record<string, unknown>): Promise<unknown> {
-  const { data, error } = await sb.rpc(fn, args);
+  const { data, error, status } = await sb.rpc(fn, args);
   if (error) {
     if (error.code === "P0001") throw new CommandError(error.message);
     // The RPCs re-raise constraint violations under their code; this is the
@@ -18,7 +18,8 @@ export async function callRpc(sb: SupabaseClient, fn: string, args: Record<strin
     if (error.code === "23P01") throw new CommandError(/speaker/.test(error.message) ? "speaker_busy" : "room_taken");
     // A function this role may not execute (the grants at the end of schema.sql).
     if (error.code === "42501") throw new CommandError("forbidden");
-    throw new PortError(error.code ?? null, error.message);
+    // no answer at all (status 0): «network», which may fall back to the device's snapshot (src/offline/network.ts)
+    throw portError(error, status);
   }
   return data;
 }
@@ -85,6 +86,31 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
         p_driver_name: d.driver_name,
         p_driver_phone: d.driver_phone,
         p_arranged: d.arranged,
+      })),
+
+    // ---- milestone 5ב-2 (CONTRACT.md «Memorial times and logistics»)
+    transports: async () =>
+      (((await call("get_transports_for", { p_edition: editionId })) ?? []) as Record<string, unknown>[]).map((t) => ({
+        lesson_id: Number(t.lesson_id),
+        pickup_address: (t.pickup_address as string | null) ?? null,
+        pickup_time: (t.pickup_time as string | null) ?? null,
+        driver_name: (t.driver_name as string | null) ?? null,
+        driver_phone: (t.driver_phone as string | null) ?? null,
+        arranged: t.arranged === true,
+      })),
+    addMemorialSlot: async (day, start, end, roomId) =>
+      Number(await call("add_memorial_slot", { p_edition: editionId, p_day: day, p_start: start, p_end: end, p_room: roomId })),
+    removeMemorialSlot: async (lessonId) => void (await call("remove_memorial_slot", { p_lesson: lessonId })),
+    addMemorialPlan: async (fallenId) => Number(await call("add_memorial_plan", { p_edition: editionId, p_fallen: fallenId })),
+    updateMemorialPlan: async (planId, version, patch) => void (await call("update_memorial_plan", { p_plan: planId, p_version: version, p_patch: patch })),
+    placeMemorialPlan: async (planId, version, lessonId) => void (await call("place_memorial_plan", { p_plan: planId, p_version: version, p_lesson: lessonId })),
+    deleteMemorialPlan: async (planId) => void (await call("delete_memorial_plan", { p_plan: planId })),
+    setMemorialPolicy: async (policy) =>
+      void (await call("set_memorial_policy", {
+        p_edition: editionId,
+        p_placement: policy.placement ?? null,
+        p_max_minutes: policy.max_minutes ?? null,
+        p_warn_adjacent_meal: policy.warn_adjacent_meal ?? null,
       })),
   };
 }

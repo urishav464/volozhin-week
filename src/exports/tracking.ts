@@ -4,6 +4,7 @@
 // only the phones the caller may see) — and last year's stage colours as the
 // row's tint. Pure, from a loaded Week: the screen, the print view, the CSV and
 // the xlsx are all this one list.
+import { memorialCard } from "../domain/memorial";
 import { teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
 import { lessonTone, PROGRESS_FILL, type ProgressTone } from "../domain/progress";
@@ -86,7 +87,9 @@ export function trackingRows(week: Week): TrackingRow[] {
       const tone = lessonTone(l);
       const base = { lesson: l, day: l.day, ...teachingWhen(l, lessonMinutes), category: (l.category_id != null && categories.get(l.category_id)) || "", tone };
       if (l.kind === "memorial") {
-        return { ...base, speakerId: null, handlers: [], speaker: "", title: l.title ?? "זמן זיכרון", sources: "", payment: "", escort: "", confirmed: "", stage: "memorial" };
+        // the plan placed on it names the fallen (5ב-2); its escort is the family's liaison — never a contact
+        const liaison = l.escort_roster_id != null ? (roster.get(l.escort_roster_id) ?? "מלווה") : "";
+        return { ...base, speakerId: null, handlers: [], speaker: "", title: memorialCard(week, l).title, sources: "", payment: "", escort: liaison, confirmed: "", stage: "memorial" };
       }
       if (l.state !== "closed") {
         const live = week.pitches.filter((p) => p.lesson_id === l.id && LIVE_PITCH.has(p.state)).sort((a, b) => a.id - b.id);

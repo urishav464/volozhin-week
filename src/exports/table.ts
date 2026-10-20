@@ -28,6 +28,6 @@ export function guardCell(v: string): string {
 /**
  * LEFT-TO-RIGHT MARK before a time range in a file's cell: a right-to-left cell
  * would otherwise lay «08:30–09:45» out as «09:45–08:30» (the dash between two
- * numbers takes the cell's direction). Invisible; the screens use <bdi> instead.
+ * numbers takes the cell's direction). Invisible. One definition: src/domain/time.ts.
  */
-export const LRM = "\u200E";
+export { LRM } from "../domain/time";

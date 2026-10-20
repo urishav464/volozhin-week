@@ -11,6 +11,7 @@ import { publicDemo } from "../../data/publicEntry";
 import { messageDate } from "../../domain/message";
 import { type Day, DAY_NAMES, fmtRange } from "../../domain/time";
 import { errorMessage } from "../../errors";
+import { useOnline } from "../../offline/online";
 import { Button } from "../settings/kit";
 import { Card, Shell } from "../Shell";
 
@@ -111,7 +112,32 @@ export function LinkMissing() {
   );
 }
 
+/**
+ * The read failed. Without a connection it says so plainly: a link's page is never kept on the device — its code
+ * stays in memory only, and the escort's page shows a speaker's phone from W−7 — so it opens with a connection
+ * alone (docs/DECISIONS.md «אבן דרך 5ב-2, חלק ב: בלי רשת»). When the connection returns it tries again by itself.
+ */
 export function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  const online = useOnline();
+  const retry = useRef(onRetry);
+  retry.current = onRetry;
+  const wasOffline = useRef(!online);
+  useEffect(() => {
+    if (!online) wasOffline.current = true;
+    else if (wasOffline.current) {
+      wasOffline.current = false;
+      retry.current();
+    }
+  }, [online]);
+  if (!online) {
+    return (
+      <div role="alert" data-needs-connection className="rounded-xl border border-bad/30 bg-bad/5 p-4 text-sm">
+        <p className="mb-1 font-semibold">הקישור הזה צריך חיבור לאינטרנט.</p>
+        <p className="mb-2">הדף שלו לא נשמר במכשיר, ולכן בלי רשת הוא לא נפתח. כשהחיבור חוזר הוא נטען לבד, ואפשר גם ללחוץ «לנסות שוב».</p>
+        <Button onClick={onRetry}>לנסות שוב</Button>
+      </div>
+    );
+  }
   return (
     <div role="alert" className="rounded-xl border border-bad/30 bg-bad/5 p-4 text-sm">
       <p className="mb-2">לא הצלחנו לטעון. אולי אין כרגע חיבור לאינטרנט.</p>

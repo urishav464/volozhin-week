@@ -243,11 +243,11 @@ test.describe("demo build", () => {
     const zip = await downloaded(page, () => page.getByRole("button", { name: "הורדת הארכיון של הדגמה" }).click());
     expect(zip.d.suggestedFilename()).toMatch(/^volozhin-archive-edition-1-\d{4}-\d{2}-\d{2}\.zip$/);
     const files = unzipSync(new Uint8Array(zip.bytes));
-    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "speakers.json", "tracking.xlsx"]);
+    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "kk.json", "memorial.json", "sources.json", "speakers.json", "tracking.xlsx"]);
     const edition = JSON.parse(strFromU8(files["edition.json"]));
     expect(edition.lessons.length).toBe(demoWeek().lessons.length);
     expect(edition.milestones.length).toBeGreaterThan(0);
-    for (const f of ["edition.json", "speakers.json"]) {
+    for (const f of ["edition.json", "speakers.json", "kk.json", "memorial.json", "sources.json"]) {
       expect(strFromU8(files[f]), f).not.toContain("טלפון לדוגמה");
       expect(strFromU8(files[f]), f).not.toContain("כתובת לדוגמה");
     }
@@ -304,9 +304,9 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
-    // the instructor's eight sections: every one inside the screen, none cut off or behind a sideways scroll
+    // the instructor's ten sections: every one inside the screen, none cut off or behind a sideways scroll
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
+    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
     const width = page.viewportSize()!.width;
     for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
       expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
@@ -326,7 +326,7 @@ test.describe("demo build", () => {
 });
 
 test.describe("mock build", () => {
-  const signedIn = async (page: Page, membership: { role: string; global: boolean; member: number }) => {
+  const signedIn = async (page: Page, membership: { role: string; global: boolean; member: number; name?: string }) => {
     const week = demoWeek();
     week.edition.id = 7;
     week.edition.kind = "real";
@@ -334,7 +334,7 @@ test.describe("mock build", () => {
     const sb = new FakeSupabase({
       status: 200,
       body: {
-        status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: membership.global,
+        status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: membership.name ?? "חבר/ת צוות לדוגמה", global_admin: membership.global,
         memberships: [{ edition_id: membership.global ? null : 7, role: membership.role, member_id: membership.member }],
       },
     });
@@ -345,6 +345,25 @@ test.describe("mock build", () => {
     sb.token = session.access_token;
     return { sb, week, session };
   };
+  test("the header of an admin of every edition: all ten sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "the widths are set here");
+    await signedIn(page, { role: "admin", global: true, member: 1, name: "שם ארוך מאוד של מדריך/ה לדוגמה" });
+    await page.goto(mockUrl());
+    await expect(page.getByRole("button", { name: "התנתקות" })).toBeVisible();
+    const links = nav(page).getByRole("link");
+    await expect(links).toHaveCount(10);
+    for (const width of [1024, 1100, 1150, 1180, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      const navBox = (await nav(page).boundingBox())!;
+      for (const box of await links.evaluateAll((ls) => ls.map((l) => ({ text: l.textContent, ...l.getBoundingClientRect().toJSON() }) as DOMRect & { text: string }))) {
+        // inside the nav's own box: not behind its sideways scroll (headless Chromium hides the scrollbar itself)
+        expect(box.left, `${width}: ${box.text}`).toBeGreaterThanOrEqual(navBox.x - 0.5);
+        expect(box.right, `${width}: ${box.text}`).toBeLessThanOrEqual(navBox.x + navBox.width + 0.5);
+      }
+      expect((await page.getByRole("banner").boundingBox())!.height, String(width)).toBeLessThanOrEqual(56); // one row: the week's grid height holds
+    }
+  });
+
   const authed = (sb: FakeSupabase, path: string, token: string) => {
     const calls = sb.calls.filter((c) => c.path === path);
     expect(calls.length, path).toBeGreaterThan(0);
@@ -400,6 +419,8 @@ test.describe("mock build", () => {
     sb.tables.set("activity", []);
     sb.tables.set("speaker_contacts", [{ speaker_id: 1, phone: "טלפון לדוגמה", email: null, secretary_note: null, notes: null }]);
     sb.tables.set("transport_details", []);
+    sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
+    sb.answers.set("get_fallen_contacts", null); // asked for the fallen this edition planned for (the demo's: 1, 2, 3) — none stored
     await nav(page).getByRole("link", { name: "הגדרות" }).click();
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());
@@ -409,7 +430,8 @@ test.describe("mock build", () => {
     const contacts = sb.calls.find((c) => c.path === "/rest/v1/speaker_contacts")!;
     expect(contacts.query.get("speaker_id")).toMatch(/^in\.\(/);
 
-    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details"]) {
+    expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 1 }, { p_fallen: 2 }, { p_fallen: 3 }]);
+    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen", "/rest/v1/rpc/get_fallen_contacts"]) {
       authed(sb, p, session.access_token);
     }
   });
@@ -432,7 +454,7 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
     await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים"]);

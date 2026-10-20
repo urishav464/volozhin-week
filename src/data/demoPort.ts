@@ -6,7 +6,8 @@ import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilesto
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
-import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import { DemoMemorial } from "./demoMemorial";
 import type { Sample } from "./demoFiles";
 import { DemoSources, type DemoSourceStore } from "./demoSources";
 import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
@@ -42,6 +43,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly public: DemoPublic;
   /** The sources' files (v10): the engine's bucket, the bytes in this tab. */
   readonly sources: DemoSources;
+  /** The fallen and their families' contacts (v11), cross-year, on the engine. */
+  readonly memorial: DemoMemorial;
   readonly blobs = new Map<string, Blob>();
   readonly samples = new Map<string, Sample>();
   readonly shared: PoolShared;
@@ -61,7 +64,10 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     const week = demoWeek();
     const seeded = seedDemoSources(week);
     for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
-    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects };
+    this.shared = {
+      contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
+      fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(),
+    };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
@@ -81,6 +87,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.kk = new DemoKk(this);
     this.public = new DemoPublic(this);
     this.sources = new DemoSources(this);
+    this.memorial = new DemoMemorial(this);
     // seeded as the demo's instructor (member 1), whoever the demo user is
     this.seeding = true;
     seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
@@ -115,6 +122,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       roster: [],
       escortTicks: [],
       sourceFiles: [],
+      memorialPlans: [],
+      fallen: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
     this.syncTeams();
@@ -195,6 +204,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     return DEMO_EMAIL;
   }
 
+  /** The demo keeps no snapshot (its data is in memory, and so works offline as it is); this is never stored. */
+  deviceUserId(): string | null {
+    return "demo";
+  }
+
   async whoami(): Promise<WhoAmI> {
     const mine = this.members.filter((m) => m.active && m.email === DEMO_EMAIL);
     return {
@@ -221,6 +235,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   }
 
   async loadWeek(editionId: number): Promise<Week> {
+    this.engine(editionId).syncFallen(); // a name rewritten from another edition's screen
     const week = structuredClone(this.engine(editionId).week);
     week.categories = structuredClone(this.categories);
     week.team = this.members
@@ -256,6 +271,15 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       setPaid: (lessonId, paid) => run(() => e.setPaid(lessonId, paid)),
       transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
       setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
+      // milestone 5ב-2
+      transports: async () => structuredClone(e.transportsOf()),
+      addMemorialSlot: (day, start, end, roomId) => run(() => e.addMemorialSlot(day, start, end, roomId)),
+      removeMemorialSlot: (lessonId) => run(() => e.removeMemorialSlot(lessonId)),
+      addMemorialPlan: (fallenId) => run(() => e.addMemorialPlan(fallenId)),
+      updateMemorialPlan: (planId, version, patch) => run(() => e.updateMemorialPlan(planId, version, patch)),
+      placeMemorialPlan: (planId, version, lessonId) => run(() => e.placeMemorialPlan(planId, version, lessonId)),
+      deleteMemorialPlan: (planId) => run(() => e.deleteMemorialPlan(planId)),
+      setMemorialPolicy: (policy) => run(() => e.setMemorialPolicy(policy)),
     };
   }
 

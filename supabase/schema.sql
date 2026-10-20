@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 10 $$;
+  as $$ select 11 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1028,6 +1028,8 @@ create or replace function public.move_lesson(p_lesson bigint, p_day integer, p_
     select * into v_l from public.lessons where id = p_lesson for update;
     if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_l.edition_id);
+    -- v11: a memorial slot stays in its memorial row (a plan moves between slots instead)
+    if v_l.kind = 'memorial' then perform app.refuse('memorial_slot'); end if;
     if v_l.state = 'closed' and app.my_role(v_l.edition_id) <> 'admin' then
       select a.owner_member_id into v_owner from public.lesson_speakers x
         join public.approaches a on a.speaker_id = x.speaker_id and a.edition_id = v_l.edition_id
@@ -1105,7 +1107,7 @@ create or replace function public.reshape(
          or (select sum(x) from unnest(p_parts) x) <> v_row.end_min - v_row.start_min then
         perform app.refuse('bad_shape');
       end if;
-      if exists (select 1 from public.lessons where id = any (v_ids) and state = 'closed') then perform app.refuse('cell_closed'); end if;
+      if exists (select 1 from public.lessons where id = any (v_ids) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('cell_closed'); end if;
       select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_ids) c;
       delete from public.lessons where id = any (v_ids);
       v_t := v_row.start_min;
@@ -1133,7 +1135,8 @@ create or replace function public.reshape(
       select coalesce(array_agg(id), '{}') into v_ids from public.lessons
        where edition_id = p_edition and day = p_day and state <> 'cancelled' and id <> v_l.id
          and int4range(start_min, end_min) && int4range(v_l.end_min, v_new_end);
-      if exists (select 1 from public.lessons where id = any (v_ids) and state = 'closed') then perform app.refuse('merge_blocked'); end if;
+      -- v11: a memorial slot is never swallowed (its plan, liaison and files would go with it)
+      if exists (select 1 from public.lessons where id = any (v_ids) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('merge_blocked'); end if;
       select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_ids) c;
       delete from public.lessons where id = any (v_ids);
       begin
@@ -1147,7 +1150,7 @@ create or replace function public.reshape(
       perform app.adopt(v_l.id, v_carried);
 
     elsif p_op = 'reset' then
-      if exists (select 1 from public.lessons where id = any (v_ids) and state = 'closed') then perform app.refuse('cell_closed'); end if;
+      if exists (select 1 from public.lessons where id = any (v_ids) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('cell_closed'); end if;
       select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_ids) c;
       delete from public.lessons where id = any (v_ids);
       if jsonb_array_length(v_carried) > 0 then
@@ -1171,6 +1174,9 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
     select * into v_l from public.lessons where id = p_lesson for update;
     if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_l.edition_id);
+    -- v11: a memorial slot's title, category and minutes are not the team's to write
+    -- (its title reaches the anon links: schedule_view, escort_view) — no screen edits one
+    if v_l.kind = 'memorial' then perform app.refuse('memorial_slot'); end if;
     if v_l.version <> p_version then perform app.refuse('stale'); end if;
     if p_patch ? 'teach_min' and p_patch ->> 'teach_min' is not null then
       v_t := (p_patch ->> 'teach_min')::integer;
@@ -1252,7 +1258,7 @@ create index if not exists activity_actor on public.activity (actor);
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
 -- read the tables created further down: notes, milestones, export_snapshots (v8),
--- share_links (v9), source_files (v10).)
+-- share_links (v9), source_files (v10), memorial_plans (v11).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1267,7 +1273,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.milestones where created_by = p_member or done_by = p_member)
         or exists (select 1 from public.export_snapshots where created_by = p_member)
         or exists (select 1 from public.share_links where created_by = p_member)
-        or exists (select 1 from public.source_files where uploaded_by = p_member);
+        or exists (select 1 from public.source_files where uploaded_by = p_member)
+        or exists (select 1 from public.memorial_plans where updated_by = p_member);
   end
   $$;
 
@@ -2415,7 +2422,9 @@ create or replace function public.mark_confirm_sent(p_lesson bigint, p_version i
   $$;
 
 -- The escort: a trainee of this edition's roster (or none), self-introduction,
--- and a note for the escorts' list. Any editor, on a closed lesson.
+-- and a note for the escorts' list. Any editor, on a closed lesson. A memorial
+-- slot's escort is the family's liaison (v11): an admin of the edition, on a
+-- slot with a plan placed on it (`no_plan`), never a self-introduction.
 create or replace function public.set_escort(p_lesson bigint, p_version integer, p_roster bigint, p_self_intro boolean, p_note text default null)
   returns void
   language plpgsql security definer set search_path = ''
@@ -2425,12 +2434,17 @@ create or replace function public.set_escort(p_lesson bigint, p_version integer,
     v_me   bigint := app.require_editor(v_l.edition_id);
     v_note text;
   begin
-    if v_l.state <> 'closed' then perform app.refuse('not_closed'); end if;
+    if v_l.kind = 'memorial' then
+      if app.my_role(v_l.edition_id) <> 'admin' then perform app.refuse('forbidden'); end if;
+      if not exists (select 1 from public.memorial_plans where lesson_id = v_l.id) then perform app.refuse('no_plan'); end if;
+    elsif v_l.state <> 'closed' then
+      perform app.refuse('not_closed');
+    end if;
     if v_l.version <> p_version then perform app.refuse('stale'); end if;
     if p_roster is not null and not exists (select 1 from public.roster where id = p_roster and edition_id = v_l.edition_id) then
       perform app.refuse('bad_escort');
     end if;
-    if p_self_intro is null then perform app.refuse('bad_value'); end if;
+    if p_self_intro is null or (p_self_intro and v_l.kind = 'memorial') then perform app.refuse('bad_value'); end if;
     v_note := app.clean_block(p_note, 300);
     if (p_roster, p_self_intro, v_note) is not distinct from (v_l.escort_roster_id, v_l.self_intro, v_l.escort_note) then return; end if;
     update public.lessons
@@ -3133,15 +3147,17 @@ create or replace function app.link_for(p_token text, p_scope text) returns publ
   end
   $$;
 
--- A lesson of this escort's link: closed, in its edition, escorted by its
--- trainee — anything else is `link_invalid`, like a bad token (no oracle).
+-- A lesson of this escort's link: closed (or a memorial slot — its escort is the
+-- family's liaison, v11), in its edition, escorted by its trainee — anything
+-- else is `link_invalid`, like a bad token (no oracle).
 create or replace function app.escort_lesson(p_link public.share_links, p_lesson bigint) returns public.lessons
   language plpgsql security definer set search_path = ''
   as $$
   declare v public.lessons;
   begin
     select * into v from public.lessons where id = p_lesson for update;
-    if v.id is null or v.edition_id <> p_link.edition_id or v.escort_roster_id is distinct from p_link.subject_id or v.state <> 'closed' then
+    if v.id is null or v.edition_id <> p_link.edition_id or v.escort_roster_id is distinct from p_link.subject_id
+       or v.state = 'cancelled' or (v.state <> 'closed' and v.kind <> 'memorial') then
       perform app.refuse('link_invalid');
     end if;
     return v;
@@ -3280,7 +3296,9 @@ create or replace function app.kk_write_leaders(p_group bigint, p_leaders jsonb)
 
 -- ------------------------------------------------------------- the anon functions
 
--- The escort's page: that trainee's closed lessons in that edition, in grid
+-- The escort's page: that trainee's closed lessons (and the memorial slots they
+-- are the family's liaison for — v11: the slot's facts alone, never the fallen's
+-- name, the plan or a family's contact) in that edition, in grid
 -- order — day, the day column's date (or null = TBD), the teaching time, room,
 -- the lead speaker's name and gender, title, self-introduction, the duty notes,
 -- the lesson's note to the escort, the four ticks — and, only from W−7 (Israel
@@ -3331,12 +3349,16 @@ create or replace function public.escort_view(p_token text) returns jsonb
           left join public.speakers s on s.id = x.speaker_id
           left join public.speaker_contacts c on c.speaker_id = s.id
           left join public.transport_details t on t.lesson_id = l.id
-         where l.edition_id = v.edition_id and l.escort_roster_id = v.subject_id and l.state = 'closed'), '[]'::jsonb));
+         where l.edition_id = v.edition_id and l.escort_roster_id = v.subject_id
+           and l.state <> 'cancelled' and (l.state = 'closed' or l.kind = 'memorial')), '[]'::jsonb));
   end
   $$;
 
 -- One of the four ticks on one of the escort's lessons, on (its first time
--- kept) or off. Answers the lesson's four ticks.
+-- kept) or off. Answers the lesson's four ticks. They are a speaker's escort's
+-- (הזכרתי למרצה, פגשתי בחניה, …): a memorial slot — the liaison's own, on the
+-- page already — has none to tick, and answers as an item that does not exist
+-- (`bad_value`), after the link's one refusal: no answer the page does not give.
 create or replace function public.escort_tick(p_token text, p_lesson bigint, p_item text, p_on boolean) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -3344,7 +3366,9 @@ create or replace function public.escort_tick(p_token text, p_lesson bigint, p_i
     v   public.share_links := app.link_for(p_token, 'escort');
     v_l public.lessons := app.escort_lesson(v, p_lesson);
   begin
-    if p_item is null or p_item not in ('reminded', 'met', 'introduced', 'gift') or p_on is null then perform app.refuse('bad_value'); end if;
+    if p_item is null or p_item not in ('reminded', 'met', 'introduced', 'gift') or p_on is null or v_l.kind = 'memorial' then
+      perform app.refuse('bad_value');
+    end if;
     if p_on then
       insert into public.escort_ticks (lesson_id, item) values (v_l.id, p_item) on conflict do nothing;
     else
@@ -3718,8 +3742,9 @@ create or replace function public.set_book_order(p_group bigint, p_copies intege
 -- Who (one function each, app.source_refusal / may_*_source, for both the
 -- policies and the functions):
 --   upload   the edition's content members and admins (logistics never; an
---            archive is its admins' only), to a CLOSED lesson of kind 'lesson'
---            — the rule of set_sources; the poster: the edition's admins; and
+--            archive is its admins' only), to a CLOSED lesson — the rule of
+--            set_sources — or (v11) a memorial slot with a plan placed on it;
+--            the poster: the edition's admins; and
 --            never at a path a source_files row holds (a path is used once)
 --   read     the edition's whole team: content, admins, and logistics (they print)
 --   delete   whoever uploaded it, or an admin of the edition
@@ -3761,8 +3786,9 @@ create or replace function app.source_mime_ok(p_mime text, p_ext text) returns b
 -- Why the caller may not upload to this path — NULL when they may. The rule
 -- of set_sources (app.require_editor on a closed lesson): content or admin of
 -- the path's edition, an archive for its admins only; a lesson of that
--- edition, closed, of kind 'lesson' (memorial slots' materials: 5ב-2); the
--- poster (…/cover/…, never a Word file) for the edition's admins.
+-- edition, closed — or a memorial slot with a plan placed on it, its materials
+-- for the reader (v11; else `no_plan`); the poster (…/cover/…, never a Word
+-- file) for the edition's admins.
 create or replace function app.source_refusal(p_name text) returns text
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -3785,7 +3811,11 @@ create or replace function app.source_refusal(p_name text) returns text
     end if;
     select * into v_l from public.lessons where id = m[2]::bigint;
     if v_l.id is null or v_l.edition_id <> v_ed.id then return 'bad_path'; end if;
-    if v_l.state <> 'closed' or v_l.kind <> 'lesson' then return 'not_closed'; end if;
+    if v_l.kind = 'memorial' then
+      if v_l.state = 'cancelled' or not exists (select 1 from public.memorial_plans p where p.lesson_id = v_l.id) then return 'no_plan'; end if;
+      return null;
+    end if;
+    if v_l.state <> 'closed' then return 'not_closed'; end if;
     return null;
   end
   $$;
@@ -3957,6 +3987,9 @@ create policy source_files_read on public.source_files for select to authenticat
 -- has something to print (in_reader's own rule — never a presentation alone).
 -- The poster: the first one the browser could read (page_count set — the
 -- build never fetches a file without one) becomes the cover (settings.reader_cover).
+-- A memorial slot's file (v11) remembers the fallen of the plan placed on it
+-- (fallen_id; no speaker), and leaves the slot's sources columns alone: a
+-- memorial slot is always in the reader.
 create or replace function public.register_source_file(p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer)
   returns jsonb
   language plpgsql security definer set search_path = ''
@@ -3972,6 +4005,7 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
     v_name   text;
     v_pages  integer;
     v_spk    bigint;
+    v_fallen bigint;
     v_first  boolean;
     v_kind   text;
     v_in     boolean;
@@ -4004,14 +4038,18 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
     if p_pages is not null and (p_pages < 1 or p_pages > 5000) then perform app.refuse('bad_value'); end if;
     -- what the browser read of it as the reader would: a PDF's pages, a picture 1; NULL — it could not (the reader leaves it out)
     v_pages := case when v_mime = 'application/pdf' then p_pages when v_mime like 'image/%' and p_pages is not null then 1 end;
-    if p_lesson is not null then
+    if p_lesson is not null and v_l.kind = 'memorial' then
+      select p.fallen_id into v_fallen from public.memorial_plans p where p.lesson_id = p_lesson;
+    elsif p_lesson is not null then
       select x.speaker_id into v_spk from public.lesson_speakers x where x.lesson_id = p_lesson and x.role = 'lead';
       v_first := not exists (select 1 from public.source_files f where f.lesson_id = p_lesson and f.speaker_id is not distinct from v_spk);
     end if;
-    insert into public.source_files (edition_id, lesson_id, cover, speaker_id, storage_path, display_name, mime, size_bytes, page_count, uploaded_by)
-    values (p_edition, p_lesson, p_lesson is null, v_spk, p_path, v_name, v_mime, v_size, v_pages, v_me)
+    insert into public.source_files (edition_id, lesson_id, cover, speaker_id, fallen_id, storage_path, display_name, mime, size_bytes, page_count, uploaded_by)
+    values (p_edition, p_lesson, p_lesson is null, v_spk, v_fallen, p_path, v_name, v_mime, v_size, v_pages, v_me)
     returning * into v_row;
-    if p_lesson is not null then
+    if p_lesson is not null and v_l.kind = 'memorial' then
+      null;   -- a memorial slot is always in the reader: nothing of the lesson changes
+    elsif p_lesson is not null then
       v_kind := case when v_l.sources_kind = 'pending' then 'sheet' else v_l.sources_kind end;
       v_in := v_l.in_reader or (v_first and v_kind not in ('pending', 'none', 'presentation'));
       if (v_kind, v_in) is distinct from (v_l.sources_kind, v_l.in_reader) then
@@ -4090,11 +4128,496 @@ create or replace function public.set_reader_cover(p_edition bigint, p_file bigi
   end
   $$;
 
+-- =============================================================================
+-- Milestone 5ב-2 (v11) — memorial times, and the logistics screen's one read.
+-- Semantics: docs/CONTRACT.md «Memorial times and logistics»; the in-memory
+-- twin is src/data/engine.ts, held to this by tests/parity.
+--
+--   fallen            the fallen the week remembers — one cross-year list (DESIGN
+--                     «נשארים בין שנים»): a name, gender, a note, active. Names
+--                     are entered in the app only, never in git. A global admin
+--                     writes (save_fallen, delete_fallen); read by any admin
+--                     (to plan) and by the team of an edition that has a plan
+--                     for one (app.may_see_fallen).
+--   fallen_contacts   the family's contact person — personal data of a bereaved
+--                     family: ADMINS ONLY — a global admin, or an admin of a real,
+--                     non-archived edition with a plan for that fallen
+--                     (app.may_see_fallen_contacts). Read one fallen at a time
+--                     (get_fallen_contacts, invoker, under the policy) — never in
+--                     load_week, never in Realtime, never through a link.
+--   memorial_plans    one per fallen per edition: the family's status, who
+--                     speaks, the planned minutes, a hard stop, the reader's
+--                     materials note — and the memorial slot it is PLACED on
+--                     (lesson_id, one plan per slot). The edition's admins write
+--                     (functions, a version each); its whole team reads it, in
+--                     load_week (never a contact).
+--   memorial slots    lessons of kind 'memorial', made by an admin inside a
+--                     memorial row of the grid (add_memorial_slot). A slot is
+--                     never moved by drag (memorial_slot) nor swallowed by a
+--                     merge (merge_blocked).
+--   the liaison       («בזמני זיכרון, המלווה הוא איש הקשר של המשפחה»): the slot's
+--                     escort (lessons.escort_roster_id), set by an admin with
+--                     set_escort once a plan is placed; it goes with the plan
+--                     when the plan moves, and leaves with it. The escort's link
+--                     shows the slot as before — never a family's contact.
+--   materials         uploads to a slot with a plan (app.source_refusal), each
+--                     file remembering the fallen it came for
+--                     (source_files.fallen_id): the reader takes a plan's files
+--                     wherever it is placed.
+--   settings.memorial the staff meeting's policy {placement, max_minutes,
+--                     warn_adjacent_meal} — never seeded (set_memorial_policy).
+--   get_transports_for  the logistics screen's transports in one invoker call —
+--                     never more than get_transport_details shows, one lesson at
+--                     a time.
+-- None of the three tables is ever published to Realtime.
+-- =============================================================================
+
+-- ------------------------------------------------------------- tables
+
+create table if not exists public.fallen (
+  id         bigint generated always as identity primary key,
+  name       text not null check (btrim(name) <> '' and char_length(name) <= 120),
+  gender     text check (gender in ('m', 'f')),
+  note       text check (char_length(note) <= 500),
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+alter table public.fallen enable row level security;
+
+create table if not exists public.fallen_contacts (
+  fallen_id    bigint primary key references public.fallen (id) on delete cascade,
+  contact_name text,
+  relation     text,
+  phone        text,
+  email        text,
+  note         text
+);
+alter table public.fallen_contacts enable row level security;
+
+create table if not exists public.memorial_plans (
+  id              bigint generated always as identity primary key,
+  edition_id      bigint not null references public.editions (id) on delete cascade,
+  fallen_id       bigint not null references public.fallen (id),   -- a fallen with plans is kept (deactivated), never deleted
+  lesson_id       bigint unique references public.lessons (id) on delete set null,   -- the memorial slot it is placed on
+  family_status   text not null default 'not_contacted'
+                  check (family_status in ('not_contacted', 'invited', 'confirmed', 'cannot_come', 'other_speaker')),
+  speaker_text    text check (char_length(speaker_text) <= 200),
+  planned_minutes integer check (planned_minutes between 1 and 180),
+  hard_stop       boolean not null default false,
+  materials_note  text check (char_length(materials_note) <= 500),
+  version         integer not null default 1,
+  updated_by      bigint,
+  created_at      timestamptz not null default now(),
+  unique (edition_id, fallen_id)
+);
+create index if not exists memorial_plans_fallen on public.memorial_plans (fallen_id);
+alter table public.memorial_plans enable row level security;
+
+-- A file on a memorial slot remembers the fallen it came for (as a lesson's
+-- file remembers its speaker): the reader takes a plan's files wherever the
+-- plan is placed now.
+alter table public.source_files add column if not exists fallen_id bigint references public.fallen (id) on delete set null;
+create index if not exists source_files_fallen on public.source_files (fallen_id);
+
+-- ------------------------------------------------------------- who sees what
+
+-- A fallen's name: a global admin, any admin (they plan), or the team of an
+-- edition that has a plan for them.
+create or replace function app.may_see_fallen(p_fallen bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select app.is_global_admin()
+        or exists (select 1 from public.members m where m.active and m.role = 'admin' and m.email = app.my_email())
+        or exists (select 1 from public.memorial_plans p where p.fallen_id = p_fallen and app.can_see_edition(p.edition_id))
+  $$;
+
+-- The real, non-archived edition with a plan for this fallen in which I am an
+-- admin, if any — the newest (the twin of app.contacts_edition). A change to
+-- the family's contact is logged there, as the caller's member row of it.
+create or replace function app.fallen_contacts_edition(p_fallen bigint) returns bigint
+  language sql stable security definer set search_path = ''
+  as $$
+    select p.edition_id from public.memorial_plans p join public.editions e on e.id = p.edition_id
+     where p.fallen_id = p_fallen and e.kind = 'real' and e.status <> 'archived' and app.my_role(p.edition_id) = 'admin'
+     order by p.edition_id desc
+     limit 1
+  $$;
+
+-- The family's contact person: admins only — a global admin, or an admin of a
+-- real edition that is not archived and has a plan for this fallen (the rule
+-- of app.may_see_contacts: a practice or demo week, or last year, gives no
+-- access). public/privacy.html says exactly this.
+create or replace function app.may_see_fallen_contacts(p_fallen bigint) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$ select app.is_global_admin() or app.fallen_contacts_edition(p_fallen) is not null $$;
+
+drop policy if exists fallen_read on public.fallen;
+create policy fallen_read on public.fallen for select to authenticated using (app.may_see_fallen(fallen.id));
+drop policy if exists fallen_contacts_read on public.fallen_contacts;
+create policy fallen_contacts_read on public.fallen_contacts for select to authenticated using (app.may_see_fallen_contacts(fallen_contacts.fallen_id));
+drop policy if exists memorial_plans_read on public.memorial_plans;
+create policy memorial_plans_read on public.memorial_plans for select to authenticated using (app.can_see_edition(edition_id));
+
+-- ------------------------------------------------------------- helpers
+
+-- The memorial rows of a day, as the edition's window allows them (rowActive, like app.lesson_rows).
+create or replace function app.memorial_rows(p_edition bigint, p_day integer)
+  returns setof public.grid_rows
+  language sql stable security definer set search_path = ''
+  as $$
+    select r.* from public.grid_rows r join public.editions e on e.id = r.edition_id
+     where r.edition_id = p_edition and r.kind = 'memorial' and p_day = any (r.days)
+       and not (p_day = 0 and e.first_day_from is not null and r.end_min <= e.first_day_from)
+       and not (p_day = 4 and r.start_min >= e.last_day_until)
+     order by r.start_min, r.end_min
+  $$;
+
+-- A plan the command is about, locked, and its edition's admin asking.
+create or replace function app.memorial_plan(p_plan bigint) returns public.memorial_plans
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v public.memorial_plans;
+  begin
+    select * into v from public.memorial_plans where id = p_plan for update;
+    if v.id is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v.edition_id);
+    return v;
+  end
+  $$;
+
+-- ------------------------------------------------------------- reads
+
+-- The family's contact person, through the policy (invoker): NULL when it is
+-- not the caller's to see; no row yet → five nulls.
+create or replace function public.get_fallen_contacts(p_fallen bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select case when app.may_see_fallen_contacts(p_fallen) then
+      coalesce((select jsonb_build_object('contact_name', c.contact_name, 'relation', c.relation, 'phone', c.phone, 'email', c.email, 'note', c.note)
+                  from public.fallen_contacts c where c.fallen_id = p_fallen),
+               '{"contact_name": null, "relation": null, "phone": null, "email": null, "note": null}'::jsonb)
+    end
+  $$;
+
+-- «הסעות» in the logistics screen: the edition's closed lessons whose transport
+-- was asked and approved, each with its details exactly as get_transport_details
+-- would show them — invoker: lessons and transport_details are read through
+-- their policies, and every lesson also passes app.may_see_transport, the very
+-- predicate of get_transport_details. A lesson the caller may not see the
+-- details of is not in the list at all. Never in a Week, never in Realtime.
+create or replace function public.get_transports_for(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'lesson_id', l.id, 'pickup_address', t.pickup_address, 'pickup_time', t.pickup_time,
+             'driver_name', t.driver_name, 'driver_phone', t.driver_phone, 'arranged', coalesce(t.arranged, false))
+             order by l.id), '[]'::jsonb)
+      from public.lessons l
+      left join public.transport_details t on t.lesson_id = l.id
+     where l.edition_id = p_edition and l.state = 'closed' and l.transport <> 'none' and l.approval = 'approved'
+       and app.may_see_transport(l.id)
+  $$;
+
+-- ------------------------------------------------------------- the fallen (a global admin)
+
+-- Add (p_fallen NULL) or rewrite one of the fallen: a name (one line ≤ 120,
+-- required), a gender (m, f or unknown — never guessed), a note (≤ 500), active.
+create or replace function public.save_fallen(p_fallen bigint, p_name text, p_gender text, p_note text, p_active boolean default true)
+  returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_name   text;
+    v_gender text;
+    v_note   text;
+    v_id     bigint;
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    v_name := app.clean_line(p_name, 120);
+    if v_name is null then perform app.refuse('name_required'); end if;
+    v_gender := app.pick_gender(p_gender);
+    v_note := app.clean_block(p_note, 500);
+    if p_active is null then perform app.refuse('bad_value'); end if;
+    if p_fallen is null then
+      insert into public.fallen (name, gender, note, active) values (v_name, v_gender, v_note, p_active) returning id into v_id;
+      return v_id;
+    end if;
+    update public.fallen set name = v_name, gender = v_gender, note = v_note, active = p_active where id = p_fallen returning id into v_id;
+    if v_id is null then perform app.refuse('stale'); end if;
+    return v_id;
+  end
+  $$;
+
+-- A fallen no edition planned for (a typo, a duplicate); one with plans is
+-- deactivated instead (`in_use`). Their family's contact goes with them.
+create or replace function public.delete_fallen(p_fallen bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    perform 1 from public.fallen where id = p_fallen for update;
+    if not found then perform app.refuse('stale'); end if;
+    if exists (select 1 from public.memorial_plans where fallen_id = p_fallen) then perform app.refuse('in_use'); end if;
+    delete from public.fallen where id = p_fallen;
+  end
+  $$;
+
+-- The family's contact person, for the people app.may_see_fallen_contacts names
+-- (the same who read it). All five are replaced; NULL clears one. The log says
+-- which fields changed, never to what. The fallen's row is locked (FOR KEY
+-- SHARE, the lock the foreign key takes anyway — a rename does not wait) before
+-- the check: a delete_fallen on another connection either finishes first, and
+-- the check finds no row: `stale`, never a raw foreign-key error; or waits for
+-- this write, and then deletes the fallen with their contact.
+create or replace function public.set_fallen_contacts(
+  p_fallen bigint, p_contact_name text, p_relation text, p_phone text, p_email text, p_note text default null)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_old    public.fallen_contacts;
+    v_name   text;
+    v_rel    text;
+    v_phone  text;
+    v_email  text;
+    v_note   text;
+    v_fields text[];
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    perform 1 from public.fallen where id = p_fallen for key share;
+    if not found then perform app.refuse('stale'); end if;
+    if not app.may_see_fallen_contacts(p_fallen) then perform app.refuse('contacts_hidden'); end if;
+    v_name  := app.clean_line(p_contact_name, 120);
+    v_rel   := app.clean_line(p_relation, 60);
+    v_phone := app.clean_line(p_phone, 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    v_email := app.clean_line(p_email, 120);
+    if v_email is not null and v_email !~ '^[^ @]+@[^ @]+\.[^ @]+$' then perform app.refuse('bad_contact_email'); end if;
+    v_note  := app.clean_block(p_note, 500);
+
+    select * into v_old from public.fallen_contacts where fallen_id = p_fallen for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when v_name is distinct from v_old.contact_name then 'contact_name' end,
+        case when v_rel is distinct from v_old.relation then 'relation' end,
+        case when v_phone is distinct from v_old.phone then 'phone' end,
+        case when v_email is distinct from v_old.email then 'email' end,
+        case when v_note is distinct from v_old.note then 'note' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    insert into public.fallen_contacts (fallen_id, contact_name, relation, phone, email, note)
+    values (p_fallen, v_name, v_rel, v_phone, v_email, v_note)
+    on conflict (fallen_id) do update
+      set contact_name = excluded.contact_name, relation = excluded.relation, phone = excluded.phone,
+          email = excluded.email, note = excluded.note;
+    -- in the edition whose plan gives the caller access, as their member row there
+    -- (app.my_member_id(NULL) finds only an every-edition row, and activity_read
+    -- hides a row with no edition); a global admin with no such plan: no edition
+    perform app.log_event(app.fallen_contacts_edition(p_fallen), 'fallen', p_fallen, 'contacts', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- ------------------------------------------------------------- memorial slots (an edition's admins)
+
+-- A memorial slot inside one of the day's memorial rows (`outside_grid`
+-- otherwise), the whole row or a part of it, in a room of the edition (NULL:
+-- the default room; the room invariant may refuse: `room_taken`).
+create or replace function public.add_memorial_slot(p_edition bigint, p_day integer, p_start integer, p_end integer, p_room bigint default null)
+  returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_room bigint;
+    v_id   bigint;
+  begin
+    perform app.require_edition_admin(p_edition);
+    perform app.check_bounds(p_day, p_start, p_end);
+    perform app.lock_day(p_edition, p_day);
+    if not exists (select 1 from app.memorial_rows(p_edition, p_day) r where r.start_min <= p_start and p_end <= r.end_min) then
+      perform app.refuse('outside_grid');
+    end if;
+    if p_room is not null and not exists (select 1 from public.rooms where id = p_room and edition_id = p_edition) then
+      perform app.refuse('bad_shape');
+    end if;
+    v_room := coalesce(p_room, app.default_room(p_edition));
+    begin
+      insert into public.lessons (edition_id, kind, day, start_min, end_min, room_id, updated_by)
+      values (p_edition, 'memorial', p_day, p_start, p_end, v_room, app.my_member_id(p_edition))
+      returning id into v_id;
+    exception when exclusion_violation then
+      perform app.refuse('room_taken');
+    end;
+    return v_id;
+  end
+  $$;
+
+-- A memorial slot with no plan on it (`memorial_placed`: take the plan off
+-- first). Its files' rows stay, for removal (on delete set null).
+create or replace function public.remove_memorial_slot(p_lesson bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_l public.lessons;
+  begin
+    select * into v_l from public.lessons where id = p_lesson for update;
+    if v_l.id is null or v_l.kind <> 'memorial' then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v_l.edition_id);
+    if exists (select 1 from public.memorial_plans where lesson_id = v_l.id) then perform app.refuse('memorial_placed'); end if;
+    delete from public.lessons where id = v_l.id;
+  end
+  $$;
+
+-- ------------------------------------------------------------- memorial plans (an edition's admins)
+
+-- A plan for one of the active fallen (`bad_value`), one per fallen per edition
+-- (`duplicate`). Adding and deleting one is logged (who, the fallen's id).
+-- The fallen's row is locked (FOR SHARE) before the check: a delete_fallen or a
+-- deactivation (save_fallen) on another connection either finishes first — and
+-- the check sees no active row: `bad_value`, never a raw foreign-key error or a
+-- plan for an inactive fallen — or waits for this plan, and then sees it
+-- (`in_use` / a deactivation of a planned fallen, as anywhere).
+create or replace function public.add_memorial_plan(p_edition bigint, p_fallen bigint) returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_id bigint;
+  begin
+    perform app.require_edition_admin(p_edition);
+    perform 1 from public.fallen where id = p_fallen and active for share;
+    if not found then perform app.refuse('bad_value'); end if;
+    insert into public.memorial_plans (edition_id, fallen_id, updated_by) values (p_edition, p_fallen, app.my_member_id(p_edition))
+    on conflict (edition_id, fallen_id) do nothing
+    returning id into v_id;
+    if v_id is null then perform app.refuse('duplicate'); end if;
+    -- a plan opens the family's contact to the edition's admins: who opened it, and when, is logged
+    perform app.log_event(p_edition, 'memorial_plans', v_id, 'insert', jsonb_build_object('fallen', p_fallen));
+    return v_id;
+  end
+  $$;
+
+-- The keys present in the patch, at the version the screen saw (`stale`), in
+-- this order: family_status (one of five), speaker_text (one line ≤ 200),
+-- planned_minutes (a whole number 1–180 — a typo guard, «הצעה» — or null),
+-- hard_stop (a boolean), materials_note (a block ≤ 500). Unknown keys ignored;
+-- nothing changed → nothing; else version + 1.
+create or replace function public.update_memorial_plan(p_plan bigint, p_version integer, p_patch jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_p public.memorial_plans := app.memorial_plan(p_plan);
+    v_n public.memorial_plans;
+  begin
+    if v_p.version <> p_version then perform app.refuse('stale'); end if;
+    if p_patch is null or jsonb_typeof(p_patch) <> 'object' then perform app.refuse('bad_value'); end if;
+    v_n := v_p;
+    if p_patch ? 'family_status' then
+      if jsonb_typeof(p_patch -> 'family_status') is distinct from 'string'
+         or not (p_patch ->> 'family_status' = any (array['not_contacted', 'invited', 'confirmed', 'cannot_come', 'other_speaker'])) then
+        perform app.refuse('bad_value');
+      end if;
+      v_n.family_status := p_patch ->> 'family_status';
+    end if;
+    if p_patch ? 'speaker_text' then
+      if jsonb_typeof(p_patch -> 'speaker_text') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+      v_n.speaker_text := app.clean_line(p_patch ->> 'speaker_text', 200);
+    end if;
+    if p_patch ? 'planned_minutes' then v_n.planned_minutes := app.json_int(p_patch -> 'planned_minutes', 1, 180); end if;
+    if p_patch ? 'hard_stop' then
+      if jsonb_typeof(p_patch -> 'hard_stop') is distinct from 'boolean' then perform app.refuse('bad_value'); end if;
+      v_n.hard_stop := (p_patch ->> 'hard_stop')::boolean;
+    end if;
+    if p_patch ? 'materials_note' then
+      if jsonb_typeof(p_patch -> 'materials_note') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+      v_n.materials_note := app.clean_block(p_patch ->> 'materials_note', 500);
+    end if;
+    if (v_n.family_status, v_n.speaker_text, v_n.planned_minutes, v_n.hard_stop, v_n.materials_note)
+       is not distinct from (v_p.family_status, v_p.speaker_text, v_p.planned_minutes, v_p.hard_stop, v_p.materials_note) then
+      return;
+    end if;
+    update public.memorial_plans
+       set family_status = v_n.family_status, speaker_text = v_n.speaker_text, planned_minutes = v_n.planned_minutes,
+           hard_stop = v_n.hard_stop, materials_note = v_n.materials_note,
+           version = version + 1, updated_by = app.my_member_id(v_p.edition_id)
+     where id = v_p.id;
+  end
+  $$;
+
+-- Place a plan on a memorial slot of its edition (`bad_value`: not a memorial
+-- slot of it, or cancelled) that holds no other plan (`memorial_taken`), or
+-- take it off (p_lesson NULL). The liaison goes with the plan: the slot it
+-- leaves loses its escort and note, the slot it comes to takes them (the
+-- escorts' ticks of both start over — app.lessons_escort_ticks). The same slot
+-- again: nothing.
+create or replace function public.place_memorial_plan(p_plan bigint, p_version integer, p_lesson bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_p    public.memorial_plans := app.memorial_plan(p_plan);
+    v_me   bigint := app.my_member_id(v_p.edition_id);
+    v_new  public.lessons;
+    v_old  public.lessons;
+  begin
+    if v_p.version <> p_version then perform app.refuse('stale'); end if;
+    if p_lesson is not distinct from v_p.lesson_id then return; end if;
+    if p_lesson is not null then
+      select * into v_new from public.lessons where id = p_lesson and edition_id = v_p.edition_id for update;
+      if v_new.id is null or v_new.kind <> 'memorial' or v_new.state = 'cancelled' then perform app.refuse('bad_value'); end if;
+      if exists (select 1 from public.memorial_plans where lesson_id = p_lesson) then perform app.refuse('memorial_taken'); end if;
+    end if;
+    if v_p.lesson_id is not null then
+      select * into v_old from public.lessons where id = v_p.lesson_id for update;
+    end if;
+    update public.memorial_plans set lesson_id = p_lesson, version = version + 1, updated_by = v_me where id = v_p.id;
+    if v_old.id is not null and (v_old.escort_roster_id is not null or v_old.escort_note is not null) then
+      update public.lessons set escort_roster_id = null, escort_note = null, version = version + 1, updated_by = v_me where id = v_old.id;
+    end if;
+    if v_new.id is not null and (v_new.escort_roster_id, v_new.escort_note) is distinct from (v_old.escort_roster_id, v_old.escort_note) then
+      update public.lessons set escort_roster_id = v_old.escort_roster_id, escort_note = v_old.escort_note, version = version + 1, updated_by = v_me
+       where id = v_new.id;
+    end if;
+  end
+  $$;
+
+-- A plan that is not placed (`memorial_placed`: take it off its slot first).
+create or replace function public.delete_memorial_plan(p_plan bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_p public.memorial_plans := app.memorial_plan(p_plan);
+  begin
+    if v_p.lesson_id is not null then perform app.refuse('memorial_placed'); end if;
+    delete from public.memorial_plans where id = v_p.id;
+    perform app.log_event(v_p.edition_id, 'memorial_plans', v_p.id, 'delete', jsonb_build_object('fallen', v_p.fallen_id));
+  end
+  $$;
+
+-- The memorial policy (DESIGN: «המדיניות נקבעת ב-settings.memorial, אחרי ישיבת
+-- הצוות»): where memorial times go (free text, a block ≤ 500), the most
+-- minutes one may take (1–180), and whether a slot next to a meal is warned
+-- about. Each part absent until the staff meeting decides it — never seeded;
+-- all three empty removes the policy. An admin of the edition.
+create or replace function public.set_memorial_policy(p_edition bigint, p_placement text, p_max_minutes integer, p_warn_adjacent_meal boolean)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v jsonb;
+  begin
+    perform app.require_edition_admin(p_edition);
+    if p_max_minutes is not null and p_max_minutes not between 1 and 180 then perform app.refuse('bad_value'); end if;
+    v := jsonb_strip_nulls(jsonb_build_object('placement', app.clean_block(p_placement, 500), 'max_minutes', p_max_minutes,
+                                              'warn_adjacent_meal', p_warn_adjacent_meal));
+    update public.editions
+       set settings = case when v = '{}'::jsonb then settings - 'memorial' else settings || jsonb_build_object('memorial', v) end
+     where id = p_edition;
+  end
+  $$;
+
 -- Everything the grid needs, in one round trip, as the caller's RLS allows —
 -- invoker, so it can never show more than the tables would. Never a contact
 -- detail and never a transport detail (their own tables). v7 adds the
 -- edition's roster (names only), for escorts; v9 the escorts' ticks; v10 the
--- sources' files (their rows — the bytes are in Storage, fetched by signed URL).
+-- sources' files (their rows — the bytes are in Storage, fetched by signed URL);
+-- v11 the memorial plans and the names of the fallen they are for — never a
+-- family's contact (fallen_contacts is read one fallen at a time, by admins).
 create or replace function public.load_week(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
@@ -4129,8 +4652,14 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
           from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = p_edition), '[]'),
       'sourceFiles', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'lesson_id', f.lesson_id, 'cover', f.cover, 'speaker_id', f.speaker_id,
           'storage_path', f.storage_path, 'display_name', f.display_name, 'mime', f.mime, 'size_bytes', f.size_bytes, 'page_count', f.page_count,
-          'uploaded_by', f.uploaded_by, 'uploaded_at', to_char(f.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by f.id)
-          from public.source_files f where f.edition_id = p_edition), '[]')
+          'uploaded_by', f.uploaded_by, 'uploaded_at', to_char(f.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'fallen_id', f.fallen_id) order by f.id)
+          from public.source_files f where f.edition_id = p_edition), '[]'),
+      'memorialPlans', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'fallen_id', p.fallen_id, 'lesson_id', p.lesson_id,
+          'family_status', p.family_status, 'speaker_text', p.speaker_text, 'planned_minutes', p.planned_minutes, 'hard_stop', p.hard_stop,
+          'materials_note', p.materials_note, 'version', p.version) order by p.id)
+          from public.memorial_plans p where p.edition_id = p_edition), '[]'),
+      'fallen', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'gender', f.gender) order by f.id)
+          from public.fallen f where exists (select 1 from public.memorial_plans p where p.fallen_id = f.id and p.edition_id = p_edition)), '[]')
     )
     where app.can_see_edition(p_edition)
   $$;
@@ -4282,6 +4811,27 @@ grant execute on function public.remove_source_file(bigint) to authenticated;
 grant execute on function public.set_reader_headers(bigint, text, text) to authenticated;
 grant execute on function public.set_reader_cover(bigint, bigint) to authenticated;
 
+-- Memorial times and logistics (v11). fallen, fallen_contacts and memorial_plans
+-- are read under RLS (the policies' predicates run as the browser's role) and
+-- written only by the functions: the fallen by a global admin, a family's contact
+-- by the admins app.may_see_fallen_contacts names, plans and slots by the
+-- edition's admins. get_transports_for: invoker, under the transport policy.
+grant select on public.fallen, public.fallen_contacts, public.memorial_plans to authenticated;
+grant execute on function app.may_see_fallen(bigint) to authenticated;
+grant execute on function app.may_see_fallen_contacts(bigint) to authenticated;
+grant execute on function public.get_fallen_contacts(bigint) to authenticated;
+grant execute on function public.get_transports_for(bigint) to authenticated;
+grant execute on function public.save_fallen(bigint, text, text, text, boolean) to authenticated;
+grant execute on function public.delete_fallen(bigint) to authenticated;
+grant execute on function public.set_fallen_contacts(bigint, text, text, text, text, text) to authenticated;
+grant execute on function public.add_memorial_slot(bigint, integer, integer, integer, bigint) to authenticated;
+grant execute on function public.remove_memorial_slot(bigint) to authenticated;
+grant execute on function public.add_memorial_plan(bigint, bigint) to authenticated;
+grant execute on function public.update_memorial_plan(bigint, integer, jsonb) to authenticated;
+grant execute on function public.place_memorial_plan(bigint, integer, bigint) to authenticated;
+grant execute on function public.delete_memorial_plan(bigint) to authenticated;
+grant execute on function public.set_memorial_policy(bigint, text, integer, boolean) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -4295,7 +4845,9 @@ grant execute on function public.set_reader_cover(bigint, bigint) to authenticat
 -- snapshots to that list (notes are free text; nobody needs them live); v9 the
 -- links and their counts (token hashes), the escorts' ticks and every kk table
 -- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead);
--- v10 the sources' files (file names; the week reloads after an upload).
+-- v10 the sources' files (file names; the week reloads after an upload); v11 the
+-- fallen, their families' contacts, and the memorial plans (the memorial screen
+-- reloads after each action; the grid on return to the tab).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -4313,7 +4865,7 @@ begin
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
-                           'source_files'] loop
+                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

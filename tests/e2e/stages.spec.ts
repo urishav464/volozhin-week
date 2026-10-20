@@ -215,7 +215,7 @@ test.describe("demo build", () => {
     const escort = await stage(panel, "מלווה");
     const who = escort.getByLabel("מלווה מרשימת החניכים");
     await expect(who.locator("option").filter({ hasText: "מלווה לדוגמה ב׳" })).toHaveText("מלווה לדוגמה ב׳ · 2 שיעורים");
-    await who.selectOption({ label: "מלווה לדוגמה ד׳ · שיעור אחד" });
+    await who.selectOption({ label: "מלווה לדוגמה ד׳ · 2 שיעורים" }); // a lesson, and Sunday's memorial time as the family's liaison (5ב-2)
     await expect(escort.getByRole("list", { name: "שיעורים קרובים של המלווה" })).toContainText("צמוד, בלי הפסקה (הצעה: לפחות 30 דקות)");
     await expect(escort.getByRole("list", { name: "משהו שחשוב לדעת" })).toHaveCount(0); // no phrases pasted yet
     await expect(escort).toContainText("עוד אין ניסוחים");
@@ -257,8 +257,9 @@ test.describe("demo build", () => {
     if (info.project.name !== "desktop") await page.getByRole("button", { name: "עריכת מלווה לדוגמה ד׳" }).click();
     await page.getByRole("button", { name: "מחיקת מלווה לדוגמה ד׳" }).click();
     const confirm = page.getByRole("group", { name: "אישור" });
-    await expect(confirm.getByRole("list", { name: "השיעורים שיישארו בלי מלווה" }).getByRole("listitem")).toHaveCount(2);
+    await expect(confirm.getByRole("list", { name: "השיעורים שיישארו בלי מלווה" }).getByRole("listitem")).toHaveCount(3);
     await expect(confirm).toContainText("רביעי 10:00–11:30");
+    await expect(confirm).toContainText("ראשון 13:00–13:15 · זמן זיכרון"); // the liaison of a memorial time is listed too
     await noSidewaysScroll(page);
     await confirm.getByRole("button", { name: "מחיקה" }).click();
     await expect(toast(page, "מלווה לדוגמה ד׳ הוסר/ה מהרשימה")).toBeVisible();
@@ -417,7 +418,7 @@ test.describe("mock build", () => {
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
     await page.goto(mockUrl());
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "מכריכה לכריכה", "ידע", "עזרה"]); // no «המרצים שלי», no approvals, no settings
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]); // no «המרצים שלי», no approvals, no settings
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
     let panel = await openLesson(page, info, "שני", "מרצה 12");

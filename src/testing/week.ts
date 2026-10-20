@@ -25,6 +25,8 @@ export function emptyWeek(): Week {
     roster: [],
     escortTicks: [],
     sourceFiles: [],
+    memorialPlans: [],
+    fallen: [],
   };
 }
 

@@ -150,7 +150,24 @@ export type Step =
   | { as: ActorKey; unstore: string }
   | { as: ActorKey; unregister: string }
   | { as: ActorKey; readerHeaders: [string | null, string | null] }
-  | { as: ActorKey; readerCover: string | null };
+  | { as: ActorKey; readerCover: string | null }
+  // memorial times and logistics (milestone 5ב-2) — the fallen by name, slots by place, plans by their fallen's name
+  /** save_fallen: `saveFallen` names the one to rewrite (null: a new one). */
+  | { as: ActorKey; saveFallen: string | null; name: string; gender?: string | null; note?: string | null; active?: boolean | null }
+  | { as: ActorKey; deleteFallen: string }
+  /** The fallen the caller sees, by name. */
+  | { as: ActorKey; readFallen: true }
+  | { as: ActorKey; readFallenContacts: string }
+  | { as: ActorKey; setFallenContacts: string; contact?: string | null; relation?: string | null; phone?: string | null; email?: string | null; note?: string | null }
+  | { as: ActorKey; addSlot: [number, number, number, string?] }
+  | { as: ActorKey; removeSlot: At }
+  | { as: ActorKey; addPlan: string }
+  | { as: ActorKey; updatePlan: string; patch: Record<string, unknown>; staleBy?: number }
+  | { as: ActorKey; placePlan: string; at: At | null; staleBy?: number }
+  | { as: ActorKey; deletePlan: string }
+  | { as: ActorKey; policy: { placement?: string | null; max_minutes?: number | null; warn_adjacent_meal?: boolean | null } }
+  /** get_transports_for: the caller's approved transports, by lesson. */
+  | { as: ActorKey; readTransports: true };
 
 /** A group's fields as steps write them: a room by name, a trainee leader by name. */
 export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
@@ -183,6 +200,25 @@ export interface Normal {
   files: string[];
   /** what the «sources» bucket holds, by file label */
   objects: string[];
+  /** the fallen, their families' contacts, and the edition's memorial plans (by their fallen's name) */
+  memorial: string[];
+}
+
+/** A fallen as the state compares it. */
+export function fallenLine(f: { name: string; gender: string | null; note: string | null; active: boolean }): string {
+  return `fallen|${f.name}|g=${d(f.gender)}|n=${d(f.note)}|active=${f.active}`;
+}
+
+/** A family's contact person as the state (and a read) compares it. */
+export function fallenContactsLine(label: string, c: { contact_name: string | null; relation: string | null; phone: string | null; email: string | null; note: string | null }): string {
+  return `${label}|c=${d(c.contact_name)}|r=${d(c.relation)}|p=${d(c.phone)}|e=${d(c.email)}|n=${d(c.note)}`;
+}
+
+/** A memorial plan as the state compares it: by its fallen, its slot by place. */
+export function planLine(fallen: string, slot: string, p: {
+  family_status: string; speaker_text: string | null; planned_minutes: number | null; hard_stop: boolean; materials_note: string | null; version: number;
+}): string {
+  return `plan|${fallen}|at=${slot}|${p.family_status}|sp=${d(p.speaker_text)}|m=${d(p.planned_minutes)}|hs=${p.hard_stop}|mn=${d(p.materials_note)}|v=${p.version}`;
 }
 
 /** A stored file's place: <edition>/<lesson|cover>/<a uuid made from its label>-<label>.<ext>. */
@@ -193,8 +229,8 @@ export function filePath(edition: number, lesson: number | null, label: string, 
 }
 
 /** A source_files row as the state compares it. */
-export function fileLine(where: string, f: { display_name: string; mime: string; size_bytes: number | string; page_count: number | null; cover: boolean }, speaker: string, by: string): string {
-  return `${where}|${f.display_name}|${f.mime}|${f.size_bytes}|p=${d(f.page_count)}|cover=${f.cover}|spk=${speaker}|by=${by}`;
+export function fileLine(where: string, f: { display_name: string; mime: string; size_bytes: number | string; page_count: number | null; cover: boolean }, speaker: string, by: string, fallen = "-"): string {
+  return `${where}|${f.display_name}|${f.mime}|${f.size_bytes}|p=${d(f.page_count)}|cover=${f.cover}|spk=${speaker}|by=${by}|fallen=${fallen}`;
 }
 
 const d = (v: unknown) => (v == null ? "-" : String(v));
@@ -261,8 +297,10 @@ export function transportRead(t: Parameters<typeof transportLine>[1] | null): st
 export function editionLines(settings: {
   confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
   reader_headers?: [string, string] | null;
+  memorial?: object | null;
 }, cover = "-"): string[] {
   return [
+    `memorial=${settings.memorial ? stable(settings.memorial) : "-"}`,
     `template=${d(settings.confirm_template)}`,
     `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,
     `window=${settings.kk_window ? `${settings.kk_window.opens_at}..${settings.kk_window.closes_at}` : "-"}`,
