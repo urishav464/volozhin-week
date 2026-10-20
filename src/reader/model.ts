@@ -15,6 +15,7 @@ import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
 import type { Lesson, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
+import { LRM } from "../exports/table";
 import { printableMime } from "../data/sourceRules";
 
 export type ManifestStatus =
@@ -55,7 +56,7 @@ export interface ManifestRow {
   lesson: Lesson;
   kind: "lesson" | "memorial";
   day: Day;
-  /** «ראשון 08:30–09:45», a night's «ליל ראשון–שני 00:30–01:45» — the teaching time. */
+  /** «ראשון 08:30–09:45», a night's «ליל ראשון–שני 00:30–01:45» — the teaching time (an LRM before it keeps it left to right). */
   when: string;
   /** The speakers as printed, the lead first («ד״ר פלונית · פלוני»); "" for a memorial slot. */
   speaker: string;
@@ -125,7 +126,8 @@ export function readerManifest(week: Week): Manifest {
   const files = [...(week.sourceFiles ?? [])].sort((a, b) => a.id - b.id);
   const rows: ManifestRow[] = scheduleEntries(week).map((e) => {
     const l = lessons.get(e.lesson_id)!;
-    const when = `${dayLabel(l.day, l.start_min)} ${fmtRange(e.start_min, e.end_min)}`;
+    // the time stays left to right inside a right-to-left line (a mark before it, as the files write it)
+    const when = `${dayLabel(l.day, l.start_min)} ${LRM}${fmtRange(e.start_min, e.end_min)}`;
     if (e.kind === "memorial") {
       const mine = memorialFiles(week, l);
       const pages = mine.reduce((n, f) => n + (f.page_count ?? 1), 0);

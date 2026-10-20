@@ -24,6 +24,7 @@ const DesignerScreen = lazy(() => import("./screens/outputs/DesignerScreen").the
 const KnowledgeScreen = lazy(() => import("./screens/knowledge/KnowledgeScreen").then((m) => ({ default: m.KnowledgeScreen })));
 const HelpScreen = lazy(() => import("./screens/HelpScreen").then((m) => ({ default: m.HelpScreen })));
 const KkScreen = lazy(() => import("./screens/kk/KkScreen").then((m) => ({ default: m.KkScreen })));
+const ReaderScreen = lazy(() => import("./screens/reader/ReaderScreen").then((m) => ({ default: m.ReaderScreen })));
 
 type State = { kind: "loading" } | { kind: "gate"; gate: Gate; email: string | null } | { kind: "error"; message: string };
 
@@ -121,7 +122,7 @@ function navFor(me: Me, week: Week | null): NavItem[] {
   const items: NavItem[] = [{ to: "/", label: "השבוע" }];
   if (handlesSpeakers(me)) items.push({ to: "/mine", label: "המרצים שלי" });
   // the outputs (milestone 4): the tracking table, the escorts' list, the designer's export — one section
-  items.push({ to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/"] });
+  items.push({ to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/", "/reader"] });
   // מכריכה לכריכה (milestone 5a): every member reads it; admins write, logistics the book orders
   items.push({ to: "/kk", label: "מכריכה לכריכה" });
   items.push({ to: "/knowledge", label: "ידע" });
@@ -182,7 +183,7 @@ function GateScreen(props: {
       // only, the approvals queue for a global admin, «המרצים שלי» for whoever
       // handles speakers; anyone else who opens one lands on the week. The
       // outputs, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
-      // admin's (the screen also checks the edition on screen).
+      // admin's, the reader content's and admins' (the screens also check the edition on screen).
       return (
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
@@ -192,6 +193,7 @@ function GateScreen(props: {
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />
           <Route path="/export/designer" element={isSettingsAdmin(gate.me) ? <DesignerScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
+          <Route path="/reader" element={<ReaderScreen port={props.port} me={gate.me} />} />
           <Route path="/kk" element={<KkScreen port={props.port} me={gate.me} />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
           <Route path="/help" element={<HelpScreen />} />

@@ -422,7 +422,7 @@ test.describe("mock build", () => {
     await page.getByRole("checkbox", { name: "כולל טלפונים" }).check();
     await expect(page.getByText("רק הטלפונים של המרצים שבטיפולך.")).toBeVisible();
     await expect.poll(() => sb.rpc.get("get_contacts_for")?.length ?? 0).toBe(1);
-    await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים"]);
+    await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים", "מקראה"]); // the reader is content's too (5ב-1); the designer's export is not
     await page.goto(`${mockUrl()}/export/designer`);
     await expect(page).toHaveURL(/\/tracking$/);
   });

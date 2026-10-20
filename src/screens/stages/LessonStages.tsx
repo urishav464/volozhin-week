@@ -10,6 +10,7 @@
 //   a global admin — approve or reject a request;
 //   logistics or an admin — «שולם», and the transport's details once approved.
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
+import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data/stageRules";
 import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro } from "../../domain/escorts";
@@ -26,6 +27,8 @@ import type { Actor } from "../weekStore";
 import { MessageComposer } from "./MessageComposer";
 import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
+import { SourceFiles } from "./SourceFiles";
+import { readerManifest, STATUS_LABEL } from "../../reader/model";
 
 export interface LessonStagesProps {
   port: DataPort;
@@ -82,7 +85,12 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
       case "escort":
         return <EscortStage key={l.version} {...ctx} speakerGender={speaker?.gender ?? null} />;
       case "sources":
-        return <SourcesStage key={l.version} {...ctx} onReader={() => show("reader")} />;
+        return (
+          <>
+            <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />
+            <SourcesStage key={l.version} {...ctx} onReader={() => show("reader")} />
+          </>
+        );
       case "reader":
         return <ReaderStage {...ctx} onSources={() => show("sources")} />;
     }
@@ -280,7 +288,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
 
 // ------------------------------------------------------------------ sources
 
-/** What arrived for the lesson and when it is printed. The files themselves and the reader come in milestone 5. */
+/** What arrived for the lesson and when it is printed (the files themselves: SourceFiles, above it). */
 function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx & { onReader: () => void }) {
   const id = useId();
   const [kind, setKind] = useState<SourcesKind>(l.sources_kind);
@@ -370,7 +378,9 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
         {!printable && <p className="text-xs text-ink-soft">אין כאן מה להדפיס (טרם התקבלו, בלי מקורות, או מצגת בלבד).</p>}
       </div>
       <div className="space-y-1">
-        <p className="text-xs text-ink-soft">העלאת הקבצים והמקראה יגיעו בהמשך.</p>
+        <p className="text-xs text-ink-soft">
+          כשמעלים קובץ ראשון, «טרם התקבלו» הופך ל«דף מקורות», והשיעור מסומן להיכנס למקראה (אם יש בו מה להדפיס).
+        </p>
         <button type="button" onClick={onReader} className={LINK_BUTTON}>
           על המקראה
         </button>
@@ -383,21 +393,33 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
   );
 }
 
-/** The reader's place: whether the lesson goes in (set with the sources), and what comes in milestone 5. */
-function ReaderStage({ lesson: l, actor, onSources }: StageCtx & { onSources: () => void }) {
+/** The reader's place: what the manifest says of this lesson (src/reader/model.ts), and the way to the reader. */
+function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSources: () => void }) {
+  const row = useMemo(() => readerManifest(week).rows.find((r) => r.lesson.id === l.id), [week, l.id]);
+  const status = row?.status ?? "missing";
+  const said: Record<typeof status, string> = {
+    included: `בתוך המקראה: ${row?.printable.length === 1 ? "קובץ אחד" : `${row?.printable.length} קבצים`}, ${row?.pages === 1 ? "עמוד אחד" : `${row?.pages} עמודים`}, אחרי הכותרת «${row?.header}».`,
+    needs_pdf: "מסומן למקראה, אבל הקבצים הם Word: צריך להעלות PDF (Word לא נכנס למקראה שנבנית בדפדפן).",
+    missing: "מסומן למקראה, ועוד לא הועלה קובץ: חסר.",
+    not_marked: "הקבצים הועלו, ועוד לא סומן שהשיעור נכנס למקראה.",
+    pending: "המקורות עוד לא התקבלו.",
+    presentation_only: "מצגת בלבד: לא נכנסת למקראה.",
+    no_sources: "בלי מקורות: אין מה להדפיס במקראה.",
+    memorial: "זמן זיכרון.",
+  };
   return (
     <div className="space-y-2 text-sm">
       <p>
-        {l.sources_kind === "none" || l.sources_kind === "presentation"
-          ? "לשיעור הזה אין מה להדפיס במקראה."
-          : l.in_reader
-            ? "השיעור מסומן להיכנס למקראה."
-            : l.sources_kind === "pending"
-              ? "המקורות עוד לא התקבלו."
-              : "המקורות התקבלו, ועוד לא סומן שהם נכנסים למקראה."}
+        <b>{STATUS_LABEL[status]}.</b> {said[status]}
       </p>
-      <p className="text-xs text-ink-soft">כאן יופיעו הקבצים שהועלו, ובהמשך גם המקראה (PDF ושלד Word).</p>
-      {actor.canEdit && <Button onClick={onSources}>לסימון במקורות</Button>}
+      <div className="flex flex-wrap gap-2">
+        {actor.canEdit && <Button onClick={onSources}>למקורות ולקבצים</Button>}
+        {actor.role !== "logistics" && (
+          <Link to="/reader" className={LINK_BUTTON}>
+            למקראה ‹
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

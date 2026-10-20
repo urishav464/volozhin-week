@@ -67,7 +67,7 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
         <h2 className="font-display text-2xl font-extrabold">טבלת מעקב</h2>
         <EditionSelect />
-        <OutputsTabs admin={actor.isAdmin} />
+        <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
       </div>
 
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 print:hidden">

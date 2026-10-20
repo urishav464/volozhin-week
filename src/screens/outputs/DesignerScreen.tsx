@@ -59,7 +59,7 @@ export function DesignerScreen({ port, me }: { port: DataPort; me: Me }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <h2 className="font-display text-2xl font-extrabold">ייצוא למעצבת</h2>
       <EditionSelect />
-      <OutputsTabs admin={actor.isAdmin} />
+      <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
     </div>
   );
   if (!actor.isAdmin) {

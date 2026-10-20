@@ -25,6 +25,7 @@ import { reopenLoses, type StageKey } from "../domain/stages";
 import { STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
 import { CreateSpeaker } from "./speakers/CreateSpeaker";
 import { LessonStages } from "./stages/LessonStages";
+import { DraftFiles } from "./stages/SourceFiles";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
 import { actorIn, useWeekStore } from "./weekStore";
 
@@ -388,6 +389,9 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           actions={actions}
           onClose={() => setPanel(null)}
           wide={wide}
+          files={(l) => (
+            <DraftFiles port={port} week={model.week} lesson={l} actor={actor} notify={(kind, text) => setToast({ kind, text })} reload={reload} />
+          )}
           stages={(l) => (
             <LessonStages
               key={`${l.id}:${panel?.kind === "lesson" ? (panel.stage ?? "") : ""}`}

@@ -50,6 +50,17 @@ export interface Write extends Call {
   prefer: string | undefined;
 }
 
+/** A request to the Storage API (/storage/v1/…), as it arrived. */
+export interface StorageCall {
+  method: string;
+  path: string;
+  auth: string | undefined;
+  apikey: string | undefined;
+  contentType: string | undefined;
+  /** JSON bodies parsed; an upload's body is its byte length. */
+  body: unknown;
+}
+
 export class FakeSupabase {
   readonly calls: Call[] = [];
   /** Bodies of every RPC call, by function name. */
@@ -65,6 +76,12 @@ export class FakeSupabase {
   /** What /auth/v1/token?grant_type=pkce answers (and the body it was sent). */
   pkceSession: unknown = null;
   pkceBody: { auth_code?: string; code_verifier?: string } | null = null;
+  /** Every Storage request, in order. Uploads answer 200; signing answers a signed URL per path; a DELETE echoes the paths; a signed URL serves `storageFiles`. */
+  readonly storage: StorageCall[] = [];
+  /** The bytes a signed URL serves, by object path. */
+  readonly storageFiles = new Map<string, Buffer>();
+  /** When set, an upload answers this instead of 200. */
+  uploadAnswer: { status: number; body: unknown } | null = null;
   constructor(private whoami: { status: number; body: unknown } = { status: 200, body: {} }) {}
 
   /** A page — or a whole context, so a page it opens (a link's tab) is answered too. */
@@ -94,6 +111,7 @@ export class FakeSupabase {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.pkceSession) });
     }
     if (u.pathname === "/auth/v1/logout") return route.fulfill({ status: 204, body: "" });
+    if (u.pathname.startsWith("/storage/v1/")) return this.storageAnswer(route);
     if (u.pathname === "/rest/v1/editions" && req.method() === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(this.answers.get("editions") ?? []) });
     }
@@ -114,6 +132,33 @@ export class FakeSupabase {
       this.rpc.set(fn, [...(this.rpc.get(fn) ?? []), req.postDataJSON()]);
       const answer = this.answers.get(fn);
       if (answer !== undefined) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  }
+
+  private storageAnswer(route: Route) {
+    const req = route.request();
+    const u = new URL(req.url());
+    const h = req.headers();
+    const raw = req.postDataBuffer();
+    const json = (h["content-type"] ?? "").includes("application/json") && raw ? JSON.parse(raw.toString("utf8")) : raw ? raw.length : null;
+    this.storage.push({ method: req.method(), path: u.pathname, auth: h["authorization"], apikey: h["apikey"], contentType: h["content-type"], body: json });
+    const ok = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    const signPrefix = "/storage/v1/object/sign/sources/";
+    if (req.method() === "GET" && u.pathname.startsWith(signPrefix)) {
+      const file = this.storageFiles.get(decodeURIComponent(u.pathname.slice(signPrefix.length)));
+      return file ? route.fulfill({ status: 200, contentType: "application/pdf", body: file }) : route.fulfill({ status: 404, body: "" });
+    }
+    if (req.method() === "POST" && u.pathname === "/storage/v1/object/sign/sources") {
+      const paths = (json as { paths: string[] }).paths;
+      return ok(paths.map((p) => ({ error: null, path: p, signedURL: `/object/sign/sources/${p}?token=signed-test-token` })));
+    }
+    if (req.method() === "DELETE" && u.pathname === "/storage/v1/object/sources") {
+      return ok(((json as { prefixes: string[] }).prefixes ?? []).map((name) => ({ name, bucket_id: "sources" })));
+    }
+    if (req.method() === "POST" && u.pathname.startsWith("/storage/v1/object/sources/")) {
+      if (this.uploadAnswer) return route.fulfill({ status: this.uploadAnswer.status, contentType: "application/json", body: JSON.stringify(this.uploadAnswer.body) });
+      return ok({ Key: u.pathname.slice("/storage/v1/object/".length), Id: "00000000-0000-4000-8000-000000000099" });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   }

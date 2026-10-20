@@ -131,6 +131,8 @@ export interface LessonPanelProps {
   wide: boolean;
   /** A closed lesson's stages (src/screens/stages/LessonStages.tsx); without it, a read-only summary. */
   stages?: (l: Lesson) => ReactNode;
+  /** A draft's files from the speaker who left (src/screens/stages/SourceFiles.tsx), for removal. */
+  files?: (l: Lesson) => ReactNode;
 }
 
 export function LessonPanel(props: LessonPanelProps) {
@@ -184,6 +186,8 @@ export function LessonPanel(props: LessonPanelProps) {
       )}
 
       {l.state === "closed" && <ClosedDetails {...props} />}
+
+      {l.state === "draft" && props.files?.(l)}
 
       {canEdit && row && l.kind === "lesson" && (
         <Section title="מבנה המשבצת">
@@ -367,7 +371,15 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
         </Section>
       )}
 
-      {canEdit && mine && <Reopen lesson={l} speakerGender={lead?.gender ?? null} isAdmin={isAdmin} onReopen={() => actions.reopen(l.id)} />}
+      {canEdit && mine && (
+        <Reopen
+          lesson={l}
+          speakerGender={lead?.gender ?? null}
+          isAdmin={isAdmin}
+          files={(model.week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id).length}
+          onReopen={() => actions.reopen(l.id)}
+        />
+      )}
     </>
   );
 }
@@ -377,7 +389,7 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
  * (CONTRACT reopen_lesson). When any stage holds something, it says what goes before doing it.
  * Paid money is never erased (paid_locked); an approved request is the instructor's to reopen.
  */
-function Reopen({ lesson: l, speakerGender, isAdmin, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; onReopen: () => void }) {
+function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
   const loses = reopenLoses(l);
   if (l.paid_at) {
@@ -393,6 +405,7 @@ function Reopen({ lesson: l, speakerGender, isAdmin, onReopen }: { lesson: Lesso
           <>
             פתיחה מחדש מחזירה את השיעור לטיוטה, ומוחקת את מה שנאסף {byGender(speakerGender, "למרצה הזה", "למרצה הזו", "למרצה הזה/הזו")}: {loses.join(" · ")}.
             אם סוגרים שוב, השלבים מתחילים מההתחלה.
+            {files > 0 && <> {files === 1 ? "הקובץ שהועלה נשאר" : `${files} הקבצים שהועלו נשארים`} בלוח השיעור, מסומן/ים «מהמרצה הקודם», עד שמסירים {files === 1 ? "אותו" : "אותם"}.</>}
           </>
         }
         confirm="פתיחה מחדש ומחיקה"
