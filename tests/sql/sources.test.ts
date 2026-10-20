@@ -548,6 +548,7 @@ describe("the sources' files", () => {
       const bad = await register(ED_ADMIN, ed, null, unread, "פוסטר.jpg", null);
       expect(bad).toMatchObject({ cover: true, page_count: null });
       expect(await cover()).toBeNull(); // the build would never fetch it: no cover, the schedule page instead
+      expect(await refusal(commitAs(ED_ADMIN, "select public.set_reader_cover($1, $2)", [ed, bad.id]))).toBe("bad_value"); // nor by hand
       const good = path(ed, "cover", "poster.pdf");
       expect(await upload(ED_ADMIN, good)).toBe("ok");
       const row = await register(ED_ADMIN, ed, null, good, "פוסטר.pdf", 1);

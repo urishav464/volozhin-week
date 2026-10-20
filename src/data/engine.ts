@@ -884,11 +884,11 @@ export class Engine {
     });
   }
 
-  /** public.set_reader_cover: an admin of the edition; one of its posters (not Word), or null. */
+  /** public.set_reader_cover: an admin of the edition; one of its posters (not Word) the browser could read, or null. */
   setReaderCover(fileId: number | null): void {
     this.tx(() => {
       this.requireEditionAdmin();
-      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.mime !== DOCX)) fail("bad_value");
+      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.page_count != null && f.mime !== DOCX)) fail("bad_value");
       const settings = { ...this.week.edition.settings };
       if (fileId == null) delete settings.reader_cover;
       else settings.reader_cover = fileId;

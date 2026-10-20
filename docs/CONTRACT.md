@@ -887,7 +887,8 @@ reader has no running headers.
 
 ### `setCover(edition, file | null)` — `set_reader_cover` → `void`
 
-`app.require_edition_admin`; a file must be a poster (`cover`) of this edition and not Word, else
+`app.require_edition_admin`; a file must be a poster (`cover`) of this edition, not Word, and one the
+browser could read (`page_count` not null — the build never fetches one it could not), else
 `bad_value`; null removes `settings.reader_cover` (the reader opens with a schedule page).
 
 ## The reader (browser only — `src/reader/`)
@@ -933,7 +934,7 @@ cannot decode (all its pages or none), a picture that is neither PNG nor JPEG by
 whose image data does not inflate to its end (`src/reader/png.ts`, before pdf-lib's decoder, which
 never returns on data cut short), a JPEG whose structure cannot be followed or whose frame pdf-lib
 does not take (its own header read, `JpegEmbedder.for`, on the cleaned bytes: not 1, 3 or 4
-components) — is left out and named, and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
+components) or whose frame has no width or height — is left out and named, and the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A
 JPEG goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame
 and the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the
 image are dropped, and so is a marker without a length (RST0–7, TEM) outside a scan, which libjpeg

@@ -4070,8 +4070,9 @@ create or replace function public.set_reader_headers(p_edition bigint, p_left te
   $$;
 
 -- The reader's cover: one of the edition's posters (a PDF or an image
--- uploaded as …/cover/…), or NULL — then the reader opens with a schedule page
--- made from the week. An admin of the edition.
+-- uploaded as …/cover/…) that the browser could read (page_count — the build
+-- never fetches one it could not), or NULL — then the reader opens with a
+-- schedule page made from the week. An admin of the edition.
 create or replace function public.set_reader_cover(p_edition bigint, p_file bigint) returns void
   language plpgsql security definer set search_path = ''
   as $$
@@ -4079,7 +4080,8 @@ create or replace function public.set_reader_cover(p_edition bigint, p_file bigi
     perform app.require_edition_admin(p_edition);
     if p_file is not null and not exists (
          select 1 from public.source_files f
-          where f.id = p_file and f.edition_id = p_edition and f.cover and f.mime <> 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') then
+          where f.id = p_file and f.edition_id = p_edition and f.cover and f.page_count is not null
+            and f.mime <> 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') then
       perform app.refuse('bad_value');
     end if;
     update public.editions

@@ -61,8 +61,10 @@ export async function openSource(bytes: Uint8Array, mime: ReaderMime): Promise<O
     if (!clean) return unreadable;
     try {
       // pdf-lib's own read of the frame (what embedJpg does first, up to the SOF): a frame it cannot take — not
-      // 1, 3 or 4 components, a marker it cannot step over — is «unreadable» here, as it would be at the build
-      await JpegEmbedder.for(clean);
+      // 1, 3 or 4 components, a marker it cannot step over — is «unreadable» here, as it would be at the build;
+      // so is a frame of no width or height (pdf-lib takes it, no viewer draws it: a blank page, never named)
+      const frame = await JpegEmbedder.for(clean);
+      if (!(frame.width > 0 && frame.height > 0)) return unreadable;
     } catch {
       return unreadable;
     }

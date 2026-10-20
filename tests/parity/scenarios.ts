@@ -797,6 +797,7 @@ export const SCENARIOS: Record<string, Step[]> = {
   "the reader's cover: the first poster the browser could read": [
     { as: "E", store: "cover", file: "p1", mime: "image/jpeg" },
     { as: "E", register: "p1", pages: null }, // not read: no cover — the schedule page
+    { as: "E", readerCover: "p1" }, // nor by hand: bad_value
     { as: "E", store: "cover", file: "p2" },
     { as: "E", register: "p2", pages: 2 }, // the first one read: the cover
     { as: "E", store: "cover", file: "p3", mime: "image/png" },

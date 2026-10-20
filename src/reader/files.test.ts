@@ -374,6 +374,13 @@ function jpeg(scan: number[] = [0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78],
     0xff, 0xd9,
   ]);
 }
+/** The photo with its frame's height and width set (SOF0: FF C0, length, precision, then height and width). */
+function sized(height: number, width: number): Uint8Array {
+  const b = jpeg();
+  const at = b.findIndex((x, i) => x === 0xff && b[i + 1] === 0xc0) + 5;
+  b.set([height >> 8, height & 255, width >> 8, width & 255], at);
+  return b;
+}
 /** APP0 (JFIF), as a camera writes it first. */
 const JFIF = [0xff, 0xe0, 0, 16, ...Buffer.from("JFIF\0", "latin1"), 1, 1, 0, 0, 1, 0, 1, 0, 0];
 
@@ -427,6 +434,9 @@ async function corpus(): Promise<{ name: string; mime: ReaderMime; bytes: Uint8A
     { name: "app0-hit-into-a-restart.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 3, [0xff, 0xd4, ...JFIF.slice(2)]) },
     // a frame pdf-lib's embedder does not take: two components («Unknown JPEG channel.»)
     { name: "two-components.jpg", mime: "image/jpeg", bytes: jpeg(undefined, 2) },
+    // a frame of no height or no width: pdf-lib takes it, no viewer draws it (libjpeg: «Empty JPEG image»)
+    { name: "zero-height.jpg", mime: "image/jpeg", bytes: sized(0, 16) },
+    { name: "zero-width.jpg", mime: "image/jpeg", bytes: sized(8, 0) },
   ];
 }
 
@@ -461,6 +471,7 @@ describe("one check for the upload and the build", () => {
     expect(await ask("fill-before-a-restart.jpg")).toEqual({ ok: true, pages: 1 });
     for (const n of ["grey.jpg", "cmyk.jpg", "restart-after-soi.jpg", "tem-after-soi.jpg", "app0-hit-into-a-restart.jpg"]) expect(await ask(n), n).toEqual({ ok: true, pages: 1 });
     expect(await ask("two-components.jpg")).toEqual({ ok: false, reason: "unreadable" });
+    for (const n of ["zero-height.jpg", "zero-width.jpg"]) expect(await ask(n), n).toEqual({ ok: false, reason: "unreadable" });
   });
 
   // the third round's proof: on 30,000 mutations of five real photos, 14 were «readable» at the upload and left
