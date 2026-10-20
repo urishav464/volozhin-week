@@ -25,6 +25,9 @@ export const ROSTER: { name: string; gender: "m" | "f" | null }[] = [
   { name: "חניך לדוגמה", gender: "m" },
 ];
 
+/** Another edition's label (a practice week): the SQL driver makes it; the engine's import host knows it by name. */
+export const FOREIGN_EDITION = "מחזור אחר";
+
 /** A trainee of another edition: the SQL driver makes one there; the engine has no such trainee. */
 export const FOREIGN_TRAINEE = "חניך/ה של מחזור אחר";
 
@@ -167,7 +170,97 @@ export type Step =
   | { as: ActorKey; deletePlan: string }
   | { as: ActorKey; policy: { placement?: string | null; max_minutes?: number | null; warn_adjacent_meal?: boolean | null } }
   /** get_transports_for: the caller's approved transports, by lesson. */
-  | { as: ActorKey; readTransports: true };
+  | { as: ActorKey; readTransports: true }
+  // the import of 5786 (v12) — a merge names its pool speaker by label, a lesson its category by name
+  | { as: ActorKey; importCandidates: ImportSpeakerStep[]; source?: string | null }
+  | { as: ActorKey; importArchive: ImportArchiveStep }
+  | { as: ActorKey; importPrefs: { row: number; speaker: string; contact_pref?: string | null; secretary_note?: string | null }[] }
+  | { as: ActorKey; importLookup: { speakers: string[]; phones: string[] } }
+  /** import_commit with a payload as it is (a wrong kind, a wrong shape). */
+  | { as: ActorKey; importRaw: { kind: string; payload: unknown } };
+
+/** A speaker row of an import step: as SpeakerRow, the merge target by its label. */
+export interface ImportSpeakerStep {
+  row: number;
+  action: "new" | "merge";
+  speaker?: string;
+  name: string;
+  title?: string | null;
+  gender?: string | null;
+  affiliation?: string | null;
+  topics?: string[];
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+}
+
+export interface ImportLessonStep {
+  row: number;
+  day: number;
+  start: number;
+  end: number;
+  room?: number;
+  title?: string | null;
+  category?: string | null;
+  audience?: string | null;
+  sources_kind?: string;
+  print_when?: string;
+  sources_note?: string | null;
+  pay_amount?: number | null;
+  import_note?: string | null;
+  speakers: number[];
+}
+
+export interface ImportArchiveStep {
+  label: string;
+  start_date?: string | null;
+  source?: string | null;
+  speakers: ImportSpeakerStep[];
+  lessons: ImportLessonStep[];
+}
+
+/** The payload rows of an import step, the merge target's id looked up by label. */
+export function speakerRows(rows: ImportSpeakerStep[], idOf: (label: string) => number) {
+  return rows.map((r) => ({
+    row: r.row, action: r.action, speaker_id: r.action === "merge" ? idOf(r.speaker ?? "") : null, title: r.title ?? null, name: r.name, gender: r.gender ?? null,
+    affiliation: r.affiliation ?? null, topics: r.topics ?? [], phone: r.phone ?? null, email: r.email ?? null, notes: r.notes ?? null,
+  }));
+}
+
+/** The archive payload of an import step, a category looked up by name. */
+export function archivePayloadOf(a: ImportArchiveStep, idOf: (label: string) => number, categoryId: (name: string) => number) {
+  return {
+    label: a.label, start_date: a.start_date ?? null, source: a.source === undefined ? "tracking-5786" : a.source, titles_from: null,
+    speakers: speakerRows(a.speakers, idOf),
+    lessons: a.lessons.map((l) => ({
+      row: l.row, day: l.day, start_min: l.start, end_min: l.end, room: l.room ?? 0, title: l.title ?? null, category_id: l.category == null ? null : categoryId(l.category),
+      audience: l.audience ?? null, sources_kind: l.sources_kind ?? "pending", print_when: l.print_when ?? "none", sources_note: l.sources_note ?? null,
+      pay_amount: l.pay_amount ?? null, import_note: l.import_note ?? null, speakers: l.speakers,
+    })),
+  };
+}
+
+/** An import's answer as one comparable string: the counts, and each speaker row by the label it resolved to. */
+export function importRead(r: { created: number; merged: number; filled: number; contacts: number; lessons: number; replaced: number; speakers: { row: number; speaker_id: number; created: boolean }[] }, label: (id: number) => string): string {
+  const head = `created=${r.created}|merged=${r.merged}|filled=${r.filled}|contacts=${r.contacts}|lessons=${r.lessons}|replaced=${r.replaced}`;
+  return `${head}|${r.speakers.map((s) => `${s.row}:${label(s.speaker_id)}${s.created ? "+" : ""}`).join(",")}`;
+}
+
+/** import_lookup's answer as one comparable string. */
+export function lookupRead(r: { phones: { key: string; speaker_id: number }[]; contacts: { speaker_id: number; phone: boolean; email: boolean; secretary_note: boolean; notes: boolean }[] }, label: (id: number) => string): string {
+  const phones = r.phones.map((p) => `${p.key}=${label(p.speaker_id)}`).sort().join(",");
+  const contacts = r.contacts.map((c) => `${label(c.speaker_id)}:${[c.phone && "p", c.email && "e", c.secretary_note && "s", c.notes && "n"].filter(Boolean).join("")}`).sort().join(",");
+  return `phones=${phones || "-"}|contacts=${contacts || "-"}`;
+}
+
+/** An archive edition's lesson as the state compares it. */
+export function archiveLessonLine(edition: string, l: {
+  day: number; start_min: number; end_min: number; state: string; kind: string; title: string | null; audience: string | null; sources_kind: string; print_when: string;
+  sources_note: string | null; pay_amount: number | null; import_note?: string | null; version: number;
+}, room: string, category: string, speakers: string): string {
+  return [`lesson|${edition}`, `${l.day}|${l.start_min}-${l.end_min}|${room}`, l.kind, l.state, `t=${d(l.title)}`, `c=${category}`, `a=${d(l.audience)}`,
+    `sk=${l.sources_kind}`, `pw=${l.print_when}`, `sn=${d(l.sources_note)}`, `pay=${d(l.pay_amount)}`, `n=${d(l.import_note)}`, `v=${l.version}`, `sp=${speakers}`].join("|");
+}
 
 /** A group's fields as steps write them: a room by name, a trainee leader by name. */
 export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
@@ -202,6 +295,8 @@ export interface Normal {
   objects: string[];
   /** the fallen, their families' contacts, and the edition's memorial plans (by their fallen's name) */
   memorial: string[];
+  /** archive editions (the import of 5786): each edition, its rooms, its lessons with their speakers */
+  archive: string[];
 }
 
 /** A fallen as the state compares it. */

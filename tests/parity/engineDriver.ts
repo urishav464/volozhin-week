@@ -1,6 +1,8 @@
 // The parity driver for src/data/engine.ts.
 import { CommandError } from "../../src/data/commands";
-import { emptyShared, Engine, type PoolShared } from "../../src/data/engine";
+import { emptyShared, Engine, type ImportHost, type PoolShared } from "../../src/data/engine";
+import { ImportRowError } from "../../src/data/imports";
+import { titlesOf } from "../../src/data/speakerRules";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
@@ -10,7 +12,7 @@ import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
-  FOREIGN_ROOM, FOREIGN_TRAINEE, planLine,
+  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, speakerRows,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -70,6 +72,31 @@ export function engineDriver(): Driver {
   const files: Record<string, { path: string; target: At | "cover" }> = {};
   const targetId = (t: At | "cover") => (t === "cover" ? null : (lessonAt(t)?.id ?? -1));
   const pathOf = (label: string, target?: At | "cover") => files[label]?.path ?? filePath(week.edition.id, targetId(target ?? "cover"), label, "application/pdf");
+
+  // ---- the import of 5786: the archive editions it makes, and what the engine needs from outside it
+  const archives: Week[] = [];
+  const host: ImportHost = {
+    titles: (id) => titlesOf(id === week.edition.id ? week.edition.settings : null),
+    byLabel: (label) => {
+      if (label === week.edition.label) return { kind: week.edition.kind, week: null };
+      if (label === FOREIGN_EDITION) return { kind: "practice", week: null };
+      const a = archives.find((x) => x.edition.label === label);
+      return a ? { kind: "archive", week: a } : null;
+    },
+    categoryIds: () => new Set(week.categories.map((c) => c.id)),
+    nextEditionId: () => 100 + archives.length,
+    nextRoomId: () => 1000 + archives.reduce((n, a) => n + a.rooms.length, 0),
+    install: (w) => {
+      const i = archives.findIndex((x) => x.edition.id === w.edition.id);
+      if (i >= 0) archives[i] = w;
+      else archives.push(w);
+    },
+  };
+  const speakerName = (id: number) => {
+    const s = week.speakers.find((x) => x.id === id);
+    return s ? speakerLabel(s) : `#${id}`;
+  };
+  const categoryId = (name: string) => week.categories.find((c) => c.name === name)?.id ?? -1;
 
   // ---- links and מכריכה לכריכה
   const tokens: Record<string, string> = {};
@@ -214,6 +241,17 @@ export function engineDriver(): Driver {
         } else if ("handOver" in step) e.handOver(approachOf(step.handOver)?.id ?? -1, step.to == null ? null : memberId(step.to), step.note ?? null);
         else if ("answerHandOver" in step) e.answerHandOver(approachOf(step.answerHandOver)?.id ?? -1, step.accept, step.note ?? null);
         else if ("avail" in step) e.setAvailability(speakerId(step.avail), step.day, step.part as DayPart, step.kind as "can" | "cannot" | null, step.note ?? null);
+        // ---- the import of 5786
+        else if ("importCandidates" in step) {
+          const payload = { source: step.source === undefined ? "brainstorm-5786" : step.source, titles_from: null, rows: speakerRows(step.importCandidates, speakerId) };
+          return importRead(e.importCommit("candidates", payload, host), speakerName);
+        } else if ("importArchive" in step) {
+          return importRead(e.importCommit("tracking", archivePayloadOf(step.importArchive, speakerId, categoryId), host), speakerName);
+        } else if ("importPrefs" in step) {
+          const rows = step.importPrefs.map((r) => ({ row: r.row, speaker_id: speakerId(r.speaker), contact_pref: r.contact_pref ?? null, secretary_note: r.secretary_note ?? null }));
+          return importRead(e.importCommit("escorts", { rows }, host), speakerName);
+        } else if ("importLookup" in step) return lookupRead(e.importLookup(step.importLookup.speakers.map(speakerId), step.importLookup.phones), speakerName);
+        else if ("importRaw" in step) return importRead(e.importCommit(step.importRaw.kind, step.importRaw.payload, host), speakerName);
         // ---- from placement to arrival
         else if ("pay" in step) {
           const l = at(step.pay, step.staleBy);
@@ -294,6 +332,7 @@ export function engineDriver(): Driver {
         } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
         return "ok";
       } catch (err) {
+        if (err instanceof ImportRowError) return `${err.code}:${err.row}:${err.reason}`;
         if (err instanceof CommandError) return err.code;
         throw err;
       } finally {
@@ -358,6 +397,16 @@ export function engineDriver(): Driver {
           ...Object.entries(shared.fallenContacts).map(([id, c]) => fallenContactsLine(`contacts|${fallenName(Number(id))}`, c)),
           ...week.memorialPlans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : key(p.lesson_id), p)),
         ].sort(),
+        archive: archives
+          .flatMap((a) => [
+            `edition|${a.edition.label}|${a.edition.kind}|${a.edition.status}|${a.edition.start_date ?? "-"}|rows=${a.rows.length}`,
+            ...a.rooms.map((r) => `room|${a.edition.label}|${r.name}|${r.sort}|${r.is_default}`),
+            ...a.lessons.map((l) => {
+              const who = a.lessonSpeakers.filter((x) => x.lesson_id === l.id).map((x) => `${speakerName(x.speaker_id)}:${x.role}`).sort().join(",");
+              return archiveLessonLine(a.edition.label, l, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
+            }),
+          ])
+          .sort(),
       };
     },
 

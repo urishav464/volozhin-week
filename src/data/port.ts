@@ -1,5 +1,6 @@
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
+import type { ImportPort } from "./imports";
 import type { KkPort } from "./kk";
 import type { KnowledgePort } from "./knowledge";
 import type { LinksPort } from "./links";
@@ -60,4 +61,6 @@ export interface DataPort {
   readonly sources: SourcesPort;
   /** The fallen and their families' contacts (admins only), cross-year (src/data/memorial.ts); the edition's plans are commands. */
   readonly memorial: MemorialPort;
+  /** The import of 5786 — a global admin's: the pool to match against, the lookup, the commit (src/data/imports.ts). */
+  readonly imports: ImportPort;
 }

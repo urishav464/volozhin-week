@@ -5,6 +5,7 @@ import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
+  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
   FOREIGN_TRAINEE, type KkStepFields, planLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
   type Step, transportLine, transportRead,
@@ -17,7 +18,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   const ed = Number((await db.query("insert into public.editions (label, first_day_from, last_day_until) values ($1, $2, $3) returning id", [EDITION.label, EDITION.first_day_from, EDITION.last_day_until])).rows[0].id);
   await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template", [ed]);
   for (const r of ROOMS) await db.query("insert into public.rooms (edition_id, name, sort, is_default) values ($1, $2, $3, $4)", [ed, r.name, r.sort, r.is_default]);
-  const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ('מחזור אחר', 'practice') returning id")).rows[0].id);
+  const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ($1, 'practice') returning id", [FOREIGN_EDITION])).rows[0].id);
   const foreignRoom = Number((await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, $2, true) returning id", [elsewhere, FOREIGN_ROOM])).rows[0].id);
   for (const r of ROSTER) await db.query("insert into public.roster (edition_id, full_name, gender) values ($1, $2, $3)", [ed, r.name, r.gender]);
   const foreignTrainee = Number((await db.query("insert into public.roster (edition_id, full_name) values ($1, $2) returning id", [elsewhere, FOREIGN_TRAINEE])).rows[0].id);
@@ -89,10 +90,40 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       return read ? read(Object.values(r.rows[0])[0]) : "ok";
     } catch (e) {
       await db.query("rollback");
-      const err = e as { code?: string; message: string };
+      const err = e as { code?: string; message: string; detail?: string };
+      if (err.code === "P0001" && err.message === "import_bad_row") return `import_bad_row:${err.detail}`;
       return err.code === "P0001" ? err.message : `raw:${err.code}:${err.message}`;
     }
   }
+
+  /** A speaker's label by id, read now (an import may have just made it). */
+  const speakerNames = async () => {
+    const rows = (await db.query("select id, name, disambiguator from public.speakers")).rows;
+    return (id: number) => {
+      const s = rows.find((r) => Number(r.id) === Number(id));
+      return s ? speakerLabel(s) : `#${id}`;
+    };
+  };
+  /** import_commit as a member, its answer as one string (the labels read after the commit). */
+  async function importCall(actor: string, kind: string, payload: unknown): Promise<string> {
+    let answer: unknown;
+    const r = await call(actor, "select public.import_commit($1, $2::jsonb)", [kind, JSON.stringify(payload)], (v) => {
+      answer = v;
+      return "ok";
+    });
+    if (r !== "ok") return r;
+    return importRead(answer as Parameters<typeof importRead>[0], await speakerNames());
+  }
+  const idsOf = async (labels: string[]) => {
+    const out: Record<string, number> = {};
+    for (const l of labels) out[l] = await speakerId(l);
+    return (label: string) => out[label] ?? -1;
+  };
+  const categoryIds = async (names: string[]) => {
+    const out: Record<string, number> = {};
+    for (const n of names) out[n] = Number((await one("select id from public.categories where name = $1", [n]))?.id ?? -1);
+    return (name: string) => out[name] ?? -1;
+  };
 
   // ---- the sources' files: each label's stored path, and the target it was stored for
   const files: Record<string, { path: string; target: At | "cover" }> = {};
@@ -427,6 +458,31 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         const p = step.policy;
         return call(step.as, "select public.set_memorial_policy($1, $2, $3, $4)", [ed, p.placement ?? null, p.max_minutes ?? null, p.warn_adjacent_meal ?? null]);
       }
+      // ---- the import of 5786
+      if ("importCandidates" in step) {
+        const idOf = await idsOf(step.importCandidates.map((r) => r.speaker ?? ""));
+        return importCall(step.as, "candidates", { source: step.source === undefined ? "brainstorm-5786" : step.source, titles_from: null, rows: speakerRows(step.importCandidates, idOf) });
+      }
+      if ("importArchive" in step) {
+        const idOf = await idsOf(step.importArchive.speakers.map((r) => r.speaker ?? ""));
+        const catOf = await categoryIds(step.importArchive.lessons.flatMap((l) => (l.category == null ? [] : [l.category])));
+        return importCall(step.as, "tracking", archivePayloadOf(step.importArchive, idOf, catOf));
+      }
+      if ("importPrefs" in step) {
+        const idOf = await idsOf(step.importPrefs.map((r) => r.speaker));
+        const rows = step.importPrefs.map((r) => ({ row: r.row, speaker_id: idOf(r.speaker), contact_pref: r.contact_pref ?? null, secretary_note: r.secretary_note ?? null }));
+        return importCall(step.as, "escorts", { rows });
+      }
+      if ("importLookup" in step) {
+        const idOf = await idsOf(step.importLookup.speakers);
+        let answer: unknown;
+        const r = await call(step.as, "select public.import_lookup($1, $2)", [step.importLookup.speakers.map(idOf), step.importLookup.phones], (v) => {
+          answer = v;
+          return "ok";
+        });
+        return r === "ok" ? lookupRead(answer as Parameters<typeof lookupRead>[0], await speakerNames()) : r;
+      }
+      if ("importRaw" in step) return importCall(step.as, step.importRaw.kind, step.importRaw.payload);
       if ("readTransports" in step) {
         lessonKeys = (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
           (r) => [Number(r.id), lessonKey(r)] as [number, string],
@@ -440,6 +496,25 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     },
 
     async state(): Promise<Normal> {
+      /** The archive editions: each, its rooms, its lessons with their speakers. */
+      const archiveLines = async () => {
+        const eds = (await db.query(`
+          select e.*, to_char(e.start_date, 'YYYY-MM-DD') as start, (select count(*)::int from public.grid_rows g where g.edition_id = e.id) as rows
+            from public.editions e where e.kind = 'archive'`)).rows;
+        const rooms = (await db.query("select r.*, e.label from public.rooms r join public.editions e on e.id = r.edition_id where e.kind = 'archive'")).rows;
+        const ls = (await db.query(`
+          select l.*, e.label, r.name as room, c.name as cat,
+                 (select string_agg(s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role, ',' order by s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role collate "C")
+                    from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id where x.lesson_id = l.id) as who
+            from public.lessons l join public.editions e on e.id = l.edition_id join public.rooms r on r.id = l.room_id
+            left join public.categories c on c.id = l.category_id
+           where e.kind = 'archive'`)).rows;
+        return [
+          ...eds.map((e) => `edition|${e.label}|${e.kind}|${e.status}|${e.start ?? "-"}|rows=${e.rows}`),
+          ...rooms.map((r) => `room|${r.label}|${r.name}|${r.sort}|${r.is_default}`),
+          ...ls.map((l) => archiveLessonLine(l.label, l, l.room, l.cat ?? "-", l.who ?? "")),
+        ].sort();
+      };
       const lessons = (await db.query(`
         select l.*, r.name as room, c.name as cat, ro.full_name as trainee from public.lessons l
           join public.rooms r on r.id = l.room_id left join public.categories c on c.id = l.category_id
@@ -515,6 +590,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           ...fallenContacts.map((c) => fallenContactsLine(`contacts|${fallenName(c.fallen_id)}`, c)),
           ...plans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : byId.get(Number(p.lesson_id))!, p)),
         ].sort(),
+        archive: await archiveLines(),
       };
     },
 

@@ -4,6 +4,7 @@ import type { WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
+import { SupabaseImports } from "./supabaseImports";
 import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
 import { SupabaseMemorial } from "./supabaseMemorial";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
@@ -41,6 +42,7 @@ export class SupabasePort implements DataPort {
   readonly kk: SupabaseKk;
   readonly sources: SupabaseSources;
   readonly memorial: SupabaseMemorial;
+  readonly imports: SupabaseImports;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
   private readonly sessionKey: string;
@@ -69,6 +71,7 @@ export class SupabasePort implements DataPort {
     this.kk = new SupabaseKk(this.sb);
     this.sources = new SupabaseSources(this.sb, url, key);
     this.memorial = new SupabaseMemorial(this.sb);
+    this.imports = new SupabaseImports(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {

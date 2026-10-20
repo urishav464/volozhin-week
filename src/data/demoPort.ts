@@ -8,6 +8,7 @@ import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
 import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
 import { DemoMemorial } from "./demoMemorial";
+import { DemoImports, type DemoImportStore } from "./demoImports";
 import type { Sample } from "./demoFiles";
 import { DemoSources, type DemoSourceStore } from "./demoSources";
 import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
@@ -27,7 +28,7 @@ const DEMO_EMAIL = "demo@example.org";
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
 // the database. The demo user is the global admin (member 1).
-export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore {
+export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore, DemoImportStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
@@ -45,6 +46,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly sources: DemoSources;
   /** The fallen and their families' contacts (v11), cross-year, on the engine. */
   readonly memorial: DemoMemorial;
+  /** The import of 5786 (v12), on the engine: an archive becomes one more edition here. */
+  readonly imports: DemoImports;
   readonly blobs = new Map<string, Blob>();
   readonly samples = new Map<string, Sample>();
   readonly shared: PoolShared;
@@ -88,6 +91,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.public = new DemoPublic(this);
     this.sources = new DemoSources(this);
     this.memorial = new DemoMemorial(this);
+    this.imports = new DemoImports(this);
     // seeded as the demo's instructor (member 1), whoever the demo user is
     this.seeding = true;
     seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
@@ -126,6 +130,14 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       fallen: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
+    this.syncTeams();
+  }
+
+  /** The import's archive edition: one more engine (the shared pool), or the one of that label with its week replaced. */
+  installWeek(week: Week): void {
+    const e = this.engines.get(week.edition.id);
+    if (e) Object.assign(e.week, week);
+    else this.engines.set(week.edition.id, this.newEngine(week));
     this.syncTeams();
   }
 

@@ -33,6 +33,8 @@ import type {
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
+import { phoneKey } from "../import/phone";
+import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
 import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
@@ -44,6 +46,8 @@ import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type K
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
+import { type ArchiveLessonRow, type ImportKind, type ImportLookup, type ImportResult, ImportRowError, type SpeakerRow } from "./imports";
+import { ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName } from "./importRules";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
 import {
   cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
@@ -110,6 +114,40 @@ const SPEAKER_FIELDS = ["title", "name", "disambiguator", "gender", "affiliation
 
 function fail(code: string): never {
   throw new CommandError(code);
+}
+
+/** app.jint: a whole number from a JSON value, or null. */
+const jint = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && Math.abs(v) < 1e15 ? v : null);
+/** `->>`: a JSON value as text (a string as it is, a number or a boolean written out), null for null. */
+const text = (v: unknown): string | null => (v == null ? null : typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+/** A refusal inside an import row: that row's ImportRowError (app.refuse_row). */
+function rowError(item: unknown, e: unknown): unknown {
+  if (!(e instanceof CommandError) || e instanceof ImportRowError) return e;
+  const row = item != null && typeof item === "object" && !Array.isArray(item) ? jint((item as Record<string, unknown>).row) : null;
+  return new ImportRowError(row ?? -1, e.code);
+}
+
+/** One speaker row as the import resolved it. */
+interface SpeakerResult {
+  speaker_id: number;
+  created: boolean;
+  filled: boolean;
+  contacts: boolean;
+}
+
+/** What the import of the tracking sheet needs from outside the engine: the other editions, and where the archive goes. */
+export interface ImportHost {
+  /** app.titles: that edition's settings.titles when it lists any, else the default four. */
+  titles(editionId: number | null): readonly string[];
+  /** The edition with this label: its kind, and its week when it is an archive. */
+  byLabel(label: string): { kind: Week["edition"]["kind"]; week: Week | null } | null;
+  /** The categories that exist. */
+  categoryIds(): ReadonlySet<number>;
+  nextEditionId(): number;
+  nextRoomId(): number;
+  /** The archive's week — a new edition, or the one of that label with its lessons replaced. Called once, after every row passed. */
+  install(week: Week): void;
 }
 
 const PITCH_RANK: Record<PitchState, number> = { approached: 0, candidate: 1, accepted: 2, declined: 3, withdrawn: 4, superseded: 5 };
@@ -1522,6 +1560,232 @@ export class Engine {
     leaders.forEach((x, i) => k.leaders.push({ id: this.nextId(k.leaders), group_id: groupId, ...x, sort: i + 1 }));
   }
 
+  // ---------------------------------------------------------------- the import of 5786 (CONTRACT.md «The import of 5786», v12)
+
+  /** public.import_lookup: a global admin — which pool speaker has one of these phones (by key), which contact fields are filled. */
+  importLookup(speakerIds: number[], phoneKeys: string[]): ImportLookup {
+    if (!this.actor.global) fail("forbidden");
+    if (speakerIds.length > 5000 || phoneKeys.length > 5000) fail("import_too_big");
+    const keys = new Set(phoneKeys);
+    const pool = new Set(this.week.speakers.map((s) => s.id));
+    const phones = Object.entries(this.shared.contacts)
+      .flatMap(([id, c]) => {
+        const k = phoneKey(c.phone);
+        return k != null && keys.has(k) && pool.has(Number(id)) ? [{ key: k, speaker_id: Number(id) }] : [];
+      })
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.speaker_id - b.speaker_id));
+    const ids = new Set([...speakerIds, ...phones.map((p) => p.speaker_id)]);
+    const contacts = this.week.speakers
+      .filter((s) => ids.has(s.id))
+      .sort((a, b) => a.id - b.id)
+      .map((s) => {
+        const c = this.shared.contacts[s.id];
+        return { speaker_id: s.id, phone: c?.phone != null, email: c?.email != null, secretary_note: c?.secretary_note != null, notes: c?.notes != null };
+      });
+    return { phones, contacts };
+  }
+
+  /**
+   * public.import_commit: a global admin; one transaction — every row or none (a bad row is an ImportRowError naming
+   * it). The archive edition is built apart and handed to `host.install` only when every row passed.
+   */
+  importCommit(kind: unknown, payload: unknown, host: ImportHost): ImportResult {
+    return this.tx(() => {
+      if (!this.actor.global) fail("forbidden");
+      if (typeof kind !== "string" || !IMPORT_KINDS.includes(kind as ImportKind)) fail("bad_value");
+      if (payload == null || typeof payload !== "object" || Array.isArray(payload)) fail("bad_value");
+      const p = payload as Record<string, unknown>;
+      const len = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+      checkPayloadSize(kind === "tracking" ? len(p.speakers) + len(p.lessons) : len(p.rows), JSON.stringify(payload));
+      const titles = host.titles(jint(p.titles_from));
+      let res: SpeakerResult[] = [];
+      let source: string | null = null;
+      let editionId: number | null = null;
+      let lessons = 0;
+      let replaced = 0;
+      if (kind === "candidates") {
+        if (!Array.isArray(p.rows)) fail("bad_value");
+        source = cleanSource(p.source);
+        res = this.importSpeakers(p.rows as unknown[], titles, source);
+      } else if (kind === "tracking") {
+        if (!Array.isArray(p.speakers) || !Array.isArray(p.lessons)) fail("bad_value");
+        const label = cleanLabel(p.label);
+        const start = typeof p.start_date === "string" || p.start_date == null ? cleanArchiveDate(p.start_date) : fail("bad_value");
+        const existing = host.byLabel(label);
+        if (existing && existing.kind !== "archive") fail("edition_exists");
+        source = cleanSource(p.source);
+        res = this.importSpeakers(p.speakers as unknown[], titles, source);
+        const ids = res.map((r) => r.speaker_id);
+        // the edition: from the template, or the same label again — its lessons replaced
+        const draft: Week = existing?.week
+          ? { ...structuredClone({ ...existing.week, speakers: [] }), speakers: this.week.speakers, lessons: [], lessonSpeakers: [], pitches: [], escortTicks: [] }
+          : {
+              edition: { id: host.nextEditionId(), label, kind: "archive", start_date: start, first_day_from: null, last_day_until: 1140, status: "archived", settings: {} },
+              rows: structuredClone(TEMPLATE_2026), rooms: [{ id: host.nextRoomId(), name: ARCHIVE_ROOM, sort: 1, is_default: true }], categories: structuredClone(this.week.categories),
+              speakers: this.week.speakers, approaches: [], availability: [], lessons: [], lessonSpeakers: [], pitches: [], team: [], roster: [], escortTicks: [], sourceFiles: [],
+              memorialPlans: [], fallen: [],
+            };
+        if (existing?.week) {
+          replaced = existing.week.lessons.length;
+          draft.edition.start_date = start;
+          for (const f of draft.sourceFiles) f.lesson_id = null; // on delete set null
+          for (const m of draft.memorialPlans ?? []) m.lesson_id = null;
+          if (draft.rooms.length === 0) draft.rooms.push({ id: host.nextRoomId(), name: ARCHIVE_ROOM, sort: 1, is_default: true });
+        }
+        editionId = draft.edition.id;
+        let nextRoom = host.nextRoomId();
+        const roomOf = (index: number): number => {
+          if (index === 0) return (draft.rooms.find((r) => r.is_default) ?? [...draft.rooms].sort((a, b) => a.sort - b.sort || a.id - b.id)[0]).id;
+          const name = parallelRoomName(index);
+          const there = draft.rooms.find((r) => r.name === name);
+          if (there) return there.id;
+          const r = { id: Math.max(nextRoom++, this.nextId(draft.rooms)), name, sort: index + 1, is_default: false };
+          draft.rooms.push(r);
+          return r.id;
+        };
+        const categories = host.categoryIds();
+        for (const item of p.lessons as unknown[]) {
+          try {
+            if (item == null || typeof item !== "object" || Array.isArray(item)) fail("bad_value");
+            const l = cleanLessonRow(item as ArchiveLessonRow, categories, ids.length);
+            const room = roomOf(l.room);
+            if (draft.lessons.some((x) => x.room_id === room && x.day === l.day && overlaps(x.start_min, x.end_min, l.start_min, l.end_min))) fail("room_taken");
+            const lesson: Lesson = {
+              id: this.nextId(draft.lessons), kind: "lesson", state: "closed", day: l.day as Day, start_min: l.start_min, end_min: l.end_min, room_id: room,
+              title: l.title, category_id: l.category_id, audience: l.audience, teach_min: null, parallel_reason: null, ...LESSON_STAGE_DEFAULTS,
+              sources_kind: l.sources_kind, print_when: l.print_when, sources_note: l.sources_note, pay_amount: l.pay_amount, import_note: l.import_note,
+              version: 1, updated_by: this.actor.memberId,
+            };
+            draft.lessons.push(lesson);
+            const seen: number[] = [];
+            for (const ref of l.speakers) {
+              const sid = ids[ref];
+              if (seen.includes(sid)) continue; // two rows that became one pool speaker
+              const busy = draft.lessonSpeakers.some(
+                (x) => x.speaker_id === sid && draft.lessons.some((y) => y.id === x.lesson_id && y.day === l.day && overlaps(y.start_min, y.end_min, l.start_min, l.end_min)),
+              );
+              if (busy) fail("speaker_busy");
+              draft.lessonSpeakers.push({ lesson_id: lesson.id, speaker_id: sid, role: seen.length ? "co" : "lead" });
+              seen.push(sid);
+            }
+            lessons++;
+          } catch (e) {
+            throw rowError(item, e);
+          }
+        }
+        host.install(draft);
+      } else {
+        if (!Array.isArray(p.rows)) fail("bad_value");
+        for (const item of p.rows as unknown[]) {
+          try {
+            if (item == null || typeof item !== "object" || Array.isArray(item)) fail("bad_value");
+            const it = item as Record<string, unknown>;
+            const s = this.week.speakers.find((x) => x.id === jint(it.speaker_id)) ?? fail("stale");
+            const pref = pickContactPref(text(it.contact_pref));
+            const sec = cleanBlock(text(it.secretary_note), LIMITS.secretary_note);
+            const r: SpeakerResult = { speaker_id: s.id, created: false, filled: false, contacts: false };
+            if (s.contact_pref == null && pref != null) {
+              Object.assign(s, { contact_pref: pref, version: s.version + 1 });
+              this.log(null, "speakers", s.id, "update", { fields: ["contact_pref"] });
+              r.filled = true;
+            }
+            const old = this.shared.contacts[s.id];
+            if (old?.secretary_note == null && sec != null) {
+              this.shared.contacts[s.id] = { ...(old ?? EMPTY_CONTACTS), secretary_note: sec };
+              this.log(null, "speakers", s.id, "contacts", { fields: ["secretary_note"] });
+              r.contacts = true;
+            }
+            res.push(r);
+          } catch (e) {
+            throw rowError(item, e);
+          }
+        }
+      }
+      // the result, and the log: counts and the label — never a name, a phone or a note
+      const src = (kind === "tracking" ? p.speakers : p.rows) as unknown[];
+      const created = res.filter((r) => r.created).length;
+      const out: ImportResult = {
+        created, merged: res.length - created, filled: res.filter((r) => r.filled).length, contacts: res.filter((r) => r.contacts).length,
+        lessons, replaced, edition_id: editionId,
+        speakers: res.map((r, i) => ({ row: jint((src[i] as Record<string, unknown> | null)?.row) ?? -1, speaker_id: r.speaker_id, created: r.created })),
+      };
+      this.log(editionId, "import", editionId, kind, {
+        rows: res.length, created: out.created, merged: out.merged, filled: out.filled, contacts: out.contacts, lessons, replaced, ...(source != null ? { source } : {}),
+      });
+      return out;
+    });
+  }
+
+  /** app.import_speakers: each row as app.import_speaker resolves it, a refusal naming the row. */
+  private importSpeakers(rows: unknown[], titles: readonly string[], source: string): SpeakerResult[] {
+    return rows.map((item) => {
+      try {
+        return this.importSpeaker(item, titles, source);
+      } catch (e) {
+        throw rowError(item, e);
+      }
+    });
+  }
+
+  /** app.import_speaker: checked in its order, resolved (merge / the name key / the phone / new), filled where empty. */
+  private importSpeaker(item: unknown, titles: readonly string[], source: string): SpeakerResult {
+    const it = (item != null && typeof item === "object" && !Array.isArray(item) ? item : {}) as Record<string, unknown>;
+    const r = cleanSpeakerRow(
+      {
+        row: 0, action: it.action as SpeakerRow["action"], speaker_id: null, title: text(it.title), name: typeof it.name === "string" ? it.name : (null as unknown as string),
+        gender: text(it.gender) as SpeakerRow["gender"], affiliation: text(it.affiliation), topics: it.topics as string[], phone: text(it.phone), email: text(it.email), notes: text(it.notes),
+      },
+      titles,
+    );
+    const pool = this.week.speakers;
+    let s: Speaker | undefined;
+    if (r.action === "merge") s = pool.find((x) => x.id === jint(it.speaker_id)) ?? fail("stale");
+    else {
+      const same = pool.filter((x) => x.name_key === r.key);
+      if (same.length > 1) fail("disambiguator_required");
+      if (same.length === 1) s = same[0];
+      else {
+        const k = phoneKey(r.phone);
+        if (k != null) {
+          const byPhone = Object.entries(this.shared.contacts).filter(([id, c]) => phoneKey(c.phone) === k && pool.some((x) => x.id === Number(id)));
+          if (byPhone.length === 1) s = pool.find((x) => x.id === Number(byPhone[0][0]));
+        }
+      }
+    }
+    let created = false;
+    let fields: string[] = [];
+    if (!s) {
+      s = {
+        id: this.nextId(pool), title: r.title, name: r.name, disambiguator: null, gender: r.gender, affiliation: r.affiliation, bio_short: null, topics: r.topics,
+        contact_pref: null, vetted: "pending", vetted_by: null, vetted_note: null, retired: false, name_key: r.key, version: 1,
+      };
+      pool.push(s);
+      created = true;
+      this.log(null, "speakers", s.id, "insert", { vetted: "pending", source });
+    } else {
+      const t = s;
+      fields = [
+        t.title == null && r.title != null ? "title" : null,
+        t.gender == null && r.gender != null ? "gender" : null,
+        t.affiliation == null && r.affiliation != null ? "affiliation" : null,
+        t.topics.length === 0 && r.topics.length > 0 ? "topics" : null,
+      ].filter((f): f is string => f != null);
+      if (fields.length) {
+        Object.assign(t, {
+          title: t.title ?? r.title, gender: t.gender ?? r.gender, affiliation: t.affiliation ?? r.affiliation, topics: t.topics.length ? t.topics : r.topics, version: t.version + 1,
+        });
+        this.log(null, "speakers", t.id, "update", { fields });
+      }
+    }
+    const old = this.shared.contacts[s.id];
+    const cfields = (["phone", "email", "notes"] as const).filter((f) => old?.[f] == null && r[f] != null);
+    if (cfields.length) {
+      this.shared.contacts[s.id] = { phone: old?.phone ?? r.phone, email: old?.email ?? r.email, secretary_note: old?.secretary_note ?? null, notes: old?.notes ?? r.notes };
+      this.log(null, "speakers", s.id, "contacts", { fields: [...cfields] });
+    }
+    return { speaker_id: s.id, created, filled: fields.length > 0, contacts: cfields.length > 0 };
+  }
+
   // ---------------------------------------------------------------- helpers
 
   /** Restores IN PLACE on failure, so `engine.week` and `engine.shared` stay the same objects (their rows are the snapshot's). */
@@ -1606,7 +1870,7 @@ export class Engine {
     return this.week.team.some((t) => t.id === memberId && (t.role === "content" || t.role === "admin"));
   }
 
-  private log(editionId: number | null, entity: string, entityId: number, kind: string, detail: Record<string, unknown>) {
+  private log(editionId: number | null, entity: string, entityId: number | null, kind: string, detail: Record<string, unknown>) {
     this.shared.log.push({ id: this.nextId(this.shared.log), at: this.now(), actor: this.actor.memberId, edition_id: editionId, entity, entity_id: entityId, kind, detail });
   }
 
