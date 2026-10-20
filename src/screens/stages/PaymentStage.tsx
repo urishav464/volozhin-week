@@ -5,7 +5,7 @@
 // time and only for whom app.may_see_transport names (CONTRACT «Transport details»).
 // Nothing here ever fills in an amount: no amount means no payment was asked.
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
-import { STAGE_LIMITS, TRANSPORTS } from "../../data/stageRules";
+import { mergeTransport, STAGE_LIMITS, TRANSPORTS } from "../../data/stageRules";
 import { telHref } from "../../domain/contactLinks";
 import { APPROVAL_LABEL, requestText, shekels, TRANSPORT_LABEL } from "../../domain/stages";
 import type { Lesson, Transport, TransportDetails } from "../../domain/types";
@@ -249,7 +249,10 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
       ) : d === null ? (
         <p className="text-sm text-ink-soft">{hidden}</p>
       ) : editing ? (
-        <TransportForm id={id} d={d} busy={busy} onCancel={() => setEditing(false)} onSave={(next, onRefused) => act("transport", () => cmds.setTransport(l.id, next), "פרטי ההסעה נשמרו", onRefused)} onSaved={async () => {
+        <TransportForm id={id} d={d} busy={busy} onCancel={() => setEditing(false)} onSave={(next, onRefused) => act("transport", async () => {
+          // The escort's link may have sent a pickup address since the form opened: only what the form changed is written over.
+          await cmds.setTransport(l.id, mergeTransport({ ...EMPTY, ...d }, next, await cmds.transport(l.id)));
+        }, "פרטי ההסעה נשמרו", onRefused)} onSaved={async () => {
           setEditing(false);
           await load();
         }} />

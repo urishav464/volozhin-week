@@ -237,7 +237,22 @@ export function Rows({ head, children, label }: { head: string[]; children: Reac
  * under it. While `editing` is set, the row is that form instead. A muted row
  * (deactivated, archived) stays readable — its badge says why.
  */
-export function Row({ cells, actions, editing, muted = false, labelled = false }: { cells: ReactNode[]; actions?: ReactNode; editing?: ReactNode; muted?: boolean; labelled?: boolean }) {
+export function Row({
+  cells,
+  actions,
+  editing,
+  below,
+  muted = false,
+  labelled = false,
+}: {
+  cells: ReactNode[];
+  actions?: ReactNode;
+  editing?: ReactNode;
+  /** Something that belongs to this row, shown right under it at full width (what its action just produced). */
+  below?: ReactNode;
+  muted?: boolean;
+  labelled?: boolean;
+}) {
   const { wide } = useSettings();
   const head = useContext(HeadCtx);
   if (wide) {
@@ -251,16 +266,25 @@ export function Row({ cells, actions, editing, muted = false, labelled = false }
       );
     }
     return (
-      <tr className={muted ? "text-ink-soft" : ""}>
-        {cells.map((c, i) => (
-          <td key={i} className={`px-2 py-1.5 align-middle ${i === 0 ? "font-semibold" : ""}`}>
-            {c}
+      <>
+        <tr className={muted ? "text-ink-soft" : ""}>
+          {cells.map((c, i) => (
+            <td key={i} className={`px-2 py-1.5 align-middle ${i === 0 ? "font-semibold" : ""}`}>
+              {c}
+            </td>
+          ))}
+          <td className="px-2 py-1.5">
+            <div className="flex flex-wrap justify-end gap-1">{actions}</div>
           </td>
-        ))}
-        <td className="px-2 py-1.5">
-          <div className="flex flex-wrap justify-end gap-1">{actions}</div>
-        </td>
-      </tr>
+        </tr>
+        {below && (
+          <tr>
+            <td colSpan={cells.length + 1} className="px-2 pb-3">
+              {below}
+            </td>
+          </tr>
+        )}
+      </>
     );
   }
   return (
@@ -286,6 +310,7 @@ export function Row({ cells, actions, editing, muted = false, labelled = false }
               ))}
           </div>
           {actions && <div className="flex max-w-full shrink-0 flex-wrap gap-1">{actions}</div>}
+          {below && <div className="w-full basis-full pb-1.5">{below}</div>}
         </>
       )}
     </li>
@@ -304,7 +329,24 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
 }
 
 /** An inline «are you sure?» inside a row — no dialog to lose on a phone. */
-export function Confirm({ text, confirm, onConfirm, onCancel, busy, danger = true }: { text: ReactNode; confirm: string; onConfirm: () => void; onCancel: () => void; busy?: boolean; danger?: boolean }) {
+export function Confirm({
+  text,
+  confirm,
+  cancel = "ביטול",
+  onConfirm,
+  onCancel,
+  busy,
+  danger = true,
+}: {
+  text: ReactNode;
+  confirm: string;
+  /** The way back — another word where «ביטול» would read as the action itself (revoking a link). */
+  cancel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+  danger?: boolean;
+}) {
   return (
     <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3">
       <p className="mb-2 text-sm">{text}</p>
@@ -314,7 +356,7 @@ export function Confirm({ text, confirm, onConfirm, onCancel, busy, danger = tru
           {confirm}
         </Button>
         <Button onClick={onCancel} autoFocus={danger}>
-          ביטול
+          {cancel}
         </Button>
       </div>
     </div>

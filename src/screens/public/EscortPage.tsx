@@ -28,7 +28,7 @@ export function EscortPage({ port, token }: { port: PublicPort; token: string })
   const [refreshing, setRefreshing] = useState(false);
 
   if (load.state === "loading") return <Loading />;
-  if (load.state === "invalid") return <LinkInvalid />;
+  if (load.state === "invalid") return <LinkInvalid scope="escort" />;
   if (load.state === "error") return <LoadFailed onRetry={() => void reload().catch(() => {})} />;
   const v = load.data;
 
@@ -77,7 +77,8 @@ export function EscortPage({ port, token }: { port: PublicPort; token: string })
         </ol>
       )}
       <p className="text-sm text-ink-soft">
-        זה דף אישי: לא מעבירים את הקישור הלאה. הוא מפסיק לעבוד בסוף השבוע, או כשהצוות מחליף אותו בקישור חדש.
+        זה דף אישי: לא מעבירים את הקישור הלאה. הוא מפסיק לעבוד בסוף השבוע, או כשהצוות מחליף אותו בקישור חדש. במכשיר משותף: ההיסטוריה של הדפדפן שומרת את הקישור
+        כפי שנפתח, ולכן מוחקים אותו משם.
       </p>
     </>
   );
@@ -90,10 +91,10 @@ function PhonesNote({ view: v }: { view: EscortView }) {
   return (
     <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">
       {v.phones_from
-        ? `הטלפון של כל מרצה יופיע כאן מ-${dmy(v.phones_from)}, שבוע לפני השבוע.`
+        ? `הטלפון של כל מרצה יופיע כאן מ-${dmy(v.phones_from)}, שבוע לפני תחילת שבוע וולוז'ין.`
         : v.edition.start_date
           ? "בשבוע הזה הטלפונים של המרצים לא מוצגים בקישור." // a practice week: never
-          : "הטלפון של כל מרצה יופיע כאן שבוע לפני השבוע, אחרי שייקבע לו תאריך."}
+          : "הטלפון של כל מרצה יופיע כאן שבוע לפני תחילת שבוע וולוז'ין, אחרי שייקבע לו תאריך."}
     </p>
   );
 }
@@ -119,6 +120,8 @@ function LessonCard({
   const intro = memorial ? null : introOf(l.self_intro, l.speaker?.gender ?? null, view.escort.gender);
   const notes = [...l.duty_notes, ...(l.escort_note ? [l.escort_note] : [])];
   const title = l.title ?? (memorial ? "זמן זיכרון" : "כותרת TBD");
+  // from W−7 the phones come; a lesson whose speaker has none on file says where it is, so it is not taken for a fault
+  const phoneAtTeam = !memorial && l.speaker != null && !l.phone && view.phones_from != null && israelDate(new Date().toISOString()) >= view.phones_from;
   return (
     <article aria-labelledby={`${id}-h`} data-escort-lesson={l.lesson_id} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm">
       <div>
@@ -127,11 +130,11 @@ function LessonCard({
         </h3>
         <p className="text-sm text-ink-soft">
           {when.date} · {l.room}
-          {memorial && " · זמן זיכרון"}
+          {memorial && l.title && " · זמן זיכרון"}
         </p>
       </div>
       <div>
-        <p className="font-semibold break-words">{l.speaker?.name ?? "המרצה: TBD"}</p>
+        {(l.speaker || !memorial) && <p className="font-semibold break-words">{l.speaker?.name ?? "המרצה: TBD"}</p>}
         <p className="break-words">{title}</p>
         {intro && (
           <p className="text-sm">
@@ -139,7 +142,7 @@ function LessonCard({
           </p>
         )}
       </div>
-      {(l.phone || l.driver) && (
+      {(l.phone || l.driver || phoneAtTeam) && (
         <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-sm">
           {l.phone && (
             <>
@@ -147,6 +150,12 @@ function LessonCard({
               <dd className="min-w-0">
                 <Phone phone={l.phone} whatsapp />
               </dd>
+            </>
+          )}
+          {phoneAtTeam && (
+            <>
+              <dt className="text-ink-soft">טלפון המרצה</dt>
+              <dd className="min-w-0">אצל הצוות</dd>
             </>
           )}
           {l.driver && (
@@ -249,7 +258,7 @@ function Ticks({
                   className="size-5 shrink-0 accent-ink"
                 />
                 <span>
-                  {TICK_LABEL[item]}
+                  {item === "introduced" && l.self_intro ? byGender(l.speaker?.gender ?? null, "המרצה הציג את עצמו", "המרצה הציגה את עצמה", "המרצה הציג/ה את עצמו/ה") : TICK_LABEL[item]}
                   {at && <span className="block text-xs text-ink-soft">סומן ב-{israelMoment(at)}</span>}
                 </span>
               </label>

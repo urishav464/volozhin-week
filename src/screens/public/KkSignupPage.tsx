@@ -1,9 +1,12 @@
 // The sign-up for מכריכה לכריכה (/k#token), one link for the whole class: the
 // trainee picks their name from the year's list (names only), then a group in
-// each track they want, and sends. The answer is the same whatever happened —
-// «נקלט — אם יש בעיה, הצוות יחזור אליך» — so the page never tells who already
-// signed up; an existing sign-up is never changed through the link (only the
-// staff move one). Outside the window the groups are shown, and nothing is sent.
+// each track they want, and sends. The answer is the same whatever happened, so
+// the page never tells who already signed up — and so it is worded as a request,
+// not a result: «הבקשה נשלחה», what was sent, and when a sign-up is recorded (not
+// yet signed up for that slot, a place left) — to check or change, the team. An
+// existing sign-up is never changed through the link (only the staff move one),
+// and the form says so before sending. Outside the window the groups are shown,
+// and nothing is sent.
 import { type FormEvent, useId, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { KkForm, KkFormGroup, KkFormTrack, PublicPort } from "../../data/publicPort";
@@ -13,7 +16,6 @@ import { LinkInvalid, LoadFailed, Loading, useLinkLoad, whenOf } from "./parts";
 
 export const LEADER_KIND_LABEL: Record<KkFormGroup["leaders"][number]["kind"], string> = { staff: "מהצוות", trainee: "חניך/ה", ein_prat: "מעין פרת" };
 
-
 /** The window in words. The server's `open` wins over this device's clock: not open there is before or after it. */
 function formWindowText(f: KkForm): string {
   if (f.open) return kkWindowText(f.window, Date.parse(f.window.opens_at!));
@@ -21,6 +23,10 @@ function formWindowText(f: KkForm): string {
 }
 
 type Sent = { name: string; picks: { day: string; time: string; group: string }[] };
+
+/** The same words for everyone, whatever the server did — no oracle, and no promise that it was recorded. */
+export const RECORDED_WHEN = "ההרשמה נקלטת רק אם עוד לא נרשמת למשבצת הזו ויש מקום בקבוצה. כדי לבדוק או לשנות — פונים לצוות.";
+export const NO_CHANGE = "מי שכבר נרשם/ה לא יכול/ה לשנות את ההרשמה כאן.";
 
 export function KkSignupPage({ port, token }: { port: PublicPort; token: string }) {
   const { load, reload } = useLinkLoad(() => port.kkForm(token));
@@ -32,7 +38,7 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
   const [sent, setSent] = useState<Sent | null>(null);
 
   if (load.state === "loading") return <Loading />;
-  if (load.state === "invalid") return <LinkInvalid />;
+  if (load.state === "invalid") return <LinkInvalid scope="kk_signup" />;
   if (load.state === "error") return <LoadFailed onRetry={() => void reload().catch(() => {})} />;
   const f = load.data;
   const trackName = (t: KkFormTrack) => {
@@ -73,9 +79,10 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
       <p className={`rounded-lg px-3 py-2 text-sm ${f.open ? "bg-ok/10" : "bg-accent-soft"}`}>{formWindowText(f)}</p>
 
       {sent && (
-        <section role="status" aria-label="ההרשמה נשלחה" className="space-y-2 rounded-xl border border-ok/40 bg-ok/5 p-4">
-          <p className="font-semibold">נקלט — אם יש בעיה, הצוות יחזור אליך.</p>
+        <section role="status" aria-label="הבקשה נשלחה" className="space-y-2 rounded-xl border border-line bg-card p-4">
+          <p className="font-semibold">הבקשה נשלחה.</p>
           <p className="text-sm">
+            <span className="text-ink-soft">מה ששלחת: </span>
             {sent.name}:{" "}
             {sent.picks.map((p, i) => (
               <span key={i}>
@@ -84,7 +91,7 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
               </span>
             ))}
           </p>
-          <p className="text-sm text-ink-soft">מי שכבר נרשם/ה לא יכול/ה לשנות את ההרשמה כאן. כדי לשנות, פונים לצוות.</p>
+          <p className="text-sm">{RECORDED_WHEN}</p>
           <Button onClick={() => setSent(null)}>הרשמה של שם נוסף</Button>
         </section>
       )}
@@ -148,9 +155,12 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
             </p>
           )}
           {f.open && (
-            <Button kind="primary" type="submit" busy={busy} busyLabel="שולח…">
-              הרשמה
-            </Button>
+            <>
+              <p className="text-sm">{NO_CHANGE}</p>
+              <Button kind="primary" type="submit" busy={busy} busyLabel="שולח…">
+                הרשמה
+              </Button>
+            </>
           )}
           <p className="text-sm text-ink-soft">בהרשמה נשמרים השם שבחרת והקבוצה. מי נרשם/ה לאיזו קבוצה רואה רק הצוות.</p>
         </form>

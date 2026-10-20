@@ -58,7 +58,7 @@ export function dutyNotes(l: Pick<Lesson, "kind" | "self_intro" | "transport" | 
 export const TICK_LABEL: Record<TickItem, string> = {
   reminded: "הזכרתי למרצה",
   met: "פגשתי בחניה",
-  introduced: "הצגתי",
+  introduced: "הצגתי את המרצה",
   gift: "נתתי מתנה",
 };
 

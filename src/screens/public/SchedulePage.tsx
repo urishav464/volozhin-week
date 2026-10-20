@@ -12,7 +12,7 @@ import { dayLabel, LinkInvalid, LoadFailed, Loading, useLinkLoad } from "./parts
 export function SchedulePage({ port, token }: { port: PublicPort; token: string }) {
   const { load, reload } = useLinkLoad(() => port.scheduleView(token));
   if (load.state === "loading") return <Loading />;
-  if (load.state === "invalid") return <LinkInvalid />;
+  if (load.state === "invalid") return <LinkInvalid scope="schedule" />;
   if (load.state === "error") return <LoadFailed onRetry={() => void reload().catch(() => {})} />;
   return <Schedule view={load.data} />;
 }
@@ -34,7 +34,7 @@ function Schedule({ view: v }: { view: ScheduleView }) {
         const date = rows[0].r.date;
         return (
           <section key={day} aria-label={`יום ${DAY_NAMES[day]}`} className="rounded-xl border border-line bg-card p-4 print:break-inside-auto print:rounded-none print:border-0 print:p-0">
-            <h3 className="mb-2 font-display text-lg font-semibold">
+            <h3 className="mb-2 font-display text-lg font-semibold print:break-after-avoid">
               יום {DAY_NAMES[day]}
               {date !== "TBD" && <span className="font-sans text-base font-normal text-ink-soft"> · {date}</span>}
             </h3>

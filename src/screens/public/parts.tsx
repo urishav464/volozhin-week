@@ -6,6 +6,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { CommandError } from "../../data/commands";
+import type { LinkScope } from "../../data/links";
 import { publicDemo } from "../../data/publicEntry";
 import { messageDate } from "../../domain/message";
 import { type Day, DAY_NAMES, fmtRange } from "../../domain/time";
@@ -20,12 +21,12 @@ export function PublicFrame({ children }: { children: ReactNode }) {
         {children}
         <footer className="space-y-1 border-t border-line pt-3 text-center text-sm text-ink-soft print:hidden">
           {/* a plain link: the host serves the static page */}
-          <a href="/privacy.html" className="underline hover:text-ink">
+          <a href="/privacy.html" className="inline-flex min-h-11 items-center underline hover:text-ink">
             מדיניות פרטיות
           </a>
           {publicDemo && (
             <p>
-              <Link to="/settings/links" className="underline hover:text-ink">
+              <Link to="/settings/links" className="inline-flex min-h-11 items-center underline hover:text-ink">
                 חזרה לקישורים של ההדגמה
               </Link>
             </p>
@@ -68,24 +69,43 @@ export function useLinkLoad<T>(read: () => Promise<T>) {
   return { load, reload, set, invalid: () => setLoad({ state: "invalid" }) };
 }
 
-/** The one refusal: no reason given, the same for every bad link. */
-export function LinkInvalid() {
+/**
+ * The one refusal: no reason given, the same for every bad link. The hint depends only on the page (the path), never
+ * on the token: a sign-up link stops when the sign-up closes, the others at the end of the week — asking the team for
+ * a new link helps only before that. The same code also stops a link past its rate limit, hence «try again».
+ */
+export function LinkInvalid({ scope }: { scope: LinkScope }) {
   return (
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">הקישור לא בתוקף</h2>
-      <p className="text-ink-soft">{errorMessage("link_invalid")}</p>
+      <div className="space-y-2 text-ink-soft">
+        <p>{errorMessage("link_invalid")}</p>
+        <p>
+          {scope === "kk_signup"
+            ? "ייתכן שההרשמה כבר נסגרה. לשאלות פונים לצוות."
+            : "אחרי סוף השבוע הקישור כבר לא נפתח. אם השבוע עוד לא נגמר, אפשר לבקש קישור חדש מהצוות."}
+        </p>
+        <p>אם הקישור עבד עד לפני רגע, אפשר לנסות שוב בעוד כמה דקות.</p>
+      </div>
     </Card>
   );
 }
 
-/** No token in the address: a link cut short, or a page reloaded after the token left the address bar. */
+/**
+ * No token in the address: a link cut short, or a page reloaded after the token left the address bar. What leaving
+ * the address bar does — and does not — is said plainly: the browser's history keeps the address as it was opened.
+ */
 export function LinkMissing() {
   return (
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">הקישור לא שלם</h2>
       <div className="space-y-2 text-ink-soft">
         <p>חסר בכתובת הקוד שאחרי הסימן #. פותחים שוב את הקישור מההודעה שקיבלת.</p>
-        <p>הקוד יוצא משורת הכתובת ברגע שהדף נפתח, כדי שלא יישאר בהיסטוריה של הדפדפן. לכן רענון של הדף לא מספיק: חוזרים להודעה ופותחים ממנה.</p>
+        <p>
+          הקוד יוצא משורת הכתובת ברגע שהדף נפתח: כך הוא לא מוצג על המסך, לא נשלח כשמשתפים את כתובת הדף, ו«חזרה» לא פותחת אותו שוב. לכן רענון של הדף לא מספיק: חוזרים להודעה
+          ופותחים ממנה.
+        </p>
+        <p>ההיסטוריה של הדפדפן שומרת את הכתובת כפי שנפתחה, עם הקוד. במכשיר משותף מוחקים אותה משם.</p>
       </div>
     </Card>
   );

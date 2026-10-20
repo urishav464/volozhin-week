@@ -8,7 +8,7 @@
 // orders. Every write is a function (port.kk, CONTRACT «מכריכה לכריכה»), so
 // the demo refuses what the database refuses. Not in Realtime: the screen reads
 // again on entry, on return to the tab, and after every action.
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { KkData, KkGroup, KkGroupFields, LeaderInput, LeaderKind } from "../../data/kk";
 import { KK_LIMITS, LEADER_KINDS } from "../../data/kk";
@@ -28,12 +28,17 @@ import { actorIn, useWeekStore } from "../weekStore";
 
 const LEADER_KIND_LABEL: Record<LeaderKind, string> = { trainee: "חניך/ה", staff: "מהצוות", ein_prat: "מעין פרת" };
 
-/** One kk occurrence of the grid: a day and the kk row starting at `start_min` (its track, once a group is on it). */
+/**
+ * One kk occurrence of the grid: a day and the kk row starting at `start_min` (its track, once a group is on it) —
+ * or a track whose row is no longer active that day (`outside`: the first or last day's hours moved after groups were
+ * made), kept on the screen so its groups and sign-ups can be cleared; the link neither offers nor takes it.
+ */
 interface Occurrence {
   day: Day;
   start_min: number;
   end_min: number;
   trackId: number | null;
+  outside?: boolean;
 }
 
 export function occurrencesOf(week: Week, data: KkData): Occurrence[] {
@@ -44,7 +49,16 @@ export function occurrencesOf(week: Week, data: KkData): Occurrence[] {
       out.push({ day, start_min: r.start_min, end_min: r.end_min, trackId: data.tracks.find((t) => t.day === day && t.start_min === r.start_min)?.id ?? null });
     }
   }
-  return out;
+  for (const t of data.tracks) {
+    if (!out.some((o) => o.trackId === t.id)) out.push({ day: t.day, start_min: t.start_min, end_min: t.end_min, trackId: t.id, outside: true });
+  }
+  return out.sort((a, b) => a.day - b.day || a.start_min - b.start_min);
+}
+
+/** The trainees who lead a group in the track: they need no group there, so they are not «עוד לא נרשמו». */
+export function leadersIn(data: KkData, trackId: number | null): Set<number> {
+  const groups = new Set(data.groups.filter((g) => g.track_id === trackId).map((g) => g.id));
+  return new Set(data.leaders.filter((x) => groups.has(x.group_id) && x.roster_id != null).map((x) => x.roster_id!));
 }
 
 export function KkScreen({ port, me }: { port: DataPort; me: Me }) {
@@ -213,28 +227,43 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
 
 function OccurrenceSection({ o, week, kk, admin, books, busy, act, port }: { o: Occurrence; week: Week; kk: KkData; admin: boolean; books: boolean; busy: string | null; act: Act; port: DataPort }) {
   const [adding, setAdding] = useState(false);
+  // the plain string names the region for a screen reader (read in logical order); what is drawn wraps the range in <bdi>
   const label = `${dayLabel(o.day, o.start_min)} ${fmtRange(o.start_min, o.end_min)}`;
+  const when = (
+    <>
+      {dayLabel(o.day, o.start_min)} <bdi dir="ltr">{fmtRange(o.start_min, o.end_min)}</bdi>
+    </>
+  );
   const date = messageDate(week.edition.start_date, o.day, o.start_min);
   const groups = kk.groups.filter((g) => g.track_id === o.trackId).sort((a, b) => a.title.localeCompare(b.title, "he") || a.id - b.id);
   const signups = kk.signups.filter((s) => s.track_id === o.trackId);
-  const missing = o.trackId == null ? [] : week.roster.filter((r) => !signups.some((s) => s.roster_id === r.id));
+  const leading = leadersIn(kk, o.trackId);
+  const leaders = week.roster.filter((r) => leading.has(r.id) && !signups.some((s) => s.roster_id === r.id));
+  const missing = o.trackId == null ? [] : week.roster.filter((r) => !leading.has(r.id) && !signups.some((s) => s.roster_id === r.id));
   return (
-    <section aria-label={label} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
+    <section aria-label={o.outside ? `${label} · מחוץ לרשת` : label} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">
-          {dayLabel(o.day, o.start_min)} <bdi dir="ltr">{fmtRange(o.start_min, o.end_min)}</bdi>
-        </h3>
+        <h3 className="font-display text-lg font-semibold">{when}</h3>
         {date && <span className="text-sm text-ink-soft">{date}</span>}
         <span className="text-sm text-ink-soft">{groups.length === 0 ? "אין קבוצות" : groups.length === 1 ? "קבוצה אחת" : `${groups.length} קבוצות`}</span>
+        {o.outside && <Badge tone="bad">מחוץ לרשת</Badge>}
       </div>
+      {o.outside && (
+        <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">
+          המשבצת הזו כבר לא ברשת של היום הזה (שעות היום הראשון או האחרון השתנו). הקבוצות שלה לא מוצעות בקישור ההרשמה. מעבירים או מסירים את הנרשמים, ומוחקים את הקבוצות — או
+          מחזירים את השעות בהגדרות.
+        </p>
+      )}
       {groups.map((g) => (
         <GroupCard key={g.id} g={g} groups={groups} week={week} kk={kk} admin={admin} books={books} busy={busy} act={act} port={port} />
       ))}
       {admin &&
+        !o.outside &&
         (adding ? (
           <GroupForm
             week={week}
             title={`קבוצה חדשה · ${label}`}
+            heading={<>קבוצה חדשה · {when}</>}
             busy={busy === `add-${o.day}-${o.start_min}`}
             onCancel={() => setAdding(false)}
             onSave={async (fields, onRefused) => {
@@ -247,13 +276,36 @@ function OccurrenceSection({ o, week, kk, admin, books, busy, act, port }: { o: 
             + קבוצה
           </Button>
         ))}
-      {o.trackId != null && groups.length > 0 && <NotYet trackLabel={label} missing={missing} groups={groups} admin={admin} busy={busy} act={act} port={port} />}
+      {o.trackId != null && groups.length > 0 && (
+        <NotYet trackLabel={label} missing={missing} leaders={leaders} groups={groups} admin={admin && !o.outside} busy={busy} act={act} port={port} />
+      )}
     </section>
   );
 }
 
-/** «עוד לא נרשמו»: the roster's names with no sign-up in this track — and, for an admin, placing one. */
-function NotYet({ trackLabel, missing, groups, admin, busy, act, port }: { trackLabel: string; missing: Week["roster"]; groups: KkGroup[]; admin: boolean; busy: string | null; act: Act; port: DataPort }) {
+/**
+ * «עוד לא נרשמו»: the roster's names with no sign-up in this track and no group of it to lead — and, for an admin,
+ * placing one. The trainees who lead a group here are named apart, so the count is who still needs a group.
+ */
+function NotYet({
+  trackLabel,
+  missing,
+  leaders,
+  groups,
+  admin,
+  busy,
+  act,
+  port,
+}: {
+  trackLabel: string;
+  missing: Week["roster"];
+  leaders: Week["roster"];
+  groups: KkGroup[];
+  admin: boolean;
+  busy: string | null;
+  act: Act;
+  port: DataPort;
+}) {
   const id = useId();
   const [who, setWho] = useState<number | null>(null);
   const [to, setTo] = useState<number | null>(null);
@@ -268,6 +320,7 @@ function NotYet({ trackLabel, missing, groups, admin, busy, act, port }: { track
       <summary className="min-h-11 cursor-pointer content-center font-semibold">
         עוד לא נרשמו ({missing.length})<span className="sr-only"> · {trackLabel}</span>
       </summary>
+      {leaders.length > 0 && <p className="mt-1 text-sm text-ink-soft">מובילים קבוצה במשבצת הזו: {leaders.map((r) => r.full_name).join(" · ")}</p>}
       {missing.length === 0 ? (
         <p className="text-sm text-ink-soft">כל החניכים ברשימה נרשמו.</p>
       ) : (
@@ -520,13 +573,16 @@ type LeaderRow = LeaderInput;
 function GroupForm({
   week,
   title,
+  heading,
   initial,
   busy,
   onSave,
   onCancel,
 }: {
   week: Week;
+  /** The form's name (a plain string, for its label); `heading`, when given, is what is drawn — with a time range isolated. */
   title: string;
+  heading?: ReactNode;
   initial?: { g: KkGroup; leaders: KkData["leaders"] };
   busy: boolean;
   onSave: (fields: KkGroupFields, onRefused: (code: string | null) => boolean) => Promise<void>;
@@ -548,37 +604,62 @@ function GroupForm({
   const roster = useMemo(() => [...week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id), [week.roster]);
   const nameOf = (l: LeaderRow) => (l.kind === "trainee" ? (week.roster.find((r) => r.id === l.roster_id)?.full_name ?? "חניך/ה שנמחק/ה") : l.label);
 
+  /** The leader picked or typed below — the list with them added (a repeat kept once), or why not. */
+  const withPending = (): { list: LeaderRow[]; problem?: string } => {
+    const pending: LeaderRow | null =
+      kind === "trainee"
+        ? leaderRoster == null
+          ? null
+          : { kind: "trainee", roster_id: leaderRoster }
+        : leaderLabel.replace(/\s+/g, " ").trim()
+          ? { kind, label: leaderLabel.replace(/\s+/g, " ").trim() }
+          : null;
+    if (!pending) return { list: leaders };
+    if (pending.kind === "trainee" && leaders.some((x) => x.kind === "trainee" && x.roster_id === pending.roster_id)) return { list: leaders };
+    if (leaders.length >= KK_LIMITS.leaders) return { list: leaders, problem: `עד ${KK_LIMITS.leaders} מובילים לקבוצה (הצעה).` };
+    return { list: [...leaders, pending] };
+  };
+  const clearPending = () => {
+    setLeaderRoster(null);
+    setLeaderLabel("");
+  };
+
   const addLeader = () => {
     setProblem(null);
-    if (leaders.length >= KK_LIMITS.leaders) return setProblem(`עד ${KK_LIMITS.leaders} מובילים לקבוצה (הצעה).`);
-    if (kind === "trainee") {
-      if (leaderRoster == null) return setProblem("צריך לבחור חניך/ה מהרשימה.");
-      setLeaders((cur) => (cur.some((x) => x.kind === "trainee" && x.roster_id === leaderRoster) ? cur : [...cur, { kind: "trainee", roster_id: leaderRoster }]));
-      setLeaderRoster(null);
-    } else {
-      const label = leaderLabel.replace(/\s+/g, " ").trim();
-      if (!label) return setProblem("צריך לכתוב את השם של המוביל/ה.");
-      setLeaders((cur) => [...cur, { kind, label }]);
-      setLeaderLabel("");
-    }
+    if (kind === "trainee" && leaderRoster == null) return setProblem("צריך לבחור חניך/ה מהרשימה.");
+    if (kind !== "trainee" && !leaderLabel.trim()) return setProblem("צריך לכתוב את השם של המוביל/ה.");
+    const { list, problem: p } = withPending();
+    if (p) return setProblem(p);
+    setLeaders(list);
+    clearPending();
   };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
-    if (!name.trim()) return setProblem(errorMessage("title_required"));
+    if (!name.trim()) {
+      document.getElementById(`${id}-t`)?.focus();
+      return setProblem("צריך לכתוב את שם הספר.");
+    }
     const cap = capacity.trim() === "" ? null : Number(capacity);
     if (cap != null && (!Number.isInteger(cap) || cap < 1 || cap > KK_LIMITS.capacity)) return setProblem(`תפוסה: מספר שלם בין 1 ל-${KK_LIMITS.capacity}, או ריק.`);
-    await onSave({ title: name, author: author.trim() || null, room_id: roomId, capacity: cap, open, leaders }, (code) => {
+    // a leader picked or typed but not added with «הוספת מוביל/ה» is still meant: saved with the others
+    const { list, problem: p } = withPending();
+    if (p) return setProblem(p);
+    if (list !== leaders) {
+      setLeaders(list);
+      clearPending();
+    }
+    await onSave({ title: name, author: author.trim() || null, room_id: roomId, capacity: cap, open, leaders: list }, (code) => {
       if (!["title_required", "bad_value", "bad_trainee", "outside_grid"].includes(code ?? "")) return false;
-      setProblem(errorMessage(code));
+      setProblem(code === "title_required" ? "צריך לכתוב את שם הספר." : errorMessage(code));
       return true;
     });
   };
 
   return (
     <form onSubmit={(e) => void submit(e)} aria-label={title} className="space-y-3 rounded-lg border border-ink/30 bg-paper p-3" noValidate>
-      <h4 className="font-semibold">{title}</h4>
+      <h4 className="font-semibold">{heading ?? title}</h4>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id={`${id}-t`} label="שם הספר">
           <input id={`${id}-t`} value={name} maxLength={KK_LIMITS.title} onChange={(e) => setName(e.target.value)} className={INPUT} autoComplete="off" />

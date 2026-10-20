@@ -345,9 +345,11 @@ test.describe("mock build", () => {
     await details.getByRole("button", { name: "עריכת פרטי ההסעה" }).click();
     await details.getByLabel("הטלפון של הנהג/ת").fill("123 456 789");
     await details.getByRole("checkbox", { name: "ההסעה סודרה" }).check();
+    // meanwhile the escort sends a pickup address through their link: the save keeps it, writing only what the form changed
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת מהמלווה לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
     await details.getByRole("button", { name: "שמירה" }).click();
     await expect.poll(() => sb.rpc.get("set_transport_details")).toEqual([
-      { p_lesson: lessonOf(0, 510), p_pickup_address: "כתובת לדוגמה", p_pickup_time: null, p_driver_name: null, p_driver_phone: "123 456 789", p_arranged: true },
+      { p_lesson: lessonOf(0, 510), p_pickup_address: "כתובת מהמלווה לדוגמה", p_pickup_time: null, p_driver_name: null, p_driver_phone: "123 456 789", p_arranged: true },
     ]);
     await panel.getByRole("button", { name: "סגירה" }).click();
 

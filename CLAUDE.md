@@ -118,7 +118,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   ticks (`escortTicks` in the Week) and the kk tables (`port.kk`, `src/data/kk.ts`: all writes are functions).
   **anon's whole reach is `ping` and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
   kk_form kk_signup schedule_view`), keyed by a token alone; every link problem is the one refusal
-  `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites. The public
+  `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its one accepted
+  residual: «full» after a sign-up — CONTRACT). The rate limit: an escort's link one count; a class link one per
+  caller's address (`app.link_client` / `linkClient`, the sha256 of cf-connecting-ip or X-Forwarded-For's first
+  entry) — never a count the whole class shares. `src/lib/schema.test.ts` holds `EXPECTED_SCHEMA_VERSION` to the file. The public
   pages read through `PublicPort` (`src/data/publicPort.ts`, `makePublicPort()`): `SupabasePublic` is a plain
   POST with the `apikey` header and no Authorization; the demo's is `src/data/demoLinks.ts`. Engine ≡ SQL
   by `tests/parity`, the public answers included; `src/domain/israelTime.ts` counts days as Israel does (W−7).
@@ -138,7 +141,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - `tests/e2e/` — builds the app twice (demo / mock) and drives it in Chromium; `mock.ts` fakes the
   Supabase endpoints by route interception.
 - `tests/sql/links.test.ts`, `tests/sql/kk.test.ts` — the anon surface: every bad token refused alike, the
-  escort's page by date (W−7) and by key, the sign-up race on two connections.
+  escort's page by date (W−7) and by key, the rate limit per address (and the review's lock-out attack, closed), the
+  sign-up races on two connections (each from its own address, so the group's row lock is what is tested), the
+  «full» residual pinned.
 - `tests/e2e/links.spec.ts` — the public pages at three widths (the token out of the address bar, the one refusal),
   issuing and opening a link, the sign-up and the staff's /kk, the schedule in print; on the mock wire, the public
   pages send the publishable key alone to the six anon functions, even with a member's session in the browser.

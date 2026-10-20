@@ -65,7 +65,8 @@ test.describe("demo build", () => {
     await expect(lessons.first()).toContainText("התאריך TBD · בית מדרש");
     await expect(lessons.first()).toContainText("פרופ׳ מרצה 03");
     await expect(lessons.first()).toContainText("הצגה על ידי המלווה — מציג את המרצה");
-    await expect(page.getByText("הטלפון של כל מרצה יופיע כאן שבוע לפני השבוע, אחרי שייקבע לו תאריך.")).toBeVisible();
+    await expect(page.getByText("הטלפון של כל מרצה יופיע כאן שבוע לפני תחילת שבוע וולוז'ין, אחרי שייקבע לו תאריך.")).toBeVisible();
+    await expect(page.getByText("במכשיר משותף: ההיסטוריה של הדפדפן שומרת את הקישור כפי שנפתח, ולכן מוחקים אותו משם.")).toBeVisible();
     await expect(page.getByText("טלפון המרצה")).toHaveCount(0);
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
     await expect(page.getByRole("form", { name: "כתובת איסוף" })).toHaveCount(0); // no transport approved for these
@@ -88,6 +89,8 @@ test.describe("demo build", () => {
     // a reload: the token is no longer in the address — the page says to open the link again
     await page.reload();
     await expect(page.getByRole("heading", { name: "הקישור לא שלם" })).toBeVisible();
+    await expect(page.getByText("ההיסטוריה של הדפדפן שומרת את הכתובת כפי שנפתחה, עם הקוד. במכשיר משותף מוחקים אותה משם.")).toBeVisible();
+    await expect(page.getByText(/כדי שלא יישאר בהיסטוריה/)).toHaveCount(0); // never promised: the browser's history keeps what was opened
   });
 
   test("the pickup address: offered where transport was approved, sent to the team, never shown back", async ({ page }) => {
@@ -114,10 +117,13 @@ test.describe("demo build", () => {
   test("a wrong link, a link of another kind, a link cut short: one page each, nothing else told", async ({ page }) => {
     await page.goto(`${demoUrl()}/e#not-a-real-link-0000000`);
     await expect(invalid(page)).toBeVisible();
-    await expect(page.getByText("הקישור לא בתוקף: אולי פג תוקפו, בוטל או הוחלף בקישור חדש.")).toBeVisible();
+    await expect(page.getByText("אולי פג תוקפו, בוטל או הוחלף בקישור חדש.", { exact: true })).toBeVisible();
+    await expect(page.getByText("אחרי סוף השבוע הקישור כבר לא נפתח. אם השבוע עוד לא נגמר, אפשר לבקש קישור חדש מהצוות.")).toBeVisible();
+    await expect(page.getByText("אם הקישור עבד עד לפני רגע, אפשר לנסות שוב בעוד כמה דקות.")).toBeVisible();
     expect(hashOf(page)).toBe("");
     await page.goto(`${demoUrl()}/k#${SEEDED.escort(2)}`); // an escort's link on the sign-up page
     await expect(invalid(page)).toBeVisible();
+    await expect(page.getByText("ייתכן שההרשמה כבר נסגרה. לשאלות פונים לצוות.")).toBeVisible(); // the hint is the page's, never the token's
     await page.goto(`${demoUrl()}/s#${SEEDED.kk}`);
     await expect(invalid(page)).toBeVisible();
     await page.goto(`${demoUrl()}/s`);
@@ -136,9 +142,12 @@ test.describe("demo build", () => {
     await page.getByRole("button", { name: "קישור חדש: מלווה לדוגמה ב׳" }).click();
     await expect(page.getByText("הקישור הקיים של מלווה לדוגמה ב׳ יפסיק לעבוד מיד")).toBeVisible();
     await page.getByRole("button", { name: "קישור חדש במקומו" }).click();
-    const box = page.getByRole("region", { name: "הקישור החדש" });
+    const box = page.getByRole("region", { name: "הקישור החדש: מלווה לדוגמה ב׳" });
     await expect(box).toContainText("הקישור החדש: מלווה לדוגמה ב׳");
     await expect(box).toContainText("הקישור מוצג רק עכשיו.");
+    await expect(toast(page, "הקישור הונפק — מעתיקים או שולחים אותו עכשיו.")).toBeVisible();
+    await expect(box).toBeInViewport(); // right under its row, brought into view
+    await expect(box.getByLabel("הקישור")).toBeFocused();
     const url = await box.getByLabel("הקישור").inputValue();
     expect(url).toMatch(new RegExp(`^${demoUrl().replace(/[.]/g, "\\.")}/e#demo-e-1-2-[A-Za-z0-9_-]{10}$`));
     const token = url.split("#")[1];
@@ -158,14 +167,28 @@ test.describe("demo build", () => {
     await expect(escortLessons(tab)).toHaveCount(2);
     await tab.close();
 
+    // the schedule's link, low on the page: its own box, under its own row, in view — and the first one still open
+    await page.getByRole("button", { name: 'קישור חדש: הלו"ז' }).click();
+    await page.getByRole("button", { name: "קישור חדש במקומו" }).click();
+    const second = page.getByRole("region", { name: 'הקישור החדש: הלו"ז' });
+    await expect(second).toBeInViewport();
+    await expect(second.getByLabel("הקישור")).toBeFocused();
+    await expect(box).toHaveCount(1);
+    const rowOf = page.getByRole("button", { name: 'ביטול הקישור: הלו"ז' });
+    expect((await second.boundingBox())!.y).toBeGreaterThan((await rowOf.boundingBox())!.y);
+    await second.getByRole("button", { name: "סגירה" }).click();
+
     // closed, the token is nowhere on the page
     await box.getByRole("button", { name: "סגירה" }).click();
     await expect(box).toHaveCount(0);
     expect(await page.content()).not.toContain(token);
 
-    // revoke the sign-up link: asked first
+    // revoke the sign-up link: asked first — «חזרה» backs out, «כן, לבטל» revokes
     await page.getByRole("button", { name: "ביטול הקישור: הרשמה למכריכה לכריכה" }).click();
-    await page.getByRole("button", { name: "ביטול הקישור", exact: true }).click();
+    await expect(page.getByRole("button", { name: "חזרה" })).toBeFocused();
+    await page.getByRole("button", { name: "חזרה" }).click();
+    await page.getByRole("button", { name: "ביטול הקישור: הרשמה למכריכה לכריכה" }).click();
+    await page.getByRole("button", { name: "כן, לבטל את הקישור" }).click();
     await expect(toast(page, "הקישור בוטל. הוא כבר לא נפתח.")).toBeVisible();
     await expect(page.getByRole("button", { name: "הנפקת קישור: הרשמה למכריכה לכריכה" })).toBeVisible();
 
@@ -193,10 +216,13 @@ test.describe("demo build", () => {
     await expect(form.getByRole("alert")).toHaveText("צריך לבחור את השם שלך מהרשימה.");
     await form.getByLabel("השם שלי").selectOption({ label: "מלווה לדוגמה ד׳" });
     await form.getByRole("radio", { name: /^ספר לדוגמה ב׳/ }).check();
+    await expect(form.getByText("מי שכבר נרשם/ה לא יכול/ה לשנות את ההרשמה כאן.")).toBeVisible(); // said before sending
     await form.getByRole("button", { name: "הרשמה" }).click();
-    const done = page.getByRole("status", { name: "ההרשמה נשלחה" });
-    await expect(done).toContainText("נקלט — אם יש בעיה, הצוות יחזור אליך.");
-    await expect(done).toContainText("מלווה לדוגמה ד׳: ראשון 21:30–22:30 — ספר לדוגמה ב׳");
+    const done = page.getByRole("status", { name: "הבקשה נשלחה" });
+    await expect(done).toContainText("הבקשה נשלחה.");
+    await expect(done).toContainText("מה ששלחת: מלווה לדוגמה ד׳: ראשון 21:30–22:30 — ספר לדוגמה ב׳");
+    await expect(done).toContainText("ההרשמה נקלטת רק אם עוד לא נרשמת למשבצת הזו ויש מקום בקבוצה. כדי לבדוק או לשנות — פונים לצוות.");
+    await expect(done).not.toContainText("נקלט —"); // never a promise that it was recorded
     const answer = await done.locator("p").first().textContent();
 
     // the same name again, another group: the very same answer — and nothing changes (the staff decide)
@@ -235,8 +261,13 @@ test.describe("demo build", () => {
     await a.getByRole("button", { name: "הסרה", exact: true }).click();
     await expect(toast(page, "ההרשמה הוסרה")).toBeVisible();
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 6");
-    await sunday.getByText("עוד לא נרשמו (3)").click();
-    await expect(sunday.getByRole("list", { name: "עוד לא נרשמו · ראשון 21:30–22:30" })).toContainText("מלווה לדוגמה ד׳");
+    await sunday.getByText("עוד לא נרשמו (2)").click(); // ה׳ leads ספר א׳: not someone who still needs a group
+    const notYet = sunday.getByRole("list", { name: "עוד לא נרשמו · ראשון 21:30–22:30" });
+    await expect(notYet).toContainText("מלווה לדוגמה ד׳");
+    await expect(notYet).not.toContainText("מלווה לדוגמה ה׳");
+    await expect(sunday.getByText("מובילים קבוצה במשבצת הזו: מלווה לדוגמה ה׳")).toBeVisible();
+    const placeWho = sunday.getByRole("form", { name: "שיבוץ · ראשון 21:30–22:30" }).getByLabel("חניך/ה");
+    await expect(placeWho.locator("option", { hasText: "מלווה לדוגמה ה׳" })).toHaveCount(0);
   });
 
   test("«מכריכה לכריכה»: a group as the admin types it — leaders, a capacity — a placement, the books; a group with sign-ups is not deleted", async ({ page }) => {
@@ -246,18 +277,20 @@ test.describe("demo build", () => {
     await expect(monday).toContainText("אין קבוצות");
     await monday.getByRole("button", { name: "קבוצה חדשה: שני 21:30–22:30" }).click();
     const form = monday.getByRole("form", { name: "קבוצה חדשה · שני 21:30–22:30" });
+    await expect(form.locator("h4 bdi")).toHaveText("21:30–22:30"); // the range isolated: never drawn «22:30–21:30»
     await form.getByRole("button", { name: "שמירה" }).click();
-    await expect(form.getByRole("alert")).toHaveText("צריך לכתוב כותרת.");
+    await expect(form.getByRole("alert")).toHaveText("צריך לכתוב את שם הספר.");
+    await expect(form.getByLabel("שם הספר")).toBeFocused();
     await form.getByLabel("שם הספר").fill("ספר חדש לדוגמה");
     await form.getByLabel("מחבר/ת (לא חובה)").fill("מחבר/ת לדוגמה");
     await form.getByLabel("חדר (לא חובה)").selectOption({ label: "כיתה ג׳" });
     await form.getByLabel("תפוסה").fill("2");
     await form.getByLabel("מרשימת החניכים").selectOption({ label: "מלווה לדוגמה ה׳" });
     await form.getByRole("button", { name: "הוספת מוביל/ה" }).click();
+    await expect(form.getByRole("list", { name: "המובילים" }).getByRole("listitem")).toHaveCount(1);
+    // typed but not added with «הוספת מוביל/ה»: still saved with the group
     await form.getByLabel("מוביל/ה", { exact: true }).selectOption({ label: "מעין פרת" });
     await form.getByLabel("שם", { exact: true }).fill("מוביל/ה לדוגמה");
-    await form.getByRole("button", { name: "הוספת מוביל/ה" }).click();
-    await expect(form.getByRole("list", { name: "המובילים" }).getByRole("listitem")).toHaveCount(2);
     await noSidewaysScroll(page);
     await form.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "הקבוצה נוספה")).toBeVisible();
@@ -266,15 +299,15 @@ test.describe("demo build", () => {
     await expect(g).toContainText("כיתה ג׳ · מובילים: מלווה לדוגמה ה׳ (חניך/ה), מוביל/ה לדוגמה (מעין פרת)");
     await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 0 מתוך 2");
 
-    // a placement by the staff, from «עוד לא נרשמו»
-    await monday.getByText("עוד לא נרשמו (6)").click();
+    // a placement by the staff, from «עוד לא נרשמו» (ה׳ leads the new group: not among them)
+    await monday.getByText("עוד לא נרשמו (5)").click();
     const place = monday.getByRole("form", { name: "שיבוץ · שני 21:30–22:30" });
     await place.getByLabel("חניך/ה").selectOption({ label: "מלווה לדוגמה א׳" });
     await place.getByLabel("לקבוצה").selectOption({ label: "ספר חדש לדוגמה" });
     await place.getByRole("button", { name: "שיבוץ" }).click();
     await expect(toast(page, "שובץ/ה")).toBeVisible();
     await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 2");
-    await expect(monday.getByText("עוד לא נרשמו (5)")).toBeVisible();
+    await expect(monday.getByText("עוד לא נרשמו (4)")).toBeVisible();
 
     // the books to order: nothing filled in for the admin; the count they type, ordered
     const books = g.getByRole("form", { name: "ספרים · ספר חדש לדוגמה" });
@@ -369,6 +402,16 @@ test.describe("mock build", () => {
         escort_note: "הערה לדוגמה", phone: "טלפון לדוגמה מהשרת", transport: true, driver: { name: "נהג/ת לדוגמה", phone: "טלפון נהג/ת לדוגמה" },
         ticks: { reminded: null, met: null, introduced: null, gift: null },
       },
+      {
+        lesson_id: 42, kind: "lesson", day: 2, date: addDays(start, 2), start_min: 510, end_min: 585, room: "חדר לדוגמה",
+        speaker: { name: "מרצה בלי טלפון לדוגמה", gender: "m" }, title: "כותרת שנייה לדוגמה", self_intro: true, duty_notes: [],
+        escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null },
+      },
+      {
+        lesson_id: 43, kind: "memorial", day: 2, date: addDays(start, 2), start_min: 780, end_min: 795, room: "חדר לדוגמה",
+        speaker: null, title: null, self_intro: false, duty_notes: [], escort_note: null, phone: null, transport: false, driver: null,
+        ticks: { reminded: null, met: null, introduced: null, gift: null },
+      },
     ],
   };
   const kkForm: KkForm = {
@@ -434,6 +477,17 @@ test.describe("mock build", () => {
     await expect(l).toContainText("ניסוח לדוגמה");
     await expect(l).toContainText("הערה לדוגמה");
     await expect(page.getByText("הטלפון של כל מרצה יופיע כאן")).toHaveCount(0);
+    await expect(l.getByRole("checkbox", { name: /^הצגתי את המרצה/ })).toBeVisible();
+    // past W−7, a speaker with no phone on file: where it is, not a blank
+    const noPhone = escortLessons(page).nth(1);
+    await expect(noPhone).toContainText("טלפון המרצה");
+    await expect(noPhone.getByText("אצל הצוות", { exact: true })).toBeVisible();
+    await expect(noPhone.getByRole("checkbox", { name: /^המרצה הציג את עצמו/ })).toBeVisible(); // a self-introduction
+    // a memorial slot with nobody named: no «המרצה: TBD», «זמן זיכרון» once
+    const memorial = escortLessons(page).nth(2);
+    await expect(memorial).not.toContainText("המרצה: TBD");
+    expect((await memorial.innerText()).split("זמן זיכרון").length - 1).toBe(1);
+    await expect(memorial).not.toContainText("טלפון המרצה");
     await l.getByRole("checkbox", { name: /^הזכרתי למרצה/ }).check();
     await expect(l.getByRole("checkbox", { name: /^הזכרתי למרצה/ })).toBeChecked();
     await l.getByLabel("כתובת איסוף למרצה").fill("  כתובת לדוגמה  ");
@@ -451,7 +505,7 @@ test.describe("mock build", () => {
     await form.getByLabel("השם שלי").selectOption({ label: "חניך/ה לדוגמה ב׳" });
     await form.getByRole("radio", { name: /^ספר לדוגמה/ }).first().check();
     await form.getByRole("button", { name: "הרשמה" }).click();
-    await expect(page.getByRole("status", { name: "ההרשמה נשלחה" })).toContainText("נקלט — אם יש בעיה, הצוות יחזור אליך.");
+    await expect(page.getByRole("status", { name: "הבקשה נשלחה" })).toContainText("הבקשה נשלחה.");
     expect(sb.rpc.get("kk_signup")).toEqual([{ p_token: TOKEN, p_roster: 12, p_group: 21 }]);
 
     // the schedule
@@ -474,7 +528,7 @@ test.describe("mock build", () => {
     for (const p of ["e", "k", "s"]) {
       await page.goto(`${mockUrl()}/${p}#${TOKEN}`);
       await expect(invalid(page)).toBeVisible();
-      await expect(page.getByText("הקישור לא בתוקף: אולי פג תוקפו, בוטל או הוחלף בקישור חדש.")).toBeVisible();
+      await expect(page.getByText("אולי פג תוקפו, בוטל או הוחלף בקישור חדש.", { exact: true })).toBeVisible();
       expect(hashOf(page)).toBe("");
     }
     // the network, not the link: try again, the token still in memory
@@ -540,7 +594,7 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("issue_link")).toEqual([{ p_edition: 7, p_scope: "kk_signup", p_subject: null }]);
 
     await page.getByRole("button", { name: "ביטול הקישור: מלווה לדוגמה א׳" }).click();
-    await page.getByRole("button", { name: "ביטול הקישור", exact: true }).click();
+    await page.getByRole("button", { name: "כן, לבטל את הקישור" }).click();
     await expect.poll(() => sb.rpc.get("revoke_link")).toEqual([{ p_link: 5 }]);
     for (const p of ["/rest/v1/rpc/issue_link", "/rest/v1/rpc/revoke_link"]) {
       for (const c of sb.calls.filter((x) => x.path === p)) expect(c.auth, p).toBe(`Bearer ${session.access_token}`);

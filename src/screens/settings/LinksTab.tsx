@@ -1,11 +1,12 @@
 // «קישורים» — links without an account (DESIGN «גישה בלי חשבון»), issued by an
 // edition's admins: a personal link for each trainee who escorts, one sign-up
 // link for מכריכה לכריכה, one schedule link. The token is shown once, right
-// after it is issued — copy it, send it on WhatsApp, open it — and never again:
+// after it is issued, under the row that issued it (scrolled to, its address in
+// focus; several may be open at once) — copy it, send it on WhatsApp, open it — and never again:
 // the database keeps only its hash, so afterwards a link can only be replaced
 // (a new token; the old one stops at once) or revoked. The list shows each
 // link's state and expiry, never a token. Everything goes through port.links.
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { demoToken } from "../../data/demoLinks";
 import { type IssuedLink, type LinkScope, linkState, linkUrl, type ShareLink } from "../../data/links";
@@ -37,11 +38,21 @@ function currentOf(links: ShareLink[], scope: LinkScope, subject: number | null)
 
 type Issued = IssuedLink & { scope: LinkScope; subject: number | null; who: string };
 
+/** Which row a just-issued link belongs to. */
+const rowKey = (scope: LinkScope, subject: number | null) => `${scope}-${subject ?? 0}`;
+
+/** The links just issued, by row, until each is closed: shown under its own row, never all in one place. */
+interface IssuedSlot {
+  of: (scope: LinkScope, subject: number | null) => Issued | null;
+  put: (x: Issued) => void;
+  close: (scope: LinkScope, subject: number | null) => void;
+}
+
 export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
   const [links, setLinks] = useState<ShareLink[] | null>(null);
   const [week, setWeek] = useState<Week | null>(null);
   const [failed, setFailed] = useState(false);
-  const [issued, setIssued] = useState<Issued | null>(null);
+  const [issued, setIssued] = useState<Record<string, Issued>>({});
 
   const load = useCallback(async () => {
     if (editionId == null) return;
@@ -57,7 +68,7 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
   useEffect(() => {
     setLinks(null);
     setWeek(null);
-    setIssued(null); // a token belongs to the edition it was issued in
+    setIssued({}); // a token belongs to the edition it was issued in
     void load();
   }, [load]);
 
@@ -72,6 +83,15 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
     if (failed) return <LoadError onRetry={() => void load()} />;
     if (!links || !week || week.edition.id !== editionId) return <Loading />;
     const archived = week.edition.kind === "archive" || week.edition.status === "archived";
+    const slot: IssuedSlot = {
+      of: (scope, subject) => issued[rowKey(scope, subject)] ?? null,
+      put: (x) => setIssued((cur) => ({ ...cur, [rowKey(x.scope, x.subject)]: x })),
+      close: (scope, subject) =>
+        setIssued((cur) => {
+          const { [rowKey(scope, subject)]: _, ...rest } = cur;
+          return rest;
+        }),
+    };
     return (
       <>
         <p className="text-sm text-ink-soft">
@@ -79,9 +99,8 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
           לעבוד) או לבטל.
         </p>
         {archived && <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">המחזור בארכיון: לא מנפיקים בו קישורים, והקישורים שלו לא נפתחים.</p>}
-        {issued && <IssuedBox issued={issued} edition={week.edition} onClose={() => setIssued(null)} />}
-        <EscortLinks data={data} week={week} links={links} archived={archived} onIssued={(x) => setIssued(x)} reload={load} />
-        <ClassLinks data={data} week={week} links={links} archived={archived} onIssued={(x) => setIssued(x)} reload={load} />
+        <EscortLinks data={data} week={week} links={links} archived={archived} issued={slot} reload={load} />
+        <ClassLinks data={data} week={week} links={links} archived={archived} issued={slot} reload={load} />
         {data.mode === "demo" && week.edition.kind === "demo" && <DemoLinksPanel week={week} />}
       </>
     );
@@ -94,11 +113,21 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
   );
 }
 
-/** The token, once: the address to copy, send or open — and the warning that it will not be shown again. */
+/**
+ * The token, once: the address to copy, send or open — and the warning that it will not be shown again. Right under
+ * the row that issued it, brought into view with its address in focus, so a click lower on the page is never followed
+ * by nothing visible (and a second click that would revoke a link nobody saw).
+ */
 function IssuedBox({ issued, edition, onClose }: { issued: Issued; edition: Edition; onClose: () => void }) {
   const { notify } = useSettings();
   const id = useId();
+  const box = useRef<HTMLElement>(null);
+  const field = useRef<HTMLInputElement>(null);
   const url = linkUrl(window.location.origin, issued.scope, issued.token);
+  useEffect(() => {
+    field.current?.focus({ preventScroll: true });
+    box.current?.scrollIntoView({ block: "center" });
+  }, [issued.link_id]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -109,13 +138,13 @@ function IssuedBox({ issued, edition, onClose }: { issued: Issued; edition: Edit
     }
   };
   return (
-    <section aria-label="הקישור החדש" className="space-y-3 rounded-xl border-2 border-ink bg-card p-4 shadow-sm sm:p-5">
+    <section ref={box} aria-label={`הקישור החדש: ${issued.who}`} className="space-y-3 rounded-xl border-2 border-ink bg-card p-4 shadow-sm sm:p-5">
       <h3 className="font-display text-lg font-semibold">הקישור החדש: {issued.who}</h3>
       <div>
         <label htmlFor={`${id}-url`} className="mb-1 block text-sm font-semibold">
           הקישור
         </label>
-        <input id={`${id}-url`} readOnly value={url} dir="ltr" onFocus={(e) => e.target.select()} className={`${INPUT} font-mono text-sm`} />
+        <input ref={field} id={`${id}-url`} readOnly value={url} dir="ltr" onFocus={(e) => e.target.select()} className={`${INPUT} font-mono text-sm`} />
       </div>
       <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">
         <b>הקישור מוצג רק עכשיו.</b> אחרי שסוגרים את המסגרת הזו אי אפשר לראות אותו שוב, רק להחליף אותו בקישור חדש. בתוקף עד {israelMoment(issued.expires_at)}.
@@ -162,12 +191,12 @@ interface RowProps {
   week: Week;
   links: ShareLink[];
   archived: boolean;
-  onIssued: (x: Issued) => void;
+  issued: IssuedSlot;
   reload: () => Promise<void>;
 }
 
 /** A trainee who escorts a closed lesson, or still holds a live link. */
-function EscortLinks({ data, week, links, archived, onIssued, reload }: RowProps) {
+function EscortLinks({ data, week, links, archived, issued, reload }: RowProps) {
   const lessons = useMemo(() => {
     const m = new Map<number, number>();
     for (const l of week.lessons) if (l.state === "closed" && l.escort_roster_id != null) m.set(l.escort_roster_id, (m.get(l.escort_roster_id) ?? 0) + 1);
@@ -180,7 +209,7 @@ function EscortLinks({ data, week, links, archived, onIssued, reload }: RowProps
     <Panel title="קישורים למלווים" aside={escorts.length === 1 ? "מלווה אחד/ת" : `${escorts.length} מלווים`}>
       <p className="mb-3 text-sm text-ink-soft">
         לכל חניך/ה שמלווה: השיעורים שלו/ה, «משהו שחשוב לדעת» וארבעת הסימונים. הטלפון של המרצה מופיע רק משבוע לפני השבוע. הקישור פג בסוף השבוע (או 30 יום אחרי ההנפקה, כל עוד
-        התאריך TBD).
+        התאריך TBD) (הצעה).
       </p>
       {escorts.length === 0 ? (
         <p className="text-ink-soft">עוד אין חניכים שמלווים שיעור סגור. משבצים מלווה בלוח של שיעור סגור, בשלב «מלווה».</p>
@@ -197,7 +226,7 @@ function EscortLinks({ data, week, links, archived, onIssued, reload }: RowProps
               cells={[r.full_name, (lessons.get(r.id) ?? 0) === 1 ? "שיעור אחד" : `${lessons.get(r.id) ?? 0} שיעורים`]}
               link={currentOf(links, "escort", r.id)}
               archived={archived}
-              onIssued={onIssued}
+              issued={issued}
               reload={reload}
             />
           ))}
@@ -208,26 +237,26 @@ function EscortLinks({ data, week, links, archived, onIssued, reload }: RowProps
 }
 
 /** The class's two links: the sign-up for מכריכה לכריכה and the schedule. */
-function ClassLinks({ data, week, links, archived, onIssued, reload }: RowProps) {
+function ClassLinks({ data, week, links, archived, issued, reload }: RowProps) {
   const w = week.edition.settings?.kk_window;
   return (
     <Panel title="קישורים לכל החניכים">
       <ul className="mb-3 space-y-1 text-sm text-ink-soft">
         <li>
           <b className="text-ink">הרשמה למכריכה לכריכה:</b> רשימת החניכים בשמות בלבד והקבוצות שפתוחות להרשמה. פג כשחלון ההרשמה נסגר
-          {w ? ` (${israelMoment(w.closes_at)})` : "; עוד אין חלון, ולכן ההרשמה סגורה"} —{" "}
+          {w ? ` (${israelMoment(w.closes_at)})` : "; עוד אין חלון, ולכן ההרשמה סגורה"} (הצעה) —{" "}
           <Link to="/kk" className="font-semibold underline">
             החלון והקבוצות במסך «מכריכה לכריכה»
           </Link>
           .
         </li>
         <li>
-          <b className="text-ink">הלו"ז:</b> הלו"ז הציבורי בלבד, כמו בייצוא למעצבת. פג בסוף השבוע.
+          <b className="text-ink">הלו"ז:</b> הלו"ז הציבורי בלבד, כמו בייצוא למעצבת. פג בסוף השבוע (או 30 יום אחרי ההנפקה, כל עוד התאריך TBD) (הצעה).
         </li>
       </ul>
       <Rows label="קישורים לכל החניכים" head={["קישור", "הקישור"]}>
-        <LinkRow data={data} week={week} scope="kk_signup" subject={null} who="הרשמה למכריכה לכריכה" cells={["הרשמה למכריכה לכריכה"]} link={currentOf(links, "kk_signup", null)} archived={archived} onIssued={onIssued} reload={reload} />
-        <LinkRow data={data} week={week} scope="schedule" subject={null} who='הלו"ז' cells={['לו"ז לצפייה']} link={currentOf(links, "schedule", null)} archived={archived} onIssued={onIssued} reload={reload} />
+        <LinkRow data={data} week={week} scope="kk_signup" subject={null} who="הרשמה למכריכה לכריכה" cells={["הרשמה למכריכה לכריכה"]} link={currentOf(links, "kk_signup", null)} archived={archived} issued={issued} reload={reload} />
+        <LinkRow data={data} week={week} scope="schedule" subject={null} who='הלו"ז' cells={['לו"ז לצפייה']} link={currentOf(links, "schedule", null)} archived={archived} issued={issued} reload={reload} />
       </Rows>
     </Panel>
   );
@@ -242,7 +271,7 @@ function LinkRow({
   cells,
   link,
   archived,
-  onIssued,
+  issued,
   reload,
 }: {
   data: DataPort;
@@ -253,18 +282,20 @@ function LinkRow({
   cells: string[];
   link: ShareLink | null;
   archived: boolean;
-  onIssued: (x: Issued) => void;
+  issued: IssuedSlot;
   reload: () => Promise<void>;
 }) {
   const { busy, run } = useAction();
   const [asking, setAsking] = useState<"replace" | "revoke" | null>(null);
   const live = link != null && linkState(link) === "live";
   const all = [...cells, <StateBadge key="s" link={link} />];
+  const mine = issued.of(scope, subject);
+  const below = mine ? <IssuedBox issued={mine} edition={week.edition} onClose={() => issued.close(scope, subject)} /> : undefined;
   const issue = async () => {
     setAsking(null);
     const box: { out?: IssuedLink } = {};
-    const ok = await run(`issue-${scope}-${subject}`, async () => (box.out = await data.links.issue(week.edition.id, scope, subject)), null);
-    if (ok && box.out) onIssued({ ...box.out, scope, subject, who });
+    const ok = await run(`issue-${scope}-${subject}`, async () => (box.out = await data.links.issue(week.edition.id, scope, subject)), "הקישור הונפק — מעתיקים או שולחים אותו עכשיו.");
+    if (ok && box.out) issued.put({ ...box.out, scope, subject, who });
     await reload();
   };
   const revoke = async () => {
@@ -289,7 +320,8 @@ function LinkRow({
                 </>
               )
             }
-            confirm={asking === "replace" ? "קישור חדש במקומו" : "ביטול הקישור"}
+            confirm={asking === "replace" ? "קישור חדש במקומו" : "כן, לבטל את הקישור"}
+            cancel="חזרה"
             onConfirm={() => void (asking === "replace" ? issue() : revoke())}
             onCancel={() => setAsking(null)}
           />
@@ -300,6 +332,7 @@ function LinkRow({
   return (
     <Row
       cells={all}
+      below={below}
       actions={
         archived ? undefined : live ? (
           <>
@@ -307,7 +340,7 @@ function LinkRow({
               קישור חדש
             </Button>
             <Button kind="danger" onClick={() => setAsking("revoke")} busy={busy === `revoke-${link!.id}`} aria-label={`ביטול הקישור: ${who}`}>
-              ביטול
+              ביטול הקישור
             </Button>
           </>
         ) : (
