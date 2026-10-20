@@ -4,7 +4,7 @@
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
-  APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
+  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -117,11 +117,13 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     };
   };
   /** One anon function — the publishable key, nobody signed in — committed, or rolled back with its code. */
-  async function anon(sql: string, params: unknown[]): Promise<{ ok: true; v: unknown } | { ok: false; code: string }> {
+  async function anon(sql: string, params: unknown[], from?: string): Promise<{ ok: true; v: unknown } | { ok: false; code: string }> {
     await db.query("begin");
     try {
       await db.query("set local role anon");
       await db.query("select set_config('request.jwt.claims', '', true)");
+      // as PostgREST passes the request's headers; the caller's address keys a class link's rate limit
+      await db.query("select set_config('request.headers', $1, true)", [from == null ? "{}" : JSON.stringify({ "x-forwarded-for": `${from}, 192.0.2.1` })]);
       const r = await db.query(sql, params);
       await db.query("commit");
       return { ok: true, v: Object.values(r.rows[0])[0] };
@@ -138,16 +140,39 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         await db.query("update public.editions set start_date = $2 where id = $1", [ed, step.startDate]);
         return "ok";
       }
+      if ("firstDayFrom" in step) {
+        await db.query("update public.editions set first_day_from = $2 where id = $1", [ed, step.firstDayFrom]);
+        return "ok";
+      }
       if ("expire" in step) {
         await db.query("update public.share_links set expires_at = now() - interval '1 minute' where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.expire)]);
+        return "ok";
+      }
+      if ("rateHits" in step) {
+        const l = await one("select scope from public.share_links where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.rateHits)]);
+        await db.query(
+          `insert into public.share_link_hits (token_hash, client_hash, window_start, hits)
+           values (extensions.digest($1, 'sha256'), case when $2 = 'escort' then '\\x'::bytea else extensions.digest($3, 'sha256') end, now(), $4)
+           on conflict (token_hash, client_hash) do update set window_start = now(), hits = excluded.hits`,
+          [tokenOf(step.rateHits), l?.scope ?? "escort", step.from ?? "", step.hits],
+        );
+        return "ok";
+      }
+      if ("rateWindowPassed" in step) {
+        await db.query("update public.share_link_hits set window_start = window_start - interval '11 minutes' where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.rateWindowPassed)]);
         return "ok";
       }
       if ("anon" in step) {
         const t = tokenOf(step.token);
         if (step.anon === "escortView" || step.anon === "kkForm" || step.anon === "scheduleView") {
           const fn = { escortView: "escort_view", kkForm: "kk_form", scheduleView: "schedule_view" }[step.anon];
-          const r = await anon(`select public.${fn}($1)`, [t]);
-          return r.ok ? publicRead(step.anon, r.v, await nameMaps()) : r.code;
+          const out: string[] = [];
+          let names: Awaited<ReturnType<typeof nameMaps>> | undefined;
+          for (let i = 0; i < (step.times ?? 1); i++) {
+            const r = await anon(`select public.${fn}($1)`, [t], step.from);
+            out.push(r.ok ? publicRead(step.anon, r.v, (names ??= await nameMaps())) : r.code);
+          }
+          return answers(out);
         }
         if (step.anon === "escortTick") {
           const r = await anon("select public.escort_tick($1, $2, $3, $4)", [t, (await at(step.at)).id, step.item, step.on]);

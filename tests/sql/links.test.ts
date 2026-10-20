@@ -2,7 +2,8 @@
 // who issues, replaces and revokes (an edition's admins only); what a token is
 // (128 bits, returned once, only its sha256 kept); the six anon functions —
 // every bad, expired, revoked, wrong-scope or rate-limited token, every lesson
-// that is not the escort's, refused with the SAME error; what the escort's page
+// that is not the escort's, refused with the SAME error; the rate limit — an
+// escort's link one count, a class link one per caller's address; what the escort's page
 // shows and when (the phone from W−7 only, the driver once arranged, never an
 // amount, an e-mail, the pickup address or a note — asserted on the JSON's keys
 // and text); the ticks; the write-only pickup address; the public schedule.
@@ -118,6 +119,9 @@ describe("links without an account", () => {
     }
   }
 
+  /** The request's headers as PostgREST passes them: an address (as X-Forwarded-For, behind a proxy), headers as given, or none. */
+  const from = (run: Run, who: string | null | Record<string, string>) =>
+    run("owner", "select set_config('request.headers', $1, true)", [JSON.stringify(who == null ? {} : typeof who === "string" ? { "x-forwarded-for": `${who}, 192.0.2.1` } : who)]);
   const version = async (id: number) => Number((await db.query("select version from public.lessons where id = $1", [id])).rows[0].version);
   const israelDay = "(now() at time zone 'Asia/Jerusalem')::date";
 
@@ -332,13 +336,63 @@ describe("links without an account", () => {
       });
     });
 
-    it("let the class's links make 600 calls in the window", async () => {
+    it("count an escort's link as one, whatever address the calls come from", async () => {
       await inTx(async (run) => {
-        await run("owner", "insert into public.share_link_hits (token_hash, window_start, hits) values (extensions.digest($1, 'sha256'), now(), 599)", [token.s]);
-        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
-        expect(await failure(run("anon", "select public.schedule_view($1)", [token.s]))).toEqual(LINK_INVALID);
+        await from(run, "198.51.100.7");
+        for (let i = 0; i < 60; i++) await run("anon", "select public.escort_view($1)", [token.e2]);
+        await from(run, "203.0.113.9");
+        expect(await failure(run("anon", "select public.escort_view($1)", [token.e2]))).toEqual(LINK_INVALID);
       });
     });
+
+    it("count a class link per caller's address — 1200 in 10 minutes each — so one holder using up their count leaves the others in", async () => {
+      await inTx(async (run) => {
+        const hits = (who: string, n: number) =>
+          run("owner", "insert into public.share_link_hits (token_hash, client_hash, window_start, hits) values (extensions.digest($1, 'sha256'), extensions.digest($2, 'sha256'), now(), $3)", [token.s, who, n]);
+        await hits("198.51.100.7", 1199);
+        await from(run, "198.51.100.7");
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+        expect(await failure(run("anon", "select public.schedule_view($1)", [token.s]))).toEqual(LINK_INVALID);
+        await from(run, "203.0.113.9"); // someone else holding the same link
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+        await from(run, null); // no address reported (not through the API): a count of its own
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+        // the address is Cloudflare's cf-connecting-ip, else X-Forwarded-For's first entry
+        await from(run, { "cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.9" });
+        expect(await failure(run("anon", "select public.schedule_view($1)", [token.s]))).toEqual(LINK_INVALID);
+        await from(run, { "x-forwarded-for": " 198.51.100.7 , 10.0.0.1" });
+        expect(await failure(run("anon", "select public.schedule_view($1)", [token.s]))).toEqual(LINK_INVALID);
+        await run("owner", "select set_config('request.headers', 'not json', true)");
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+        // only the hash of an address is kept, and a passed window's counts are cleared by the next call
+        const kept = (await run("owner", "select client_hash from public.share_link_hits where token_hash = extensions.digest($1, 'sha256')", [token.s])).rows;
+        expect(kept.every((r) => r.client_hash.length === 32)).toBe(true);
+        expect(JSON.stringify(kept)).not.toContain("198.51.100.7");
+        await run("owner", "update public.share_link_hits set window_start = now() - interval '11 minutes' where token_hash = extensions.digest($1, 'sha256')", [token.s]);
+        await from(run, "192.0.2.50");
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+        expect((await run("owner", "select count(*)::int as n from public.share_link_hits where token_hash = extensions.digest($1, 'sha256')", [token.s])).rows[0].n).toBe(1);
+      });
+    });
+
+    // The review's attack (anon-attack, «DoS: one holder of the class's kk link burns its 600-call budget…»): the
+    // class link was one count for everyone, so one holder's loop of cheap reads closed the sign-up — and the
+    // schedule — for the whole class, and the page sent them to ask for a new link. Now each address has its own.
+    it("ATTACK, closed: one holder's loop through the class's links does not lock the class out", async () => {
+      await inTx(async (run) => {
+        await run(ED_ADMIN, "select public.kk_set_window($1, now() - interval '1 day', now() + interval '3 days')", [ed]);
+        const group = Number(await run(ED_ADMIN, "select public.kk_add_group($1, 1, 1290, '{\"title\": \"ספר לבדיקה\", \"capacity\": 5}') as id", [ed]).then((x) => x.rows[0].id));
+        await from(run, "198.51.100.66"); // the attacker
+        for (let i = 0; i < 1200; i++) await run("anon", "select public.kk_form($1)", [token.k]);
+        expect(await failure(run("anon", "select public.kk_form($1)", [token.k]))).toEqual(LINK_INVALID); // their own count is used up
+        for (let i = 0; i < 1200; i++) await run("anon", "select public.schedule_view($1)", [token.s]);
+        await from(run, "203.0.113.20"); // a trainee
+        expect(await code(run("anon", "select public.kk_form($1)", [token.k]))).toBe("ok");
+        expect((await run("anon", "select public.kk_signup($1, $2, $3) as v", [token.k, roster.r2, group])).rows[0].v).toEqual({ status: "received" });
+        expect((await run("owner", "select roster_id from public.kk_signups where group_id = $1", [group])).rows.map((x) => Number(x.roster_id))).toEqual([roster.r2]);
+        expect(await code(run("anon", "select public.schedule_view($1)", [token.s]))).toBe("ok");
+      });
+    }, 120_000);
 
     it("are anon's alone among the API roles, and anon reaches nothing else", async () => {
       await inTx(async (run) => {

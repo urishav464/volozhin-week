@@ -7,9 +7,9 @@ import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
 import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vetting, Week } from "../../src/domain/types";
 import type { KkGroupFields } from "../../src/data/kk";
-import type { LinkScope } from "../../src/data/links";
+import { linkClient, type LinkScope } from "../../src/data/links";
 import {
-  APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE,
+  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   type Step, transportLine, transportRead,
 } from "./fixture";
@@ -109,22 +109,42 @@ export function engineDriver(): Driver {
         new Engine(week, { memberId: 1, role: "admin", global: true }, undefined, shared).refreshLinkExpiry();
         return "ok";
       }
+      if ("firstDayFrom" in step) {
+        week.edition.first_day_from = step.firstDayFrom;
+        return "ok";
+      }
       if ("expire" in step) {
         const l = shared.links.find((x) => x.token === tokenOf(step.expire));
         if (l) l.expires_at = new Date(Date.now() - 60_000).toISOString();
         return "ok";
       }
+      if ("rateHits" in step) {
+        const l = shared.links.find((x) => x.token === tokenOf(step.rateHits));
+        if (l) shared.linkHits[`${l.token} ${linkClient(l.scope, step.from)}`] = { window_start: new Date().toISOString(), hits: step.hits };
+        return "ok";
+      }
+      if ("rateWindowPassed" in step) {
+        for (const [k, h] of Object.entries(shared.linkHits)) {
+          if (k.startsWith(`${tokenOf(step.rateWindowPassed)} `)) h.window_start = new Date(Date.parse(h.window_start) - 11 * 60_000).toISOString();
+        }
+        return "ok";
+      }
       if ("anon" in step) {
-        const e = new Engine(week, { memberId: 0, role: "content" }, undefined, shared);
+        const e = new Engine(week, { memberId: 0, role: "content", address: "from" in step ? step.from : undefined }, undefined, shared);
         try {
           const t = tokenOf(step.token);
           switch (step.anon) {
             case "escortView":
-              return publicRead("escortView", e.escortView(t), names);
             case "kkForm":
-              return publicRead("kkForm", e.kkForm(t), names);
             case "scheduleView":
-              return publicRead("scheduleView", e.scheduleView(t), names);
+              return answers(Array.from({ length: ("times" in step ? step.times : undefined) ?? 1 }, () => {
+                try {
+                  return publicRead(step.anon, step.anon === "escortView" ? e.escortView(t) : step.anon === "kkForm" ? e.kkForm(t) : e.scheduleView(t), names);
+                } catch (err) {
+                  if (err instanceof CommandError) return err.code;
+                  throw err;
+                }
+              }));
             case "escortTick":
               return publicRead("escortTick", e.escortTick(t, at(step.at).id, step.item as never, step.on as boolean), names);
             case "escortPickup":

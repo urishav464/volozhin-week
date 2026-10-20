@@ -569,6 +569,31 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", issue: "schedule", name: "s5" },
   ],
 
+  "links: the rate limit — an escort's link counted as one, a class link per caller's address, never one count for the class": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false },
+    { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניך לדוגמה", name: "e2" },
+    { as: "E", issue: "schedule", name: "s" },
+    { as: "E", issue: "kk_signup", name: "k" },
+    { anon: "escortView", token: "e1", times: 60 },
+    { anon: "escortView", token: "e1" }, // the 61st in ten minutes
+    { anon: "escortView", token: "e1", from: "198.51.100.7" }, // one person's link: one count, from anywhere
+    { anon: "escortView", token: "e2" }, // another link is counted apart
+    { rateWindowPassed: "e1" },
+    { anon: "escortView", token: "e1" }, // ten minutes later
+    { rateHits: "s", from: "198.51.100.7", hits: 1199 },
+    { anon: "scheduleView", token: "s", from: "198.51.100.7", times: 2 }, // the 1200th, then refused
+    { anon: "scheduleView", token: "s", from: "203.0.113.9" }, // someone else holding the same link still gets in
+    { anon: "scheduleView", token: "s" }, // no address reported: a count of its own
+    { rateHits: "k", from: "198.51.100.7", hits: 1200 },
+    { anon: "kkForm", token: "k", from: "198.51.100.7" },
+    { anon: "kkForm", token: "k", from: "203.0.113.9" },
+    { rateWindowPassed: "s" },
+    { anon: "scheduleView", token: "s", from: "198.51.100.7" },
+  ],
+
   "the escort's link: own lessons only, the phone from W−7, ticks, a write-only pickup address": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
     { as: "A", close: "אלפא", at: [1, 510] },
@@ -669,6 +694,14 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", kkUpdate: "ספר ג", patch: { capacity: 2 } },
     { as: "E", kkUpdate: "ספר ג", patch: { capacity: 2, room: "ספרייה" } },
     { anon: "kkForm", token: "k" }, // ספר א closed, ספר ג offered now
+    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ה", capacity: 3 } },
+    { anon: "kkForm", token: "k" }, // Sunday's track on offer
+    { firstDayFrom: 1350 }, // Sunday opens at 22:30: its kk row is off the grid
+    { anon: "kkForm", token: "k" }, // the track is not offered any more…
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // …nor signed up for
+    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ו", capacity: 3 } }, // outside_grid
+    { firstDayFrom: 510 },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // on the grid again
     { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
     { as: "A", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
     { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: true },

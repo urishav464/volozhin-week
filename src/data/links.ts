@@ -67,9 +67,18 @@ export function linkExpiry(edition: Pick<Edition, "start_date" | "settings">, sc
   return edition.start_date ? israelMidnight(addDays(edition.start_date, 5)) : fallback;
 }
 
-/** Calls a token may make in RATE_WINDOW_MS («הצעה»): an escort's link is one person's; the class shares the others. app.link_rate. */
+/**
+ * Calls a link may make in RATE_WINDOW_MS («הצעה»), app.link_rate: an escort's link is one person's, counted as one; a
+ * class link (the sign-up, the schedule) is counted per caller's address (`linkClient`) — never one count the whole
+ * class shares, which one holder could use up for everyone.
+ */
 export function linkRate(scope: LinkScope): number {
-  return scope === "escort" ? 60 : 600;
+  return scope === "escort" ? 60 : 1200;
+}
+
+/** Whose count a call is (app.link_client): one for an escort's link; per caller's address ("" when none was reported) for a class link. */
+export function linkClient(scope: LinkScope, address: string | undefined): string {
+  return scope === "escort" ? "" : `@${address?.trim() ?? ""}`;
 }
 export const RATE_WINDOW_MS = 10 * 60_000;
 

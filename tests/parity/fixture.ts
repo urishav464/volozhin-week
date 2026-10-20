@@ -119,7 +119,8 @@ export type Step =
   // links and מכריכה לכריכה (milestone 5a) — tokens by the name a step gave them, groups by title, tracks by [day, start]
   | { as: ActorKey; issue: string; trainee?: string | null; name: string }
   | { as: ActorKey; revoke: string }
-  | { anon: "escortView" | "kkForm" | "scheduleView"; token: string }
+  /** `from`: the caller's address as the API would report it (a class link's rate limit is per address); `times`: the call made that many times, the last answer kept. */
+  | { anon: "escortView" | "kkForm" | "scheduleView"; token: string; from?: string; times?: number }
   | { anon: "escortTick"; token: string; at: At; item: string; on: boolean | null }
   | { anon: "escortPickup"; token: string; at: At; address: string | null }
   | { anon: "kkSignup"; token: string; trainee: string; group: string }
@@ -132,8 +133,14 @@ export type Step =
   | { as: ActorKey; bookOrder: string; copies: number | null; ordered: boolean | null }
   /** The week's opening Sunday, set by hand (the «מחזור» tab writes the row directly): a yyyy-mm-dd or TBD. */
   | { startDate: string | null }
+  /** Sunday's opening minute, set by hand (as the «מחזור» tab writes it). */
+  | { firstDayFrom: number | null }
   /** A link's expiry moved into the past, by hand. */
-  | { expire: string };
+  | { expire: string }
+  /** Ten minutes passed for a link's rate limit (its counts' windows moved back by hand). */
+  | { rateWindowPassed: string }
+  /** A link's count for one caller (`from`; an escort's link has one count) set by hand, as if that many calls were made now. */
+  | { rateHits: string; from?: string; hits: number };
 
 /** A group's fields as steps write them: a room by name, a trainee leader by name. */
 export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
@@ -278,6 +285,18 @@ export function publicRead(
     .map((t) => ({ ...t, id: names.track(Number(t.id)), groups: t.groups.map((g) => ({ ...g, id: names.group(Number(g.id)) })).sort(byText((g) => g.title)) }))
     .sort(byText((t) => String(t.id)));
   return stable(f);
+}
+
+/** The answers of a call made several times, as one string: runs of the same answer counted («60× … | 1× link_invalid»). */
+export function answers(list: string[]): string {
+  if (list.length === 1) return list[0];
+  const runs: [number, string][] = [];
+  for (const x of list) {
+    const last = runs[runs.length - 1];
+    if (last && last[1] === x) last[0]++;
+    else runs.push([1, x]);
+  }
+  return runs.map(([n, x]) => `${n}× ${x}`).join(" | ");
 }
 
 export interface Driver {

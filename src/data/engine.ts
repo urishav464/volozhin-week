@@ -32,7 +32,7 @@ import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
 import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup, type KkTrack } from "./kk";
-import { type IssuedLink, LINK_SCOPES, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
+import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import {
@@ -44,6 +44,8 @@ export interface Actor {
   role: "admin" | "content" | "logistics";
   /** An admin of every edition (members.edition_id null): vets speakers, sees every speaker's contacts. */
   global?: boolean;
+  /** anon's calls through a class link: the caller's address as the API reports it (app.link_client) — keys the rate limit. */
+  address?: string;
 }
 
 /** share_links as the demo keeps them: with the token itself (synthetic; the database keeps only its sha256). */
@@ -70,7 +72,7 @@ export interface PoolShared {
   transport: Record<string, TransportDetails>;
   /** share_links (v9). */
   links: DemoLink[];
-  /** share_link_hits: the rate limit, by token. */
+  /** share_link_hits: the rate limit, by token and caller (`${token} ${linkClient(…)}`). */
   linkHits: Record<string, { window_start: string; hits: number }>;
   /** kk_tracks, kk_groups, kk_leaders, kk_signups, book_orders (v9). */
   kk: KkStore;
@@ -865,7 +867,7 @@ export class Engine {
         open: this.kkOpen(),
         roster: [...this.week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id).map(({ id, full_name }) => ({ id, full_name })),
         tracks: k.tracks
-          .filter((t) => t.edition_id === e.id && k.groups.some((g) => g.track_id === t.id && offered(g)))
+          .filter((t) => t.edition_id === e.id && this.kkTrackOnGrid(t) && k.groups.some((g) => g.track_id === t.id && offered(g)))
           .sort((a, b) => a.day - b.day || a.start_min - b.start_min)
           .map((t) => ({
             id: t.id, day: t.day, date: e.start_date ? addDays(e.start_date, t.day) : null, start_min: t.start_min, end_min: t.end_min,
@@ -893,7 +895,8 @@ export class Engine {
       const k = this.shared.kk;
       const g = k.groups.find((x) => x.id === groupId && x.edition_id === e.id);
       if (
-        g && g.open && g.capacity != null && this.kkOpen() && this.week.roster.some((r) => r.id === rosterId) &&
+        g && g.open && g.capacity != null && this.kkOpen() && this.kkTrackOnGrid(k.tracks.find((t) => t.id === g.track_id)!) &&
+        this.week.roster.some((r) => r.id === rosterId) &&
         k.signups.filter((x) => x.group_id === g.id).length < g.capacity &&
         !k.signups.some((x) => x.track_id === g.track_id && x.roster_id === rosterId)
       ) {
@@ -1042,21 +1045,25 @@ export class Engine {
   // ---------------------------------------------------------------- links and kk: helpers
 
   /**
-   * app.link_for: the link a token opens, counted against its rate limit — refused, always `link_invalid`, when
-   * unknown, of another scope, revoked, expired, of another or an archived edition, or past the limit. (Inside
-   * tx(): a refusal rolls the count back, as the database's does.)
+   * app.link_for: the link a token opens — refused, always `link_invalid`, when unknown, of another scope, revoked,
+   * expired, of another or an archived edition — then counted against its rate limit (an escort's link as one, a
+   * class link per caller's address) and refused, the same way, past it. (Inside tx(): a refusal rolls the count
+   * back, as the database's does.) A counted call clears the link's other counts whose window has passed.
    */
   private linkFor(token: unknown, scope: LinkScope): DemoLink {
     if (!tokenShape(token)) fail("link_invalid");
     const l = this.shared.links.find((x) => x.token === token) ?? fail("link_invalid");
     const now = this.now();
-    const h = this.shared.linkHits[l.token];
-    if (!h || Date.parse(h.window_start) <= Date.parse(now) - RATE_WINDOW_MS) this.shared.linkHits[l.token] = { window_start: now, hits: 1 };
-    else h.hits++;
-    if (this.shared.linkHits[l.token].hits > linkRate(l.scope)) fail("link_invalid");
     if (l.scope !== scope || l.revoked_at != null || Date.parse(l.expires_at) <= Date.parse(now)) fail("link_invalid");
     const e = this.week.edition;
     if (l.edition_id !== e.id || e.kind === "archive" || e.status === "archived") fail("link_invalid");
+    const key = `${l.token} ${linkClient(l.scope, this.actor.address)}`;
+    const passed = (h: { window_start: string }) => Date.parse(h.window_start) <= Date.parse(now) - RATE_WINDOW_MS;
+    for (const [k, h] of Object.entries(this.shared.linkHits)) if (k !== key && k.startsWith(`${l.token} `) && passed(h)) delete this.shared.linkHits[k];
+    const h = this.shared.linkHits[key];
+    if (!h || passed(h)) this.shared.linkHits[key] = { window_start: now, hits: 1 };
+    else h.hits++;
+    if (this.shared.linkHits[key].hits > linkRate(l.scope)) fail("link_invalid");
     return l;
   }
 
@@ -1075,6 +1082,11 @@ export class Engine {
   /** app.teach_end. */
   private teachEnd(l: Lesson): number {
     return l.kind === "memorial" ? l.end_min : l.start_min + teachMinutes(l, this.week.edition.settings?.lesson_minutes);
+  }
+
+  /** app.kk_track_on_grid: the track's kk row is still active that day (the first or last day's hours may have moved). */
+  private kkTrackOnGrid(t: { day: Day; start_min: number }): boolean {
+    return this.week.rows.some((r) => r.kind === "kk" && rowActive(r, t.day, this.week.edition) && r.start_min === t.start_min);
   }
 
   /** app.kk_open: inside the sign-up window now. */

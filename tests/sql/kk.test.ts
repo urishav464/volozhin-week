@@ -2,7 +2,8 @@
 // (names only, never who signed up), a sign-up recorded only inside the window,
 // in an open group with a capacity entered and a place left, never changing an
 // existing one, and the same answer in every case; two sign-ups at once for the
-// last place (two connections): exactly one; the staff's groups, leaders,
+// last place, or a sign-up while the staff place someone there (two
+// connections): exactly one; the «full» residual; the staff's groups, leaders,
 // placements and book orders, and who may write them.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
@@ -188,8 +189,26 @@ describe("מכריכה לכריכה", () => {
       });
     });
 
-    // Two calls through the one class link queue up twice over: on the group's row lock, and on the token's counter row.
-    it("two trainees at once for the last place (two connections): exactly one gets it", async () => {
+    it("neither offers nor records a track whose kk row left the grid (Sunday's hours moved) — the staff keep it", async () => {
+      await inTx(async (run) => {
+        await open(run);
+        const sunday = Number((await run(ED_ADMIN, "select public.kk_add_group($1, 0, 1290, '{\"title\": \"ספר ביום ראשון\", \"capacity\": 3}') as id", [ed])).rows[0].id);
+        await run(ED_ADMIN, "select public.kk_place($1, $2)", [sunday, r[0]]);
+        const days = async () => (await run("anon", "select public.kk_form($1) as f", [token])).rows[0].f.tracks.map((t: { day: number }) => t.day);
+        expect(await days()).toEqual([0, 1]);
+        await run("owner", "update public.editions set first_day_from = 1350 where id = $1", [ed]); // Sunday opens at 22:30
+        expect(await days()).toEqual([1]);
+        expect(await signup(run, r[1], sunday)).toEqual({ status: "received" });
+        expect((await run(ED_ADMIN, "select public.load_kk($1) as k", [ed])).rows[0].k.signups.filter((x: { group_id: number }) => x.group_id === sunday).map((x: { roster_id: number }) => x.roster_id)).toEqual([r[0]]);
+        await run("owner", "update public.editions set first_day_from = 510 where id = $1", [ed]);
+        expect(await signup(run, r[1], sunday)).toEqual({ status: "received" });
+        expect((await run("owner", "select count(*)::int as n from public.kk_signups where group_id = $1", [sunday])).rows[0].n).toBe(2);
+      });
+    });
+
+    // Two connections, as two browsers: each from its own address, so each has its own count (app.link_client) and
+    // nothing but the group's row lock stands between them.
+    const twoConnections = async (fn: (c1: pg.Client, c2: pg.Client) => Promise<void>) => {
       await commitAs(ED_ADMIN, "select public.kk_set_window($1, now() - interval '1 day', now() + interval '3 days')", [ed]);
       const url = new URL(adminUrl());
       url.pathname = `/${dbName}`;
@@ -197,7 +216,21 @@ describe("מכריכה לכריכה", () => {
       await c1.connect();
       await c2.connect();
       try {
-        for (const c of [c1, c2]) await c.query("begin; set local role anon; select set_config('request.jwt.claims', '', true)");
+        await fn(c1, c2);
+      } finally {
+        await c1.end();
+        await c2.end();
+        await db.query("delete from public.kk_signups");
+        await commitAs(ED_ADMIN, "select public.kk_set_window($1, null, null)", [ed]);
+      }
+    };
+    const asAnon = (c: pg.Client, address: string) =>
+      c.query("begin; set local role anon; select set_config('request.jwt.claims', '', true); select set_config('request.headers', $$" + JSON.stringify({ "x-forwarded-for": address }) + "$$, true)");
+
+    it("two trainees at once for the last place (two connections): exactly one gets it", async () => {
+      await twoConnections(async (c1, c2) => {
+        await asAnon(c1, "198.51.100.1");
+        await asAnon(c2, "198.51.100.2");
         expect((await c1.query("select public.kk_signup($1, $2, $3) as v", [token, r[0], g.b])).rows[0].v).toEqual({ status: "received" });
         const second = c2.query("select public.kk_signup($1, $2, $3) as v", [token, r[1], g.b]); // waits on the group's row lock
         await new Promise((res) => setTimeout(res, 150));
@@ -205,12 +238,54 @@ describe("מכריכה לכריכה", () => {
         expect((await second).rows[0].v).toEqual({ status: "received" });
         await c2.query("commit");
         expect((await db.query("select roster_id from public.kk_signups where group_id = $1", [g.b])).rows.map((x) => Number(x.roster_id))).toEqual([r[0]]);
-      } finally {
-        await c1.end();
-        await c2.end();
-        await db.query("delete from public.kk_signups");
-        await commitAs(ED_ADMIN, "select public.kk_set_window($1, null, null)", [ed]);
-      }
+      });
+    });
+
+    it("the staff placing someone in the last place while a trainee signs up through the link: the link waits, then records nothing", async () => {
+      await twoConnections(async (c1, c2) => {
+        await c1.query("begin; set local role authenticated; select set_config('request.jwt.claims', $$" + JSON.stringify(google(ED_ADMIN)) + "$$, true)");
+        await c1.query("select public.kk_place($1, $2)", [g.b, r[0]]); // not committed yet
+        await asAnon(c2, "198.51.100.3");
+        const link = c2.query("select public.kk_signup($1, $2, $3) as v", [token, r[1], g.b]); // waits on the group's row lock
+        await new Promise((res) => setTimeout(res, 150));
+        await c1.query("commit");
+        expect((await link).rows[0].v).toEqual({ status: "received" });
+        await c2.query("commit");
+        expect((await db.query("select roster_id, via from public.kk_signups where group_id = $1", [g.b])).rows.map((x) => [Number(x.roster_id), x.via])).toEqual([[r[0], "staff"]]);
+      });
+    });
+
+    // The residual the review found (anon-attack, security, code): «full» is the one fact the form gives about the
+    // sign-ups, and it can tell, through a real sign-up, whether a named trainee already had one in the track — sign
+    // them up for a group with one place left, then read the form: still not full → they had one (the link never
+    // changes a sign-up). One bit per probe, only where a group has exactly one place left, and the probe is a
+    // sign-up the staff see on /kk («בקישור»). Accepted and documented (DECISIONS «ביקורת אבן דרך 5א», privacy
+    // page): without «full», trainees would pick full groups blind. These tests pin it so a change is a choice.
+    it("RESIDUAL, accepted: a sign-up then «full» tells whether a named trainee already signed up for that track", async () => {
+      await inTx(async (run) => {
+        await open(run);
+        await run(ED_ADMIN, "select public.kk_place($1, $2)", [g.a, r[0]]); // staff put r[0] in group a
+        const fullB = async () => (await run("anon", "select public.kk_form($1) as f", [token])).rows[0].f.tracks[0].groups.find((x: { id: number }) => x.id === g.b).full;
+        expect(await fullB()).toBe(false); // b has one place
+        expect(await signup(run, r[0], g.b)).toEqual({ status: "received" });
+        expect(await fullB()).toBe(false); // → r[0] already had a sign-up in this track
+        expect(await signup(run, r[1], g.b)).toEqual({ status: "received" });
+        expect(await fullB()).toBe(true); // → r[1] had none — and is now signed up, «בקישור», for the staff to see
+        expect(await signups(run)).toEqual([[g.a, r[0], "staff"], [g.b, r[1], "link"]]);
+      });
+    });
+
+    it("RESIDUAL, accepted: the same through a group that already has someone in it", async () => {
+      await inTx(async (run) => {
+        await open(run);
+        await signup(run, r[0], g.a); // g.a has capacity 2: one place left
+        await run(ED_ADMIN, "select public.kk_place($1, $2)", [g.b, r[1]]); // r[1] already in the track
+        const full = async () => (await run("anon", "select public.kk_form($1) as f", [token])).rows[0].f.tracks[0].groups.find((x: { id: number }) => x.id === g.a).full;
+        expect(await signup(run, r[1], g.a)).toEqual({ status: "received" });
+        expect(await full()).toBe(false);
+        expect(await signup(run, r[2], g.a)).toEqual({ status: "received" });
+        expect(await full()).toBe(true);
+      });
     });
   });
 

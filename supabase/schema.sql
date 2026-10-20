@@ -2807,9 +2807,11 @@ create or replace function public.get_contacts_for(p_lessons bigint[]) returns j
 --                    issues it; only its sha256 is stored, and no browser role
 --                    can read even that (column grants). Issue = replace: the
 --                    old live link of the same subject is revoked.
---   share_link_hits  the rate limit, per token («הצעה»): 60 calls in 10 minutes
---                    for an escort's link, 600 for the class's links (kk,
---                    schedule), which some 60 trainees share.
+--   share_link_hits  the rate limit («הצעה»): an escort's link — one person's —
+--                    60 calls in 10 minutes; the class's links (kk, schedule),
+--                    which some 60 trainees share, 1200 in 10 minutes per
+--                    caller's address (hashed), never one count for the whole
+--                    class: one holder can never close a class link for the rest.
 --   escort_ticks     הזכרתי · פגשתי בחניה · הצגתי · נתתי מתנה: written through
 --                    the escort's link, read by the team in load_week. A lesson
 --                    whose escort changes (set_escort, reopen_lesson, a trainee
@@ -2845,10 +2847,21 @@ create table if not exists public.share_links (
 create unique index if not exists share_links_live on public.share_links (edition_id, scope, coalesce(subject_id, 0)) where revoked_at is null;
 alter table public.share_links enable row level security;
 
+-- A draft of v9 counted per token alone (token_hash its key). The counts live
+-- ten minutes, so an old table is simply replaced.
+do $$
+begin
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'share_link_hits')
+     and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'share_link_hits' and column_name = 'client_hash') then
+    drop table public.share_link_hits;
+  end if;
+end $$;
 create table if not exists public.share_link_hits (
-  token_hash   bytea primary key references public.share_links (token_hash) on delete cascade,
+  token_hash   bytea not null references public.share_links (token_hash) on delete cascade,
+  client_hash  bytea not null,   -- '' for an escort's link; the sha256 of the caller's address for a class link
   window_start timestamptz not null,
-  hits         integer not null
+  hits         integer not null,
+  primary key (token_hash, client_hash)
 );
 alter table public.share_link_hits enable row level security;   -- no policy: the definer functions only
 
@@ -3048,39 +3061,73 @@ drop trigger if exists lessons_escort_ticks on public.lessons;
 create trigger lessons_escort_ticks after update of escort_roster_id on public.lessons
   for each row execute function app.lessons_escort_ticks();
 
--- How many calls a token may make in 10 minutes («הצעה»): an escort's link is
--- one person's; the sign-up and schedule links are shared by the whole class.
+-- How many calls a link may make in 10 minutes («הצעה»): an escort's link is one
+-- person's, counted as one; a class link (the sign-up, the schedule) is held by
+-- some 60 trainees, so it is counted per caller's address (app.link_client) —
+-- a whole class behind one Wi-Fi address, some 10 calls each, uses half.
 create or replace function app.link_rate(p_scope text) returns integer
   language sql immutable set search_path = ''
-  as $$ select case when p_scope = 'escort' then 60 else 600 end $$;
+  as $$ select case when p_scope = 'escort' then 60 else 1200 end $$;
+
+-- Whose count a call is: an escort's link has one ('' — one person's link); a
+-- class link one per caller's address as the API gateway reports it — Cloudflare's
+-- cf-connecting-ip, else the first address of X-Forwarded-For (as Supabase's own
+-- guide reads it) — kept only as its sha256. No address (a call that did not come
+-- through the API) is one count of its own. A caller who makes up addresses
+-- escapes their own limit, as anyone may already call with made-up tokens (never
+-- counted); the limit is against a runaway page, not an attacker, and there is
+-- no count the whole class shares, so nobody can use it up for the others.
+create or replace function app.link_client(p_scope text) returns bytea
+  language plpgsql stable set search_path = ''
+  as $$
+  declare
+    h jsonb;
+  begin
+    if p_scope = 'escort' then return '\x'::bytea; end if;
+    begin
+      h := nullif(current_setting('request.headers', true), '')::jsonb;
+    exception when others then
+      h := null;
+    end;
+    if h is null or jsonb_typeof(h) <> 'object' then h := '{}'::jsonb; end if;
+    return extensions.digest(coalesce(nullif(btrim(h ->> 'cf-connecting-ip'), ''),
+                                      nullif(btrim(split_part(h ->> 'x-forwarded-for', ',', 1)), ''),
+                                      ''), 'sha256');
+  end
+  $$;
 
 -- The link a presented token opens — found by the sha256 of what was presented,
--- never by the plaintext — counted against its rate limit, and refused, always
--- with the one code `link_invalid`, when it is unknown, of another scope,
--- revoked, expired, of an archived edition, or past the limit. (A refusal rolls
--- the count back with everything else: only answered calls are counted.)
+-- never by the plaintext — refused, always with the one code `link_invalid`,
+-- when it is unknown, of another scope, revoked, expired or of an archived
+-- edition; then counted (app.link_rate, app.link_client) and refused, with the
+-- same code, past the limit. A refusal rolls the count back with everything
+-- else: only answered calls are counted. Each counted call also clears the
+-- link's counts whose window has passed, so made-up addresses do not pile up.
 create or replace function app.link_for(p_token text, p_scope text) returns public.share_links
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v      public.share_links;
-    v_hash bytea;
-    v_hits integer;
+    v        public.share_links;
+    v_hash   bytea;
+    v_client bytea;
+    v_hits   integer;
   begin
     if p_token is null or char_length(p_token) not between 16 and 64 then perform app.refuse('link_invalid'); end if;
     v_hash := extensions.digest(p_token, 'sha256');
     select * into v from public.share_links where token_hash = v_hash;
-    if v.id is null then perform app.refuse('link_invalid'); end if;
-    insert into public.share_link_hits as h (token_hash, window_start, hits) values (v_hash, now(), 1)
-    on conflict (token_hash) do update
+    if v.id is null or v.scope <> p_scope or v.revoked_at is not null or v.expires_at <= now() then perform app.refuse('link_invalid'); end if;
+    if exists (select 1 from public.editions e where e.id = v.edition_id and (e.kind = 'archive' or e.status = 'archived')) then
+      perform app.refuse('link_invalid');
+    end if;
+    v_client := app.link_client(v.scope);
+    delete from public.share_link_hits
+     where token_hash = v_hash and client_hash <> v_client and window_start <= now() - interval '10 minutes';
+    insert into public.share_link_hits as h (token_hash, client_hash, window_start, hits) values (v_hash, v_client, now(), 1)
+    on conflict (token_hash, client_hash) do update
       set hits = case when h.window_start <= now() - interval '10 minutes' then 1 else h.hits + 1 end,
           window_start = case when h.window_start <= now() - interval '10 minutes' then now() else h.window_start end
     returning h.hits into v_hits;
     if v_hits > app.link_rate(v.scope) then perform app.refuse('link_invalid'); end if;
-    if v.scope <> p_scope or v.revoked_at is not null or v.expires_at <= now() then perform app.refuse('link_invalid'); end if;
-    if exists (select 1 from public.editions e where e.id = v.edition_id and (e.kind = 'archive' or e.status = 'archived')) then
-      perform app.refuse('link_invalid');
-    end if;
     return v;
   end
   $$;
@@ -3119,6 +3166,14 @@ create or replace function app.kk_rows(p_edition bigint, p_day integer)
        and not (p_day = 4 and r.start_min >= e.last_day_until)
      order by r.start_min, r.end_min
   $$;
+
+-- A track whose kk row is still active that day — the edition's first or last
+-- day's hours can move after groups exist (src/screens/kk «מחוץ לרשת»). A track
+-- off the grid keeps its groups and sign-ups for the staff, but the link
+-- neither offers it nor records a sign-up on it.
+create or replace function app.kk_track_on_grid(p public.kk_tracks) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$ select exists (select 1 from app.kk_rows(p.edition_id, p.day) r where r.start_min = p.start_min) $$;
 
 -- A whole number from a JSON value in [lo, hi]; absent or JSON null → NULL.
 create or replace function app.json_int(p jsonb, p_lo integer, p_hi integer) returns integer
@@ -3320,9 +3375,10 @@ create or replace function public.escort_pickup(p_token text, p_lesson bigint, p
   $$;
 
 -- The sign-up page: the window and whether it is open now, the edition's
--- trainees (names only — nothing about who signed up), and the tracks with
--- the groups on offer (open, with a capacity entered): the book, its author,
--- the room, the leaders' names, and whether the group is full.
+-- trainees (names only — nothing about who signed up), and the tracks still on
+-- the grid (app.kk_track_on_grid) with the groups on offer (open, with a
+-- capacity entered): the book, its author, the room, the leaders' names, and
+-- whether the group is full.
 create or replace function public.kk_form(p_token text) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -3351,15 +3407,15 @@ create or replace function public.kk_form(p_token text) returns jsonb
                              where g.track_id = t.id and g.open and g.capacity is not null))
                order by t.day, t.start_min)
           from public.kk_tracks t
-         where t.edition_id = v.edition_id
+         where t.edition_id = v.edition_id and app.kk_track_on_grid(t)
            and exists (select 1 from public.kk_groups g where g.track_id = t.id and g.open and g.capacity is not null)), '[]'::jsonb));
   end
   $$;
 
 -- A trainee signs up for a group: recorded only inside the window, for a
--- trainee of the edition, in an open group with a capacity entered and a place
--- left (counted under the group's row lock, so two at once never overfill
--- it). An existing sign-up for that track is NEVER changed through the link —
+-- trainee of the edition, in an open group with a capacity entered, on a track
+-- still on the grid, and with a place left (counted under the group's row lock,
+-- so two at once — or one while the staff place someone — never overfill it). An existing sign-up for that track is NEVER changed through the link —
 -- only the staff move one (kk_place). The answer is the same in every case:
 -- the link is no oracle of who signed up.
 create or replace function public.kk_signup(p_token text, p_roster bigint, p_group bigint) returns jsonb
@@ -3373,6 +3429,7 @@ create or replace function public.kk_signup(p_token text, p_roster bigint, p_gro
     select * into v_ed from public.editions where id = v.edition_id;
     select * into v_g from public.kk_groups where id = p_group and edition_id = v.edition_id for update;
     if v_g.id is not null and v_g.open and v_g.capacity is not null and app.kk_open(v_ed.settings)
+       and (select app.kk_track_on_grid(t) from public.kk_tracks t where t.id = v_g.track_id)
        and exists (select 1 from public.roster r where r.id = p_roster and r.edition_id = v.edition_id)
        and (select count(*) from public.kk_signups s where s.group_id = v_g.id) < v_g.capacity then
       insert into public.kk_signups (edition_id, track_id, group_id, roster_id, via)

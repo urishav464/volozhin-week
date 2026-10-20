@@ -447,7 +447,9 @@ never outlives that speaker: `reopen_lesson` deletes it with the other stages.
 - `setTransport(lesson, details)` — any member (`not_member`); the lesson exists (`stale`);
   `may_see_transport` (`transport_hidden`); `transport <> 'none'` (`no_transport`); values (above).
   All five replaced; nothing changed → no-op; logged (`lessons transport {fields}`) with the field
-  names only, never a value.
+  names only, never a value. Since v9 the escort's link writes `pickup_address` too
+  (`escort_pickup`), so the lesson panel saves the fields its form changed over the details read
+  again at the moment of saving (`mergeTransport`, `src/data/stageRules.ts`), never a stale copy.
 
 ### Templates — `set_confirm_template` / `set_duty_phrases`
 
@@ -552,7 +554,7 @@ their edition's links (`share_links_read`), everyone else nothing. A link opens 
 | Rule | Detail |
 |---|---|
 | expiry («הצעה») | `escort`, `schedule`: the end of the week, Friday 00:00 Israel time (`start_date + 5`); while the date is TBD, 720 hours after issue. `kk_signup`: `settings.kk_window.closes_at`; no window, 720 hours after issue (`app.link_expiry`, `linkExpiry`). Stored in `expires_at` and recomputed, for links not revoked, whenever the edition's `start_date` or `kk_window` changes (`app.editions_link_expiry`; `Engine.refreshLinkExpiry`) |
-| rate limit («הצעה») | per token, 10 minutes: 60 calls for an `escort` link, 600 for the class's (`kk_signup`, `schedule`) — `share_link_hits`, `app.link_rate` / `linkRate`. A refused call is rolled back with everything else, so only answered calls count |
+| rate limit («הצעה») | 10 minutes. An `escort` link (one person's) is one count: 60 calls. A class link (`kk_signup`, `schedule`, held by the whole class) is counted **per caller's address** — Cloudflare's `cf-connecting-ip`, else the first entry of `X-Forwarded-For` from PostgREST's `request.headers`, kept only as its sha256; none reported is a count of its own — 1200 calls each (`share_link_hits(token_hash, client_hash, window_start, hits)`, `app.link_rate` / `linkRate`, `app.link_client` / `linkClient`). There is no count the class shares, so nobody can use up the link for the others. A refused call is rolled back with everything else, so only answered calls count; a counted call clears the link's counts whose window has passed |
 | one live link | per `(edition, scope, subject)`: issuing again revokes the live one (replace) |
 
 ### `issue(edition, scope, subject)` — `issue_link` → `{link_id, token, expires_at}`
@@ -573,8 +575,8 @@ Each is `SECURITY DEFINER`, `search_path = ''`, takes the token first, and answe
 **One refusal for every link problem: `link_invalid`** (P0001, no detail, no hint) — a token
 outside 16–64 characters, unknown, of another scope, revoked, expired, of an archived or archive
 edition, or past its rate limit; and, for the escort's writes, a lesson that is not closed, not in
-the link's edition, or not escorted by its trainee. In that order: the shape, the lookup, the
-count, the link's state, the edition (`app.link_for`, `Engine.linkFor`).
+the link's edition, or not escorted by its trainee. In that order: the shape, the lookup and the
+link's state, the edition, then the count (`app.link_for`, `Engine.linkFor`).
 
 ### `escortView(token)` — `escort_view` → `jsonb`
 
@@ -617,15 +619,24 @@ escort_link}`, actor null) — never the value.
 `{edition: {label, start_date}, window: {opens_at, closes_at}, open, roster: [{id, full_name}],
 tracks: [{id, day, date, start_min, end_min, groups: [{id, title, author, room, leaders: [{kind,
 name}], full}]}]}`. `open`: `opens_at ≤ now < closes_at`. `roster`: the edition's trainees, names
-only — nothing about who signed up. `tracks`: those with a group **on offer** (`open` and a
-`capacity` entered); `groups`: those on offer; `full`: the sign-ups ≥ the capacity (a count, never
-who). Lists the SQL orders by collation (trainees, groups by title) are compared sorted.
+only — nothing about who signed up. `tracks`: those still on the grid (their kk row active that
+day — `app.kk_track_on_grid`; the first or last day's hours may move after groups exist) with a
+group **on offer** (`open` and a `capacity` entered); `groups`: those on offer; `full`: the sign-ups
+≥ the capacity (a count, never who). Lists the SQL orders by collation (trainees, groups by title)
+are compared sorted.
+
+**The one residual** (accepted, `tests/sql/kk.test.ts` «RESIDUAL»): `full` together with a sign-up
+can tell whether a named trainee already had a sign-up in a track — sign them up for a group with
+exactly one place left and read the form again: still not full means they had one. One bit per
+probe, and the probe is itself a sign-up (`via 'link'`) the staff see. The link never *answers* who
+signed up.
 
 ### `kkSignup(token, roster, group)` — `kk_signup` → `{status: 'received'}`, always
 
 Records `kk_signups(track of the group, group, roster, via 'link')` only when **all** hold: the
-group is of the link's edition, `open`, with a capacity, the window open now, the trainee of the
-edition, fewer sign-ups than the capacity — counted under the group's row lock — and no sign-up of
+group is of the link's edition, `open`, with a capacity, its track on the grid, the window open
+now, the trainee of the edition, fewer sign-ups than the capacity — counted under the group's row
+lock, which `kk_place` takes too — and no sign-up of
 that trainee for that track yet (**an existing sign-up is never changed through the link**; only
 `kk_place` moves one). Otherwise nothing. The answer is the same in every case: the link is no
 oracle of who signed up.

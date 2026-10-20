@@ -100,3 +100,14 @@ export function cleanTransportDetails(d: Partial<TransportDetails>): TransportDe
 }
 
 export const EMPTY_TRANSPORT: TransportDetails = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
+
+/**
+ * What the team's «פרטי ההסעה» saves, now that the escort's link writes the pickup address too (public.escort_pickup):
+ * the fields the form changed from what it loaded, and for the rest what the database holds at the moment of saving
+ * — so an address the escort sent while the form was open is never overwritten with the stale copy.
+ */
+export function mergeTransport(loaded: TransportDetails, draft: TransportDetails, current: TransportDetails | null): TransportDetails {
+  if (!current) return draft;
+  const pick = <K extends keyof TransportDetails>(k: K): TransportDetails[K] => (draft[k] === loaded[k] ? current[k] : draft[k]);
+  return { pickup_address: pick("pickup_address"), pickup_time: pick("pickup_time"), driver_name: pick("driver_name"), driver_phone: pick("driver_phone"), arranged: pick("arranged") };
+}
