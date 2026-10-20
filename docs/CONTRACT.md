@@ -767,7 +767,7 @@ docx`. The original name is never in the path; it is the row's `display_name`.
 
 | Who (policies on `storage.objects`, `bucket_id = 'sources'`) | Rule | Function |
 |---|---|---|
-| upload (INSERT, `authenticated`) | `app.source_refusal(name)` is null — below | `app.may_upload_source` |
+| upload (INSERT, `authenticated`) | `app.source_refusal(name)` is null — below — and **no `source_files` row holds the path**: a path is used once (a row whose object a half-way removal deleted is never fronted by someone else's new bytes; a real upload always has a new uuid) | `app.may_upload_source` |
 | read (SELECT, `authenticated`) | a member of the path's edition, any role (logistics print) | `app.may_read_source` |
 | delete (DELETE, `authenticated`) | an admin of the edition; else (not an archive) its uploader — the row's `uploaded_by` is the caller's member row, or, for an object never registered, its `owner_id` is the caller's JWT `sub` | `app.may_delete_source` |
 | update | nobody — a replacement is a delete and an upload | — |
@@ -782,11 +782,23 @@ member of the path's edition (or it does not exist) → `not_member`; logistics 
 archive-kind or archived edition and not an admin → `archived`; `cover`: not an admin → `forbidden`,
 a `.docx` → `bad_file`, else allowed; a lesson that is not the edition's → `bad_path`; a lesson not
 `closed`, or not of kind `lesson` (memorial slots: 5ב-2) → `not_closed`. It is the rule of
-`set_sources` (content or admin, a closed lesson). Engine: `Engine.sourceRefusal`.
+`set_sources` (content or admin, a closed lesson). Engine: `Engine.sourceRefusal`; the upload
+policy's whole predicate (with the used path): `Engine.mayUploadSource`.
 
 The Storage API's own answers, as the browser maps them (`SupabaseSources`; `Engine.storeObject`):
 a type or size the bucket refuses (413/415) → `bad_file`; a policy refusal (401/403) →
-`upload_refused`; anything else, or an object already at the path → `upload_failed`.
+`upload_refused` — a path a row already holds included; anything else, or an unregistered object
+already at the path → `upload_failed`.
+
+**What the Storage API knows of a file** (`objects.metadata`): `size` is measured by Storage itself;
+`mimetype` is the uploader's declared `Content-Type`, held only to the bucket's four types — Storage
+never looks at the bytes. `register_source_file` holds the type to the path's extension as well, but a
+row marked `application/pdf` can still hold any bytes. The reader therefore checks the bytes
+themselves (a PDF that does not open, a picture that is neither PNG nor JPEG → left out, named).
+
+**Every upload carries `Cache-Control: private, no-store`**, which Storage stores and sends back on
+every read of the file, signed URLs included: no browser or shared cache keeps a copy past its signed
+URL or past a removal.
 
 ## `source_files`
 
@@ -820,8 +832,11 @@ calls:
   edition's or lesson's (`bad_path`);
 - no live object at `p_path`, or not uploaded by the caller (`owner_id` ≠ the JWT `sub`) → `no_file`;
 - the object's `metadata.mimetype` not one of the four or not matching the extension, or its
-  `metadata.size` missing or over 25 MB → `bad_file` — the Storage API's word, not the browser's;
-- `display_name` one line ≤ 200, required; `p_pages` null or 1–5000 → else `bad_value`.
+  `metadata.size` missing or over 25 MB → `bad_file` — the size as Storage measured it; the type as the
+  uploader declared it (Storage held it to the four, never sniffing the bytes);
+- `display_name` one line ≤ 200, required; `p_pages` null or 1–5000 → else `bad_value`. The browser
+  sends the picked file's name shortened to fit before the bytes go up (`displayNameOf`: cut before
+  the extension, which stays — «….pdf»), so a long name is never refused after the upload.
 
 Then the row: `page_count` = `p_pages` for a PDF, 1 for an image, null for Word; `speaker_id` = the
 lesson's lead; `uploaded_by` = the caller's member row. **A lesson's file:** `sources_kind`
@@ -882,13 +897,27 @@ entry with the page it starts on); then each day: every `included` row — a hea
 files' pages, each scaled to fit A4 with its aspect and rotation kept — and every memorial slot; a
 «סיכום יום» page closes every day. Running headers `[left, right]` alternate (an odd page the left
 one); page numbers count from the cover's first page as 1; the cover carries neither. Hebrew is drawn on an OffscreenCanvas and
-embedded as PNG. A file that cannot be read is left out and named. The result is downloaded — never
-uploaded.
+embedded as PNG. Every file is read and embedded before the pages are planned; a file that cannot be
+read — a PDF that does not open or is protected, one whose pages pdf-lib cannot decode (all its pages
+or none), a picture that is neither PNG nor JPEG by its bytes, or broken — is left out and named, and
+the build goes on. A picture is drawn as what its bytes are (a PNG saved as .jpg is a PNG). **A JPEG
+goes in without its metadata** (`src/reader/jpeg.ts`): only APP0, APP14, the tables, the frame and
+the scans are kept — EXIF (GPS, camera, time), XMP, ICC, MPF, comments and anything after the image
+are dropped; its EXIF orientation is read first and honoured. A PDF's pages are copied as they are
+(an image inside a PDF keeps what it carries). The result is downloaded — never uploaded.
 
-The Word skeleton (`docx.ts`, docx 9.8.1): a TOC field updated on open, a heading per day, every
+**The lesson's «מקראה» stage** (`stagesOf(lesson, readerFilesOf(week, id))`, `src/domain/stages.ts`)
+says what the manifest says: «במקראה» (done) only for `included`; marked with no PDF or picture of
+the current speaker → open, «חסר קובץ», or «צריך PDF» when Word files came. `nextLessonStep` then
+still says `sources` for such a lesson («המרצים שלי», the tracking table).
+
+The Word skeleton (`docx.ts`, docx 9.8.1): a title «תוכן העניינים» and a TOC field updated on open,
+a heading per day (Heading 1, outline level 0) opening a page with its first entry under it, every
 lesson marked `in_reader` (not `presentation_only`, not `no_sources` — whatever its files) and every
-memorial slot as a heading on its own page, a ruled «סיכום יום» page per day, right to left, A4, the
-same running headers and a page number.
+memorial slot as a heading (Heading 2, outline level 1) on its own page, a «סיכום יום» page per day of
+22 ruled lines (a bottom and a between border: a bottom alone is drawn once under the whole block),
+right to left by default (`pPrDefault` `w:bidi` — the TOC's paragraphs too), A4, the same running
+headers and a page number.
 
 ## Errors (milestone 5ב-1)
 

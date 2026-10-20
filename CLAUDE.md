@@ -134,21 +134,27 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **Sources and the reader (milestone 5ב-1, schema v10):** a closed lesson's files live in the PRIVATE Storage
   bucket `sources`, which `schema.sql` creates with its policies on `storage.objects` (no dashboard step): upload =
   `app.source_refusal` (the set_sources rule — content/admin, a closed lesson of kind 'lesson'; the poster
-  `…/cover/…` admins only), read = the whole edition team, delete = uploader or admin, update nobody, anon nothing —
+  `…/cover/…` admins only) and a path no `source_files` row holds (`app.may_upload_source` — a path is used once),
+  read = the whole edition team, delete = uploader or admin, update nobody, anon nothing —
   and **restrictive** copies of each so no later policy can widen the bucket. The path convention is one regex in
   two places (`app.source_path_re` ≡ `SOURCE_PATH_RE`, `src/data/sourceRules.ts`, compared by a test). Upload =
-  Storage first (XHR with the member's token), then `register_source_file` (the object must exist, be the caller's,
-  type/size from Storage's metadata); removal = Storage first, then `remove_source_file` (refuses `file_present`).
+  Storage first (XHR with the member's token, `Cache-Control: private, no-store`), then `register_source_file` (the
+  object must exist, be the caller's; its size as Storage measured it, its type as the uploader declared it — Storage
+  never sniffs; the display name shortened to ≤ 200 before upload, `displayNameOf`); removal = Storage first, then
+  `remove_source_file` (refuses `file_present`).
   `source_files` rows remember the lead speaker they came for (`speaker_id`): `reopen_lesson` keeps them as
   «מהמרצה הקודם», never in the reader. Never in Realtime. `port.sources` (`src/data/sources.ts`: SupabaseSources /
   DemoSources on the engine's in-memory bucket; synthetic demo files in `src/data/demoFiles.ts`).
   **The reader** is browser-only (`src/reader/`): `model.ts` the manifest «התקבל / חסר» (one status per closed lesson
   and memorial slot; `memorialFiles` is 5ב-2's hook), `layout.ts` the pure page plan (cover, TOC with page numbers,
   days, «סיכום יום»), `assemble.ts` the PDF on pdf-lib 1.17.1 inside a module worker (`worker.ts`; Hebrew drawn on
-  OffscreenCanvas → PNG), `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
+  OffscreenCanvas → PNG) — every file read AND embedded before the plan (a file pdf-lib cannot decode is named, never
+  a failed build), a picture by its bytes, a JPEG stripped of EXIF/GPS/XMP/ICC/comments first (`jpeg.ts`) —
+  `build.ts` signed URLs + fetch + cancel, `docx.ts` the Word skeleton (docx **9.8.1**, not
   newer). Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
   Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
-  (`/reader`, content and admins; also a tab of «תוצרים»).
+  (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
+  `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
