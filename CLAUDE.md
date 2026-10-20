@@ -209,10 +209,13 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `/logistics`, …) says it needs a connection over the day view (`view.ts` `sectionNeedingConnection`).
 - **The import of 5786 (schema v12):** `src/import/` — the readers (a paste: `clipboard.ts` → `html.ts`, DOMParser
   into an inert document, text nodes only, or `table.ts` TSV; `xlsxRead.ts` and `docxRead.ts` of our own on
-  `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says),
+  `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says, and every
+  reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
   normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
-  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default; an escorts' column is never
-  mappable), matching (`match.ts`) and the three kinds (`candidates.ts`, `tracking.ts`, `escorts.ts`).
+  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
+  first five rows (`findHeaderRow`, the admin may choose another); an escorts' column — by its header in any of those
+  rows — is never mappable, in any kind (`escortColumns`), and its names only keep a phrase from being saved), matching
+  (`match.ts`) and the three kinds (`candidates.ts`, `tracking.ts`, `escorts.ts`).
   `port.imports` (`src/data/imports.ts`, `importRules.ts`) → `import_lookup` (booleans, never a contact's value) and
   `import_commit` — a global admin's, SECURITY DEFINER, one transaction, every row or none (`import_bad_row`
   «row:reason»), fill-empty only, re-runnable (schema.sql «Import 5786»; CONTRACT «The import of 5786»; the engine's

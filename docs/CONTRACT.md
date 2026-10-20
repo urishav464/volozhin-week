@@ -1204,7 +1204,11 @@ Resolved:
 - Completing **fills only what is empty**: the speaker's `title`, `gender`, `affiliation`, `topics` (an empty array is
   empty), and `speaker_contacts`' `phone`, `email`, `notes`. A field with a value is never overwritten. **A gender
   the speaker's own title contradicts is never filled** (the pool's «הרבנית» with no gender and a row «הרב»: no
-  gender; a title that says none — «ד״ר» — takes the row's). A speaker whose own record got a field: `version + 1`.
+  gender; a title that says none — «ד״ר» — takes the row's), **and the mirror: a title that says the other gender
+  than the speaker's is never filled** (`app.title_gender(title)` against the speaker's gender — its own, or the one
+  filled by this row: the pool's man with no title and a row «הרבנית» keeps no title; a title that says no gender —
+  «ד״ר» — is filled). The preview names the title it would fill, or «תואר: לא ימולא — במאגר המגדר …». A speaker
+  whose own record got a field: `version + 1`.
 
 ### `candidates` — `{source, titles_from, rows: SpeakerRow[]}`
 `rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`. Each row as above.
@@ -1223,7 +1227,10 @@ replace would delete it with its lesson, so nothing is replaced; `source` as abo
 - **An archive edition with this label:** **all its lessons are deleted** (their speakers with them) and replaced
   by these; its `start_date` set to the one given (null included); its speakers stay in the pool.
 - Each lesson, checked in this order (`cleanLessonRow`): an object; `day` 0–4, `390 ≤ start_min < end_min ≤ 1830`,
-  multiples of 5 → else `bad_shape`; `room` 0–9 → else `bad_value` (0 the default room; k «מקביל k+1», made when first
+  multiples of 5 → else `bad_shape`; **within the archive edition's own week** — on Thursday (`day` 4) `end_min ≤`
+  its `last_day_until` (1140: last year's week ended at 19:00), on Sunday (`day` 0) `start_min ≥` its
+  `first_day_from` when that is known → else `bad_shape` (the server holds the rule, not only the browser's preview);
+  `room` 0–9 → else `bad_value` (0 the default room; k «מקביל k+1», made when first
   needed); `title` ≤ 200; `category_id` null or a category → else `bad_value`; `audience` ≤ 120; `sources_kind` one of
   the kinds, `print_when` one of `none before same_day` → else `bad_value`; `sources_note` ≤ 500; `pay_amount` null or
   a whole 1–100000 → else `bad_amount`; `import_note` a block ≤ 1000; `speakers` a non-empty array of distinct
