@@ -4,6 +4,7 @@ import type { WeekCommands } from "./commands";
 import type { DataPort } from "./port";
 import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
+import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
 import { SupabaseSettings } from "./supabaseSettings";
 import { SupabaseSpeakers } from "./supabaseSpeakers";
@@ -15,6 +16,8 @@ export class SupabasePort implements DataPort {
   readonly speakers: SupabaseSpeakers;
   readonly outputs: SupabaseOutputs;
   readonly knowledge: SupabaseKnowledge;
+  readonly links: SupabaseLinks;
+  readonly kk: SupabaseKk;
   private readonly sb: SupabaseClient;
   private topicSeq = 0;
 
@@ -26,6 +29,8 @@ export class SupabasePort implements DataPort {
     this.speakers = new SupabaseSpeakers(this.sb);
     this.outputs = new SupabaseOutputs(this.sb);
     this.knowledge = new SupabaseKnowledge(this.sb);
+    this.links = new SupabaseLinks(this.sb);
+    this.kk = new SupabaseKk(this.sb);
   }
 
   async sessionEmail(): Promise<string | null> {
@@ -89,6 +94,7 @@ export class SupabasePort implements DataPort {
     const w = (await callRpc(this.sb, "load_week", { p_edition: editionId })) as Week;
     // A database from before v7 has no roster in the Week (the schema-version gate shows first; this keeps a screen from breaking under it).
     if (w && !Array.isArray(w.roster)) w.roster = [];
+    if (w && !Array.isArray(w.escortTicks)) w.escortTicks = []; // and none of the escorts' ticks before v9
     return w;
   }
 

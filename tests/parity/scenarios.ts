@@ -1,7 +1,13 @@
 // Scenarios that walk docs/CONTRACT.md clause by clause. Each runs on the
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
+import { addDays, israelDate } from "../../src/domain/israelTime";
 import { FOREIGN_ROOM, FOREIGN_TRAINEE, type Step } from "./fixture";
+
+// Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
+const NOW = Date.now();
+const dateIn = (days: number) => addDays(israelDate(new Date(NOW).toISOString()), days);
+const isoIn = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
 
 export const SCENARIOS: Record<string, Step[]> = {
   "propose, claim, offer, give back": [
@@ -519,5 +525,167 @@ export const SCENARIOS: Record<string, Step[]> = {
     { archive: true },
     { as: "E", template: "נוסח לדוגמה אחר" }, // an admin may still write in an archive
     { as: "A", template: "נוסח לדוגמה אחר" },
+  ],
+
+  // ------------------------------------------------------------ links and מכריכה לכריכה (milestone 5a)
+
+  "links: an edition admin issues, replaces and revokes; a token opens its own page only": [
+    { as: "A", reshape: [1, 510], op: { op: "split_parallel", count: 2, reason: "דוגמה" } },
+    { as: "A", propose: "אלפא", at: [1, 510] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", at: [1, 510, "כיתה"] },
+    { as: "A", close: "בטא", at: [1, 510, "כיתה"] },
+    { as: "A", update: [1, 510], patch: { title: "כותרת לדוגמה", category: "פילוסופיה", teach_min: 60 } },
+    { as: "A", propose: "גמא", cell: [2, 600, 690] }, // a draft: not public
+    { as: "A", issue: "schedule", name: "x" },
+    { as: "L", issue: "schedule", name: "x" },
+    { as: "E", issue: "escort", trainee: FOREIGN_TRAINEE, name: "x" },
+    { as: "E", issue: "escort", trainee: null, name: "x" },
+    { as: "E", issue: "kk_signup", trainee: "חניכה לדוגמה", name: "x" },
+    { as: "E", issue: "poster", name: "x" },
+    { as: "E", issue: "schedule", name: "s1" },
+    { anon: "scheduleView", token: "s1" },
+    { anon: "escortView", token: "s1" }, // another scope's token
+    { anon: "kkForm", token: "s1" },
+    { anon: "scheduleView", token: "nothing" }, // a token that opens nothing
+    { as: "admin", issue: "schedule", name: "s2" }, // replaces s1
+    { anon: "scheduleView", token: "s1" },
+    { anon: "scheduleView", token: "s2" },
+    { as: "A", revoke: "s2" },
+    { as: "E", revoke: "s2" },
+    { as: "E", revoke: "s2" }, // already revoked: nothing
+    { anon: "scheduleView", token: "s2" },
+    { startDate: dateIn(-10) }, // the week is over
+    { as: "E", issue: "schedule", name: "s3" },
+    { startDate: dateIn(20) },
+    { as: "E", issue: "schedule", name: "s3" },
+    { anon: "scheduleView", token: "s3" }, // with dates now
+    { startDate: null }, // TBD again: 30 days after issue
+    { expire: "s3" },
+    { anon: "scheduleView", token: "s3" },
+    { as: "E", issue: "schedule", name: "s4" },
+    { archive: true },
+    { anon: "scheduleView", token: "s4" }, // an archived edition's link
+    { as: "admin", issue: "schedule", name: "s5" },
+  ],
+
+  "the escort's link: own lessons only, the phone from W−7, ticks, a write-only pickup address": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", propose: "בטא", cell: [1, 600, 690] },
+    { as: "A", close: "בטא", at: [1, 600] },
+    { as: "A", propose: "גמא", cell: [2, 510, 600] },
+    { as: "A", close: "גמא", at: [2, 510] },
+    { as: "A", escort: [1, 510], trainee: "חניכה לדוגמה", selfIntro: false, note: "הערה לדוגמה" },
+    { as: "A", escort: [1, 600], trainee: "חניכה לדוגמה", selfIntro: true },
+    { as: "A", escort: [2, 510], trainee: "חניך לדוגמה", selfIntro: false },
+    { as: "A", pay: [1, 600], amount: 300, transport: "round_trip" },
+    { as: "admin", decide: [[1, 600]], decision: "approved", note: "הערה לדוגמה" },
+    { as: "A", setTransport: [1, 600], address: "כתובת לדוגמה", driver: "נהג/ת לדוגמה", phone: "555 0100 33", arranged: true },
+    { as: "A", sources: [1, 510], kind: "sheet", print: "before", note: "הערת מקורות", inReader: true },
+    { as: "E", duty: [{ when: "always", text: "ניסוח לדוגמה" }, { when: "self_intro", text: "ניסוח להצגה עצמית" }, { when: "escort_intro", text: "ניסוח למלווה" }, { when: "transport", text: "ניסוח להסעה" }] },
+    { as: "A", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניכה לדוגמה", name: "e1" },
+    { as: "E", issue: "escort", trainee: "חניך לדוגמה", name: "e2" },
+    { anon: "escortView", token: "e1" }, // the date TBD: no phone
+    { startDate: dateIn(10) },
+    { anon: "escortView", token: "e1" }, // W−10: not yet
+    { startDate: dateIn(7) },
+    { anon: "escortView", token: "e1" }, // W−7: אלפא's phone (בטא has none on file)
+    { startDate: dateIn(3) },
+    { anon: "escortView", token: "e2" },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: true }, // the first time kept
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "gift", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "gift", on: false },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "hug", on: true },
+    { anon: "escortTick", token: "e1", at: [1, 510], item: "met", on: null },
+    { anon: "escortTick", token: "e1", at: [2, 510], item: "met", on: true }, // another escort's lesson
+    { anon: "escortTick", token: "e1", at: [3, 510], item: "met", on: true }, // no lesson there
+    { anon: "escortTick", token: "e2", at: [2, 510], item: "reminded", on: true },
+    { anon: "escortPickup", token: "e1", at: [1, 510], address: "כתובת" }, // no transport asked
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: "   " },
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: "א".repeat(201) },
+    { anon: "escortPickup", token: "e2", at: [1, 600], address: "כתובת" }, // not e2's lesson
+    { anon: "escortPickup", token: "e1", at: [1, 600], address: " רחוב  לדוגמה 1 " }, // written, never read back
+    { anon: "escortView", token: "e1" },
+    { as: "B", readTransport: [1, 600] },
+    { as: "A", readTransport: [1, 600] },
+    { as: "A", escort: [2, 510], trainee: "חניכה לדוגמה", selfIntro: false }, // a new escort: e2's ticks go
+    { anon: "escortView", token: "e2" },
+    { anon: "escortView", token: "e1" },
+    { as: "admin", reopen: [1, 510] }, // a draft again: its escort and ticks go
+    { anon: "escortView", token: "e1" },
+    { expire: "e1" },
+    { anon: "escortView", token: "e1" },
+  ],
+
+  "מכריכה לכריכה: groups on the grid's kk rows, the window, a link that never overwrites, the staff place": [
+    { as: "A", kkAdd: [1, 1290], fields: { title: "ספר א" } },
+    { as: "L", kkAdd: [1, 1290], fields: { title: "ספר א" } },
+    { as: "E", kkAdd: [4, 1290], fields: { title: "ספר א" } }, // Thursday ends at 19:00
+    { as: "E", kkAdd: [1, 510], fields: { title: "ספר א" } }, // a lesson row
+    { as: "E", kkAdd: [1, 1290], fields: {} },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", room: FOREIGN_ROOM } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 0 } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 1.5 } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", open: "yes" } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "trainee", trainee: FOREIGN_TRAINEE }] } },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "staff", label: " " }] } },
+    {
+      as: "E",
+      kkAdd: [1, 1290],
+      fields: {
+        title: " ספר  א ", author: "מחבר/ת לדוגמה", room: "כיתה", capacity: 1,
+        leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }, { kind: "staff", label: "צוות לדוגמה" }, { kind: "staff", label: " צוות  לדוגמה " }],
+      },
+    },
+    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר ב", capacity: 5, ignored: true } },
+    { as: "E", kkAdd: [2, 1740], fields: { title: "ספר ג" } }, // no capacity yet: not offered
+    { as: "E", issue: "kk_signup", name: "k" }, // no window yet: 30 days
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" }, // closed: nothing recorded
+    { as: "E", kkWindow: [isoIn(-1), isoIn(3)] },
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" },
+    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר ב" }, // never changed through the link
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר א" }, // full
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" }, // not offered
+    { anon: "kkSignup", token: "k", trainee: FOREIGN_TRAINEE, group: "ספר ב" },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "אין כזה" },
+    { anon: "kkForm", token: "k" }, // ספר א is full
+    { as: "E", kkPlace: "ספר א", trainee: "חניך לדוגמה" }, // the staff decide: over capacity
+    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // moved within the track
+    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // already there
+    { as: "A", kkPlace: "ספר ב", trainee: "חניך לדוגמה" },
+    { as: "E", kkPlace: "ספר ב", trainee: FOREIGN_TRAINEE },
+    { as: "E", kkPlace: "ספר ד", trainee: "חניך לדוגמה" },
+    { as: "E", kkDelete: "ספר ב" },
+    { as: "E", kkUnplace: [1, 1290], trainee: "חניכה לדוגמה" },
+    { as: "E", kkUnplace: [3, 1290], trainee: "חניכה לדוגמה" },
+    { as: "E", kkDelete: "ספר ב" },
+    { as: "E", kkUpdate: "ספר א", patch: { title: "  " } },
+    { as: "E", kkUpdate: "ספר א", patch: { title: "ספר א מתוקן", author: null, capacity: 3, open: false, leaders: [] } },
+    { as: "A", kkUpdate: "ספר ג", patch: { capacity: 2 } },
+    { as: "E", kkUpdate: "ספר ג", patch: { capacity: 2, room: "ספרייה" } },
+    { anon: "kkForm", token: "k" }, // ספר א closed, ספר ג offered now
+    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
+    { as: "A", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
+    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: true },
+    { as: "E", bookOrder: "ספר א מתוקן", copies: 5, ordered: true }, // the first time kept
+    { as: "E", bookOrder: "ספר א מתוקן", copies: null, ordered: true },
+    { as: "E", bookOrder: "ספר א מתוקן", copies: 1001, ordered: false },
+    { as: "E", bookOrder: "ספר ג", copies: 2, ordered: false },
+    { as: "E", bookOrder: "ספר ג", copies: null, ordered: false },
+    { as: "E", kkWindow: [isoIn(1), null] },
+    { as: "E", kkWindow: [isoIn(3), isoIn(1)] },
+    { as: "A", kkWindow: [isoIn(-1), isoIn(3)] },
+    { as: "E", kkWindow: [isoIn(-3), isoIn(-1)] }, // closed: the link has expired with it
+    { anon: "kkForm", token: "k" },
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" },
+    { as: "E", kkWindow: [null, null] }, // no window: 30 days after issue again
+    { anon: "kkForm", token: "k" },
+    { as: "E", issue: "kk_signup", name: "k2" },
+    { anon: "kkForm", token: "k" }, // replaced
   ],
 };

@@ -1,6 +1,8 @@
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
+import type { KkPort } from "./kk";
 import type { KnowledgePort } from "./knowledge";
+import type { LinksPort } from "./links";
 import type { OutputsPort } from "./outputs";
 import type { SettingsPort } from "./settings";
 import type { SpeakerPort } from "./speakers";
@@ -42,4 +44,8 @@ export interface DataPort {
   readonly outputs: OutputsPort;
   /** «ידע»: the knowledge base's notes and the milestones (src/data/knowledge.ts). */
   readonly knowledge: KnowledgePort;
+  /** Links without an account — issue, replace, revoke, list (an edition's admins; src/data/links.ts). */
+  readonly links: LinksPort;
+  /** מכריכה לכריכה: groups, leaders, sign-ups, the window, book orders (src/data/kk.ts). */
+  readonly kk: KkPort;
 }

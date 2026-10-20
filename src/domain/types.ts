@@ -232,6 +232,8 @@ export interface EditionSettings {
   confirm_template?: string;
   /** The escorts' «משהו שחשוב לדעת» phrases — the instructor's own; absent until pasted. */
   duty_phrases?: DutyPhrase[];
+  /** מכריכה לכריכה's sign-up window (ISO instants, as toISOString writes them); absent = closed. The admin sets it. */
+  kk_window?: { opens_at: string; closes_at: string };
 }
 
 export interface Edition {
@@ -260,6 +262,19 @@ export interface Week {
   team: TeamMember[];
   /** The edition's trainees (names only), for escorts. */
   roster: RosterMember[];
+  /** The escorts' ticks, written through their links (v9) — the team reads them. */
+  escortTicks: EscortTick[];
+}
+
+/** The four things an escort ticks off: reminded the speaker, met them at the parking, introduced them, gave the gift. */
+export const TICK_ITEMS = ["reminded", "met", "introduced", "gift"] as const;
+export type TickItem = (typeof TICK_ITEMS)[number];
+
+/** One tick, and when it was made (the first time is kept). */
+export interface EscortTick {
+  lesson_id: number;
+  item: TickItem;
+  at: string;
 }
 
 /** Pitch states that still mean "in play" for a cell. */

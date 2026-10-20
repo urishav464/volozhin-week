@@ -7,7 +7,8 @@
 // last one, field by field. Pure, from a loaded Week.
 import { messageDate, teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
-import { DAY_NAMES, fmtRange, overlaps } from "../domain/time";
+import { addDays } from "../domain/israelTime";
+import { type Day, DAY_NAMES, fmtRange, overlaps } from "../domain/time";
 import type { Lesson, Week } from "../domain/types";
 import { gridOrder } from "./tracking";
 import { LRM, type Table } from "./table";
@@ -49,34 +50,78 @@ function isPublic(l: Lesson): boolean {
   return l.state !== "cancelled" && (l.kind === "memorial" || l.state === "closed");
 }
 
-export function designerRows(week: Week): DesignerRow[] {
+/**
+ * The public schedule's facts for one lesson — what public.schedule_view gives the schedule link (without the
+ * lesson's id) and what a designer row is written from. tests/parity holds this equal to the SQL.
+ */
+export interface ScheduleEntry {
+  kind: "lesson" | "memorial";
+  day: Day;
+  /** The day column's date (a night lesson stays under its column, as on the poster), or null while the week's date is TBD. */
+  date: string | null;
+  /** The teaching time (a memorial slot: the whole slot). */
+  start_min: number;
+  end_min: number;
+  /** The speakers' names as printed, the lead first: «ד״ר פלונית · פלוני». */
+  speaker: string;
+  title: string | null;
+  category: string;
+  room: string;
+  /** A closed lesson that overlaps another closed lesson of the day. */
+  parallel: boolean;
+}
+
+/** The public schedule of a loaded Week, in grid order. */
+export function scheduleEntries(week: Week): (ScheduleEntry & { lesson_id: number })[] {
   const speakers = new Map(week.speakers.map((s) => [s.id, s]));
   const categories = new Map(week.categories.map((c) => [c.id, c.name]));
   const rooms = new Map(week.rooms.map((r) => [r.id, r.name]));
   const lessonMinutes = week.edition.settings?.lesson_minutes;
   const shown = week.lessons.filter(isPublic).sort(gridOrder(week));
   const teaching = shown.filter((l) => l.kind === "lesson");
+  const start = week.edition.start_date;
   return shown.map((l) => {
     const names = week.lessonSpeakers
       .filter((x) => x.lesson_id === l.id)
-      .sort((a, b) => Number(a.role !== "lead") - Number(b.role !== "lead"))
+      .sort((a, b) => Number(a.role !== "lead") - Number(b.role !== "lead") || a.speaker_id - b.speaker_id)
       .map((x) => speakers.get(x.speaker_id))
       .filter((s) => !!s)
       .map((s) => displayName(s!));
     return {
       lesson_id: l.id,
       kind: l.kind,
-      day: DAY_NAMES[l.day],
-      // the day column's date (a night lesson stays under its column, as on the poster)
-      date: messageDate(week.edition.start_date, l.day, 390) ?? "TBD",
-      time: fmtRange(l.start_min, l.start_min + (l.kind === "memorial" ? l.end_min - l.start_min : teachMinutes(l, lessonMinutes))),
+      day: l.day,
+      date: start ? addDays(start, l.day) : null,
+      start_min: l.start_min,
+      end_min: l.start_min + (l.kind === "memorial" ? l.end_min - l.start_min : teachMinutes(l, lessonMinutes)),
       speaker: names.join(" · "),
-      title: l.title ?? (l.kind === "memorial" ? "זמן זיכרון" : "TBD"),
+      title: l.title,
       category: (l.category_id != null && categories.get(l.category_id)) || "",
       room: rooms.get(l.room_id) ?? "",
       parallel: l.kind === "lesson" && teaching.some((o) => o.id !== l.id && o.day === l.day && overlaps(o.start_min, o.end_min, l.start_min, l.end_min)),
     };
   });
+}
+
+/** One entry as the designer's table (and the schedule link's page) writes it. */
+export function designerRow(e: ScheduleEntry, lessonId: number): DesignerRow {
+  return {
+    lesson_id: lessonId,
+    kind: e.kind,
+    day: DAY_NAMES[e.day],
+    // the day column's date, Gregorian and Hebrew, as in the summary message
+    date: messageDate(e.date, 0, 390) ?? "TBD",
+    time: fmtRange(e.start_min, e.end_min),
+    speaker: e.speaker,
+    title: e.title ?? (e.kind === "memorial" ? "זמן זיכרון" : "TBD"),
+    category: e.category,
+    room: e.room,
+    parallel: e.parallel,
+  };
+}
+
+export function designerRows(week: Week): DesignerRow[] {
+  return scheduleEntries(week).map((e) => designerRow(e, e.lesson_id));
 }
 
 /** A field as the table writes it. */

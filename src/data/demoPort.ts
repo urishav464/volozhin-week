@@ -5,8 +5,9 @@ import type { CellTarget, EscortPatch, LessonPatch, PaymentItem, ReshapeOp, Sour
 import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilestone, DemoOutputs } from "./demoOutputs";
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
+import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
 import { demoContacts, demoHistory, demoLog, demoTransport, demoWeek } from "./demoWeek";
-import { type Actor, Engine, type PoolShared } from "./engine";
+import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
 import type { Note } from "./knowledge";
 import type { ExportSnapshot } from "./outputs";
 import type { DataPort } from "./port";
@@ -23,7 +24,7 @@ const DEMO_EMAIL = "demo@example.org";
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
 // the database. The demo user is the global admin (member 1).
-export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore {
+export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
@@ -31,7 +32,15 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly speakers: DemoSpeakers;
   readonly outputs: DemoOutputs;
   readonly knowledge: DemoKnowledge;
+  /** The edition's links (v9) — the demo's tokens are synthetic (src/data/demoLinks.ts). */
+  readonly links: DemoLinks;
+  /** מכריכה לכריכה. */
+  readonly kk: DemoKk;
+  /** What a link's public page reads: the anon functions on the engine. */
+  readonly public: DemoPublic;
   readonly shared: PoolShared;
+  /** While the constructor seeds the demo's links, their tokens are the fixed ones (demoToken(…, true)). */
+  private seeding = false;
   readonly history: Record<number, HistoryLesson[]> = demoHistory();
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[] = [];
@@ -44,7 +53,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
 
   constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
     const week = demoWeek();
-    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week) };
+    this.shared = { contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk() };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
@@ -60,10 +69,24 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.speakers = new DemoSpeakers(this);
     this.outputs = new DemoOutputs(this);
     this.knowledge = new DemoKnowledge(this);
+    this.links = new DemoLinks(this);
+    this.kk = new DemoKk(this);
+    this.public = new DemoPublic(this);
+    // seeded as the demo's instructor (member 1), whoever the demo user is
+    this.seeding = true;
+    seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
+    this.seeding = false;
   }
 
-  private newEngine(week: Week): Engine {
-    return new Engine(week, this.actor, undefined, this.shared, () => [...this.engines.values()].map((e) => e.week));
+  private newEngine(week: Week, actor: Actor = this.actor): Engine {
+    const editionId = week.edition.id;
+    return new Engine(week, actor, undefined, this.shared, () => [...this.engines.values()].map((e) => e.week), (scope, subject) =>
+      demoToken(scope, editionId, subject, this.seeding),
+    );
+  }
+
+  notify(): void {
+    this.listeners.forEach((l) => l());
   }
 
   addEngine(edition: Edition, room: Room): void {
@@ -81,6 +104,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       pitches: [],
       team: [],
       roster: [],
+      escortTicks: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
     this.syncTeams();

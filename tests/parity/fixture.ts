@@ -115,7 +115,31 @@ export type Step =
   | { as: ActorKey; readTransport: At }
   | { as: ActorKey; setTransport: At; address?: string | null; time?: string | null; driver?: string | null; phone?: string | null; arranged?: boolean }
   | { as: ActorKey; template: string | null }
-  | { as: ActorKey; duty: unknown };
+  | { as: ActorKey; duty: unknown }
+  // links and מכריכה לכריכה (milestone 5a) — tokens by the name a step gave them, groups by title, tracks by [day, start]
+  | { as: ActorKey; issue: string; trainee?: string | null; name: string }
+  | { as: ActorKey; revoke: string }
+  | { anon: "escortView" | "kkForm" | "scheduleView"; token: string }
+  | { anon: "escortTick"; token: string; at: At; item: string; on: boolean | null }
+  | { anon: "escortPickup"; token: string; at: At; address: string | null }
+  | { anon: "kkSignup"; token: string; trainee: string; group: string }
+  | { as: ActorKey; kkAdd: [number, number]; fields: KkStepFields }
+  | { as: ActorKey; kkUpdate: string; patch: KkStepFields }
+  | { as: ActorKey; kkDelete: string }
+  | { as: ActorKey; kkPlace: string; trainee: string }
+  | { as: ActorKey; kkUnplace: [number, number]; trainee: string }
+  | { as: ActorKey; kkWindow: [string | null, string | null] }
+  | { as: ActorKey; bookOrder: string; copies: number | null; ordered: boolean | null }
+  /** The week's opening Sunday, set by hand (the «מחזור» tab writes the row directly): a yyyy-mm-dd or TBD. */
+  | { startDate: string | null }
+  /** A link's expiry moved into the past, by hand. */
+  | { expire: string };
+
+/** A group's fields as steps write them: a room by name, a trainee leader by name. */
+export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
+
+/** An unknown token name: a well-formed token that opens nothing. */
+export const NO_SUCH_TOKEN = "AAAAAAAAAAAAAAAAAAAAAA";
 
 /** The comparable state: everything keyed by natural keys, never by ids. */
 export interface Normal {
@@ -130,8 +154,14 @@ export interface Normal {
   availability: string[];
   /** transport_details, by lesson */
   transport: string[];
-  /** the edition's template and duty phrases */
+  /** the edition's template and duty phrases, and the sign-up window */
   edition: string[];
+  /** share_links: scope, subject, revoked, expiry (by rule), who issued */
+  links: string[];
+  /** kk_tracks, kk_groups (with leaders), kk_signups, book_orders */
+  kk: string[];
+  /** escort_ticks */
+  ticks: string[];
 }
 
 const d = (v: unknown) => (v == null ? "-" : String(v));
@@ -195,8 +225,59 @@ export function transportRead(t: Parameters<typeof transportLine>[1] | null): st
 }
 
 /** The edition's template and phrases, as comparable lines. */
-export function editionLines(settings: { confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null }): string[] {
-  return [`template=${d(settings.confirm_template)}`, `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`];
+export function editionLines(settings: {
+  confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
+}): string[] {
+  return [
+    `template=${d(settings.confirm_template)}`,
+    `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,
+    `window=${settings.kk_window ? `${settings.kk_window.opens_at}..${settings.kk_window.closes_at}` : "-"}`,
+  ];
+}
+
+/** A link's expiry as the state compares it: «+720h» after issue (the date TBD), «past» once over (a hand edit's instant differs by milliseconds), else the instant. */
+export function expiryOf(createdAt: string | Date, expiresAt: string | Date): string {
+  const [c, e] = [new Date(createdAt).getTime(), new Date(expiresAt).getTime()];
+  if (e - c === 720 * 3_600_000) return "+720h";
+  return e <= Date.now() ? "past" : new Date(e).toISOString();
+}
+
+export function linkLine(l: { scope: string; trainee: string; revoked: boolean; created_at: string | Date; expires_at: string | Date; by: string }): string {
+  return `${l.scope}|${l.trainee}|rev=${l.revoked ? "y" : "-"}|exp=${expiryOf(l.created_at, l.expires_at)}|by=${l.by}`;
+}
+
+/** JSON with every object's keys sorted — a view compared whole, whichever order its keys came in. */
+export function stable(v: unknown): string {
+  const norm = (x: unknown): unknown =>
+    Array.isArray(x) ? x.map(norm) : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, y]) => [k, norm(y)])) : x;
+  return JSON.stringify(norm(v));
+}
+
+const byText = <T>(key: (x: T) => string) => (a: T, b: T) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+
+/** What a public read returns, as one comparable string: lessons by place, ids by name, tick times as set/unset, lists the SQL orders by collation sorted. */
+export function publicRead(
+  kind: "escortView" | "escortTick" | "kkForm" | "scheduleView",
+  v: unknown,
+  names: { lesson: (id: number) => string; track: (id: number) => string; group: (id: number) => string; trainee: (id: number) => string },
+): string {
+  const ticks = (t: Record<string, string | null>) => Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x == null ? "-" : "y"]));
+  if (kind === "escortTick") return stable(ticks(v as Record<string, string | null>));
+  if (kind === "scheduleView") return stable(v);
+  if (kind === "escortView") {
+    const x = structuredClone(v) as { lessons: { lesson_id: number | string; ticks: Record<string, string | null> }[] };
+    for (const l of x.lessons) Object.assign(l, { lesson_id: names.lesson(Number(l.lesson_id)), ticks: ticks(l.ticks) });
+    return stable(x);
+  }
+  const f = structuredClone(v) as {
+    roster: { id: number | string; full_name: string }[];
+    tracks: { id: number | string; groups: { id: number | string; title: string }[] }[];
+  };
+  f.roster = f.roster.map((r) => ({ ...r, id: names.trainee(Number(r.id)) })).sort(byText((r) => r.full_name));
+  f.tracks = f.tracks
+    .map((t) => ({ ...t, id: names.track(Number(t.id)), groups: t.groups.map((g) => ({ ...g, id: names.group(Number(g.id)) })).sort(byText((g) => g.title)) }))
+    .sort(byText((t) => String(t.id)));
+  return stable(f);
 }
 
 export interface Driver {

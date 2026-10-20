@@ -65,6 +65,11 @@ export const ERRORS: Record<string, string> = {
   // knowledge and milestones (milestone 4)
   title_required: "צריך לכתוב כותרת.",
   in_use: "זה בשימוש במקום אחר, ולכן אי אפשר למחוק.",
+  // links without an account and מכריכה לכריכה (milestone 5a)
+  link_invalid: "הקישור לא בתוקף: אולי פג תוקפו, בוטל או הוחלף בקישור חדש. אפשר לבקש קישור מהצוות.",
+  link_past: "הקישור כבר לא יהיה בתוקף: השבוע הסתיים, או שחלון ההרשמה נסגר.",
+  bad_trainee: "צריך לבחור חניך/ה מרשימת החניכים של המחזור.",
+  group_has_signups: "יש נרשמים לקבוצה הזו. קודם מעבירים אותם לקבוצה אחרת או מסירים אותם, ואז מוחקים.",
 };
 
 export function errorMessage(code: string | null | undefined): string {

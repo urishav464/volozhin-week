@@ -39,7 +39,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable
-  as $$ select 8 $$;
+  as $$ select 9 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -206,8 +206,8 @@ create policy members_admin_write on public.members
 -- Functions a browser calls.
 -- -----------------------------------------------------------------------------
 
--- The keep-alive ping (GitHub Actions, daily) — the only thing anon may run
--- before the escort and sign-up links exist.
+-- The keep-alive ping (GitHub Actions, daily). With the public links' six
+-- functions (v9, below), the whole of what anon may run.
 create or replace function public.ping() returns text
   language sql stable security definer set search_path = ''
   as $$ select 'ok'::text $$;
@@ -810,7 +810,7 @@ create policy activity_read on public.activity for select to authenticated using
 -- ------------------------------------------------------------- reads
 
 -- load_week (everything the grid needs, in one round trip) is defined in the
--- v7 section below: it reads the roster, which is created further down.
+-- v9 section below: it reads the roster and the escorts' ticks, created further down.
 
 -- ------------------------------------------------------------- commands (docs/CONTRACT.md)
 
@@ -1251,7 +1251,8 @@ create index if not exists activity_actor on public.activity (actor);
 
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
--- read the v8 tables created further down: notes, milestones, export_snapshots.)
+-- read the tables created further down: notes, milestones, export_snapshots (v8),
+-- share_links (v9).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1264,7 +1265,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.speakers where created_by = p_member or vetted_by = p_member)
         or exists (select 1 from public.notes where created_by = p_member or updated_by = p_member)
         or exists (select 1 from public.milestones where created_by = p_member or done_by = p_member)
-        or exists (select 1 from public.export_snapshots where created_by = p_member);
+        or exists (select 1 from public.export_snapshots where created_by = p_member)
+        or exists (select 1 from public.share_links where created_by = p_member);
   end
   $$;
 
@@ -2311,43 +2313,8 @@ create or replace function app.clean_duty_phrases(p jsonb) returns jsonb
 
 -- ------------------------------------------------------------- reads
 
--- Everything the grid needs, in one round trip, as the caller's RLS allows —
--- invoker, so it can never show more than the tables would. Never a contact
--- detail and never a transport detail (their own tables). v7 adds the
--- edition's roster (names only), for escorts.
-create or replace function public.load_week(p_edition bigint) returns jsonb
-  language sql stable security invoker set search_path = ''
-  as $$
-    select jsonb_build_object(
-      'edition', (select to_jsonb(e) from public.editions e where e.id = p_edition),
-      'rows', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.start_min, r.id) from public.grid_rows r where r.edition_id = p_edition), '[]'),
-      'rooms', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.sort, r.id) from public.rooms r where r.edition_id = p_edition), '[]'),
-      'categories', coalesce((select jsonb_agg(to_jsonb(c) order by c.sort, c.id) from public.categories c), '[]'),
-      'speakers', coalesce((select jsonb_agg(jsonb_build_object(
-          'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
-          'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
-          'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
-          'name_key', s.name_key, 'version', s.version)
-          order by s.id) from public.speakers s), '[]'),
-      'approaches', coalesce((select jsonb_agg(jsonb_build_object(
-          'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
-          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
-          from public.approaches a where a.edition_id = p_edition), '[]'),
-      'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
-          join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
-      'lessons', coalesce((select jsonb_agg(to_jsonb(l) - 'span' - 'edition_id' - 'created_at' order by l.id)
-          from public.lessons l where l.edition_id = p_edition), '[]'),
-      'lessonSpeakers', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'role', x.role))
-          from public.lesson_speakers x where x.edition_id = p_edition), '[]'),
-      'pitches', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'lesson_id', p.lesson_id, 'approach_id', p.approach_id,
-          'state', p.state, 'proposed_by', p.proposed_by, 'at', p.at) order by p.id)
-          from public.pitches p where p.edition_id = p_edition), '[]'),
-      'team', coalesce((select jsonb_agg(to_jsonb(t) order by t.id) from public.team(p_edition) t), '[]'),
-      'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name, 'gender', r.gender) order by r.full_name, r.id)
-          from public.roster r where r.edition_id = p_edition), '[]')
-    )
-    where app.can_see_edition(p_edition)
-  $$;
+-- load_week (everything the grid needs, in one round trip) is defined in the v9
+-- section below: it reads the escorts' ticks, which are created there.
 
 -- Transport details, through the policy (invoker): NULL when they are not mine to see.
 create or replace function public.get_transport_details(p_lesson bigint) returns jsonb
@@ -2818,6 +2785,902 @@ create or replace function public.get_contacts_for(p_lessons bigint[]) returns j
        and app.may_see_contacts(x.speaker_id)
   $$;
 
+-- =============================================================================
+-- Milestone 5a (v9) — links without an account, and מכריכה לכריכה. Semantics:
+-- docs/CONTRACT.md «Links and מכריכה לכריכה»; the in-memory twin is
+-- src/data/engine.ts, and tests/parity holds the two together.
+--
+-- The FIRST surface for `anon` (the publishable key, nobody signed in). Its whole
+-- reach is ping and the six functions below, each SECURITY DEFINER with a fixed
+-- output shape, each keyed by a link's token alone:
+--   escort_view, escort_tick, escort_pickup   one trainee's escort link: their
+--                     lessons, the four ticks, a pickup address (write-only)
+--   kk_form, kk_signup                        the class's sign-up link
+--   schedule_view                             the public schedule, read-only
+-- An unknown, expired, revoked or wrong-scope token, a token past its rate limit,
+-- a lesson that is not that escort's, and a link of an archived edition all get
+-- the SAME refusal, `link_invalid` — the links are no oracle. A sign-up answers
+-- the same in every case, so the link never tells who signed up.
+--
+--   share_links      the links: 128 random bits per token (extensions
+--                    .gen_random_bytes), returned ONCE to the edition admin who
+--                    issues it; only its sha256 is stored, and no browser role
+--                    can read even that (column grants). Issue = replace: the
+--                    old live link of the same subject is revoked.
+--   share_link_hits  the rate limit, per token («הצעה»): 60 calls in 10 minutes
+--                    for an escort's link, 600 for the class's links (kk,
+--                    schedule), which some 60 trainees share.
+--   escort_ticks     הזכרתי · פגשתי בחניה · הצגתי · נתתי מתנה: written through
+--                    the escort's link, read by the team in load_week. A lesson
+--                    whose escort changes (set_escort, reopen_lesson, a trainee
+--                    deleted) loses its ticks: they were the last escort's.
+--   kk_tracks …      מכריכה לכריכה: a track per kk grid row occurrence (a day
+--                    and a kk row), groups (a book — title and author as typed,
+--                    nothing seeded — a room, a capacity the admin entered,
+--                    open), their leaders, the sign-ups (one per trainee per
+--                    track) and the book orders. Written by the edition's
+--                    admins through the functions below (book orders logistics
+--                    too); read by its members.
+-- None of these tables is ever published to Realtime.
+-- =============================================================================
+
+-- ------------------------------------------------------------- tables
+
+-- An escort's link names a trainee of the edition; a kk sign-up names one too.
+create unique index if not exists roster_id_edition on public.roster (id, edition_id);
+
+create table if not exists public.share_links (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  scope      text not null check (scope in ('escort', 'kk_signup', 'schedule')),
+  subject_id bigint references public.roster (id) on delete cascade,   -- the escort (scope 'escort'); NULL otherwise
+  token_hash bytea not null unique check (octet_length(token_hash) = 32),
+  created_by bigint,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  check ((scope = 'escort') = (subject_id is not null))
+);
+-- One live link per subject: issuing again revokes the old one first.
+create unique index if not exists share_links_live on public.share_links (edition_id, scope, coalesce(subject_id, 0)) where revoked_at is null;
+alter table public.share_links enable row level security;
+
+create table if not exists public.share_link_hits (
+  token_hash   bytea primary key references public.share_links (token_hash) on delete cascade,
+  window_start timestamptz not null,
+  hits         integer not null
+);
+alter table public.share_link_hits enable row level security;   -- no policy: the definer functions only
+
+create table if not exists public.escort_ticks (
+  lesson_id bigint not null references public.lessons (id) on delete cascade,
+  item      text not null check (item in ('reminded', 'met', 'introduced', 'gift')),
+  at        timestamptz not null default now(),
+  primary key (lesson_id, item)
+);
+alter table public.escort_ticks enable row level security;
+
+create table if not exists public.kk_tracks (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  day        smallint not null check (day between 0 and 4),
+  start_min  integer not null check (start_min between 390 and 1830),
+  end_min    integer not null check (end_min between 390 and 1830 and end_min > start_min),
+  unique (edition_id, day, start_min),
+  unique (id, edition_id)
+);
+alter table public.kk_tracks enable row level security;
+
+create table if not exists public.kk_groups (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null,
+  track_id   bigint not null,
+  title      text not null check (btrim(title) <> '' and char_length(title) <= 200),
+  author     text check (char_length(author) <= 120),
+  room_id    bigint references public.rooms (id) on delete set null,
+  capacity   integer check (capacity between 1 and 1000),   -- what the admin entered; NULL = not offered yet
+  open       boolean not null default true,
+  created_at timestamptz not null default now(),
+  foreign key (track_id, edition_id) references public.kk_tracks (id, edition_id) on delete cascade,
+  unique (id, track_id)
+);
+create index if not exists kk_groups_track on public.kk_groups (track_id);
+alter table public.kk_groups enable row level security;
+
+create table if not exists public.kk_leaders (
+  id        bigint generated always as identity primary key,
+  group_id  bigint not null references public.kk_groups (id) on delete cascade,
+  kind      text not null check (kind in ('staff', 'trainee', 'ein_prat')),
+  roster_id bigint references public.roster (id) on delete cascade,   -- a trainee leader
+  label     text check (char_length(label) <= 80),                    -- anyone else, as typed
+  sort      integer not null default 0,
+  check ((kind = 'trainee') = (roster_id is not null)),
+  check (kind = 'trainee' or btrim(coalesce(label, '')) <> '')
+);
+create index if not exists kk_leaders_group on public.kk_leaders (group_id);
+alter table public.kk_leaders enable row level security;
+
+create table if not exists public.kk_signups (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null,
+  track_id   bigint not null,
+  group_id   bigint not null,
+  roster_id  bigint not null,
+  via        text not null check (via in ('link', 'staff')),
+  created_at timestamptz not null default now(),
+  unique (track_id, roster_id),
+  foreign key (track_id, edition_id) references public.kk_tracks (id, edition_id) on delete cascade,
+  foreign key (group_id, track_id) references public.kk_groups (id, track_id) on delete cascade,
+  foreign key (roster_id, edition_id) references public.roster (id, edition_id) on delete cascade
+);
+create index if not exists kk_signups_group on public.kk_signups (group_id);
+alter table public.kk_signups enable row level security;
+
+create table if not exists public.book_orders (
+  group_id   bigint primary key references public.kk_groups (id) on delete cascade,
+  copies     integer not null check (copies between 0 and 1000),
+  ordered_at timestamptz
+);
+alter table public.book_orders enable row level security;
+
+-- ------------------------------------------------------------- reads under RLS
+
+-- The links: an edition's admins, and never the hash (column grants, at the end).
+drop policy if exists share_links_read on public.share_links;
+create policy share_links_read on public.share_links for select to authenticated using (app.my_role(edition_id) = 'admin');
+drop policy if exists escort_ticks_read on public.escort_ticks;
+create policy escort_ticks_read on public.escort_ticks for select to authenticated using (
+  exists (select 1 from public.lessons l where l.id = escort_ticks.lesson_id and app.can_see_edition(l.edition_id)));
+drop policy if exists kk_tracks_read on public.kk_tracks;
+create policy kk_tracks_read on public.kk_tracks for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists kk_groups_read on public.kk_groups;
+create policy kk_groups_read on public.kk_groups for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists kk_leaders_read on public.kk_leaders;
+create policy kk_leaders_read on public.kk_leaders for select to authenticated using (
+  exists (select 1 from public.kk_groups g where g.id = kk_leaders.group_id and app.can_see_edition(g.edition_id)));
+drop policy if exists kk_signups_read on public.kk_signups;
+create policy kk_signups_read on public.kk_signups for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists book_orders_read on public.book_orders;
+create policy book_orders_read on public.book_orders for select to authenticated using (
+  exists (select 1 from public.kk_groups g where g.id = book_orders.group_id and app.can_see_edition(g.edition_id)));
+
+-- ------------------------------------------------------------- helpers
+
+-- An instant as JavaScript writes it (toISOString): the window's bounds and the
+-- ticks' times read the same in both implementations.
+create or replace function app.iso(p timestamptz) returns text
+  language sql immutable set search_path = ''
+  as $$ select to_char(p at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') $$;
+
+-- A lesson's teaching time ends here: its own teaching time, else
+-- min(settings.lesson_minutes ?? 75, the slot) — src/domain/message.ts
+-- teachMinutes; a memorial slot is its whole length.
+create or replace function app.teach_end(p_lesson public.lessons, p_settings jsonb) returns integer
+  language sql immutable set search_path = ''
+  as $$
+    select case when p_lesson.kind = 'memorial' then p_lesson.end_min
+                else p_lesson.start_min + coalesce(p_lesson.teach_min, least(
+                       case when jsonb_typeof(p_settings -> 'lesson_minutes') = 'number' then (p_settings ->> 'lesson_minutes')::numeric::integer else 75 end,
+                       p_lesson.end_min - p_lesson.start_min)) end
+  $$;
+
+-- «ד״ר פלונית אלמונית» (src/domain/names.ts displayName).
+create or replace function app.speaker_label(p public.speakers) returns text
+  language sql immutable set search_path = ''
+  as $$ select case when nullif(p.title, '') is null then p.name else p.title || ' ' || p.name end $$;
+
+-- A lesson's «משהו שחשוב לדעת»: the instructor's duty phrases that apply to it,
+-- in their order — the rule of src/domain/escorts.ts (dutyNotes), which
+-- tests/parity holds equal to this. Never the amount.
+create or replace function app.duty_notes(p_lesson public.lessons, p_phrases jsonb) returns jsonb
+  language sql immutable set search_path = ''
+  as $$
+    select coalesce(jsonb_agg(t.p ->> 'text' order by t.o), '[]'::jsonb)
+      from jsonb_array_elements(case when jsonb_typeof(p_phrases) = 'array' then p_phrases else '[]'::jsonb end) with ordinality as t(p, o)
+     where jsonb_typeof(t.p) = 'object' and jsonb_typeof(t.p -> 'text') = 'string'
+       and case t.p ->> 'when'
+             when 'always' then true
+             when 'self_intro' then p_lesson.self_intro
+             when 'escort_intro' then p_lesson.kind = 'lesson' and not p_lesson.self_intro
+             when 'transport' then p_lesson.transport <> 'none' and p_lesson.approval = 'approved'
+             when 'memorial' then p_lesson.kind = 'memorial'
+             else false
+           end
+  $$;
+
+-- The four ticks of a lesson: when each was ticked, or null.
+create or replace function app.ticks_of(p_lesson bigint) returns jsonb
+  language sql stable security definer set search_path = ''
+  as $$
+    select jsonb_build_object(
+      'reminded',   (select app.iso(t.at) from public.escort_ticks t where t.lesson_id = p_lesson and t.item = 'reminded'),
+      'met',        (select app.iso(t.at) from public.escort_ticks t where t.lesson_id = p_lesson and t.item = 'met'),
+      'introduced', (select app.iso(t.at) from public.escort_ticks t where t.lesson_id = p_lesson and t.item = 'introduced'),
+      'gift',       (select app.iso(t.at) from public.escort_ticks t where t.lesson_id = p_lesson and t.item = 'gift'))
+  $$;
+
+-- When a link stops working («הצעה», DECISIONS אבן דרך 5א): an escort's and the
+-- schedule's at the end of the week — Friday 00:00 Israel time, start_date + 5
+-- — or, while the week's date is TBD, 30 days (720 hours) after it was issued;
+-- the sign-up link when the sign-up window closes (no window yet: 30 days).
+-- Kept in share_links.expires_at, and recomputed when the date or the window
+-- moves (app.editions_link_expiry).
+create or replace function app.link_expiry(p_edition bigint, p_scope text, p_created timestamptz) returns timestamptz
+  language sql stable security definer set search_path = ''
+  as $$
+    select case
+      when p_scope = 'kk_signup' then
+        coalesce((e.settings #>> '{kk_window,closes_at}')::timestamptz, p_created + interval '720 hours')
+      else
+        coalesce(((e.start_date + 5)::timestamp at time zone 'Asia/Jerusalem'), p_created + interval '720 hours')
+    end
+    from public.editions e where e.id = p_edition
+  $$;
+
+create or replace function app.editions_link_expiry() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if new.start_date is distinct from old.start_date or (new.settings -> 'kk_window') is distinct from (old.settings -> 'kk_window') then
+      update public.share_links set expires_at = app.link_expiry(new.id, scope, created_at)
+       where edition_id = new.id and revoked_at is null;
+    end if;
+    return null;
+  end
+  $$;
+drop trigger if exists editions_link_expiry on public.editions;
+create trigger editions_link_expiry after update of start_date, settings on public.editions
+  for each row execute function app.editions_link_expiry();
+
+-- A lesson whose escort changes — another trainee, none (set_escort, reopen_lesson),
+-- or the trainee deleted (on delete set null) — loses the last escort's ticks.
+create or replace function app.lessons_escort_ticks() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if new.escort_roster_id is distinct from old.escort_roster_id then
+      delete from public.escort_ticks where lesson_id = new.id;
+    end if;
+    return null;
+  end
+  $$;
+drop trigger if exists lessons_escort_ticks on public.lessons;
+create trigger lessons_escort_ticks after update of escort_roster_id on public.lessons
+  for each row execute function app.lessons_escort_ticks();
+
+-- How many calls a token may make in 10 minutes («הצעה»): an escort's link is
+-- one person's; the sign-up and schedule links are shared by the whole class.
+create or replace function app.link_rate(p_scope text) returns integer
+  language sql immutable set search_path = ''
+  as $$ select case when p_scope = 'escort' then 60 else 600 end $$;
+
+-- The link a presented token opens — found by the sha256 of what was presented,
+-- never by the plaintext — counted against its rate limit, and refused, always
+-- with the one code `link_invalid`, when it is unknown, of another scope,
+-- revoked, expired, of an archived edition, or past the limit. (A refusal rolls
+-- the count back with everything else: only answered calls are counted.)
+create or replace function app.link_for(p_token text, p_scope text) returns public.share_links
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v      public.share_links;
+    v_hash bytea;
+    v_hits integer;
+  begin
+    if p_token is null or char_length(p_token) not between 16 and 64 then perform app.refuse('link_invalid'); end if;
+    v_hash := extensions.digest(p_token, 'sha256');
+    select * into v from public.share_links where token_hash = v_hash;
+    if v.id is null then perform app.refuse('link_invalid'); end if;
+    insert into public.share_link_hits as h (token_hash, window_start, hits) values (v_hash, now(), 1)
+    on conflict (token_hash) do update
+      set hits = case when h.window_start <= now() - interval '10 minutes' then 1 else h.hits + 1 end,
+          window_start = case when h.window_start <= now() - interval '10 minutes' then now() else h.window_start end
+    returning h.hits into v_hits;
+    if v_hits > app.link_rate(v.scope) then perform app.refuse('link_invalid'); end if;
+    if v.scope <> p_scope or v.revoked_at is not null or v.expires_at <= now() then perform app.refuse('link_invalid'); end if;
+    if exists (select 1 from public.editions e where e.id = v.edition_id and (e.kind = 'archive' or e.status = 'archived')) then
+      perform app.refuse('link_invalid');
+    end if;
+    return v;
+  end
+  $$;
+
+-- A lesson of this escort's link: closed, in its edition, escorted by its
+-- trainee — anything else is `link_invalid`, like a bad token (no oracle).
+create or replace function app.escort_lesson(p_link public.share_links, p_lesson bigint) returns public.lessons
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v public.lessons;
+  begin
+    select * into v from public.lessons where id = p_lesson for update;
+    if v.id is null or v.edition_id <> p_link.edition_id or v.escort_roster_id is distinct from p_link.subject_id or v.state <> 'closed' then
+      perform app.refuse('link_invalid');
+    end if;
+    return v;
+  end
+  $$;
+
+-- The sign-up window (editions.settings.kk_window): open from opens_at until closes_at.
+create or replace function app.kk_open(p_settings jsonb) returns boolean
+  language sql stable set search_path = ''
+  as $$
+    select coalesce((p_settings #>> '{kk_window,opens_at}')::timestamptz <= now()
+                    and now() < (p_settings #>> '{kk_window,closes_at}')::timestamptz, false)
+  $$;
+
+-- The kk rows of a day, as the edition's window allows them (rowActive, like app.lesson_rows).
+create or replace function app.kk_rows(p_edition bigint, p_day integer)
+  returns setof public.grid_rows
+  language sql stable security definer set search_path = ''
+  as $$
+    select r.* from public.grid_rows r join public.editions e on e.id = r.edition_id
+     where r.edition_id = p_edition and r.kind = 'kk' and p_day = any (r.days)
+       and not (p_day = 0 and e.first_day_from is not null and r.end_min <= e.first_day_from)
+       and not (p_day = 4 and r.start_min >= e.last_day_until)
+     order by r.start_min, r.end_min
+  $$;
+
+-- A whole number from a JSON value in [lo, hi]; absent or JSON null → NULL.
+create or replace function app.json_int(p jsonb, p_lo integer, p_hi integer) returns integer
+  language plpgsql immutable set search_path = ''
+  as $$
+  begin
+    if p is null or jsonb_typeof(p) = 'null' then return null; end if;
+    if jsonb_typeof(p) <> 'number' then perform app.refuse('bad_value'); end if;
+    if (p #>> '{}')::numeric <> trunc((p #>> '{}')::numeric) or (p #>> '{}')::numeric not between p_lo and p_hi then
+      perform app.refuse('bad_value');
+    end if;
+    return (p #>> '{}')::integer;
+  end
+  $$;
+
+-- A group's leaders as both sides accept them (src/data/kkRules.ts
+-- cleanLeaders): a JSON array of {kind, roster_id | label} — a trainee of the
+-- edition's roster (`bad_trainee`), or a name as typed, one line ≤ 80; repeats
+-- (the first kept) dropped; at most 6 («הצעה»).
+create or replace function app.kk_clean_leaders(p jsonb, p_edition bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_out jsonb := '[]'::jsonb;
+    e     jsonb;
+    v_one jsonb;
+    v_r   bigint;
+  begin
+    if p is null or jsonb_typeof(p) = 'null' then return v_out; end if;
+    if jsonb_typeof(p) <> 'array' then perform app.refuse('bad_value'); end if;
+    for e in select x from jsonb_array_elements(p) with ordinality as t(x, o) order by o loop
+      if jsonb_typeof(e) <> 'object' or jsonb_typeof(e -> 'kind') is distinct from 'string'
+         or not (e ->> 'kind' = any (array['staff', 'trainee', 'ein_prat'])) then
+        perform app.refuse('bad_value');
+      end if;
+      if e ->> 'kind' = 'trainee' then
+        if jsonb_typeof(e -> 'roster_id') is distinct from 'number' then perform app.refuse('bad_trainee'); end if;
+        if (e ->> 'roster_id')::numeric <> trunc((e ->> 'roster_id')::numeric) then perform app.refuse('bad_trainee'); end if;
+        v_r := (e ->> 'roster_id')::numeric::bigint;
+        if not exists (select 1 from public.roster r where r.id = v_r and r.edition_id = p_edition) then perform app.refuse('bad_trainee'); end if;
+        v_one := jsonb_build_object('kind', 'trainee', 'roster_id', v_r, 'label', null);
+      else
+        if jsonb_typeof(e -> 'label') is distinct from 'string' or app.clean_line(e ->> 'label', 80) is null then perform app.refuse('bad_value'); end if;
+        v_one := jsonb_build_object('kind', e ->> 'kind', 'roster_id', null, 'label', app.clean_line(e ->> 'label', 80));
+      end if;
+      continue when v_out @> jsonb_build_array(v_one);
+      v_out := v_out || jsonb_build_array(v_one);
+    end loop;
+    if jsonb_array_length(v_out) > 6 then perform app.refuse('bad_value'); end if;
+    return v_out;
+  end
+  $$;
+
+-- A group's fields from a JSON object (kk_add_group, kk_update_group): only the
+-- keys present, cleaned and checked in this order — title (one line ≤ 200,
+-- required: `title_required`), author (≤ 120), room_id (a room of the edition),
+-- capacity (1–1000 or none), open (a boolean), leaders. Unknown keys ignored.
+create or replace function app.kk_clean_group(p jsonb, p_edition bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_out  jsonb := '{}'::jsonb;
+    v_room bigint;
+  begin
+    if p is null or jsonb_typeof(p) <> 'object' then perform app.refuse('bad_value'); end if;
+    if p ? 'title' then
+      if jsonb_typeof(p -> 'title') not in ('string', 'null') or app.clean_line(p ->> 'title', 200) is null then perform app.refuse('title_required'); end if;
+      v_out := v_out || jsonb_build_object('title', app.clean_line(p ->> 'title', 200));
+    end if;
+    if p ? 'author' then
+      if jsonb_typeof(p -> 'author') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+      v_out := v_out || jsonb_build_object('author', app.clean_line(p ->> 'author', 120));
+    end if;
+    if p ? 'room_id' then
+      v_room := app.json_int(p -> 'room_id', 1, 2147483647);
+      if v_room is not null and not exists (select 1 from public.rooms where id = v_room and edition_id = p_edition) then
+        perform app.refuse('bad_value');
+      end if;
+      v_out := v_out || jsonb_build_object('room_id', v_room);
+    end if;
+    if p ? 'capacity' then
+      v_out := v_out || jsonb_build_object('capacity', app.json_int(p -> 'capacity', 1, 1000));
+    end if;
+    if p ? 'open' then
+      if jsonb_typeof(p -> 'open') <> 'boolean' then perform app.refuse('bad_value'); end if;
+      v_out := v_out || jsonb_build_object('open', (p ->> 'open')::boolean);
+    end if;
+    if p ? 'leaders' then
+      v_out := v_out || jsonb_build_object('leaders', app.kk_clean_leaders(p -> 'leaders', p_edition));
+    end if;
+    return v_out;
+  end
+  $$;
+
+create or replace function app.kk_write_leaders(p_group bigint, p_leaders jsonb) returns void
+  language sql security definer set search_path = ''
+  as $$
+    delete from public.kk_leaders where group_id = p_group;
+    insert into public.kk_leaders (group_id, kind, roster_id, label, sort)
+    select p_group, x ->> 'kind', (x ->> 'roster_id')::bigint, x ->> 'label', o::integer
+      from jsonb_array_elements(p_leaders) with ordinality as t(x, o);
+  $$;
+
+-- ------------------------------------------------------------- the anon functions
+
+-- The escort's page: that trainee's closed lessons in that edition, in grid
+-- order — day, the day column's date (or null = TBD), the teaching time, room,
+-- the lead speaker's name and gender, title, self-introduction, the duty notes,
+-- the lesson's note to the escort, the four ticks — and, only from W−7 (Israel
+-- time) of a real edition whose week has a date, the lead speaker's phone; the
+-- driver's name and phone only once the transport was approved and arranged.
+-- Never an amount, an approval, an e-mail, the pickup address, another
+-- escort's lesson or anyone else's note.
+create or replace function public.escort_view(p_token text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v      public.share_links := app.link_for(p_token, 'escort');
+    v_ed   public.editions;
+    v_r    public.roster;
+    v_ph   boolean;
+  begin
+    select * into v_ed from public.editions where id = v.edition_id;
+    select * into v_r from public.roster where id = v.subject_id;
+    v_ph := v_ed.kind = 'real' and v_ed.start_date is not null
+            and (now() at time zone 'Asia/Jerusalem')::date >= v_ed.start_date - 7;
+    return jsonb_build_object(
+      'edition', jsonb_build_object('label', v_ed.label, 'start_date', v_ed.start_date),
+      'escort', jsonb_build_object('full_name', v_r.full_name, 'gender', v_r.gender),
+      'phones_from', case when v_ed.kind = 'real' then v_ed.start_date - 7 end,
+      'lessons', coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'lesson_id', l.id,
+                 'kind', l.kind,
+                 'day', l.day,
+                 'date', v_ed.start_date + l.day::integer,
+                 'start_min', l.start_min,
+                 'end_min', app.teach_end(l, v_ed.settings),
+                 'room', rm.name,
+                 'speaker', case when s.id is not null then jsonb_build_object('name', app.speaker_label(s), 'gender', s.gender) end,
+                 'title', l.title,
+                 'self_intro', l.self_intro,
+                 'duty_notes', app.duty_notes(l, v_ed.settings -> 'duty_phrases'),
+                 'escort_note', l.escort_note,
+                 'phone', case when v_ph then c.phone end,
+                 'transport', l.transport <> 'none' and l.approval = 'approved',
+                 'driver', case when v_ed.kind = 'real' and l.transport <> 'none' and l.approval = 'approved' and t.arranged
+                                then jsonb_build_object('name', t.driver_name, 'phone', t.driver_phone) end,
+                 'ticks', app.ticks_of(l.id))
+               order by l.day, l.start_min, rm.sort, l.id)
+          from public.lessons l
+          join public.rooms rm on rm.id = l.room_id
+          left join public.lesson_speakers x on x.lesson_id = l.id and x.role = 'lead'
+          left join public.speakers s on s.id = x.speaker_id
+          left join public.speaker_contacts c on c.speaker_id = s.id
+          left join public.transport_details t on t.lesson_id = l.id
+         where l.edition_id = v.edition_id and l.escort_roster_id = v.subject_id and l.state = 'closed'), '[]'::jsonb));
+  end
+  $$;
+
+-- One of the four ticks on one of the escort's lessons, on (its first time
+-- kept) or off. Answers the lesson's four ticks.
+create or replace function public.escort_tick(p_token text, p_lesson bigint, p_item text, p_on boolean) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v   public.share_links := app.link_for(p_token, 'escort');
+    v_l public.lessons := app.escort_lesson(v, p_lesson);
+  begin
+    if p_item is null or p_item not in ('reminded', 'met', 'introduced', 'gift') or p_on is null then perform app.refuse('bad_value'); end if;
+    if p_on then
+      insert into public.escort_ticks (lesson_id, item) values (v_l.id, p_item) on conflict do nothing;
+    else
+      delete from public.escort_ticks where lesson_id = v_l.id and item = p_item;
+    end if;
+    return app.ticks_of(v_l.id);
+  end
+  $$;
+
+-- «כתובת איסוף»: the escort writes the speaker's pickup address, one line ≤ 200,
+-- on a lesson whose transport was approved (`no_transport`). Write-only: it is
+-- never read back through the link. The log says the field changed, and how —
+-- never the value.
+create or replace function public.escort_pickup(p_token text, p_lesson bigint, p_address text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v      public.share_links := app.link_for(p_token, 'escort');
+    v_l    public.lessons := app.escort_lesson(v, p_lesson);
+    v_addr text;
+  begin
+    if not (v_l.transport <> 'none' and v_l.approval = 'approved') then perform app.refuse('no_transport'); end if;
+    v_addr := app.clean_line(p_address, 200);
+    if v_addr is null then perform app.refuse('bad_value'); end if;
+    insert into public.transport_details (lesson_id, pickup_address) values (v_l.id, v_addr)
+    on conflict (lesson_id) do update set pickup_address = excluded.pickup_address;
+    perform app.log_event(v_l.edition_id, 'lessons', v_l.id, 'transport', '{"fields": ["pickup_address"], "via": "escort_link"}'::jsonb);
+  end
+  $$;
+
+-- The sign-up page: the window and whether it is open now, the edition's
+-- trainees (names only — nothing about who signed up), and the tracks with
+-- the groups on offer (open, with a capacity entered): the book, its author,
+-- the room, the leaders' names, and whether the group is full.
+create or replace function public.kk_form(p_token text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v    public.share_links := app.link_for(p_token, 'kk_signup');
+    v_ed public.editions;
+  begin
+    select * into v_ed from public.editions where id = v.edition_id;
+    return jsonb_build_object(
+      'edition', jsonb_build_object('label', v_ed.label, 'start_date', v_ed.start_date),
+      'window', jsonb_build_object('opens_at', v_ed.settings #>> '{kk_window,opens_at}', 'closes_at', v_ed.settings #>> '{kk_window,closes_at}'),
+      'open', app.kk_open(v_ed.settings),
+      'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name) order by r.full_name, r.id)
+                            from public.roster r where r.edition_id = v.edition_id), '[]'::jsonb),
+      'tracks', coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'id', t.id, 'day', t.day, 'date', v_ed.start_date + t.day::integer, 'start_min', t.start_min, 'end_min', t.end_min,
+                 'groups', (select jsonb_agg(jsonb_build_object(
+                                     'id', g.id, 'title', g.title, 'author', g.author, 'room', rm.name,
+                                     'leaders', coalesce((select jsonb_agg(jsonb_build_object('kind', k.kind, 'name', coalesce(ro.full_name, k.label)) order by k.sort, k.id)
+                                                            from public.kk_leaders k left join public.roster ro on ro.id = k.roster_id
+                                                           where k.group_id = g.id), '[]'::jsonb),
+                                     'full', (select count(*) from public.kk_signups s where s.group_id = g.id) >= g.capacity)
+                                   order by g.title, g.id)
+                              from public.kk_groups g left join public.rooms rm on rm.id = g.room_id
+                             where g.track_id = t.id and g.open and g.capacity is not null))
+               order by t.day, t.start_min)
+          from public.kk_tracks t
+         where t.edition_id = v.edition_id
+           and exists (select 1 from public.kk_groups g where g.track_id = t.id and g.open and g.capacity is not null)), '[]'::jsonb));
+  end
+  $$;
+
+-- A trainee signs up for a group: recorded only inside the window, for a
+-- trainee of the edition, in an open group with a capacity entered and a place
+-- left (counted under the group's row lock, so two at once never overfill
+-- it). An existing sign-up for that track is NEVER changed through the link —
+-- only the staff move one (kk_place). The answer is the same in every case:
+-- the link is no oracle of who signed up.
+create or replace function public.kk_signup(p_token text, p_roster bigint, p_group bigint) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v    public.share_links := app.link_for(p_token, 'kk_signup');
+    v_ed public.editions;
+    v_g  public.kk_groups;
+  begin
+    select * into v_ed from public.editions where id = v.edition_id;
+    select * into v_g from public.kk_groups where id = p_group and edition_id = v.edition_id for update;
+    if v_g.id is not null and v_g.open and v_g.capacity is not null and app.kk_open(v_ed.settings)
+       and exists (select 1 from public.roster r where r.id = p_roster and r.edition_id = v.edition_id)
+       and (select count(*) from public.kk_signups s where s.group_id = v_g.id) < v_g.capacity then
+      insert into public.kk_signups (edition_id, track_id, group_id, roster_id, via)
+      values (v.edition_id, v_g.track_id, v_g.id, p_roster, 'link')
+      on conflict (track_id, roster_id) do nothing;
+    end if;
+    return jsonb_build_object('status', 'received');
+  end
+  $$;
+
+-- The public schedule (src/exports/designer.ts): closed lessons and memorial
+-- slots, in grid order — kind, day, the day column's date (or null), the
+-- teaching time, the speakers' names, title, category, room, «במקביל». Never a
+-- contact, an amount or a note.
+create or replace function public.schedule_view(p_token text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v    public.share_links := app.link_for(p_token, 'schedule');
+    v_ed public.editions;
+  begin
+    select * into v_ed from public.editions where id = v.edition_id;
+    return jsonb_build_object(
+      'edition', jsonb_build_object('label', v_ed.label, 'start_date', v_ed.start_date),
+      'rows', coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'kind', l.kind,
+                 'day', l.day,
+                 'date', v_ed.start_date + l.day::integer,
+                 'start_min', l.start_min,
+                 'end_min', app.teach_end(l, v_ed.settings),
+                 'speaker', coalesce((select string_agg(app.speaker_label(s), ' · ' order by (x.role <> 'lead'), x.speaker_id)
+                                        from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id
+                                       where x.lesson_id = l.id), ''),
+                 'title', l.title,
+                 'category', coalesce(c.name, ''),
+                 'room', rm.name,
+                 'parallel', l.kind = 'lesson' and exists (
+                   select 1 from public.lessons o
+                    where o.edition_id = l.edition_id and o.id <> l.id and o.kind = 'lesson' and o.state = 'closed'
+                      and o.day = l.day and o.start_min < l.end_min and l.start_min < o.end_min))
+               order by l.day, l.start_min, rm.sort, l.id)
+          from public.lessons l
+          join public.rooms rm on rm.id = l.room_id
+          left join public.categories c on c.id = l.category_id
+         where l.edition_id = v.edition_id and l.state <> 'cancelled' and (l.kind = 'memorial' or l.state = 'closed')), '[]'::jsonb));
+  end
+  $$;
+
+-- ------------------------------------------------------------- the links, for the edition's admins
+
+-- Issue a link — and so replace one: the live link of the same edition, scope
+-- and subject is revoked in the same transaction. Returns the token ONCE
+-- (base64url, 128 random bits); only its sha256 is kept. An escort's link names
+-- a trainee of the edition (`bad_escort`); the others name nobody. A link that
+-- would already be expired (the week is over, the window closed) → `link_past`.
+create or replace function public.issue_link(p_edition bigint, p_scope text, p_subject bigint default null) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_ed    public.editions;
+    v_token text;
+    v_exp   timestamptz;
+    v_id    bigint;
+  begin
+    perform app.require_edition_admin(p_edition);
+    select * into v_ed from public.editions where id = p_edition for update;   -- two admins at once queue up
+    if v_ed.kind = 'archive' or v_ed.status = 'archived' then perform app.refuse('archived'); end if;
+    if p_scope is null or p_scope not in ('escort', 'kk_signup', 'schedule') then perform app.refuse('bad_value'); end if;
+    if p_scope = 'escort' then
+      if p_subject is null or not exists (select 1 from public.roster where id = p_subject and edition_id = p_edition) then perform app.refuse('bad_escort'); end if;
+    elsif p_subject is not null then
+      perform app.refuse('bad_value');
+    end if;
+    v_exp := app.link_expiry(p_edition, p_scope, now());
+    if v_exp <= now() then perform app.refuse('link_past'); end if;
+    update public.share_links set revoked_at = now()
+     where edition_id = p_edition and scope = p_scope and subject_id is not distinct from p_subject and revoked_at is null;
+    v_token := translate(rtrim(encode(extensions.gen_random_bytes(16), 'base64'), '='), '+/', '-_');
+    insert into public.share_links (edition_id, scope, subject_id, token_hash, created_by, expires_at)
+    values (p_edition, p_scope, p_subject, extensions.digest(v_token, 'sha256'), app.my_member_id(p_edition), v_exp)
+    returning id into v_id;
+    return jsonb_build_object('link_id', v_id, 'token', v_token, 'expires_at', app.iso(v_exp));
+  end
+  $$;
+
+create or replace function public.revoke_link(p_link bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v public.share_links;
+  begin
+    select * into v from public.share_links where id = p_link for update;
+    if v.id is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v.edition_id);
+    if v.revoked_at is null then update public.share_links set revoked_at = now() where id = v.id; end if;
+  end
+  $$;
+
+-- ------------------------------------------------------------- מכריכה לכריכה, for the edition's admins
+
+-- Everything the «מכריכה לכריכה» screen needs, in one round trip, as the
+-- caller's RLS allows (invoker). The window is in the edition's settings.
+create or replace function public.load_kk(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select jsonb_build_object(
+      'tracks', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'day', t.day, 'start_min', t.start_min, 'end_min', t.end_min) order by t.day, t.start_min)
+                            from public.kk_tracks t where t.edition_id = p_edition), '[]'::jsonb),
+      'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'track_id', g.track_id, 'title', g.title, 'author', g.author,
+                                                              'room_id', g.room_id, 'capacity', g.capacity, 'open', g.open) order by g.id)
+                            from public.kk_groups g where g.edition_id = p_edition), '[]'::jsonb),
+      'leaders', coalesce((select jsonb_agg(jsonb_build_object('id', k.id, 'group_id', k.group_id, 'kind', k.kind, 'roster_id', k.roster_id, 'label', k.label)
+                                            order by k.group_id, k.sort, k.id)
+                             from public.kk_leaders k join public.kk_groups g on g.id = k.group_id where g.edition_id = p_edition), '[]'::jsonb),
+      'signups', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'track_id', s.track_id, 'group_id', s.group_id, 'roster_id', s.roster_id,
+                                                               'via', s.via, 'created_at', to_char(s.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by s.id)
+                             from public.kk_signups s where s.edition_id = p_edition), '[]'::jsonb),
+      'orders', coalesce((select jsonb_agg(jsonb_build_object('group_id', o.group_id, 'copies', o.copies, 'ordered_at', to_char(o.ordered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by o.group_id)
+                            from public.book_orders o join public.kk_groups g on g.id = o.group_id where g.edition_id = p_edition), '[]'::jsonb)
+    )
+    where app.can_see_edition(p_edition)
+  $$;
+
+-- A group on a kk occurrence of the grid (a kk row active that day,
+-- `outside_grid` otherwise); its track is made on first use.
+create or replace function public.kk_add_group(p_edition bigint, p_day integer, p_start integer, p_fields jsonb) returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_end   integer;
+    v_f     jsonb;
+    v_track bigint;
+    v_id    bigint;
+  begin
+    perform app.require_edition_admin(p_edition);
+    select r.end_min into v_end from app.kk_rows(p_edition, p_day) r where r.start_min = p_start limit 1;
+    if v_end is null then perform app.refuse('outside_grid'); end if;
+    v_f := app.kk_clean_group(p_fields, p_edition);
+    if not v_f ? 'title' then perform app.refuse('title_required'); end if;
+    insert into public.kk_tracks (edition_id, day, start_min, end_min) values (p_edition, p_day, p_start, v_end)
+    on conflict (edition_id, day, start_min) do nothing;
+    select id into v_track from public.kk_tracks where edition_id = p_edition and day = p_day and start_min = p_start;
+    insert into public.kk_groups (edition_id, track_id, title, author, room_id, capacity, open)
+    values (p_edition, v_track, v_f ->> 'title', v_f ->> 'author', (v_f ->> 'room_id')::bigint, (v_f ->> 'capacity')::integer,
+            coalesce((v_f ->> 'open')::boolean, true))
+    returning id into v_id;
+    perform app.kk_write_leaders(v_id, coalesce(v_f -> 'leaders', '[]'::jsonb));
+    return v_id;
+  end
+  $$;
+
+-- The keys present in the patch, as kk_add_group cleans them.
+create or replace function public.kk_update_group(p_group bigint, p_patch jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_g public.kk_groups;
+    v_f jsonb;
+  begin
+    select * into v_g from public.kk_groups where id = p_group for update;
+    if v_g.id is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v_g.edition_id);
+    v_f := app.kk_clean_group(p_patch, v_g.edition_id);
+    update public.kk_groups
+       set title    = case when v_f ? 'title' then v_f ->> 'title' else title end,
+           author   = case when v_f ? 'author' then v_f ->> 'author' else author end,
+           room_id  = case when v_f ? 'room_id' then (v_f ->> 'room_id')::bigint else room_id end,
+           capacity = case when v_f ? 'capacity' then (v_f ->> 'capacity')::integer else capacity end,
+           open     = case when v_f ? 'open' then (v_f ->> 'open')::boolean else open end
+     where id = v_g.id;
+    if v_f ? 'leaders' then perform app.kk_write_leaders(v_g.id, v_f -> 'leaders'); end if;
+  end
+  $$;
+
+-- A group nobody signed up for (else `group_has_signups`: move or remove them
+-- first); a track left without groups goes with it.
+create or replace function public.kk_delete_group(p_group bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_g public.kk_groups;
+  begin
+    select * into v_g from public.kk_groups where id = p_group for update;
+    if v_g.id is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v_g.edition_id);
+    if exists (select 1 from public.kk_signups where group_id = v_g.id) then perform app.refuse('group_has_signups'); end if;
+    delete from public.kk_groups where id = v_g.id;
+    delete from public.kk_tracks t where t.id = v_g.track_id and not exists (select 1 from public.kk_groups g where g.track_id = t.id);
+  end
+  $$;
+
+-- The staff put a trainee in a group — a new sign-up, or a move within the
+-- track. Not bound by the capacity or the window: the staff decide.
+create or replace function public.kk_place(p_group bigint, p_roster bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_g public.kk_groups;
+    v_s public.kk_signups;
+  begin
+    select * into v_g from public.kk_groups where id = p_group for update;
+    if v_g.id is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v_g.edition_id);
+    if p_roster is null or not exists (select 1 from public.roster where id = p_roster and edition_id = v_g.edition_id) then
+      perform app.refuse('bad_trainee');
+    end if;
+    select * into v_s from public.kk_signups where track_id = v_g.track_id and roster_id = p_roster for update;
+    if v_s.id is null then
+      insert into public.kk_signups (edition_id, track_id, group_id, roster_id, via) values (v_g.edition_id, v_g.track_id, v_g.id, p_roster, 'staff');
+    elsif v_s.group_id <> v_g.id then
+      update public.kk_signups set group_id = v_g.id, via = 'staff' where id = v_s.id;
+    end if;
+  end
+  $$;
+
+-- The staff take a trainee's sign-up for a track away.
+create or replace function public.kk_unplace(p_track bigint, p_roster bigint) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_ed bigint;
+  begin
+    select edition_id into v_ed from public.kk_tracks where id = p_track;
+    if v_ed is null then perform app.refuse('stale'); end if;
+    perform app.require_edition_admin(v_ed);
+    delete from public.kk_signups where track_id = p_track and roster_id = p_roster;
+  end
+  $$;
+
+-- The sign-up window: both bounds (opens before it closes), or neither (closed).
+-- In editions.settings.kk_window, as JavaScript writes instants; the sign-up
+-- link's expiry follows it (app.editions_link_expiry).
+create or replace function public.kk_set_window(p_edition bigint, p_opens timestamptz, p_closes timestamptz) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    perform app.require_edition_admin(p_edition);
+    if (p_opens is null) <> (p_closes is null) or p_opens >= p_closes then perform app.refuse('bad_value'); end if;
+    update public.editions
+       set settings = case when p_opens is null then settings - 'kk_window'
+                           else settings || jsonb_build_object('kk_window', jsonb_build_object('opens_at', app.iso(p_opens), 'closes_at', app.iso(p_closes))) end
+     where id = p_edition;
+  end
+  $$;
+
+-- How many copies of a group's book to order (0–1000; null removes the line),
+-- and whether they were ordered (the first time kept). Logistics or an admin.
+create or replace function public.set_book_order(p_group bigint, p_copies integer, p_ordered boolean) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_g public.kk_groups;
+  begin
+    select * into v_g from public.kk_groups where id = p_group;
+    if v_g.id is null then perform app.refuse('stale'); end if;
+    perform app.require_logistics(v_g.edition_id);
+    if p_ordered is null or (p_copies is null and p_ordered) or p_copies not between 0 and 1000 then perform app.refuse('bad_value'); end if;
+    if p_copies is null then
+      delete from public.book_orders where group_id = v_g.id;
+      return;
+    end if;
+    insert into public.book_orders as o (group_id, copies, ordered_at) values (v_g.id, p_copies, case when p_ordered then now() end)
+    on conflict (group_id) do update
+      set copies = excluded.copies,
+          ordered_at = case when p_ordered then coalesce(o.ordered_at, now()) end;
+  end
+  $$;
+
+-- ------------------------------------------------------------- reads
+
+-- Everything the grid needs, in one round trip, as the caller's RLS allows —
+-- invoker, so it can never show more than the tables would. Never a contact
+-- detail and never a transport detail (their own tables). v7 adds the
+-- edition's roster (names only), for escorts; v9 the escorts' ticks.
+create or replace function public.load_week(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select jsonb_build_object(
+      'edition', (select to_jsonb(e) from public.editions e where e.id = p_edition),
+      'rows', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.start_min, r.id) from public.grid_rows r where r.edition_id = p_edition), '[]'),
+      'rooms', coalesce((select jsonb_agg(to_jsonb(r) - 'edition_id' order by r.sort, r.id) from public.rooms r where r.edition_id = p_edition), '[]'),
+      'categories', coalesce((select jsonb_agg(to_jsonb(c) order by c.sort, c.id) from public.categories c), '[]'),
+      'speakers', coalesce((select jsonb_agg(jsonb_build_object(
+          'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
+          'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
+          'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
+          'name_key', s.name_key, 'version', s.version)
+          order by s.id) from public.speakers s), '[]'),
+      'approaches', coalesce((select jsonb_agg(jsonb_build_object(
+          'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
+          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
+          from public.approaches a where a.edition_id = p_edition), '[]'),
+      'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
+          join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
+      'lessons', coalesce((select jsonb_agg(to_jsonb(l) - 'span' - 'edition_id' - 'created_at' order by l.id)
+          from public.lessons l where l.edition_id = p_edition), '[]'),
+      'lessonSpeakers', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'role', x.role))
+          from public.lesson_speakers x where x.edition_id = p_edition), '[]'),
+      'pitches', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'lesson_id', p.lesson_id, 'approach_id', p.approach_id,
+          'state', p.state, 'proposed_by', p.proposed_by, 'at', p.at) order by p.id)
+          from public.pitches p where p.edition_id = p_edition), '[]'),
+      'team', coalesce((select jsonb_agg(to_jsonb(t) order by t.id) from public.team(p_edition) t), '[]'),
+      'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name, 'gender', r.gender) order by r.full_name, r.id)
+          from public.roster r where r.edition_id = p_edition), '[]'),
+      'escortTicks', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', t.lesson_id, 'item', t.item, 'at', to_char(t.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by t.lesson_id, t.item)
+          from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = p_edition), '[]')
+    )
+    where app.can_see_edition(p_edition)
+  $$;
+
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -2928,6 +3791,30 @@ grant insert (edition_id, section, title, body_md), update (section, title, body
 grant insert (edition_id, title, days_before), update (title, days_before, done_at) on public.milestones to authenticated;
 grant execute on function public.get_contacts_for(bigint[]) to authenticated;
 
+-- Links and מכריכה לכריכה (v9). anon — the publishable key, nobody signed in —
+-- gets ping and the six link functions below, and nothing else: no table, no
+-- other function. authenticated: every column of share_links but the hash (an
+-- edition's admins, under RLS), SELECT on the ticks and the kk tables (the
+-- edition's members); every write a function.
+grant execute on function public.escort_view(text) to anon;
+grant execute on function public.escort_tick(text, bigint, text, boolean) to anon;
+grant execute on function public.escort_pickup(text, bigint, text) to anon;
+grant execute on function public.kk_form(text) to anon;
+grant execute on function public.kk_signup(text, bigint, bigint) to anon;
+grant execute on function public.schedule_view(text) to anon;
+grant select (id, edition_id, scope, subject_id, created_by, created_at, expires_at, revoked_at) on public.share_links to authenticated;
+grant select on public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders to authenticated;
+grant execute on function public.issue_link(bigint, text, bigint) to authenticated;
+grant execute on function public.revoke_link(bigint) to authenticated;
+grant execute on function public.load_kk(bigint) to authenticated;
+grant execute on function public.kk_add_group(bigint, integer, integer, jsonb) to authenticated;
+grant execute on function public.kk_update_group(bigint, jsonb) to authenticated;
+grant execute on function public.kk_delete_group(bigint) to authenticated;
+grant execute on function public.kk_place(bigint, bigint) to authenticated;
+grant execute on function public.kk_unplace(bigint, bigint) to authenticated;
+grant execute on function public.kk_set_window(bigint, timestamptz, timestamptz) to authenticated;
+grant execute on function public.set_book_order(bigint, integer, boolean) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -2938,7 +3825,9 @@ grant execute on function public.get_contacts_for(bigint[]) to authenticated;
 -- so a table with personal data (speaker_contacts, members, activity,
 -- editions, roster, transport_details) is never published, and is taken out if
 -- someone added it by hand. v8 adds the knowledge base and the export
--- snapshots to that list (notes are free text; nobody needs them live).
+-- snapshots to that list (notes are free text; nobody needs them live); v9 the
+-- links and their counts (token hashes), the escorts' ticks and every kk table
+-- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -2954,7 +3843,8 @@ begin
     raise warning 'supabase_realtime publishes whole schemas, personal-data tables included — recreate it empty (create publication supabase_realtime;) and run this file again';
     return;
   end if;
-  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones'] loop
+  foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
+                           'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

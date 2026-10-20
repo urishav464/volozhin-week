@@ -13,18 +13,27 @@
 // transport, the summary message, the escort, sources — with transport
 // details kept in `shared`, never in a Week, as the database keeps them apart.
 import { dayPart } from "../domain/dayParts";
+import { dutyNotes } from "../domain/escorts";
+import { addDays, israelDate } from "../domain/israelTime";
+import { teachMinutes } from "../domain/message";
+import { displayName } from "../domain/names";
 import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
 import { similarity } from "../domain/trigram";
 import type {
   Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, Pitch, PitchState, Speaker, SpeakerContacts, Transport, TransportDetails, Vetting, Week,
 } from "../domain/types";
-import { LESSON_STAGE_DEFAULTS, LIVE_PITCH } from "../domain/types";
+import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
+import { scheduleEntries } from "../exports/designer";
+import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
 import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
 import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
+import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup, type KkTrack } from "./kk";
+import { type IssuedLink, LINK_SCOPES, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
+import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import {
   cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
@@ -37,6 +46,20 @@ export interface Actor {
   global?: boolean;
 }
 
+/** share_links as the demo keeps them: with the token itself (synthetic; the database keeps only its sha256). */
+export type DemoLink = ShareLink & { edition_id: number; token: string };
+
+/** מכריכה לכריכה's tables, across editions as in the database. */
+export interface KkStore {
+  tracks: (KkTrack & { edition_id: number })[];
+  groups: (KkGroup & { edition_id: number })[];
+  leaders: (KkLeader & { sort: number })[];
+  signups: (KkSignup & { edition_id: number })[];
+  orders: BookOrder[];
+}
+
+export const emptyKk = (): KkStore => ({ tracks: [], groups: [], leaders: [], signups: [], orders: [] });
+
 /** What the database keeps outside a Week, shared by every edition's engine in the demo. */
 export interface PoolShared {
   /** speaker_contacts, by speaker id. */
@@ -45,7 +68,15 @@ export interface PoolShared {
   log: ActivityEntry[];
   /** transport_details, by `${edition id}:${lesson id}` (the demo's editions number their lessons apart). */
   transport: Record<string, TransportDetails>;
+  /** share_links (v9). */
+  links: DemoLink[];
+  /** share_link_hits: the rate limit, by token. */
+  linkHits: Record<string, { window_start: string; hits: number }>;
+  /** kk_tracks, kk_groups, kk_leaders, kk_signups, book_orders (v9). */
+  kk: KkStore;
 }
+
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk() });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -65,9 +96,11 @@ export class Engine {
     public week: Week,
     private readonly actor: Actor,
     private readonly now: () => string = () => new Date().toISOString(),
-    readonly shared: PoolShared = { contacts: {}, log: [], transport: {} },
+    readonly shared: PoolShared = emptyShared(),
     /** The other editions' weeks (the demo's other engines): closed lessons and contacts across years. */
     private readonly elsewhere: () => Week[] = () => [],
+    /** A new link's token: 128 random bits, as public.issue_link makes it (the demo's say what they open). */
+    private readonly newToken: (scope: LinkScope, subjectId: number | null) => string = () => randomToken(),
   ) {}
 
   // ---------------------------------------------------------------- commands
@@ -691,6 +724,381 @@ export class Engine {
     });
   }
 
+  // ---------------------------------------------------------------- links (CONTRACT.md «Links and מכריכה לכריכה», milestone 5a)
+
+  /** share_links_read: an edition's admins see its links — never a token; anyone else, none. */
+  links(): ShareLink[] {
+    if (!this.isAdmin()) return [];
+    return this.shared.links
+      .filter((l) => l.edition_id === this.week.edition.id)
+      .sort((a, b) => b.id - a.id)
+      .map(({ id, scope, subject_id, created_by, created_at, expires_at, revoked_at }) => ({ id, scope, subject_id, created_by, created_at, expires_at, revoked_at }));
+  }
+
+  /** public.issue_link: an admin of the edition; the live link of the same subject is revoked (replace); the token comes back once. */
+  issueLink(scope: LinkScope, subjectId: number | null = null): IssuedLink {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      const e = this.week.edition;
+      if (e.kind === "archive" || e.status === "archived") fail("archived");
+      if (!LINK_SCOPES.includes(scope)) fail("bad_value");
+      if (scope === "escort") {
+        if (subjectId == null || !this.week.roster.some((r) => r.id === subjectId)) fail("bad_escort");
+      } else if (subjectId != null) fail("bad_value");
+      const now = this.now();
+      const expires = linkExpiry(e, scope, now);
+      if (Date.parse(expires) <= Date.parse(now)) fail("link_past");
+      for (const l of this.shared.links) {
+        if (l.edition_id === e.id && l.scope === scope && l.subject_id === subjectId && l.revoked_at == null) l.revoked_at = now;
+      }
+      const token = this.newToken(scope, subjectId);
+      const link: DemoLink = {
+        id: this.nextId(this.shared.links), edition_id: e.id, scope, subject_id: subjectId, token, created_by: this.actor.memberId, created_at: now, expires_at: expires, revoked_at: null,
+      };
+      this.shared.links.push(link);
+      return { link_id: link.id, token, expires_at: expires };
+    });
+  }
+
+  /** public.revoke_link: an admin of the link's edition; already revoked → nothing. */
+  revokeLink(linkId: number): void {
+    this.tx(() => {
+      const l = this.shared.links.find((x) => x.id === linkId && x.edition_id === this.week.edition.id) ?? fail("stale");
+      this.requireEditionAdmin();
+      if (l.revoked_at == null) l.revoked_at = this.now();
+    });
+  }
+
+  /** app.editions_link_expiry: the week's date or the sign-up window moved — the live links' expiry follows. */
+  refreshLinkExpiry(): void {
+    for (const l of this.shared.links) {
+      if (l.edition_id === this.week.edition.id && l.revoked_at == null) l.expires_at = linkExpiry(this.week.edition, l.scope, l.created_at);
+    }
+  }
+
+  // ---------------------------------------------------------------- the anon functions: a token is the only key
+
+  /** public.escort_view: that trainee's closed lessons; the phone only from W−7 of a real edition with a date. */
+  escortView(token: unknown): EscortView {
+    return this.tx(() => {
+      const link = this.linkFor(token, "escort");
+      const e = this.week.edition;
+      const r = this.week.roster.find((x) => x.id === link.subject_id)!;
+      const phones = e.kind === "real" && e.start_date != null && israelDate(this.now()) >= addDays(e.start_date, -7);
+      const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
+      const lessons: EscortLesson[] = this.week.lessons
+        .filter((l) => l.state === "closed" && l.escort_roster_id === link.subject_id)
+        .sort(gridOrder(this.week))
+        .map((l) => {
+          const lead = this.week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
+          const s = lead ? this.week.speakers.find((x) => x.id === lead.speaker_id) : undefined;
+          const approved = l.transport !== "none" && l.approval === "approved";
+          const t = this.shared.transport[this.transportKey(l.id)];
+          return {
+            lesson_id: l.id,
+            kind: l.kind,
+            day: l.day,
+            date: e.start_date ? addDays(e.start_date, l.day) : null,
+            start_min: l.start_min,
+            end_min: this.teachEnd(l),
+            room: rooms.get(l.room_id)!,
+            speaker: s ? { name: displayName(s), gender: s.gender } : null,
+            title: l.title,
+            self_intro: l.self_intro,
+            duty_notes: dutyNotes(l, e.settings?.duty_phrases),
+            escort_note: l.escort_note,
+            phone: phones && s ? (this.shared.contacts[s.id]?.phone ?? null) : null,
+            transport: approved,
+            driver: e.kind === "real" && approved && t?.arranged ? { name: t.driver_name, phone: t.driver_phone } : null,
+            ticks: this.ticksOf(l.id),
+          };
+        });
+      return {
+        edition: { label: e.label, start_date: e.start_date },
+        escort: { full_name: r.full_name, gender: r.gender },
+        phones_from: e.kind === "real" && e.start_date ? addDays(e.start_date, -7) : null,
+        lessons,
+      };
+    });
+  }
+
+  /** public.escort_tick: on (the first time kept) or off, on one of the escort's lessons. */
+  escortTick(token: unknown, lessonId: number, item: TickItem, on: boolean): EscortTicks {
+    return this.tx(() => {
+      const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
+      if (!TICK_ITEMS.includes(item) || typeof on !== "boolean") fail("bad_value");
+      const has = this.week.escortTicks.some((t) => t.lesson_id === l.id && t.item === item);
+      if (on && !has) this.week.escortTicks.push({ lesson_id: l.id, item, at: this.now() });
+      if (!on) this.week.escortTicks = this.week.escortTicks.filter((t) => !(t.lesson_id === l.id && t.item === item));
+      return this.ticksOf(l.id);
+    });
+  }
+
+  /** public.escort_pickup: write-only, on a lesson whose transport was approved. */
+  escortPickup(token: unknown, lessonId: number, address: string): void {
+    this.tx(() => {
+      const l = this.escortLesson(this.linkFor(token, "escort"), lessonId);
+      if (!(l.transport !== "none" && l.approval === "approved")) fail("no_transport");
+      const a = typeof address === "string" ? cleanLine(address, STAGE_LIMITS.pickup_address) : null;
+      if (a == null) fail("bad_value");
+      const key = this.transportKey(l.id);
+      this.shared.transport[key] = { ...(this.shared.transport[key] ?? EMPTY_TRANSPORT), pickup_address: a };
+      this.shared.log.push({
+        id: this.nextId(this.shared.log), at: this.now(), actor: null, edition_id: this.week.edition.id, entity: "lessons", entity_id: l.id, kind: "transport",
+        detail: { fields: ["pickup_address"], via: "escort_link" },
+      });
+    });
+  }
+
+  /** public.kk_form: the window, the trainees (names only), and the groups on offer — whether each is full, never who is in it. */
+  kkForm(token: unknown): KkForm {
+    return this.tx(() => {
+      this.linkFor(token, "kk_signup");
+      const e = this.week.edition;
+      const k = this.shared.kk;
+      const offered = (g: KkGroup) => g.open && g.capacity != null;
+      const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
+      const names = new Map(this.week.roster.map((x) => [x.id, x.full_name]));
+      return {
+        edition: { label: e.label, start_date: e.start_date },
+        window: { opens_at: e.settings?.kk_window?.opens_at ?? null, closes_at: e.settings?.kk_window?.closes_at ?? null },
+        open: this.kkOpen(),
+        roster: [...this.week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id).map(({ id, full_name }) => ({ id, full_name })),
+        tracks: k.tracks
+          .filter((t) => t.edition_id === e.id && k.groups.some((g) => g.track_id === t.id && offered(g)))
+          .sort((a, b) => a.day - b.day || a.start_min - b.start_min)
+          .map((t) => ({
+            id: t.id, day: t.day, date: e.start_date ? addDays(e.start_date, t.day) : null, start_min: t.start_min, end_min: t.end_min,
+            groups: k.groups
+              .filter((g) => g.track_id === t.id && offered(g))
+              .sort((a, b) => a.title.localeCompare(b.title, "he") || a.id - b.id)
+              .map((g) => ({
+                id: g.id, title: g.title, author: g.author, room: g.room_id == null ? null : (rooms.get(g.room_id) ?? null),
+                leaders: k.leaders
+                  .filter((x) => x.group_id === g.id)
+                  .sort((a, b) => a.sort - b.sort || a.id - b.id)
+                  .map((x) => ({ kind: x.kind, name: (x.roster_id != null ? names.get(x.roster_id) : x.label) ?? "" })),
+                full: k.signups.filter((x) => x.group_id === g.id).length >= g.capacity!,
+              })),
+          })),
+      };
+    });
+  }
+
+  /** public.kk_signup: recorded only when everything allows it; an existing sign-up is never changed; the same answer always. */
+  kkSignup(token: unknown, rosterId: number, groupId: number): void {
+    this.tx(() => {
+      this.linkFor(token, "kk_signup");
+      const e = this.week.edition;
+      const k = this.shared.kk;
+      const g = k.groups.find((x) => x.id === groupId && x.edition_id === e.id);
+      if (
+        g && g.open && g.capacity != null && this.kkOpen() && this.week.roster.some((r) => r.id === rosterId) &&
+        k.signups.filter((x) => x.group_id === g.id).length < g.capacity &&
+        !k.signups.some((x) => x.track_id === g.track_id && x.roster_id === rosterId)
+      ) {
+        k.signups.push({ id: this.nextId(k.signups), edition_id: e.id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "link", created_at: this.now() });
+      }
+    });
+  }
+
+  /** public.schedule_view: the public schedule (src/exports/designer.ts). */
+  scheduleView(token: unknown): ScheduleView {
+    return this.tx(() => {
+      this.linkFor(token, "schedule");
+      const e = this.week.edition;
+      return { edition: { label: e.label, start_date: e.start_date }, rows: scheduleEntries(this.week).map(({ lesson_id: _id, ...r }) => r) };
+    });
+  }
+
+  // ---------------------------------------------------------------- מכריכה לכריכה (the edition's admins)
+
+  /** public.load_kk. */
+  loadKk(): KkData {
+    const ed = this.week.edition.id;
+    const k = this.shared.kk;
+    const groups = k.groups.filter((g) => g.edition_id === ed);
+    const ids = new Set(groups.map((g) => g.id));
+    return structuredClone({
+      tracks: k.tracks.filter((t) => t.edition_id === ed).sort((a, b) => a.day - b.day || a.start_min - b.start_min).map(({ edition_id: _e, ...t }) => t),
+      groups: [...groups].sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...g }) => g),
+      leaders: k.leaders.filter((x) => ids.has(x.group_id)).sort((a, b) => a.group_id - b.group_id || a.sort - b.sort || a.id - b.id).map(({ sort: _s, ...x }) => x),
+      signups: k.signups.filter((x) => x.edition_id === ed).sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...x }) => x),
+      orders: k.orders.filter((o) => ids.has(o.group_id)).sort((a, b) => a.group_id - b.group_id),
+    });
+  }
+
+  /** public.kk_add_group: on a kk occurrence of the grid (`outside_grid`); its track made on first use. */
+  kkAddGroup(day: number, startMin: number, fields: KkGroupFields): number {
+    return this.tx(() => {
+      this.requireEditionAdmin();
+      const e = this.week.edition;
+      const row = this.week.rows
+        .filter((r) => r.kind === "kk" && rowActive(r, day as Day, e) && r.start_min === startMin)
+        .sort((a, b) => a.start_min - b.start_min || a.end_min - b.end_min)[0];
+      if (!row) fail("outside_grid");
+      const f = this.cleanGroup(fields);
+      if (f.title === undefined) fail("title_required");
+      const k = this.shared.kk;
+      let track = k.tracks.find((t) => t.edition_id === e.id && t.day === day && t.start_min === startMin);
+      if (!track) {
+        track = { id: this.nextId(k.tracks), edition_id: e.id, day: day as Day, start_min: startMin, end_min: row!.end_min };
+        k.tracks.push(track);
+      }
+      const g = {
+        id: this.nextId(k.groups), edition_id: e.id, track_id: track.id, title: f.title!, author: f.author ?? null, room_id: f.room_id ?? null,
+        capacity: f.capacity ?? null, open: f.open ?? true,
+      };
+      k.groups.push(g);
+      this.writeLeaders(g.id, f.leaders ?? []);
+      return g.id;
+    });
+  }
+
+  /** public.kk_update_group: the keys present. */
+  kkUpdateGroup(groupId: number, patch: KkGroupFields): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      const f = this.cleanGroup(patch);
+      const { leaders, ...rest } = f;
+      Object.assign(g, rest);
+      if (leaders !== undefined) this.writeLeaders(g.id, leaders);
+    });
+  }
+
+  /** public.kk_delete_group: nobody signed up (`group_has_signups`); a track left empty goes too. */
+  kkDeleteGroup(groupId: number): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      const k = this.shared.kk;
+      if (k.signups.some((x) => x.group_id === g.id)) fail("group_has_signups");
+      k.groups = k.groups.filter((x) => x.id !== g.id);
+      k.leaders = k.leaders.filter((x) => x.group_id !== g.id);
+      k.orders = k.orders.filter((x) => x.group_id !== g.id);
+      if (!k.groups.some((x) => x.track_id === g.track_id)) k.tracks = k.tracks.filter((t) => t.id !== g.track_id);
+    });
+  }
+
+  /** public.kk_place: the staff put a trainee in a group — new, or moved within the track; no capacity, no window. */
+  kkPlace(groupId: number, rosterId: number): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireEditionAdmin();
+      if (rosterId == null || !this.week.roster.some((r) => r.id === rosterId)) fail("bad_trainee");
+      const k = this.shared.kk;
+      const s = k.signups.find((x) => x.track_id === g.track_id && x.roster_id === rosterId);
+      if (!s) k.signups.push({ id: this.nextId(k.signups), edition_id: g.edition_id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "staff", created_at: this.now() });
+      else if (s.group_id !== g.id) Object.assign(s, { group_id: g.id, via: "staff" });
+    });
+  }
+
+  /** public.kk_unplace. */
+  kkUnplace(trackId: number, rosterId: number): void {
+    this.tx(() => {
+      const k = this.shared.kk;
+      if (!k.tracks.some((t) => t.id === trackId && t.edition_id === this.week.edition.id)) fail("stale");
+      this.requireEditionAdmin();
+      k.signups = k.signups.filter((x) => !(x.track_id === trackId && x.roster_id === rosterId));
+    });
+  }
+
+  /** public.kk_set_window: both bounds, opening first — or neither (closed). The sign-up link's expiry follows. */
+  kkSetWindow(opensAt: string | null, closesAt: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      if ((opensAt == null) !== (closesAt == null)) fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      if (opensAt == null || closesAt == null) delete settings.kk_window;
+      else {
+        const [o, c] = [Date.parse(opensAt), Date.parse(closesAt)];
+        if (Number.isNaN(o) || Number.isNaN(c) || o >= c) fail("bad_value");
+        settings.kk_window = { opens_at: new Date(o).toISOString(), closes_at: new Date(c).toISOString() };
+      }
+      this.week.edition.settings = settings;
+      this.refreshLinkExpiry();
+    });
+  }
+
+  /** public.set_book_order: logistics or an admin; copies 0–1000 (null removes it); ordered — the first time kept. */
+  setBookOrder(groupId: number, copies: number | null, ordered: boolean): void {
+    this.tx(() => {
+      const g = this.kkGroup(groupId);
+      this.requireLogistics();
+      if (typeof ordered !== "boolean" || (copies == null && ordered) || (copies != null && (!Number.isInteger(copies) || copies < 0 || copies > 1000))) fail("bad_value");
+      const k = this.shared.kk;
+      const o = k.orders.find((x) => x.group_id === g.id);
+      if (copies == null) {
+        k.orders = k.orders.filter((x) => x.group_id !== g.id);
+        return;
+      }
+      const at = ordered ? (o?.ordered_at ?? this.now()) : null;
+      if (o) Object.assign(o, { copies, ordered_at: at });
+      else k.orders.push({ group_id: g.id, copies, ordered_at: at });
+    });
+  }
+
+  // ---------------------------------------------------------------- links and kk: helpers
+
+  /**
+   * app.link_for: the link a token opens, counted against its rate limit — refused, always `link_invalid`, when
+   * unknown, of another scope, revoked, expired, of another or an archived edition, or past the limit. (Inside
+   * tx(): a refusal rolls the count back, as the database's does.)
+   */
+  private linkFor(token: unknown, scope: LinkScope): DemoLink {
+    if (!tokenShape(token)) fail("link_invalid");
+    const l = this.shared.links.find((x) => x.token === token) ?? fail("link_invalid");
+    const now = this.now();
+    const h = this.shared.linkHits[l.token];
+    if (!h || Date.parse(h.window_start) <= Date.parse(now) - RATE_WINDOW_MS) this.shared.linkHits[l.token] = { window_start: now, hits: 1 };
+    else h.hits++;
+    if (this.shared.linkHits[l.token].hits > linkRate(l.scope)) fail("link_invalid");
+    if (l.scope !== scope || l.revoked_at != null || Date.parse(l.expires_at) <= Date.parse(now)) fail("link_invalid");
+    const e = this.week.edition;
+    if (l.edition_id !== e.id || e.kind === "archive" || e.status === "archived") fail("link_invalid");
+    return l;
+  }
+
+  /** app.escort_lesson: closed, of this edition, escorted by the link's trainee — else `link_invalid` (no oracle). */
+  private escortLesson(link: DemoLink, lessonId: number): Lesson {
+    const l = this.week.lessons.find((x) => x.id === lessonId);
+    if (!l || l.escort_roster_id !== link.subject_id || l.state !== "closed") fail("link_invalid");
+    return l!;
+  }
+
+  private ticksOf(lessonId: number): EscortTicks {
+    const at = (item: TickItem) => this.week.escortTicks.find((t) => t.lesson_id === lessonId && t.item === item)?.at ?? null;
+    return { reminded: at("reminded"), met: at("met"), introduced: at("introduced"), gift: at("gift") };
+  }
+
+  /** app.teach_end. */
+  private teachEnd(l: Lesson): number {
+    return l.kind === "memorial" ? l.end_min : l.start_min + teachMinutes(l, this.week.edition.settings?.lesson_minutes);
+  }
+
+  /** app.kk_open: inside the sign-up window now. */
+  private kkOpen(): boolean {
+    const w = this.week.edition.settings?.kk_window;
+    const now = Date.parse(this.now());
+    return !!w && Date.parse(w.opens_at) <= now && now < Date.parse(w.closes_at);
+  }
+
+  private kkGroup(id: number): KkGroup & { edition_id: number } {
+    return this.shared.kk.groups.find((g) => g.id === id && g.edition_id === this.week.edition.id) ?? fail("stale");
+  }
+
+  private cleanGroup(fields: unknown) {
+    return cleanGroupFields(fields, (id) => this.week.rooms.some((r) => r.id === id), (id) => this.week.roster.some((r) => r.id === id));
+  }
+
+  /** app.kk_write_leaders: replace the group's leaders, in order. */
+  private writeLeaders(groupId: number, leaders: CleanLeader[]) {
+    const k = this.shared.kk;
+    k.leaders = k.leaders.filter((x) => x.group_id !== groupId);
+    leaders.forEach((x, i) => k.leaders.push({ id: this.nextId(k.leaders), group_id: groupId, ...x, sort: i + 1 }));
+  }
+
   // ---------------------------------------------------------------- helpers
 
   /** Restores IN PLACE on failure, so `engine.week` and `engine.shared` stay the same objects (their rows are the snapshot's). */
@@ -699,6 +1107,7 @@ export class Engine {
     try {
       const out = fn();
       this.reconfirm(snapshot.week.lessons);
+      this.dropStaleTicks(snapshot.week.lessons);
       return out;
     } catch (e) {
       Object.assign(this.week, snapshot.week);
@@ -720,6 +1129,13 @@ export class Engine {
       if (!o || l.state !== "closed" || l.confirm_sent_at == null || l.confirm_sent_at !== o.confirm_sent_at) continue;
       if (o.state !== "closed" || RECONFIRM_FIELDS.some((k) => o[k] !== l[k])) l.needs_reconfirm = true;
     }
+  }
+
+  /** app.lessons_escort_ticks: a lesson whose escort changed (or that is gone) loses the last escort's ticks. */
+  private dropStaleTicks(before: Lesson[]) {
+    const now = new Map(this.week.lessons.map((l) => [l.id, l.escort_roster_id]));
+    const old = new Map(before.map((l) => [l.id, l.escort_roster_id]));
+    this.week.escortTicks = this.week.escortTicks.filter((t) => now.has(t.lesson_id) && now.get(t.lesson_id) === old.get(t.lesson_id));
   }
 
   /** app.contacts_edition: the newest real, non-archived edition in which the actor handles the speaker. */

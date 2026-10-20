@@ -115,6 +115,8 @@ export class DemoSettings implements SettingsPort {
         if (l.state === "closed" && l.confirm_sent_at != null && !l.needs_reconfirm) Object.assign(l, { needs_reconfirm: true, version: l.version + 1 });
       }
     }
+    // app.editions_link_expiry: the links' expiry follows the week's date
+    this.s.engines.get(id)!.refreshLinkExpiry();
     this.done(null);
   }
 
@@ -236,8 +238,18 @@ export class DemoSettings implements SettingsPort {
   async deleteRoster(id: number): Promise<void> {
     const r = this.rosterRow(id);
     this.s.roster = this.s.roster.filter((x) => x.id !== id);
-    // lessons_escort_roster_fk: on delete set null
-    for (const l of this.s.engines.get(r.edition_id)?.week.lessons ?? []) if (l.escort_roster_id === id) l.escort_roster_id = null;
+    // lessons_escort_roster_fk: on delete set null — and their ticks go (app.lessons_escort_ticks)
+    const w = this.s.engines.get(r.edition_id)?.week;
+    for (const l of w?.lessons ?? []) {
+      if (l.escort_roster_id !== id) continue;
+      l.escort_roster_id = null;
+      w!.escortTicks = w!.escortTicks.filter((t) => t.lesson_id !== l.id);
+    }
+    // on delete cascade: their escort's link, their sign-ups, a group they led (v9)
+    const sh = this.s.shared;
+    sh.links = sh.links.filter((l) => l.subject_id !== id);
+    sh.kk.signups = sh.kk.signups.filter((x) => x.roster_id !== id);
+    sh.kk.leaders = sh.kk.leaders.filter((x) => x.roster_id !== id);
     this.done(null);
   }
 

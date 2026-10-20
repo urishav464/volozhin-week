@@ -4,8 +4,9 @@
 import type pg from "pg";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
-  APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE, lessonKey,
-  lessonLine, matchesRead, MEMBERS, type Normal, poolLine, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel, type Step, transportLine, transportRead,
+  APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE, type KkStepFields,
+  lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
+  type Step, transportLine, transportRead,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -81,8 +82,102 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     }
   }
 
+  // ---- links and מכריכה לכריכה
+  const tokens: Record<string, string> = {};
+  const tokenOf = (name: string) => tokens[name] ?? NO_SUCH_TOKEN;
+  const groupId = async (title: string) => Number((await one("select id from public.kk_groups where edition_id = $1 and title = $2", [ed, title]))?.id ?? -1);
+  const trackId = async ([day, start]: [number, number]) =>
+    Number((await one("select id from public.kk_tracks where edition_id = $1 and day = $2 and start_min = $3", [ed, day, start]))?.id ?? -1);
+  const kkFields = async (f: KkStepFields) => {
+    const out: Record<string, unknown> = { ...f };
+    if ("room" in out) {
+      out.room_id = await roomId(out.room as string);
+      delete out.room;
+    }
+    if (Array.isArray(out.leaders)) {
+      const list: unknown[] = [];
+      for (const x of out.leaders as Record<string, unknown>[]) list.push("trainee" in x ? { kind: x.kind, roster_id: await traineeId(x.trainee as string) } : x);
+      out.leaders = list;
+    }
+    return JSON.stringify(out);
+  };
+  /** Ids → the names the comparison uses, read fresh after a call. */
+  const nameMaps = async () => {
+    const ls = (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows;
+    const ts = (await db.query("select id, day, start_min from public.kk_tracks")).rows;
+    const gs = (await db.query("select id, title from public.kk_groups")).rows;
+    const rs = (await db.query("select id, full_name from public.roster")).rows;
+    const map = (rows: Record<string, unknown>[], f: (r: Record<string, unknown>) => string) => new Map(rows.map((r) => [Number(r.id), f(r)]));
+    const [lm, tm, gm, rm] = [map(ls, (r) => lessonKey(r as never)), map(ts, (r) => `${r.day}|${r.start_min}`), map(gs, (r) => String(r.title)), map(rs, (r) => String(r.full_name))];
+    return {
+      lesson: (id: number) => lm.get(id) ?? `#${id}`,
+      track: (id: number) => tm.get(id) ?? `#${id}`,
+      group: (id: number) => gm.get(id) ?? `#${id}`,
+      trainee: (id: number) => rm.get(id) ?? `#${id}`,
+    };
+  };
+  /** One anon function — the publishable key, nobody signed in — committed, or rolled back with its code. */
+  async function anon(sql: string, params: unknown[]): Promise<{ ok: true; v: unknown } | { ok: false; code: string }> {
+    await db.query("begin");
+    try {
+      await db.query("set local role anon");
+      await db.query("select set_config('request.jwt.claims', '', true)");
+      const r = await db.query(sql, params);
+      await db.query("commit");
+      return { ok: true, v: Object.values(r.rows[0])[0] };
+    } catch (e) {
+      await db.query("rollback");
+      const err = e as { code?: string; message: string };
+      return { ok: false, code: err.code === "P0001" ? err.message : `raw:${err.code}:${err.message}` };
+    }
+  }
+
   return {
     async run(step: Step): Promise<string> {
+      if ("startDate" in step) {
+        await db.query("update public.editions set start_date = $2 where id = $1", [ed, step.startDate]);
+        return "ok";
+      }
+      if ("expire" in step) {
+        await db.query("update public.share_links set expires_at = now() - interval '1 minute' where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.expire)]);
+        return "ok";
+      }
+      if ("anon" in step) {
+        const t = tokenOf(step.token);
+        if (step.anon === "escortView" || step.anon === "kkForm" || step.anon === "scheduleView") {
+          const fn = { escortView: "escort_view", kkForm: "kk_form", scheduleView: "schedule_view" }[step.anon];
+          const r = await anon(`select public.${fn}($1)`, [t]);
+          return r.ok ? publicRead(step.anon, r.v, await nameMaps()) : r.code;
+        }
+        if (step.anon === "escortTick") {
+          const r = await anon("select public.escort_tick($1, $2, $3, $4)", [t, (await at(step.at)).id, step.item, step.on]);
+          return r.ok ? publicRead("escortTick", r.v, await nameMaps()) : r.code;
+        }
+        if (step.anon === "escortPickup") {
+          const r = await anon("select public.escort_pickup($1, $2, $3)", [t, (await at(step.at)).id, step.address]);
+          return r.ok ? "ok" : r.code;
+        }
+        const k = step as Extract<Step, { anon: "kkSignup" }>;
+        const r = await anon("select public.kk_signup($1, $2, $3)", [t, (await traineeId(k.trainee)) ?? -1, await groupId(k.group)]);
+        return r.ok ? (r.v as { status: string }).status : r.code;
+      }
+      if ("issue" in step) {
+        return call(step.as, "select public.issue_link($1, $2, $3)", [ed, step.issue, await traineeId(step.trainee ?? null)], (v) => {
+          tokens[step.name] = (v as { token: string }).token;
+          return "ok";
+        });
+      }
+      if ("revoke" in step) {
+        const l = await one("select id from public.share_links where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.revoke)]);
+        return call(step.as, "select public.revoke_link($1)", [l ? Number(l.id) : -1]);
+      }
+      if ("kkAdd" in step) return call(step.as, "select public.kk_add_group($1, $2, $3, $4::jsonb)", [ed, step.kkAdd[0], step.kkAdd[1], await kkFields(step.fields)]);
+      if ("kkUpdate" in step) return call(step.as, "select public.kk_update_group($1, $2::jsonb)", [await groupId(step.kkUpdate), await kkFields(step.patch)]);
+      if ("kkDelete" in step) return call(step.as, "select public.kk_delete_group($1)", [await groupId(step.kkDelete)]);
+      if ("kkPlace" in step) return call(step.as, "select public.kk_place($1, $2)", [await groupId(step.kkPlace), (await traineeId(step.trainee)) ?? -1]);
+      if ("kkUnplace" in step) return call(step.as, "select public.kk_unplace($1, $2)", [await trackId(step.kkUnplace), (await traineeId(step.trainee)) ?? -1]);
+      if ("kkWindow" in step) return call(step.as, "select public.kk_set_window($1, $2, $3)", [ed, step.kkWindow[0], step.kkWindow[1]]);
+      if ("bookOrder" in step) return call(step.as, "select public.set_book_order($1, $2, $3)", [await groupId(step.bookOrder), step.copies, step.ordered]);
       if ("archive" in step) {
         await db.query("update public.editions set status = 'archived' where id = $1", [ed]);
         return "ok";
@@ -198,8 +293,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         ]);
       }
       if ("template" in step) return call(step.as, "select public.set_confirm_template($1, $2)", [ed, step.template]);
-      // duty
-      return call(step.as, "select public.set_duty_phrases($1, $2::jsonb)", [ed, step.duty === undefined ? null : JSON.stringify(step.duty)]);
+      if ("duty" in step) return call(step.as, "select public.set_duty_phrases($1, $2::jsonb)", [ed, step.duty === undefined ? null : JSON.stringify(step.duty)]);
+      throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
     async state(): Promise<Normal> {
@@ -225,6 +320,17 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           join public.speakers s on s.id = a.speaker_id where a.edition_id = $1`, [ed])).rows;
       const transport = (await db.query("select t.* from public.transport_details t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed])).rows;
       const settings = (await one("select settings from public.editions where id = $1", [ed])).settings;
+      const links = (await db.query("select l.*, r.full_name from public.share_links l left join public.roster r on r.id = l.subject_id where l.edition_id = $1", [ed])).rows;
+      const names = await nameMaps();
+      const tracks = (await db.query("select * from public.kk_tracks where edition_id = $1", [ed])).rows;
+      const groups = (await db.query(`
+        select g.*, r.name as room,
+               (select string_agg(k.kind || ':' || coalesce(ro.full_name, k.label), ',' order by k.sort)
+                  from public.kk_leaders k left join public.roster ro on ro.id = k.roster_id where k.group_id = g.id) as leaders
+          from public.kk_groups g left join public.rooms r on r.id = g.room_id where g.edition_id = $1`, [ed])).rows;
+      const signups = (await db.query("select * from public.kk_signups where edition_id = $1", [ed])).rows;
+      const orders = (await db.query("select o.* from public.book_orders o join public.kk_groups g on g.id = o.group_id where g.edition_id = $1", [ed])).rows;
+      const ticks = (await db.query("select t.* from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed])).rows;
       return {
         lessons: lessons
           .map((l) => lessonLine(lessonKey(l), l, l.cat ?? "-", member, l.escort_roster_id == null ? "-" : (l.trainee ?? `#${l.escort_roster_id}`)))
@@ -237,6 +343,16 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
         edition: editionLines(settings),
+        links: links
+          .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
+          .sort(),
+        kk: [
+          ...tracks.map((t) => `track|${t.day}|${t.start_min}-${t.end_min}`),
+          ...groups.map((g) => `group|${names.track(Number(g.track_id))}|${g.title}|a=${g.author ?? "-"}|room=${g.room ?? "-"}|cap=${g.capacity ?? "-"}|open=${g.open}|lead=${g.leaders ?? "-"}`),
+          ...signups.map((x) => `signup|${names.track(Number(x.track_id))}|${names.trainee(Number(x.roster_id))}|${names.group(Number(x.group_id))}|${x.via}`),
+          ...orders.map((o) => `order|${names.group(Number(o.group_id))}|${o.copies}|ord=${o.ordered_at == null ? "-" : "y"}`),
+        ].sort(),
+        ticks: ticks.map((t) => `${byId.get(Number(t.lesson_id))}|${t.item}`).sort(),
       };
     },
 

@@ -1,14 +1,17 @@
 // The parity driver for src/data/engine.ts.
 import { CommandError } from "../../src/data/commands";
-import { Engine, type PoolShared } from "../../src/data/engine";
+import { emptyShared, Engine, type PoolShared } from "../../src/data/engine";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
 import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vetting, Week } from "../../src/domain/types";
+import type { KkGroupFields } from "../../src/data/kk";
+import type { LinkScope } from "../../src/data/links";
 import {
   APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, FOREIGN_ROOM, FOREIGN_TRAINEE,
-  lessonKey, lessonLine, matchesRead, MEMBERS, type Normal, poolLine, ROOMS, ROSTER, SPEAKERS, speakerLabel, type Step, transportLine, transportRead,
+  type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
+  type Step, transportLine, transportRead,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -29,6 +32,7 @@ export function engineDriver(): Driver {
     pitches: [],
     team: MEMBERS.map((m, i) => ({ id: i + 1, display_name: m.name, gender: null, role: m.role })),
     roster: ROSTER.map((r, i) => ({ id: i + 1, full_name: r.name, gender: r.gender })),
+    escortTicks: [],
   };
   const speakerId = (label: string) => week.speakers.find((s) => speakerLabel(s) === label)?.id ?? -1;
   for (const [i, a] of APPROACHES.entries()) {
@@ -38,7 +42,7 @@ export function engineDriver(): Driver {
     const a = week.approaches.find((x) => x.speaker_id === speakerId(v.speaker))!;
     week.availability.push({ id: i + 1, approach_id: a.id, day: v.day as Day, from_min: v.from, to_min: v.to, kind: v.kind, note: v.note });
   }
-  const shared: PoolShared = { contacts: Object.fromEntries(Object.entries(CONTACTS).map(([label, c]) => [speakerId(label), { ...c }])), log: [], transport: {} };
+  const shared: PoolShared = { ...emptyShared(), contacts: Object.fromEntries(Object.entries(CONTACTS).map(([label, c]) => [speakerId(label), { ...c }])) };
 
   const roomId = (name?: string) => (name === FOREIGN_ROOM ? 999 : name ? week.rooms.find((r) => r.name === name)!.id : week.rooms.find((r) => r.is_default)!.id);
   const lessonAt = ([day, start, room]: At) =>
@@ -56,6 +60,35 @@ export function engineDriver(): Driver {
     return { id: l?.id ?? -1, version: (l?.version ?? 0) - staleBy };
   };
 
+  // ---- links and מכריכה לכריכה
+  const tokens: Record<string, string> = {};
+  const tokenOf = (name: string) => tokens[name] ?? NO_SUCH_TOKEN;
+  const groupId = (title: string) => shared.kk.groups.find((g) => g.title === title)?.id ?? -1;
+  const trackId = ([day, start]: [number, number]) => shared.kk.tracks.find((t) => t.day === day && t.start_min === start)?.id ?? -1;
+  const kkFields = (f: KkStepFields): KkGroupFields => {
+    const out: Record<string, unknown> = { ...f };
+    if ("room" in out) {
+      out.room_id = roomId(out.room as string);
+      delete out.room;
+    }
+    if (Array.isArray(out.leaders)) {
+      out.leaders = (out.leaders as Record<string, unknown>[]).map((x) => ("trainee" in x ? { kind: x.kind, roster_id: traineeId(x.trainee as string) } : x));
+    }
+    return out as KkGroupFields;
+  };
+  const names = {
+    lesson: (id: number) => {
+      const l = week.lessons.find((x) => x.id === id);
+      return l ? lessonKey({ ...l, room: week.rooms.find((r) => r.id === l.room_id)!.name }) : `#${id}`;
+    },
+    track: (id: number) => {
+      const t = shared.kk.tracks.find((x) => x.id === id);
+      return t ? `${t.day}|${t.start_min}` : `#${id}`;
+    },
+    group: (id: number) => shared.kk.groups.find((x) => x.id === id)?.title ?? `#${id}`,
+    trainee: (id: number) => week.roster.find((r) => r.id === id)?.full_name ?? `#${id}`,
+  };
+
   return {
     async run(step: Step): Promise<string> {
       if ("archive" in step) {
@@ -65,6 +98,48 @@ export function engineDriver(): Driver {
       if ("sandbox" in step) {
         week.edition.kind = "practice";
         return "ok";
+      }
+      if ("startDate" in step) {
+        // as a hand edit of editions.start_date: app.editions_reconfirm, then app.editions_link_expiry
+        const before = week.edition.start_date;
+        week.edition.start_date = step.startDate;
+        if (before != null && step.startDate !== before) {
+          for (const l of week.lessons) if (l.state === "closed" && l.confirm_sent_at != null && !l.needs_reconfirm) Object.assign(l, { needs_reconfirm: true, version: l.version + 1 });
+        }
+        new Engine(week, { memberId: 1, role: "admin", global: true }, undefined, shared).refreshLinkExpiry();
+        return "ok";
+      }
+      if ("expire" in step) {
+        const l = shared.links.find((x) => x.token === tokenOf(step.expire));
+        if (l) l.expires_at = new Date(Date.now() - 60_000).toISOString();
+        return "ok";
+      }
+      if ("anon" in step) {
+        const e = new Engine(week, { memberId: 0, role: "content" }, undefined, shared);
+        try {
+          const t = tokenOf(step.token);
+          switch (step.anon) {
+            case "escortView":
+              return publicRead("escortView", e.escortView(t), names);
+            case "kkForm":
+              return publicRead("kkForm", e.kkForm(t), names);
+            case "scheduleView":
+              return publicRead("scheduleView", e.scheduleView(t), names);
+            case "escortTick":
+              return publicRead("escortTick", e.escortTick(t, at(step.at).id, step.item as never, step.on as boolean), names);
+            case "escortPickup":
+              e.escortPickup(t, at(step.at).id, step.address as string);
+              return "ok";
+            case "kkSignup":
+              e.kkSignup(t, traineeId(step.trainee) ?? -1, groupId(step.group));
+              return "received";
+          }
+        } catch (err) {
+          if (err instanceof CommandError) return err.code;
+          throw err;
+        } finally {
+          week = e.week;
+        }
       }
       const m = MEMBERS.find((x) => x.key === step.as)!;
       const e = new Engine(week, { memberId: memberId(m.key), role: m.role, global: !!m.global }, undefined, shared);
@@ -133,6 +208,16 @@ export function engineDriver(): Driver {
           });
         } else if ("template" in step) e.setConfirmTemplate(step.template);
         else if ("duty" in step) e.setDutyPhrases(step.duty as DutyPhrase[]);
+        // ---- links and מכריכה לכריכה
+        else if ("issue" in step) tokens[step.name] = e.issueLink(step.issue as LinkScope, traineeId(step.trainee ?? null)).token;
+        else if ("revoke" in step) e.revokeLink(shared.links.find((x) => x.token === tokenOf(step.revoke))?.id ?? -1);
+        else if ("kkAdd" in step) e.kkAddGroup(step.kkAdd[0], step.kkAdd[1], kkFields(step.fields));
+        else if ("kkUpdate" in step) e.kkUpdateGroup(groupId(step.kkUpdate), kkFields(step.patch));
+        else if ("kkDelete" in step) e.kkDeleteGroup(groupId(step.kkDelete));
+        else if ("kkPlace" in step) e.kkPlace(groupId(step.kkPlace), traineeId(step.trainee) ?? -1);
+        else if ("kkUnplace" in step) e.kkUnplace(trackId(step.kkUnplace), traineeId(step.trainee) ?? -1);
+        else if ("kkWindow" in step) e.kkSetWindow(step.kkWindow[0], step.kkWindow[1]);
+        else if ("bookOrder" in step) e.setBookOrder(groupId(step.bookOrder), step.copies, step.ordered as boolean);
         return "ok";
       } catch (err) {
         if (err instanceof CommandError) return err.code;
@@ -167,6 +252,24 @@ export function engineDriver(): Driver {
         availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
         edition: editionLines(week.edition.settings),
+        links: shared.links
+          .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
+          .sort(),
+        kk: [
+          ...shared.kk.tracks.map((t) => `track|${t.day}|${t.start_min}-${t.end_min}`),
+          ...shared.kk.groups.map((g) => {
+            const leaders = shared.kk.leaders
+              .filter((x) => x.group_id === g.id)
+              .sort((a, b) => a.sort - b.sort)
+              .map((x) => `${x.kind}:${x.roster_id != null ? trainee(x.roster_id) : x.label}`)
+              .join(",");
+            const room = g.room_id == null ? "-" : week.rooms.find((r) => r.id === g.room_id)!.name;
+            return `group|${names.track(g.track_id)}|${g.title}|a=${g.author ?? "-"}|room=${room}|cap=${g.capacity ?? "-"}|open=${g.open}|lead=${leaders || "-"}`;
+          }),
+          ...shared.kk.signups.map((x) => `signup|${names.track(x.track_id)}|${trainee(x.roster_id)}|${names.group(x.group_id)}|${x.via}`),
+          ...shared.kk.orders.map((o) => `order|${names.group(o.group_id)}|${o.copies}|ord=${o.ordered_at == null ? "-" : "y"}`),
+        ].sort(),
+        ticks: week.escortTicks.map((t) => `${key(t.lesson_id)}|${t.item}`).sort(),
       };
     },
 

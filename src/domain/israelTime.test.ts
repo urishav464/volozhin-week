@@ -1,0 +1,24 @@
+import { describe, expect, it } from "vitest";
+import { addDays, israelDate, israelMidnight } from "./israelTime";
+
+describe("days in Israel", () => {
+  it("is the date in Israel, whatever the instant's zone", () => {
+    expect(israelDate("2027-02-13T21:59:00Z")).toBe("2027-02-13"); // 23:59 in Israel (UTC+2)
+    expect(israelDate("2027-02-13T22:00:00Z")).toBe("2027-02-14"); // midnight
+    expect(israelDate("2027-06-12T21:00:00Z")).toBe("2027-06-13"); // summer: UTC+3
+  });
+
+  it("adds calendar days across months and years", () => {
+    expect(addDays("2027-02-14", 5)).toBe("2027-02-19");
+    expect(addDays("2027-02-14", -7)).toBe("2027-02-07");
+    expect(addDays("2026-12-30", 3)).toBe("2027-01-02");
+    expect(addDays("2028-02-28", 1)).toBe("2028-02-29");
+  });
+
+  it("finds 00:00 in Israel in winter, in summer, and on the days the clock changes", () => {
+    expect(israelMidnight("2027-02-19")).toBe("2027-02-18T22:00:00.000Z");
+    expect(israelMidnight("2027-06-18")).toBe("2027-06-17T21:00:00.000Z");
+    expect(israelMidnight("2026-10-25")).toBe("2026-10-24T21:00:00.000Z"); // summer time ends at 02:00 that night
+    expect(israelMidnight("2027-03-26")).toBe("2027-03-25T22:00:00.000Z"); // summer time starts at 02:00 that night
+  });
+});

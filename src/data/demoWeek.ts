@@ -187,6 +187,11 @@ export function demoWeek(): Week {
       { id: 5, display_name: "לוגיסטיקה (הדגמה)", gender: null, role: "logistics" },
     ],
     roster: DEMO_ROSTER.map((r) => ({ ...r })),
+    // the first escort reminded the speaker of Sunday's opening and will meet them at the parking (synthetic times)
+    escortTicks: [
+      { lesson_id: 1, item: "reminded", at: at(13) },
+      { lesson_id: 1, item: "met", at: at(14) },
+    ],
   };
 }
 
