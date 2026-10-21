@@ -163,7 +163,10 @@ test.describe("demo build", () => {
     // not a type the bucket takes: refused before anything is sent — the lesson's rule, never the poster's
     await panel.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
     await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toHaveText("אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG).");
-    // removal asks first
+    // removal asks first — and «ביטול» gives the focus back to «הסרה»
+    await list.getByRole("button", { name: "הסרה" }).click();
+    await panel.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(list.getByRole("button", { name: "הסרה" })).toBeFocused();
     await list.getByRole("button", { name: "הסרה" }).click();
     await panel.getByRole("button", { name: "כן, להסיר" }).click();
     await expect(toast(page, "הקובץ הוסר")).toBeVisible();

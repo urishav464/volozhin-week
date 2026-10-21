@@ -8,7 +8,7 @@ import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
 import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
-import { Button, Confirm, INPUT } from "../screens/settings/kit";
+import { Button, Confirm, INPUT, useFocusBack } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
 import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
 
@@ -391,6 +391,8 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
  */
 function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «פתיחה מחדש» takes it back
+  const focusBack = useFocusBack();
   const loses = reopenLoses(l);
   if (l.paid_at) {
     return <p className="text-sm text-ink-soft">התשלום סומן כשולם, ולכן אי אפשר לפתוח את השיעור מחדש. קודם מבטלים את הסימון «שולם», בשלב התשלום.</p>;
@@ -413,12 +415,15 @@ function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson
           setAsking(false);
           onReopen();
         }}
-        onCancel={() => setAsking(false)}
+        onCancel={() => {
+          setAsking(false);
+          focusBack.back();
+        }}
       />
     );
   }
   return (
-    <Button onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
+    <Button ref={focusBack.ref()} onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
       פתיחה מחדש (חזרה לטיוטה)
     </Button>
   );

@@ -21,7 +21,7 @@ import type { Lesson, SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { memorialFiles, memorialLeftovers, planOn } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
-import { Button, Confirm } from "../settings/kit";
+import { Button, Confirm, useFocusBack } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
 import { archivedEdition, memberName, whenText } from "./parts";
@@ -69,6 +69,8 @@ export function FileRow({
   port, week, file: f, actor, notify, reload, previous = false, before, pick,
 }: Omit<SourceFilesProps, "lesson" | "clear"> & { file: SourceFile; previous?: boolean; before?: ReactNode; pick?: ReactNode }) {
   const [asking, setAsking] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «הסרה» takes it back
+  const focusBack = useFocusBack();
   const [busy, setBusy] = useState<"open" | "remove" | null>(null);
   const open = async () => {
     setBusy("open");
@@ -115,7 +117,7 @@ export function FileRow({
           פתיחה
         </Button>
         {mayRemove(actor, week, f) && !asking && (
-          <Button kind="danger" onClick={() => setAsking(true)}>
+          <Button ref={focusBack.ref()} kind="danger" onClick={() => setAsking(true)}>
             הסרה
           </Button>
         )}
@@ -136,7 +138,10 @@ export function FileRow({
           confirm="כן, להסיר"
           busy={busy === "remove"}
           onConfirm={() => void remove()}
-          onCancel={() => setAsking(false)}
+          onCancel={() => {
+            setAsking(false);
+            focusBack.back();
+          }}
         />
       )}
     </li>
