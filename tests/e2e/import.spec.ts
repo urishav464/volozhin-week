@@ -612,7 +612,7 @@ test.describe("demo build — the import of 5786", () => {
     await page.goto(`${demoUrl()}/settings/import`);
     await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
     const td = (x: string) => `<td>${x}</td>`;
-    await paste(page, `<table><tr>${td("מרצה")}</tr><tr>${td("הרב מרצה 07-ישיבת בדיקה")}</tr><tr>${td("הרב מרצה 12 - ישיבת הר בדיקה")}</tr><tr>${td("ד\"ר מרצה 03, הרבנית חדשה בדיקתית")}</tr></table>`, "");
+    await paste(page, `<table><tr>${td("מרצה")}</tr><tr>${td("הרב מרצה 07-ישיבת בדיקה")}</tr><tr>${td("הרב מרצה 12 - ישיבת הר בדיקה")}</tr><tr>${td("ד\"ר מרצה 03, הרבנית חדשה בדיקתית")}</tr><tr>${td("הרב מרצה 15 מלווה")}</tr></table>`, "");
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
     const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
     // a tail after « - » is a line of the name by itself — the name the pool's, the tail its affiliation («הצעה»)
@@ -626,8 +626,11 @@ test.describe("demo build — the import of 5786", () => {
     const glued = preview.locator('li[data-ref="2"]');
     await expect(glued).toContainText("מרצה 07-ישיבת בדיקה");
     await expect(glued).toContainText("חדש");
+    // a name still holding an escort's word: said beside it in red
+    await expect(preview.locator('li[data-ref="5"] p.text-bad')).toHaveText(/^בשם יש מילה על מלווה או חניך\/ה/);
     await glued.getByRole("button", { name: "עריכה" }).click();
     const form = glued.getByRole("group", { name: "עריכה" });
+    await expect(form.getByLabel("שם", { exact: true })).toBeFocused(); // the keyboard goes on into the form
     await expect(form.getByLabel("תואר")).toHaveValue("הרב");
     await form.getByLabel("שם", { exact: true }).fill("מרצה 07 000-000-0001");
     await expect(form).toContainText("יש כאן טלפון או מייל");
@@ -640,9 +643,11 @@ test.describe("demo build — the import of 5786", () => {
     await expect(glued).toContainText("תואם");
     await expect(glued).toContainText("כבר במאגר: מרצה 07");
     await expect(glued).toContainText("יושלם (רק מה שחסר): תואר: הרב"); // the pool's מרצה 07 has its gender and an affiliation already
+    await expect(glued.getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // and back to the card's «עריכה»
     // taken back: what was read, again
     await glued.getByRole("button", { name: "ביטול העריכה" }).click();
     await expect(glued).toContainText("חדש");
+    await expect(glued.getByRole("button", { name: "עריכה — מרצה 07-ישיבת בדיקה" })).toBeFocused();
     await expect(glued).not.toContainText("נערך ידנית");
     await noSidewaysScroll(page);
   });
@@ -674,6 +679,7 @@ test.describe("demo build — the import of 5786", () => {
     await form.getByLabel("שיוך מוסדי").fill("מכון לדוגמה");
     await form.getByRole("button", { name: "שמירת העריכה" }).click();
     await expect(card("מרצה 07")).toContainText("נערך ידנית");
+    await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // the same card, its key as read kept
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
     await expect(page.getByRole("list", { name: "השיעורים" }).locator("li").filter({ hasText: "כותרת אלף" })).toContainText("מרצה 07");

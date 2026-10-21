@@ -2,7 +2,7 @@
 // categories, the sources' words, the escorts' phrases, and the preview «חדש · תואם · עמום · מדולג» — a choice for
 // every «עמום», and what a match would fill; «עריכה» of a speaker card's name, title and affiliation. Lists, one card per
 // row, the same at every width.
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { fmtRange } from "../../domain/time";
 import { dayLabel } from "../../reader/model";
 import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
@@ -180,6 +180,9 @@ function EditSpeaker({
   const [title, setTitle] = useState(start.title ?? "");
   const [name, setName] = useState(start.name);
   const [affiliation, setAffiliation] = useState(start.affiliation ?? "");
+  // opened by «עריכה»: the keyboard goes on into the form, to the name
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => nameRef.current?.focus(), []);
   const value: SpeakerEdit = { title: title || null, name, affiliation: affiliation || null };
   const problem = editProblem(value, titles);
   const escort = namedEscort(name, escorts);
@@ -203,7 +206,7 @@ function EditSpeaker({
           <label htmlFor={`${id}-n`} className="mb-0.5 block text-sm font-semibold">
             שם
           </label>
-          <input id={`${id}-n`} value={name} onChange={(e) => setName(e.target.value)} aria-describedby={`${id}-p`} className={INPUT} />
+          <input ref={nameRef} id={`${id}-n`} value={name} onChange={(e) => setName(e.target.value)} aria-describedby={`${id}-p`} className={INPUT} />
         </div>
         <div className="min-w-0">
           <label htmlFor={`${id}-a`} className="mb-0.5 block text-sm font-semibold">
@@ -248,17 +251,33 @@ function Editable({
   onEdit: (e: SpeakerEdit | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // the form closed (saved or cancelled), or the edit taken back: the keyboard returns to this card's «עריכה»
+  const editRef = useRef<HTMLButtonElement>(null);
+  const [refocus, setRefocus] = useState(0);
+  useEffect(() => {
+    if (refocus) editRef.current?.focus();
+  }, [refocus]);
+  const close = () => {
+    setOpen(false);
+    setRefocus((n) => n + 1);
+  };
   return (
     <>
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {edited && <Badge tone="neutral">נערך ידנית</Badge>}
         {!open && (
-          <Button kind="quiet" onClick={() => setOpen(true)}>
+          <Button ref={editRef} kind="quiet" aria-label={`עריכה — ${fields.name}`} onClick={() => setOpen(true)}>
             עריכה
           </Button>
         )}
         {edited && !open && (
-          <Button kind="quiet" onClick={() => onEdit(null)}>
+          <Button
+            kind="quiet"
+            onClick={() => {
+              onEdit(null);
+              setRefocus((n) => n + 1);
+            }}
+          >
             ביטול העריכה
           </Button>
         )}
@@ -272,9 +291,9 @@ function Editable({
           onLine={onLine}
           onSave={(e) => {
             onEdit(e);
-            setOpen(false);
+            close();
           }}
-          onCancel={() => setOpen(false)}
+          onCancel={close}
         />
       )}
     </>
@@ -321,6 +340,7 @@ export function CandidatesPreview({
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
               {r.skip && <p className="text-sm text-ink-soft">{r.skip}</p>}
+              {r.nameWarning && <p className="text-sm text-bad">{r.nameWarning}</p>}
               {r.fields && <Editable fields={r.fields} edited={!!r.edited} titles={titles} escorts={escorts} onEdit={(e) => onEdit(r.ref, e)} />}
               {d && (
                 <>
@@ -510,7 +530,8 @@ export function SpeakersPreview({
           const owners = post?.key ? (pool.phones.get(post.key) ?? []).filter((id) => !(target?.action === "merge" && target.target === id)) : [];
           const owner = owners.length ? pool.pool.find((x) => x.id === owners[0]) : undefined;
           return (
-            <li key={s.key} data-undecided={open || undefined} className="py-2">
+            // keyed by its first key as read, which an «עריכה» keeps: the card stays, and the keyboard returns to it
+            <li key={s.from[0] ?? s.key} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>

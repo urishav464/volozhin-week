@@ -68,6 +68,20 @@ describe("סבב שישי, 1: «עריכה» — the admin's name, title and aff
     expect(read.rows[1]).toMatchObject({ skip: "כפול בטבלה (כמו שורה 2)", edited: true, fields: { name: "יואב בדיקתי" } });
   });
 
+  it("a name still holding an escort's word: its nameWarning (said in red beside the name), never among the row's warnings", () => {
+    const g = [["מרצה"], ["מרצה 15 מלווה"], ["ד\"ר מרצה 05, הרב מרצה 16 חניך"]];
+    const rows = readCandidateSheet(g, ["name"], { ...opts, lineAs: new Map([["3:1.1", "speaker" as const]]) }).rows;
+    expect(rows.map((r) => [r.ref, r.data?.name, r.nameWarning])).toEqual([
+      ["2", "מרצה 15 מלווה", "בשם יש מילה על מלווה או חניך/ה — אם היא לא חלק מהשם, מתקנים ב«עריכה»"],
+      ["3", "מרצה 05", null],
+      ["3:1.1", "מרצה 16 חניך", "בשם יש מילה על מלווה או חניך/ה — אם היא לא חלק מהשם, מתקנים ב«עריכה»"],
+    ]);
+    for (const r of rows) expect(r.warnings.join(" ")).not.toMatch(/בשם יש מילה/);
+    // corrected in «עריכה»: no warning left
+    const edited = readCandidateSheet(g, ["name"], { ...opts, edits: new Map([["2", { title: null, name: "מרצה 15", affiliation: null }]]) }).rows[0];
+    expect(edited).toMatchObject({ edited: true, nameWarning: null });
+  });
+
   it("the tracking sheet: a speaker edited by its key as read — matched again; two names edited into one are one speaker", () => {
     const g = [["מרצה", "שיעור ב", "כותרת"], ["הרב יואב בדיקתי-ישיבת הר בדיקה", "ראשון 8:30", "א"], ["יואב בדיקתי", "ראשון 10:00", "ב"], ["מרצה12", "ראשון 11:30", "ג"]];
     const m3: Mapping = ["speaker", "when", "title"];

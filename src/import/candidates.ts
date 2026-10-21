@@ -54,6 +54,8 @@ export interface CandidateRead {
   fields?: SpeakerEdit | null;
   /** The admin edited them («נערך ידנית»). */
   edited?: boolean;
+  /** Its name still holds an escort's word (escortInName): said beside it in red, as in the tracking sheet. */
+  nameWarning?: string | null;
 }
 
 export interface ReadOptions {
@@ -141,7 +143,6 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
     }
     seen.set(key, row);
     const nameWarning = escortInName(name, lc.escorts.words);
-    if (nameWarning) warnings.push(nameWarning);
     // the cell's other names and the name's brackets: each an ExtraLine — the admin's choice, or the read's «הצעה»
     const lineAff: string[] = [];
     const extras: { ref: string; raw: string }[] = [];
@@ -194,6 +195,7 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       ref: String(row),
       skip: null,
       warnings,
+      nameWarning,
       fields: fields(affiliation),
       edited: !!edit,
       data: { title, name, key, gender, affiliation, topics: tags, phone: phone.value, phoneKey: phone.key, email: email.value, notes: note },
@@ -222,7 +224,6 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       });
       const joined = xEdit ? xEdit.affiliation : aff.join(", ") || null;
       const affiliation = joined && chars(joined) <= LIMITS.affiliation ? joined : null;
-      const nameWarning = escortInName(sub.name, lc.escorts.words);
       out.push({
         row,
         ref: x.ref,
@@ -230,8 +231,8 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
         warnings: [
           aff.length ? "שם נוסף מתא השם — רק השם, התואר והשיוך שבסוגריים (שאר העמודות של השורה למרצה הראשון/ה)" : "שם נוסף מתא השם — רק השם והתואר (שאר העמודות של השורה למרצה הראשון/ה)",
           ...(joined && !affiliation ? [`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`] : []),
-          ...(nameWarning ? [nameWarning] : []),
         ],
+        nameWarning: escortInName(sub.name, lc.escorts.words),
         fields: { ...sub, affiliation },
         edited: !!xEdit,
         data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation, topics: [], phone: null, phoneKey: null, email: null, notes: null },
