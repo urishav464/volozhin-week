@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_TITLES } from "../data/speakerRules";
 import type { Category, Speaker } from "../domain/types";
 import { candidatesPayload, contextOf, lookupFor, previewCandidates, readCandidates, splitTopics, undecided } from "./candidates";
-import { channelOf, escortsPayload, isContactPhrase, isMoneyOrTransport, phrasesOf, previewEscorts, readEscorts, splitPhrases } from "./escorts";
+import { channelOf, escortsPayload, isMoneyOrTransport, previewEscorts, readEscorts, splitPhrases, suggestChannel } from "./escorts";
 import { defaultMapping } from "./fields";
 import type { Choice } from "./match";
 import { archivePayload, doubleGroups, planLessons, plainAmount, previewTrackingSpeakers, proposedCategory, readTracking, topicKey, topicsOf } from "./tracking";
@@ -34,7 +34,7 @@ describe("(a) the candidates", () => {
   it("reads each row: title split, gender «הצעה» from it, tags, the phone apart, statuses and notes as lines", () => {
     const read = readCandidates(grid, m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(read[0]).toEqual({
-      row: 2, skip: null, warnings: [],
+      row: 2, ref: "2", skip: null, warnings: [],
       data: { title: "הרב", name: "דוגמה אלף", key: "דוגמה אלף", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך", "פילוסופיה"], phone: "0000000001", phoneKey: "0000000001", email: null, notes: "טווח ימים: א-ב" },
     });
     expect(read[1].data).toMatchObject({ title: "הרבנית", gender: "f", notes: "טווח ימים: נסגר\nהערות: הערה לדוגמה" });
@@ -55,7 +55,7 @@ describe("(a) the candidates", () => {
     expect(preview[2].fills).toEqual(["תואר: ד״ר"]); // its affiliation is there already: never overwritten
     expect(candidatesPayload(preview, new Map(), "brainstorm-5786", null)).toBeNull();
     expect(undecided(preview, new Map()).map((r) => r.row)).toEqual([5]);
-    const choices = new Map<number, Choice>([[5, { action: "merge", target: 1 }], [8, { action: "skip" }]]);
+    const choices = new Map<string, Choice>([["5", { action: "merge", target: 1 }], ["8", { action: "skip" }]]);
     const p = candidatesPayload(preview, choices, "brainstorm-5786", null)!;
     expect(p.rows.map((r) => [r.row, r.action, r.speaker_id])).toEqual([
       [2, "new", null],
@@ -188,38 +188,44 @@ describe("(c) the escorts' file", () => {
   ];
   const m = ["speaker", null, "phrases"];
 
-  it("phrases: split, grouped, pre-ticked when about the channel («הצעה»), payment and transport dropped", () => {
+  it("phrases: split, each speaker's shown once, the channel they name suggested («הצעה»), payment and transport set apart", () => {
     expect(splitPhrases("דרך המזכירה. תשלום בהעברה בנקאית")).toEqual(["דרך המזכירה", "תשלום בהעברה בנקאית"]);
-    const phrases = phrasesOf(readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES }));
-    expect(phrases.map((p) => [p.text, p.count, p.channel, p.contact, p.money])).toEqual([
-      ["דרך המזכירה", 2, "secretary", true, false],
-      ["תשלום בהעברה בנקאית", 1, null, false, true],
-      ["רק בוואטסאפ", 2, "whatsapp", true, false],
-      ["לאסוף מהתחנה", 1, null, false, true],
-      ["אוהב/ת קפה", 1, null, false, false],
+    const preview = previewEscorts(readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES }), NO_LOOKUP);
+    const of = (k: string) => preview.find((p) => p.key === k)!;
+    expect(of("מרצה 07").phrases.map((p) => [p.text, p.channel, p.money])).toEqual([
+      ["דרך המזכירה", "secretary", false],
+      ["תשלום בהעברה בנקאית", null, true],
     ]);
+    expect(of("מרצה 07").suggested).toBe("secretary");
+    expect(of("מרצה 20").phrases.map((p) => p.text)).toEqual(["רק בוואטסאפ", "לאסוף מהתחנה", "אוהב/ת קפה"]);
+    expect(of("מרצה 20").suggested).toBe("whatsapp");
     for (const w of ["רק בווטסאפ", "וואטסאפ בלבד", "ווצאפ", "WhatsApp"]) expect(channelOf(w)).toBe("whatsapp");
     expect(channelOf("במייל או בטלפון")).toBeNull(); // two channels: none chosen
-    expect(isContactPhrase("לתאם הסעה דרך המזכירה")).toBe(false);
+    expect(suggestChannel([{ channel: "email", money: false }, { channel: "phone", money: false }])).toBeNull();
+    expect(suggestChannel([{ channel: "email", money: false }, { channel: "phone", money: true }])).toBe("email");
     expect(isMoneyOrTransport("לתאם הסעה דרך המזכירה")).toBe(true);
   });
 
-  it("previews per speaker: ticked phrases as the note, one channel as contact_pref, not in the pool → «מדולג»", () => {
+  it("the payload: the channel chosen and the admin's own note, per speaker of the pool — not in the pool → «מדולג»; nothing of the file", () => {
     const rows = readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES });
-    const ticked = new Set(["דרך המזכירה", "רק בוואטסאפ", "אוהב/ת קפה", "תשלום בהעברה בנקאית"]);
-    const preview = previewEscorts(rows, ticked, NO_LOOKUP);
+    const preview = previewEscorts(rows, NO_LOOKUP);
     const of = (k: string) => preview.find((p) => p.key === k)!;
-    expect(of("מרצה 07")).toMatchObject({ status: "match", rows: [2, 4], contact_pref: "secretary", secretary_note: "דרך המזכירה", fills: ["ערוץ קשר", "איך פונים"] });
-    // a money phrase never reaches the note, even ticked
-    expect(of("מרצה 07").secretary_note).not.toContain("תשלום");
-    expect(of("מרצה 20")).toMatchObject({ status: "match", contact_pref: "whatsapp", secretary_note: "רק בוואטסאפ · אוהב/ת קפה" });
+    expect(of("מרצה 07")).toMatchObject({ status: "match", rows: [2, 4] });
     expect(of("מרצה לא במאגר")).toMatchObject({ status: "skip", reason: "לא במאגר — קודם מייבאים את המועמדים או את גיליון המעקב" });
-    expect(escortsPayload(preview, new Map())).toEqual({
+    const answers = new Map([
+      ["מרצה 07", { channel: "secretary" as const, note: "" }],
+      ["מרצה 20", { channel: "other" as const, note: "  רק אחרי 16:00 " }],
+    ]);
+    expect(escortsPayload(preview, new Map(), answers)).toEqual({
       rows: [
-        { row: 2, speaker_id: 1, contact_pref: "secretary", secretary_note: "דרך המזכירה" },
-        { row: 3, speaker_id: 2, contact_pref: "whatsapp", secretary_note: "רק בוואטסאפ · אוהב/ת קפה" },
+        { row: 2, speaker_id: 1, channel: "secretary", note: null },
+        { row: 3, speaker_id: 2, channel: "other", note: "רק אחרי 16:00" },
       ],
     });
-    expect(JSON.stringify(escortsPayload(preview, new Map()))).not.toContain("חניך/ה"); // never an escort's name
+    // no channel, or «אחר» with no note: nothing for that speaker
+    expect(escortsPayload(preview, new Map(), new Map([["מרצה 07", { channel: null, note: "x" }], ["מרצה 20", { channel: "other", note: " " }]]))).toEqual({ rows: [] });
+    // a note with a phone in it: nothing is sent until it is gone
+    expect(escortsPayload(preview, new Map(), new Map([["מרצה 07", { channel: "phone", note: "000-000-0001" }]]))).toBeNull();
+    expect(JSON.stringify(escortsPayload(preview, new Map(), answers))).not.toMatch(/חניך|המזכירה|וואטסאפ/); // never the file's words
   });
 });

@@ -8,11 +8,14 @@ import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
 import type { Category, PrintWhen, SourcesKind } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import type { CandidatePreview, MatchContext } from "../../import/candidates";
-import { editedText, type EscortsPreview as EscortsRowPreview, isMoneyOrTransport, namedEscort, type Phrase } from "../../import/escorts";
+import {
+  answerSaves, CHANNEL_LABEL, type EscortAnswer, escortFills, type EscortsPreview as EscortsRowPreview, IMPORT_CHANNELS, type ImportChannel, namedEscort, noteProblem, type ShownPhrase,
+} from "../../import/escorts";
+import { LIMITS } from "../../data/speakerRules";
 import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
 import { DESIGN_SOURCES, sourcesKey, type SourcesRule, SUGGESTED_SOURCES } from "../../import/sources";
 import { ARCHIVE_ROOM, parallelRoomName } from "../../data/importRules";
-import { hasContact, scrubContacts } from "../../import/phone";
+import { scrubContacts } from "../../import/phone";
 import type { DoubleGroup, ExtraLine, GroupDecision, LessonPlan, LineAs, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
 import { Badge, INPUT, Panel } from "./kit";
@@ -160,8 +163,8 @@ export function CandidatesPreview({
   rows: CandidatePreview[];
   pool: MatchContext;
   choices: Map<string, Choice>;
-  /** Each row's action as the commit takes it (null: undecided). */
-  resolved: Map<number, Resolved | null>;
+  /** Each row's action as the commit takes it, by its ref (null: undecided). */
+  resolved: Map<string, Resolved | null>;
   onChoose: (key: string, c: Choice | null) => void;
 }) {
   return (
@@ -171,10 +174,10 @@ export function CandidatesPreview({
         {rows.map((r) => {
           const d = r.data;
           const name = d ? `${d.title ? `${d.title} ` : ""}${d.name}` : "—";
-          const c = choices.get(String(r.row));
-          const open = !!d && resolved.get(r.row) == null;
+          const c = choices.get(r.ref);
+          const open = !!d && resolved.get(r.ref) == null;
           return (
-            <li key={r.row} data-row={r.row} data-undecided={open || undefined} className="py-2">
+            <li key={r.ref} data-row={r.row} data-ref={r.ref} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm text-ink-soft">שורה {r.row}</span>
                 <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
@@ -191,8 +194,8 @@ export function CandidatesPreview({
                     fill={d}
                     pool={pool}
                     choice={c}
-                    onChoose={(x) => onChoose(String(r.row), x)}
-                    blocked={c?.action === "same" && open ? `שורה ${c.ref} לא מיובאת (או עוד מחכה להחלטה) — בוחרים אחרת.` : null}
+                    onChoose={(x) => onChoose(r.ref, x)}
+                    blocked={c?.action === "same" && open ? `שורה ${c.ref.split(":")[0]} לא מיובאת (או עוד מחכה להחלטה) — בוחרים אחרת.` : null}
                   />
                 </>
               )}
@@ -402,7 +405,7 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
     return !!s && actionOf(s.status, s.match, choices.get(k))?.action === "skip";
   };
   return (
-    <Panel title="השיעורים" aside={`${kept.length} לייבוא · ${plans.length - kept.length} מדולגים`}>
+    <Panel title="השיעורים" aside={`${kept.length === 1 ? "שיעור אחד לייבוא" : `${kept.length} לייבוא`} · ${plans.length - kept.length === 1 ? "מדולג אחד" : `${plans.length - kept.length} מדולגים`}`}>
       <ul aria-label="השיעורים" className="divide-y divide-line border-y border-line">
         {plans.map((p) => {
           const gone = !p.skip && p.speakerKeys.every(skippedSpeaker);
@@ -456,175 +459,188 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
   );
 }
 
-// ------------------------------------------------------------------ (c) the escorts' file
+// ------------------------------------------------------------------ (c) the escorts' file — see EscortsPreview below
 
-export function PhrasesTable({
-  phrases,
-  ticked,
-  edits,
-  names,
-  onToggle,
-  onEdit,
-}: {
-  phrases: Phrase[];
-  ticked: Set<string>;
-  /** A phrase's text as edited (its key → text). */
-  edits: Map<string, string>;
-  /** The escorts' names (the file's escorts' column, the rosters): a phrase holding one cannot be ticked. */
-  names: readonly string[];
-  onToggle: (k: string) => void;
-  onEdit: (k: string, text: string) => void;
-}) {
+const LINE_AS_LABEL: Record<LineAs, (of: string) => string> = {
+  speaker: () => "מרצה נוסף/ת",
+  affiliation: (of) => `שיוך מוסדי של ${of}`,
+  skip: () => "לא לייבא את השורה",
+};
+
+/**
+ * A speaker cell's other names (a line under the first; in the candidates also one beside it): «מרצה נוסף/ת», «שיוך
+ * מוסדי» or «לא לייבא» — the read proposes only an institution's affiliation and an escort's «לא לייבא» («הצעה»); any
+ * other waits for the admin. A line of a row left out anyway waits for nothing.
+ */
+export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: ExtraLine[]; skipped?: ReadonlySet<number>; onChoose: (id: string, as: LineAs) => void }) {
   const id = useId();
-  const money = phrases.filter((p) => p.money);
-  const rest = phrases.filter((p) => !p.money);
   return (
-    <Panel title="ניסוחים" aside="נשמרים רק הניסוחים המסומנים — על ערוץ הקשר">
+    <Panel title="שם נוסף בתא של המרצה" aside="מרצה נוסף/ת, שיוך מוסדי או לא לייבא">
       <p className="mb-2 text-sm text-ink-soft">
-        הסימון הראשון הוא <Badge tone="accent">הצעה</Badge>: ניסוח שמזכיר מזכירות, וואטסאפ, מייל או טלפון — ולא מלווה. ניסוחים על תשלום והסעה לא נשמרים — הם נגזרים
-        מהשיעור. אפשר לערוך ניסוח לפני הסימון: נשמר הנוסח הערוך. ניסוח שיש בו מילה משם של מלווה (גם שם פרטי או שם משפחה לבד) לא נשמר עד שהיא נמחקת ממנו, ומספר
-        טלפון או כתובת מייל יוצאים מכל ניסוח — נשמר איך פונים, לא המספר.
+        שורה עם שם של מוסד (ישיבת…, מכון…, מדרשת…) מוצעת כשיוך המוסדי של השם שמעליה, ושורה עם שם מעמודת המלווים — «לא לייבא» <Badge tone="accent">הצעה</Badge>. כל
+        שורה אחרת, בסוגריים או לא, מחכה להחלטה. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
       </p>
-      <ul aria-label="ניסוחים" className="divide-y divide-line border-y border-line">
-        {rest.map((p, i) => {
-          const text = editedText(p.text, edits);
-          const escort = namedEscort(text, names);
-          const typed = hasContact(text);
-          const blocked = !!escort || text === "" || isMoneyOrTransport(text);
-          const on = ticked.has(p.key) && !blocked;
+      <ul aria-label="שמות נוספים בתא המרצה" className="space-y-2">
+        {lines.map((l) => {
+          const gone = skipped.has(l.row);
+          const open = l.as == null && !gone;
           return (
-            <li key={p.key} data-phrase={p.key} className="py-1.5">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                {/* a 44px target around the box; its name is the phrase as the file wrote it */}
-                <span className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center">
-                  <input
-                    id={`${id}-t-${i}`}
-                    type="checkbox"
-                    checked={on}
-                    disabled={blocked}
-                    onChange={() => onToggle(p.key)}
-                    aria-label={`${p.text} (${p.count}${p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})`}
-                    aria-describedby={escort || p.mentions || typed ? `${id}-w-${i}` : undefined}
-                    className="size-5 cursor-pointer accent-ink disabled:cursor-not-allowed"
-                  />
-                </span>
-                <label htmlFor={`${id}-e-${i}`} className="sr-only">
-                  הנוסח שיישמר במקום «{p.text}»
-                </label>
-                <input
-                  id={`${id}-e-${i}`}
-                  value={edits.get(p.key) ?? p.text}
-                  maxLength={300}
-                  onChange={(e) => onEdit(p.key, e.target.value)}
-                  className={`${INPUT} min-w-0 flex-1 basis-48`}
-                />
-                <span className="text-sm text-ink-soft">
-                  ({p.count}
-                  {p.channel ? ` · ${CONTACT_PREF_LABEL[p.channel]}` : ""})
-                </span>
-              </div>
-              {escort ? (
-                <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
-                  יש כאן שם של מלווה («{escort}») — לא נשמר. מוחקים את השם מהנוסח, ואז אפשר לסמן.
-                </p>
-              ) : typed ? (
-                <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
-                  יש בנוסח טלפון או מייל — הם יוצאים ממנו ולא נשמרים.
-                </p>
-              ) : (
-                p.mentions && (
-                  <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-ink-soft">
-                    מדבר על המלווה — לא מסומן מראש. אם יש כאן שם, מוחקים אותו לפני הסימון.
-                  </p>
-                )
-              )}
+            <li key={l.id} data-line={l.id} data-undecided={open || undefined} className="rounded-lg border border-line bg-paper p-2.5">
+              <p className="text-sm break-words">
+                <span className="text-ink-soft">שורה {l.row}:</span> <b>{l.ofName}</b> / <b>{l.text}</b>{" "}
+                {gone ? (
+                  <span className="text-ink-soft">(השורה מדולגת — אין צורך להחליט)</span>
+                ) : l.as == null ? (
+                  <>
+                    <Badge tone="bad">צריך לבחור</Badge> <span className="text-ink-soft">({l.why})</span>
+                  </>
+                ) : (
+                  !l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>
+                )}
+              </p>
+              <fieldset className="mt-1 min-w-0" disabled={gone}>
+                <legend className="sr-only">«{l.text}» — מה זה?</legend>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["speaker", "affiliation", "skip"] as const).map((as) => (
+                    <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
+                      <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(l.id, as)} className="accent-ink" />
+                      {LINE_AS_LABEL[as](l.ofName)}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
             </li>
           );
         })}
       </ul>
-      {money.length > 0 && (
-        <>
-          <p className="mt-3 mb-1 text-sm font-semibold">תשלום והסעה — לא נשמרים</p>
-          <ul aria-label="ניסוחים שלא נשמרים" className="text-sm text-ink-soft">
-            {money.map((p) => (
-              <li key={p.key} className="break-words">
-                · {p.text}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
     </Panel>
   );
 }
 
-/** The speaker cells' second lines: «שיוך מוסדי» of the name above, or a speaker of its own — the read's «הצעה», the admin's choice. */
-export function LinesTable({ lines, onChoose }: { lines: ExtraLine[]; onChoose: (id: string, as: LineAs) => void }) {
-  const id = useId();
+/** The file's phrases about a speaker, read-only — the reason for the channel proposed; none of them is saved. */
+function PhrasesShown({ phrases }: { phrases: ShownPhrase[] }) {
+  if (phrases.length === 0) return null;
   return (
-    <Panel title="שורה נוספת בתא של המרצה" aside="שיוך מוסדי או מרצה נוסף/ת">
-      <p className="mb-2 text-sm text-ink-soft">
-        שורה בסוגריים, או עם שם של מוסד (ישיבת…, מכון…, מדרשת…), נקראת כשיוך המוסדי של השם שמעליה <Badge tone="accent">הצעה</Badge>; שורה בתואר, או שם שכבר
-        בגיליון או במאגר — כמרצה נוסף/ת. כל שורה אחרת מחכה להחלטה. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
-      </p>
-      <ul aria-label="שורות נוספות בתא המרצה" className="space-y-2">
-        {lines.map((l) => (
-          <li key={l.id} data-line={l.id} data-undecided={l.as == null || undefined} className="rounded-lg border border-line bg-paper p-2.5">
-            <p className="text-sm break-words">
-              <span className="text-ink-soft">שורה {l.row}:</span> <b>{l.ofName}</b> / <b>{l.text}</b>{" "}
-              {l.as == null ? (
-                <>
-                  <Badge tone="bad">צריך לבחור</Badge> <span className="text-ink-soft">({l.why})</span>
-                </>
-              ) : (
-                !l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>
-              )}
-            </p>
-            <fieldset className="mt-1 min-w-0">
-              <legend className="sr-only">
-                «{l.text}» — מה זה?
-              </legend>
-              <div className="flex flex-wrap gap-1.5">
-                {(["affiliation", "speaker"] as const).map((as) => (
-                  <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-                    <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(l.id, as)} className="accent-ink" />
-                    {as === "affiliation" ? `שיוך מוסדי של ${l.ofName}` : "מרצה נוסף/ת"}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+    <div className="mt-1 text-sm">
+      <p className="text-ink-soft">בקובץ (לא נשמר):</p>
+      <ul aria-label="הניסוחים בקובץ" className="ps-3 text-ink-soft">
+        {phrases.map((p) => (
+          <li key={p.text} className="break-words">
+            «{p.text}»{p.channel && !p.money ? ` — ${CONTACT_PREF_LABEL[p.channel]}` : ""}
+            {p.money && " — תשלום או הסעה (נגזרים מהשיעור)"}
+            {p.escort && <span className="text-bad"> — יש כאן שם של מלווה («{p.escort}»)</span>}
           </li>
         ))}
       </ul>
-    </Panel>
+    </div>
   );
 }
 
-export function EscortsPreview({ rows, choices, onChoose }: { rows: EscortsRowPreview[]; choices: Map<string, Choice>; onChoose: (key: string, c: Choice | null) => void }) {
+/**
+ * The escorts' file, one card per speaker: the file's phrases (shown), the channel — chosen from the list, the
+ * phrases' «הצעה» first — and a note the admin may type (empty; never the file's words). Only those two are sent.
+ */
+export function EscortsPreview({
+  rows,
+  pool,
+  names,
+  choices,
+  onChoose,
+  answers,
+  onAnswer,
+}: {
+  rows: EscortsRowPreview[];
+  pool: MatchContext;
+  /** The escorts' names (the file's column, the rosters): said beside a phrase or a note that holds one. */
+  names: readonly string[];
+  choices: Map<string, Choice>;
+  onChoose: (key: string, c: Choice | null) => void;
+  answers: Map<string, EscortAnswer>;
+  onAnswer: (key: string, a: EscortAnswer) => void;
+}) {
+  const id = useId();
   return (
-    <Panel title="תצוגה מקדימה">
+    <Panel title="איך פונים לכל מרצה" aside="ערוץ מהרשימה, והערה משלך — שום ניסוח מהקובץ לא נשמר">
+      <p className="mb-2 text-sm text-ink-soft">
+        לכל מרצה בוחרים ערוץ קשר מהרשימה. הבחירה הראשונה היא <Badge tone="accent">הצעה</Badge> לפי הניסוחים שבקובץ — הם מוצגים רק כדי להסביר אותה, ולא נשמרים.
+        אפשר לכתוב הערה קצרה משלך (לא חובה; בלי טלפון ובלי מייל). נשמרים רק הערוץ וההערה, ורק במה שאצל המרצה עוד ריק.
+      </p>
       <Counts statuses={rows.map((r) => r.status)} />
       <ul aria-label="תצוגה מקדימה" className="divide-y divide-line border-y border-line">
-        {rows.map((r) => (
-          <li key={`${r.key}-${r.rows[0]}`} data-undecided={(r.status === "ambiguous" && !choices.has(r.key)) || undefined} className="py-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="min-w-0 flex-1 font-semibold break-words">{r.name || "—"}</span>
-              <span className="text-sm text-ink-soft">{rowsSaid(r.rows)}</span>
-              <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
-            </div>
-            {r.reason && <p className="text-sm text-ink-soft">{r.reason}</p>}
-            {r.status !== "skip" && (
-              <>
-                <Facts items={[r.contact_pref && `ערוץ: ${CONTACT_PREF_LABEL[r.contact_pref]}`, r.secretary_note && `«${r.secretary_note}»`]} />
-                {r.status === "match" && <p className="text-sm text-ink-soft">{r.fills.length ? `יושלם (רק מה שחסר): ${r.fills.join(", ")}` : "אין מה להשלים — שום דבר לא נדרס."}</p>}
-                {r.status === "ambiguous" && r.match && (
-                  <SpeakerDecision name={r.name} status={r.status} match={r.match} fill={null} pool={null} choice={choices.get(r.key)} onChoose={(c) => onChoose(r.key, c)} />
-                )}
-              </>
-            )}
-            <Warnings items={r.warnings} />
-          </li>
-        ))}
+        {rows.map((r, i) => {
+          const a = answers.get(r.key);
+          const channel = a?.channel ?? null;
+          const note = a?.note ?? "";
+          const saves = answerSaves(a);
+          const problem = channel ? noteProblem(note) : null;
+          const noteEscort = channel && note ? namedEscort(note, names) : null;
+          const open = r.status === "ambiguous" && !!saves && !choices.has(r.key);
+          const fills = r.target ? escortFills(r.target, pool.flags.get(r.target.id), a) : [];
+          const set = (patch: Partial<EscortAnswer>) => onAnswer(r.key, { channel, note, ...patch });
+          return (
+            <li key={`${r.key}-${r.rows[0]}`} data-undecided={open || !!problem || undefined} className="py-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 flex-1 font-semibold break-words">{r.name || "—"}</span>
+                <span className="text-sm text-ink-soft">{rowsSaid(r.rows)}</span>
+                <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+              </div>
+              {r.reason && <p className="text-sm text-ink-soft">{r.reason}</p>}
+              {r.status !== "skip" && (
+                <>
+                  <PhrasesShown phrases={r.phrases} />
+                  <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <label htmlFor={`${id}-c-${i}`} className="mb-0.5 block text-sm font-semibold">
+                        ערוץ הקשר {channel != null && channel === r.suggested && <Badge tone="accent">הצעה</Badge>}
+                      </label>
+                      <select
+                        id={`${id}-c-${i}`}
+                        value={channel ?? ""}
+                        onChange={(e) => set({ channel: (e.target.value || null) as ImportChannel | null })}
+                        className={INPUT}
+                      >
+                        <option value="">לא לשמור ערוץ</option>
+                        {IMPORT_CHANNELS.map((c) => (
+                          <option key={c} value={c}>
+                            {CHANNEL_LABEL[c]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="min-w-0">
+                      <label htmlFor={`${id}-n-${i}`} className="mb-0.5 block text-sm font-semibold">
+                        הערה משלך (לא חובה)
+                      </label>
+                      <input
+                        id={`${id}-n-${i}`}
+                        value={note}
+                        maxLength={LIMITS.secretary_note}
+                        disabled={channel == null}
+                        placeholder={channel === "other" ? "איך פונים — במילים שלך" : ""}
+                        onChange={(e) => set({ note: e.target.value })}
+                        aria-describedby={problem || noteEscort ? `${id}-w-${i}` : undefined}
+                        className={INPUT}
+                      />
+                    </div>
+                  </div>
+                  {(problem || noteEscort) && (
+                    <p id={`${id}-w-${i}`} className="mt-0.5 text-sm text-bad">
+                      {problem ?? `יש בהערה שם של מלווה («${noteEscort}») — ההערה נשמרת כפי שנכתבה; כדאי למחוק אותו.`}
+                    </p>
+                  )}
+                  {!saves && <p className="mt-0.5 text-sm text-ink-soft">{channel === "other" ? "«אחר» בלי הערה — לא יישמר דבר." : "לא יישמר דבר למרצה הזה."}</p>}
+                  {saves && r.status === "match" && (
+                    <p className="mt-0.5 text-sm text-ink-soft">{fills.length ? `יושלם (רק מה שחסר): ${fills.join(", ")}` : "אין מה להשלים — שום דבר לא נדרס."}</p>
+                  )}
+                  {saves && r.status === "ambiguous" && r.match && (
+                    <SpeakerDecision name={r.name} status={r.status} match={r.match} fill={null} pool={null} choice={choices.get(r.key)} onChoose={(c) => onChoose(r.key, c)} />
+                  )}
+                </>
+              )}
+              <Warnings items={r.warnings} />
+            </li>
+          );
+        })}
       </ul>
     </Panel>
   );

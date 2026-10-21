@@ -11,10 +11,10 @@ import type { DataPort } from "../../data/port";
 import { titlesOf } from "../../data/speakerRules";
 import type { Category, Edition } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { candidatesPayload, contextOf, lookupFor, type MatchContext, previewCandidates, readCandidates, resolvedRows } from "../../import/candidates";
+import { candidatesPayload, contextOf, lookupFor, type MatchContext, previewCandidates, readCandidateSheet, resolvedRows } from "../../import/candidates";
 import { gridFromClipboard } from "../../import/clipboard";
 import { readDocx } from "../../import/docxRead";
-import { escortColumns, escortNames, escortsPayload, phrasesOf, previewEscorts, readEscorts } from "../../import/escorts";
+import { answerSaves, type EscortAnswer, escortColumns, escortLike, escortNames, escortsPayload, noteProblem, previewEscorts, readEscorts } from "../../import/escorts";
 import { defaultMapping, FIELDS, findHeaderRow, HEADER_SEARCH, type ImportKind, KIND_LABEL, type Mapping, setMapping } from "../../import/fields";
 import { IMPORT_LIMITS } from "../../import/limits";
 import { hasContact } from "../../import/phone";
@@ -24,12 +24,12 @@ import { sampleGrid } from "../../import/sample";
 import { defaultSourcesRule, type SourcesRule } from "../../import/sources";
 import type { Grid, GridSource } from "../../import/table";
 import {
-  archivePayload, doubleGroups, type GroupDecision, type LineAs, phonesAfterChoices, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers, sourcesValuesOf,
-  speakerAliases, topicsOf,
+  archivePayload, doubleGroups, type GroupDecision, type LineAs, openLines, phonesAfterChoices, planLessons, previewTrackingSpeakers, proposedCategory, readTracking, resolvedSpeakers,
+  skippedRows, sourcesValuesOf, speakerAliases, topicsOf,
 } from "../../import/tracking";
 import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
-import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, LinesTable, PhrasesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
+import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, LinesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
 import { Badge, Button, Confirm, Field, INPUT, Panel, useSettings } from "./kit";
 
 const DEFAULT_SOURCE: Record<ImportKind, string> = { candidates: "brainstorm-5786", tracking: "tracking-5786", escorts: "" };
@@ -56,7 +56,8 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const [problem, setProblem] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [headerRow, setHeaderRow] = useState<HeaderAt>(0);
-  /** The escorts' kind with no header row and no escorts' column found: the admin says which column it is (or none). */
+  /** Which column the escorts' names are in, as the admin said (or «none») — always asked in the escorts' file, and in
+   * the tracking sheet when a header or a first row looks like one (escortLike); never guessed. */
   const [escortAsked, setEscortAsked] = useState<number | "none" | null>(null);
   const [mapping, setMap] = useState<Mapping>([]);
   const [source, setSource] = useState("");
@@ -69,12 +70,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const [decisions, setDecisions] = useState<Map<number, GroupDecision>>(new Map());
   const [topics, setTopics] = useState<Map<string, number | null>>(new Map());
   const [sources, setSources] = useState<Map<string, SourcesRule>>(new Map());
-  const [ticked, setTicked] = useState<Set<string>>(new Set());
-  /** A phrase's text as the admin edited it (phrase key → text) — to keep the channel without an escort's name. */
-  const [edits, setEdits] = useState<Map<string, string>>(new Map());
-  /** The trainees of the real editions (names only) — read at «בדיקה» for the escorts' file, to keep them out of the phrases. */
+  /** The escorts' file: each speaker's channel (from the list) and the admin's own note — all that is sent. */
+  const [answers, setAnswers] = useState<Map<string, EscortAnswer>>(new Map());
+  /** The trainees of the real editions (names only) — read at «בדיקה» for the escorts' file, to say so beside a phrase that names one. */
   const [rosterNames, setRosterNames] = useState<string[]>([]);
-  /** A line under a name in the speaker's cell: the admin's «שיוך מוסדי» / «מרצה נוסף/ת». */
+  /** Another name of a speaker's cell (a line under it; in the candidates also one beside it): the admin's «מרצה נוסף/ת» / «שיוך מוסדי» / «לא לייבא». */
   const [lineAs, setLineAs] = useState<Map<string, LineAs>>(new Map());
   const [confirming, setConfirming] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -108,7 +108,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
     setCtx(null);
     setChoices(new Map());
     setDecisions(new Map());
-    setEdits(new Map());
+    setAnswers(new Map());
     setLineAs(new Map());
     setConfirming(false);
     setCommitProblem(null);
@@ -183,32 +183,36 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const grid = table?.grid ?? [];
   const names = useMemo(() => columnNames(grid, headerRow), [grid, headerRow]);
   const rows = useMemo(() => dataRows(grid, headerRow), [grid, headerRow]);
-  // the escorts' columns: found (a header in the header row, or one in the first rows), or — in the escorts' file with
-  // no header row and none found — the one the admin names. Never mapped, whatever the mapping says.
+  // the escorts' columns: the one the admin names — always asked in the escorts' file, and in the tracking sheet when a
+  // header or a first row speaks of escorts or trainees — and, as a guard, any found (a header in the header row, or
+  // one in the first rows). Never mapped, never read, whatever the mapping says.
   const foundEscort = useMemo(() => escortColumns(grid, headerRow), [grid, headerRow]);
-  const askEscort = kind === "escorts" && !!table && headerRow == null && foundEscort.size === 0;
+  const askEscort = !!table && (kind === "escorts" || (kind === "tracking" && escortLike(grid, headerRow)));
   const escortCols = useMemo(() => (typeof escortAsked === "number" ? new Set([...foundEscort, escortAsked]) : foundEscort), [foundEscort, escortAsked]);
   const read = useMemo(() => mapping.map((f, i) => (escortCols.has(i) ? null : f)), [mapping, escortCols]);
-  // the escorts' names — as the file writes them and as the rosters have them — only to keep them out of the phrases
-  const escortsNamed = useMemo(() => (kind === "escorts" ? [...escortNames(grid, headerRow, escortCols), ...rosterNames] : []), [kind, grid, headerRow, escortCols, rosterNames]);
+  // the escorts' names — as the file writes them (and, for the escorts' file, as the rosters have them): read in the page
+  // only, to say so beside a phrase that names one, and to propose «לא לייבא» for a speaker cell's line that does
+  const escortsNamed = useMemo(() => [...escortNames(grid, headerRow, escortCols), ...(kind === "escorts" ? rosterNames : [])], [kind, grid, headerRow, escortCols, rosterNames]);
 
-  // ---- what each kind reads (pure, in memory)
-  const readOpts = { headerRow, titles, genderFromTitle };
-  const cand = useMemo(() => (kind === "candidates" && table ? readCandidates(grid, read, readOpts) : null), [kind, table, grid, read, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
-  const trackBase = useMemo(() => (kind === "tracking" && table ? readTracking(grid, read, readOpts) : null), [kind, table, grid, read, headerRow, titles, genderFromTitle]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ---- what each kind reads (pure, in memory) — a cell's other names proposed «לא לייבא» when they name an escort
+  const readOpts = { headerRow, titles, genderFromTitle, escorts: escortsNamed };
+  const cand = useMemo(() => (kind === "candidates" && table ? readCandidateSheet(grid, read, readOpts).rows : null), [kind, table, grid, read, headerRow, titles, genderFromTitle, escortsNamed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trackBase = useMemo(() => (kind === "tracking" && table ? readTracking(grid, read, readOpts) : null), [kind, table, grid, read, headerRow, titles, genderFromTitle, escortsNamed]); // eslint-disable-line react-hooks/exhaustive-deps
   const esc = useMemo(() => (kind === "escorts" && table ? readEscorts(grid, read, { headerRow, titles }) : null), [kind, table, grid, read, headerRow, titles]);
-  const phrases = useMemo(() => (esc ? phrasesOf(esc, escortsNamed) : []), [esc, escortsNamed]);
 
   // a change to what is read takes the check (and the choices made on it) away
   useEffect(() => {
     setCtx(null);
     setConfirming(false);
   }, [cand, trackBase, esc]);
-  // once checked, the speaker cells' second lines are read against the pool too, and as the admin turned them
-  const poolKeys = useMemo(() => (ctx ? new Set(ctx.match.pool.map((s) => s.name_key)) : undefined), [ctx]);
+  // once checked, the speaker cells' other names are read as the admin turned them
   const track = useMemo(
-    () => (trackBase && ctx ? readTracking(grid, read, { ...readOpts, known: poolKeys, lineAs }) : trackBase),
-    [trackBase, ctx, poolKeys, lineAs], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (trackBase && ctx ? readTracking(grid, read, { ...readOpts, lineAs }) : trackBase),
+    [trackBase, ctx, lineAs], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const candSheet = useMemo(
+    () => (cand && ctx ? readCandidateSheet(grid, read, { ...readOpts, lineAs }) : null),
+    [cand, ctx, lineAs], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const needed = kind ? FIELDS[kind][0] : null; // the speaker's column: nothing is read without it
@@ -239,19 +243,18 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       if (trackBase) {
         setTopics(new Map(topicsOf(trackBase).map((t) => [t.key, proposedCategory(t.text, categories)])));
         setSources(new Map(sourcesValuesOf(trackBase).map((v) => [v.key, { kind: defaultSourcesRule(v.text).kind, print: defaultSourcesRule(v.text).print }])));
-        setLineAs(new Map());
       }
+      setLineAs(new Map());
+      const match = contextOf(pool, lookup);
       if (kind === "escorts") {
-        // the trainees of the real editions (names only): a phrase that names one is never ticked by itself
+        // the trainees of the real editions (names only): said beside a phrase that names one
         const rosters = await Promise.all(editions.filter((e) => e.kind === "real").map((e) => data.settings.roster(e.id)));
-        const roster = rosters.flat().map((r) => r.full_name);
-        setRosterNames(roster);
-        const all = phrasesOf(esc ?? [], [...escortNames(grid, headerRow, escortCols), ...roster]);
-        setTicked(new Set(all.filter((p) => p.contact && !p.money).map((p) => p.key)));
-        setEdits(new Map());
+        setRosterNames(rosters.flat().map((r) => r.full_name));
+        // each speaker's channel starts as the one the phrases suggest («הצעה»); the note starts empty — never the file's
+        setAnswers(new Map(previewEscorts(esc ?? [], match).filter((p) => p.status !== "skip").map((p) => [p.key, { channel: p.suggested, note: "" }])));
       }
       setChoices(new Map());
-      setCtx({ match: contextOf(pool, lookup), categories });
+      setCtx({ match, categories });
     } catch (err) {
       notify("error", said(err));
     } finally {
@@ -260,7 +263,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   };
 
   // ---- the preview and the payload
-  const candPreview = useMemo(() => (cand && ctx ? previewCandidates(cand, ctx.match) : null), [cand, ctx]);
+  const candPreview = useMemo(() => (candSheet && ctx ? previewCandidates(candSheet.rows, ctx.match) : null), [candSheet, ctx]);
   // the sheet's speakers first (the pool, then each other), «כמו …» as the lessons' own speakers, then the lessons
   const allTrackSpeakers = useMemo(() => (track && ctx ? previewTrackingSpeakers(track, ctx.match) : null), [track, ctx]);
   const alias = useMemo(() => (allTrackSpeakers ? speakerAliases(allTrackSpeakers, choices) : new Map<string, string>()), [allTrackSpeakers, choices]);
@@ -284,8 +287,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
     for (const k of alias.keys()) m.delete(k);
     return m;
   }, [plans, alias]);
-  const linesOpen = kind === "tracking" && track ? track.lines.filter((l) => l.as == null).length : 0;
-  const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ticked, ctx.match, edits, escortsNamed) : null), [esc, ctx, ticked, edits, escortsNamed]);
+  // the lines still to decide — never one of a row left out anyway (it changes nothing)
+  const lineSkipped = useMemo(() => (kind === "tracking" && track ? skippedRows(track, plans) : new Set<number>()), [kind, track, plans]);
+  const lines = kind === "tracking" ? (track?.lines ?? []) : kind === "candidates" ? (candSheet?.lines ?? []) : [];
+  const linesOpen = kind === "tracking" && track ? openLines(track, plans).length : kind === "candidates" ? lines.filter((l) => l.as == null).length : 0;
+  const escPreview = useMemo(() => (esc && ctx ? previewEscorts(esc, ctx.match, escortsNamed) : null), [esc, ctx, escortsNamed]);
   const groups = useMemo(() => (track ? doubleGroups(track) : []), [track]);
 
   const labelTrim = labelKey(label);
@@ -295,34 +301,35 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const archiveLabels = editions.filter((e) => e.kind === "archive").map((e) => e.label);
   const replacing = kind === "tracking" && sameLabel?.kind === "archive";
   const meta = { label: labelTrim, start_date: startDate || null, source: source.trim(), titles_from: titlesEdition?.id ?? null };
-  const rowChoices = useMemo(() => new Map([...choices].map(([k, v]) => [Number(k), v])), [choices]);
   const commit: ImportCommit | null = useMemo(() => {
     if (!ctx || !kind) return null;
+    // another name of a cell not yet decided (a speaker, an affiliation, or neither?): nothing is sent
+    if (linesOpen > 0) return null;
     if (kind === "candidates") {
-      const p = candPreview && candidatesPayload(candPreview, rowChoices, meta.source, meta.titles_from);
+      const p = candPreview && candidatesPayload(candPreview, choices, meta.source, meta.titles_from);
       return p ? { kind, payload: p } : null;
     }
     if (kind === "tracking") {
-      // a line under a name not yet decided (a speaker or an affiliation?): nothing is sent
-      if (track?.lines.some((l) => l.as == null)) return null;
       const p = plans && trackSpeakers && archivePayload(plans, trackSpeakers, choices, meta);
       return p ? { kind, payload: p } : null;
     }
-    const p = escPreview && escortsPayload(escPreview, choices);
+    const p = escPreview && escortsPayload(escPreview, choices, answers);
     return p ? { kind, payload: p } : null;
-  }, [ctx, kind, candPreview, rowChoices, plans, trackSpeakers, track, choices, escPreview, meta.label, meta.start_date, meta.source, meta.titles_from]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ctx, kind, candPreview, linesOpen, plans, trackSpeakers, track, choices, escPreview, answers, meta.label, meta.start_date, meta.source, meta.titles_from]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const candResolved = useMemo(() => (candPreview ? resolvedRows(candPreview, rowChoices) : null), [candPreview, rowChoices]);
+  const candResolved = useMemo(() => (candPreview ? resolvedRows(candPreview, choices) : null), [candPreview, choices]);
   const trackResolved = useMemo(() => (trackSpeakers ? resolvedSpeakers(allTrackSpeakers ?? [], choices) : null), [trackSpeakers, allTrackSpeakers, choices]);
   const undecidedCount =
-    kind === "candidates" ? (candPreview ?? []).filter((r) => r.data && candResolved?.get(r.row) == null).length
+    kind === "candidates" ? (candPreview ?? []).filter((r) => r.data && candResolved?.get(r.ref) == null).length
     : kind === "tracking" ? (trackSpeakers ?? []).filter((s) => trackResolved?.get(s.speaker.key) == null).length
-    : (escPreview ?? []).filter((r) => r.status === "ambiguous" && !choices.has(r.key)).length;
+    : (escPreview ?? []).filter((r) => r.status === "ambiguous" && answerSaves(answers.get(r.key)) && !choices.has(r.key)).length;
+  const notesWrong = kind === "escorts" ? (escPreview ?? []).filter((r) => r.status !== "skip" && answers.get(r.key)?.channel && noteProblem(answers.get(r.key)!.note)).length : 0;
   const groupsOpen = kind === "tracking" ? groups.filter((g) => !decisions.has(g.id)).length : 0;
   const blockers = [
     undecidedCount > 0 && (undecidedCount === 1 ? "מרצה אחד/ת «עמום/ה» מחכה להחלטה" : `${undecidedCount} מרצים «עמומים» מחכים להחלטה`),
     groupsOpen > 0 && (groupsOpen === 1 ? "קבוצת «כפולה» אחת מחכה להחלטה" : `${groupsOpen} קבוצות «כפולה» מחכות להחלטה`),
-    linesOpen > 0 && (linesOpen === 1 ? "שורה נוספת אחת בתא של מרצה מחכה להחלטה (שיוך מוסדי או מרצה נוסף/ת)" : `${linesOpen} שורות נוספות בתאי המרצים מחכות להחלטה (שיוך מוסדי או מרצה נוסף/ת)`),
+    linesOpen > 0 && (linesOpen === 1 ? "שם נוסף אחד בתא של מרצה מחכה להחלטה (מרצה נוסף/ת, שיוך מוסדי או לא לייבא)" : `${linesOpen} שמות נוספים בתאי המרצים מחכים להחלטה (מרצה נוסף/ת, שיוך מוסדי או לא לייבא)`),
+    notesWrong > 0 && (notesWrong === 1 ? "בהערה של מרצה אחד/ת יש מה לתקן" : `בהערות של ${notesWrong} מרצים יש מה לתקן`),
     kind === "tracking" && hasContact(labelTrim) && "בשם המחזור יש טלפון או מייל — צריך שם אחר",
     kind !== "escorts" && hasContact(source) && "במקור יש טלפון או מייל — צריך מקור אחר",
     kind === "tracking" && !labelTrim && "צריך שם למחזור בארכיון",
@@ -492,7 +499,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                 className={INPUT}
               >
                 <option value="">צריך לבחור</option>
-                <option value="none">אין בקובץ עמודה של מלווים</option>
+                <option value="none">אין בקובץ עמודה כזו</option>
                 {names.map((n, i) => (
                   <option key={i} value={i}>
                     {`${n}: ${rows.map((r) => r.cells[i]).filter(Boolean).slice(0, 2).join(" · ").slice(0, 60) || "ריקה"}`}
@@ -500,7 +507,9 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                 ))}
               </select>
               <p id={`${id}-escort-hint`} className="mt-1 text-xs text-ink-soft">
-                בלי שורת כותרות אי אפשר לדעת לבד. העמודה שנבחרת לא נקראת, והשמות שבה לא נכנסים לשום ניסוח.
+                {kind === "escorts"
+                  ? "לא מנחשים לבד. העמודה שנבחרת לא נקראת, והשמות שבה לא נשמרים. גם שום ניסוח מהקובץ לא נשמר — רק הערוץ שבוחרים לכל מרצה וההערה שכותבים."
+                  : "בגיליון יש כותרת או שורה שמדברת על מלווים או חניכים. העמודה שנבחרת לא נקראת, והשמות שבה לא נשמרים."}
               </p>
             </div>
           )}
@@ -601,28 +610,28 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           <SourcesTable read={track} value={sources} onChange={(k, v) => setSources(new Map(sources).set(k, v))} />
         </>
       )}
-      {kind === "escorts" && ctx && (
-        <PhrasesTable
-          phrases={phrases}
-          ticked={ticked}
-          edits={edits}
-          names={escortsNamed}
-          onToggle={(k) => setTicked((cur) => { const n = new Set(cur); if (!n.delete(k)) n.add(k); return n; })}
-          onEdit={(k, text) => setEdits((cur) => new Map(cur).set(k, text))}
-        />
-      )}
 
-      {ctx && kind === "candidates" && candPreview && candResolved && <CandidatesPreview rows={candPreview} pool={ctx.match} choices={choices} resolved={candResolved} onChoose={choose} />}
-      {ctx && kind === "tracking" && track && track.lines.length > 0 && (
-        <LinesTable lines={track.lines} onChoose={(lineId, as) => setLineAs((cur) => new Map(cur).set(lineId, as))} />
+      {ctx && (kind === "tracking" || kind === "candidates") && lines.length > 0 && (
+        <LinesTable lines={lines} skipped={lineSkipped} onChoose={(lineId, as) => setLineAs((cur) => new Map(cur).set(lineId, as))} />
       )}
+      {ctx && kind === "candidates" && candPreview && candResolved && <CandidatesPreview rows={candPreview} pool={ctx.match} choices={choices} resolved={candResolved} onChoose={choose} />}
       {ctx && kind === "tracking" && trackSpeakers && (
         <>
           <SpeakersPreview rows={trackSpeakers} pool={ctx.match} choices={choices} resolved={trackResolved ?? new Map()} onChoose={choose} postPhones={postPhones} />
           {plans ? <LessonsPreview plans={plans} categories={ctx.categories} speakers={trackSpeakers} choices={choices} /> : <Panel title="השיעורים"><p className="text-ink-soft">אחרי ההחלטה על כל קבוצות «כפולה» יופיעו כאן השיעורים.</p></Panel>}
         </>
       )}
-      {ctx && kind === "escorts" && escPreview && <EscortsPreview rows={escPreview} choices={choices} onChoose={choose} />}
+      {ctx && kind === "escorts" && escPreview && (
+        <EscortsPreview
+          rows={escPreview}
+          pool={ctx.match}
+          names={escortsNamed}
+          choices={choices}
+          onChoose={choose}
+          answers={answers}
+          onAnswer={(k, a) => setAnswers((cur) => new Map(cur).set(k, a))}
+        />
+      )}
 
       {ctx && kind && (
         <Panel title="שמירה">
@@ -631,7 +640,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               {blockers.map((b) => (
                 <li key={b}>{b}</li>
               ))}
-              {(undecidedCount > 0 || groupsOpen > 0 || linesOpen > 0) && (
+              {(undecidedCount > 0 || groupsOpen > 0 || linesOpen > 0 || notesWrong > 0) && (
                 <li className="list-none">
                   <Button
                     kind="quiet"

@@ -244,8 +244,11 @@ export function readXlsx(bytes: Uint8Array): XlsxBook {
   const base = wbPath.slice(0, wbPath.lastIndexOf("/") + 1);
   const wbRels = rels(text(`${base}_rels/${wbPath.slice(base.length)}.rels`));
   const sheets: XlsxSheet[] = [];
+  let listed = 0;
   for (const e of xmlEvents(wb!)) {
     if (e.t !== "open" || local(e.name) !== "sheet") continue;
+    // more sheets than a workbook could have: refused as they are listed (each would be an option on the screen)
+    if (++listed > IMPORT_LIMITS.sheets) tooBig();
     const rel = wbRels.get(attr(e.attrs, "id") ?? "");
     if (!rel || !rel.type.endsWith("/worksheet")) continue; // a chart sheet, a dialog sheet
     sheets.push({ name: e.attrs.name ?? `גיליון ${sheets.length + 1}`, path: resolve(base, rel.target), hidden: (e.attrs.state ?? "visible") !== "visible" });

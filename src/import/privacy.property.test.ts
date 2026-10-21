@@ -1,22 +1,27 @@
-// The import's two privacy invariants, as properties (DECISIONS «ביקורת: ייבוא ואבן דרך 6», סבב שלישי) — random
-// tables, seeded, thousands of them, through the whole wizard pipeline to the payload the commit would send:
+// The import's two privacy invariants, as properties (DECISIONS «ביקורת: ייבוא ואבן דרך 6», סבב שלישי and סבב רביעי) —
+// random tables, seeded, thousands of them, through the whole wizard pipeline to the payload the commit would send:
 //   1. a phone or an e-mail found ANYWHERE in the input — every cell, every position, every form the readers know
-//      («טל'», brackets, dashes of every kind, +972, a bidi mark between the digits, a second line, two numbers in a
-//      cell) — lands only in a contact field (phone, email); never in a name, a title, an affiliation, a tag, a note, a
-//      lesson's title / audience / sources note / import note, or the escorts' note (secretary_note). And the commit's
-//      backstop (importRules — the engine's and the database's «contact_in_text») never refuses what the wizard sends.
-//   2. an escort's name — by first name, by surname, whole, after a Hebrew prefix letter — is never pre-ticked, and
-//      never saved in a note unedited (nor edited, while a word of it is still there).
+//      («טל'», brackets, dashes of every kind, «/ · • _ : ,» between the groups, +972, a bidi mark or NEL between the
+//      digits, fullwidth or Arabic-Indic digits, a second line, two numbers in a cell, an e-mail with spaces around its
+//      «@», «@@», «＠») — lands only in a contact field (phone, email); never in a name, a title, an affiliation, a tag, a
+//      note, or a lesson's title / audience / sources note / import note. And the commit's backstop (importRules — the
+//      engine's and the database's «contact_in_text») never refuses what the wizard sends.
+//   2. an escort's name never reaches the payload: in the escorts' file STRUCTURALLY — a row is the channel chosen
+//      from the list and the admin's own note, whatever the file says (and a note the admin typed with a phone in it is
+//      never sent); in the tracking sheet and the candidates, the escorts' column is asked for and never read, and a
+//      speaker cell's line that names an escort is proposed «לא לייבא» — by first name, surname, after up to four
+//      prefix letters, with niqqud or a mark inside, «(מלווה: …)», a nickname the escorts' cell gives in brackets.
 // Every person and number here is made up at run time (the digits from the seed): none is in this file.
 import { describe, expect, it } from "vitest";
-import { cleanLessonRow, cleanPrefsRow, cleanSpeakerRow } from "../data/importRules";
+import { cleanLessonRow, cleanPrefsRow, cleanSpeakerRow, PREFS_KEYS } from "../data/importRules";
 import { DEFAULT_TITLES } from "../data/speakerRules";
 import type { Speaker } from "../domain/types";
-import { candidatesPayload, contextOf, type MatchContext, previewCandidates, readCandidates, undecided } from "./candidates";
-import { escortColumns, escortNames, escortsPayload, NOT_A_NAME, phrasesOf, previewEscorts, readEscorts } from "./escorts";
+import { candidatesPayload, contextOf, type MatchContext, previewCandidates, readCandidateSheet, undecided } from "./candidates";
+import { type EscortAnswer, escortColumns, escortLike, escortNames, escortsPayload, IMPORT_CHANNELS, NOT_A_NAME, previewEscorts, readEscorts } from "./escorts";
 import type { Mapping } from "./fields";
+import type { LineAs } from "./lines";
 import type { Choice } from "./match";
-import { hasContact } from "./phone";
+import { foldContact, hasContact } from "./phone";
 import { archivePayload, doubleGroups, planLessons, previewTrackingSpeakers, readTracking, resolvedSpeakers, speakerAliases } from "./tracking";
 
 /** mulberry32: a small seeded generator — the same cases on every run. */
@@ -43,29 +48,57 @@ const words = (g: R, n: number) => Array.from({ length: n }, () => (g.chance(0.5
 const latin = (g: R) => Array.from({ length: 3 + g.int(6) }, () => g.pick([..."abcdefghijklmnopqrstuvwxyz"])).join("");
 const digits = (g: R, n: number) => Array.from({ length: n }, () => String(g.int(10))).join("");
 
-/** A phone, in one of the forms last year's files wrote them — its digits made up now. */
+/** The contacts a case wrote — every one, as generated (its digits, its address), to look for afterwards. */
+let made: { phones: string[]; emails: string[] } = { phones: [], emails: [] };
+/** Digits in another script now and then: Arabic-Indic, Persian, fullwidth, Devanagari. */
+const script = (g: R, s: string) => {
+  if (!g.chance(0.15)) return s;
+  const zero = g.pick([0x660, 0x6f0, 0xff10, 0x966]);
+  return s.replace(/[0-9]/g, (d) => String.fromCodePoint(zero + Number(d)));
+};
+/** A phone, in one of the forms last year's files (and the reviewers) wrote them — its digits made up now. */
 function phone(g: R): string {
   const a = `0${digits(g, 2)}`;
   const b = digits(g, 3);
   const c = digits(g, 4);
-  return g.pick([
-    () => `${a}-${b}${c}`,
-    () => `${a} ${b} ${c}`,
-    () => `${a}${b}${c}`,
-    () => `${a}.${b}.${c}`,
-    () => `+972-${a.slice(1)}-${b}-${c}`,
-    () => `+972 (0)${a.slice(1)} ${b}${c}`,
-    () => `(0${digits(g, 1)}) ${b}-${c}`,
-    () => `${a}‏-‏${b}‏-${c}`, // bidi marks, as a copy from WhatsApp carries them
-    () => `${a}‑${b}‑${c}`, // non-breaking hyphens
-    () => `${a}–${b}${c}`,
-    () => `${a} ${b} ${c}`,
-    () => `${a}-${b}\n${c}`, // broken over a line
-  ])();
+  made.phones.push(`${a}${b}${c}`);
+  const sep = (x: string) => `${a}${x}${b}${x}${c}`;
+  return script(
+    g,
+    g.pick([
+      () => `${a}-${b}${c}`,
+      () => `${a} ${b} ${c}`,
+      () => `${a}${b}${c}`,
+      () => `${a}.${b}.${c}`,
+      () => `+972-${a.slice(1)}-${b}-${c}`,
+      () => `+972 (0)${a.slice(1)} ${b}${c}`,
+      () => `(${a}) ${b}-${c}`,
+      () => `${a}/${b}${c}`,
+      () => sep("‏-‏"), // bidi marks, as a copy from WhatsApp carries them
+      () => sep("‑"), // non-breaking hyphens
+      () => `${a}–${b}${c}`,
+      () => `${a}-${b}\n${c}`, // broken over a line
+      () => sep(g.pick(["/", " / ", "·", "•", "‧", "_", ":", ","])), // the reviewers' separators
+      () => sep(g.pick(["\u0085", "᠎", "‍", "⁠", "\u{e0020}"])), // what shows nothing
+    ])(),
+  );
 }
 function email(g: R): string {
-  const at = `${latin(g)}${g.chance(0.3) ? `.${latin(g)}` : ""}@${g.pick(["example.org", "example.com", "test.example.net"])}`;
-  return g.pick([() => at, () => `mailto:${at}`, () => `<${at}>`])();
+  const local = `${latin(g)}${g.chance(0.3) ? `.${latin(g)}` : ""}`;
+  const [dom, tld] = g.pick([["example", "org"], ["example", "com"], ["test.example", "net"]]);
+  made.emails.push(`${local}@${dom}.${tld}`);
+  const at = `${local}@${dom}.${tld}`;
+  return g.pick([
+    () => at,
+    () => `mailto:${at}`,
+    () => `<${at}>`,
+    () => `${local} @${dom}.${tld}`,
+    () => `${local}@ ${dom}.${tld}`,
+    () => `${local}@${dom} .${tld}`,
+    () => `${local} @ ${dom} . ${tld}`,
+    () => `${local}@@${dom}.${tld}`,
+    () => `${local}＠${dom}.${tld}`,
+  ])();
 }
 /** A contact as written beside other words: labelled, bracketed, two of them, or bare. */
 function contact(g: R): string {
@@ -91,24 +124,18 @@ function sprinkle(g: R, text: string, p = 0.5): string {
   return g.pick([() => `${c} ${text}`, () => `${text} ${c}`, () => `${text}\n${c}`, () => `${c}\n${text}`, () => c, () => `${text} - ${c}`, () => `${text}, ${c} ${words(g, 1)}`])();
 }
 
-/** The digit runs of every phone the case wrote (7+ digits): none may be found in a field that is not a contact. */
-function leaked(fields: (string | null | undefined)[], phones: string[], emails: string[]): string[] {
+/** What a field kept of the case's contacts: one (hasContact), the last 7 digits of a phone, or an address. */
+function leaked(fields: (string | null | undefined)[]): string[] {
   const out: string[] = [];
   for (const f of fields) {
     if (!f) continue;
     if (hasContact(f)) out.push(`contact: ${JSON.stringify(f)}`);
-    const d = f.replace(/[^0-9]/g, "");
-    for (const p of phones) if (d.includes(p.replace(/[^0-9]/g, "").slice(-7))) out.push(`digits of ${p}: ${JSON.stringify(f)}`);
-    for (const e of emails) if (f.includes(e)) out.push(`e-mail ${e}: ${JSON.stringify(f)}`);
+    const d = foldContact(f).replace(/[^0-9]/g, "");
+    for (const p of made.phones) if (d.includes(p.slice(-7))) out.push(`digits of ${p}: ${JSON.stringify(f)}`);
+    const flat = foldContact(f).replace(/\s+/g, "").replace(/[@＠]+/g, "@");
+    for (const e of made.emails) if (flat.includes(e)) out.push(`e-mail ${e}: ${JSON.stringify(f)}`);
   }
   return out;
-}
-/** Every contact a case's cells hold (as generated), to look for afterwards. */
-function contactsIn(cells: string[]): { phones: string[]; emails: string[] } {
-  const all = cells.join("\n");
-  const phones = [...all.matchAll(/\+?[0-9][0-9 \n() ‏‑.–-]{6,}[0-9]/g)].map((m) => m[0]).filter((m) => m.replace(/[^0-9]/g, "").length >= 7);
-  const emails = [...all.matchAll(/[a-z.]+@[a-z.]+\.[a-z]+/g)].map((m) => m[0]);
-  return { phones, emails };
 }
 
 const sp = (id: number, name: string): Speaker => ({
@@ -124,17 +151,19 @@ function choose(g: R, status: string, allowNew: boolean | undefined, candidates:
   if (status === "ambiguous") return candidates.length && g.chance(0.4) ? { action: "merge", target: candidates[0].id } : allowNew ? { action: "new" } : { action: "skip" };
   return g.chance(0.1) ? { action: "skip" } : null;
 }
+const LINE_AS: readonly LineAs[] = ["speaker", "affiliation", "skip"];
 const CASES = 1500;
 
 describe("invariant 1: a phone or an e-mail lands only in a contact field — and the commit's backstop agrees", () => {
-  it(`(a) the candidates: ${CASES} random tables`, () => {
+  it(`(a) the candidates: ${CASES} random tables, every other name of a cell decided at random`, () => {
     const head = ["מרצה", "תואר", "מוסד", "נושאים", "טלפון", "מייל", "טווח ימים", "הערות"];
     const m: Mapping = ["name", "title", "affiliation", "topics", "phone", "email", "status", "note"];
     let checked = 0;
     for (let seed = 1; seed <= CASES; seed++) {
       const g = rng(seed);
+      made = { phones: [], emails: [] };
       const rows = Array.from({ length: 1 + g.int(6) }, () => [
-        sprinkle(g, `${TITLE(g)}${NAME(g)}`, 0.4),
+        sprinkle(g, `${TITLE(g)}${NAME(g)}${g.pick(["", "", ` + ${NAME(g)}`, `\n${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\n${contact(g)}`])}`, 0.4),
         sprinkle(g, g.pick(["", "הרב", "רבי", words(g, 1)]), 0.2),
         sprinkle(g, g.chance(0.5) ? `ישיבת ${word(g)}` : "", 0.3),
         sprinkle(g, `${words(g, 1)}, ${words(g, 2)}`, 0.3),
@@ -143,16 +172,19 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
         sprinkle(g, g.pick(["", "א-ב", "נסגר"]), 0.2),
         sprinkle(g, words(g, 3), 0.5),
       ]);
-      const { phones, emails } = contactsIn(rows.flatMap((r) => [r[0], r[1], r[2], r[3], r[6], r[7]]));
-      const read = readCandidates([head, ...rows], m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
-      const preview = previewCandidates(read, CTX);
-      const choices = new Map<number, Choice>();
-      for (const r of undecided(preview, choices)) choices.set(r.row, choose(g, r.status, r.match?.allowNew, r.match?.candidates ?? []) ?? { action: "skip" });
+      const grid = [head, ...rows];
+      const o = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true };
+      const first = readCandidateSheet(grid, m, o);
+      const lineAs = new Map(first.lines.map((l) => [l.id, l.as ?? g.pick(LINE_AS)] as const));
+      const read = readCandidateSheet(grid, m, { ...o, lineAs });
+      expect(read.lines.every((l) => l.as != null)).toBe(true);
+      const preview = previewCandidates(read.rows, CTX);
+      const choices = new Map<string, Choice>();
+      for (const r of undecided(preview, choices)) choices.set(r.ref, choose(g, r.status, r.match?.allowNew, r.match?.candidates ?? []) ?? { action: "skip" });
       const p = candidatesPayload(preview, choices, "brainstorm-5786", null);
       expect(p, `seed ${seed}`).not.toBeNull();
       for (const row of p!.rows) {
-        const bad = leaked([row.name, row.title, row.affiliation, ...row.topics, row.notes], phones, emails);
-        expect(bad, `seed ${seed} row ${row.row}`).toEqual([]);
+        expect(leaked([row.name, row.title, row.affiliation, ...row.topics, row.notes]), `seed ${seed} row ${row.row}`).toEqual([]);
         expect(() => cleanSpeakerRow(row, DEFAULT_TITLES), `seed ${seed}`).not.toThrow();
         checked++;
       }
@@ -167,6 +199,7 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
     let lessons = 0;
     for (let seed = 1; seed <= CASES; seed++) {
       const g = rng(10_000 + seed);
+      made = { phones: [], emails: [] };
       const speakerCell = () => {
         const first = `${TITLE(g)}${NAME(g)}`;
         const second = g.pick(["", ` + ${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\nמכון ${word(g)}`, `\n${NAME(g)}`, `\n${contact(g)}`, ` ${phone(g)}`]);
@@ -183,12 +216,11 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
         g.pick(["", "תנ״ך", "פילוסופיה"]),
         sprinkle(g, g.chance(0.5) ? words(g, 3) : "", 0.4),
       ]);
-      const { phones, emails } = contactsIn(rows.flatMap((r) => [r[0], r[2], r[3], r[4], r[6], r[8]]));
       const grid = [head, ...rows];
       const base = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true };
       const first = readTracking(grid, m, base);
-      const lineAs = new Map(first.lines.map((l) => [l.id, l.as ?? (g.chance(0.5) ? "affiliation" : "speaker")] as const));
-      const read = readTracking(grid, m, { ...base, known: new Set(POOL.map((s) => s.name_key)), lineAs });
+      const lineAs = new Map(first.lines.map((l) => [l.id, l.as ?? g.pick(LINE_AS)] as const));
+      const read = readTracking(grid, m, { ...base, lineAs });
       expect(read.lines.every((l) => l.as != null)).toBe(true);
       const speakers = previewTrackingSpeakers(read, CTX);
       const choices = new Map<string, Choice>();
@@ -203,11 +235,11 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
       const p = archivePayload(plans, speakers, choices, { label: "ארכיון", start_date: null, source: "tracking-5786", titles_from: null });
       expect(p, `seed ${seed}`).not.toBeNull();
       for (const s of p!.speakers) {
-        expect(leaked([s.name, s.title, s.affiliation, ...s.topics, s.notes], phones, emails), `seed ${seed}`).toEqual([]);
+        expect(leaked([s.name, s.title, s.affiliation, ...s.topics, s.notes]), `seed ${seed}`).toEqual([]);
         expect(() => cleanSpeakerRow(s, DEFAULT_TITLES), `seed ${seed}`).not.toThrow();
       }
       for (const l of p!.lessons) {
-        expect(leaked([l.title, l.audience, l.sources_note, l.import_note], phones, emails), `seed ${seed} lesson ${l.row}`).toEqual([]);
+        expect(leaked([l.title, l.audience, l.sources_note, l.import_note]), `seed ${seed} lesson ${l.row}`).toEqual([]);
         expect(() => cleanLessonRow(l, new Set(), p!.speakers.length, { first_day_from: null, last_day_until: 1140 }), `seed ${seed}`).not.toThrow();
         lessons++;
       }
@@ -215,104 +247,190 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
     expect(lessons).toBeGreaterThan(CASES);
   });
 
-  it(`(c) the escorts' file: ${CASES} random files, every phrase ticked, some edited to hold a contact`, () => {
+  it(`(c) the escorts' file: ${CASES} random files — a row is a channel from the list and the admin's note; a note with a contact is never sent`, () => {
     const head = ["מרצה", "מלווה", "הערות"];
     const m: Mapping = ["speaker", null, "phrases"];
     const PHRASES = ["דרך המזכירה", "רק בוואטסאפ", "רק במייל", "להתקשר ערב לפני", "זמין בשעות הבוקר", "לא לשלוח הודעות בשבת"];
-    let notes = 0;
+    const NOTES = ["בבוקר", "אחרי הצהריים", "בימי חול", "רק בערב", "לא בשבת"];
+    let rowsSent = 0;
+    let refused = 0;
     for (let seed = 1; seed <= CASES; seed++) {
       const g = rng(20_000 + seed);
+      made = { phones: [], emails: [] };
       const rows = Array.from({ length: 1 + g.int(6) }, () => [
         sprinkle(g, g.pick(POOL).name, 0.2),
         g.chance(0.3) ? sprinkle(g, NAME(g), 0.5) : "",
         Array.from({ length: 1 + g.int(3) }, () => sprinkle(g, g.pick(PHRASES), 0.4)).join(g.pick(["\n", ". ", "; "])),
       ]);
-      const { phones, emails } = contactsIn(rows.map((r) => r[2]));
+      const fileWords = new Set(rows.flatMap((r) => [r[1], r[2]]).join(" ").split(/[^א-ת]+/).filter((w) => w.length >= 2));
       const grid = [head, ...rows];
       const read = readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES });
-      const names = escortNames(grid, 0, escortColumns(grid, 0));
-      const all = phrasesOf(read, names);
-      const ticked = new Set(all.map((p) => p.key));
-      const edits = new Map(all.filter(() => g.chance(0.2)).map((p) => [p.key, sprinkle(g, p.text, 1)] as const));
-      const typed = contactsIn([...edits.values()]);
-      const preview = previewEscorts(read, ticked, CTX, edits, names);
+      const preview = previewEscorts(read, CTX, escortNames(grid, 0, escortColumns(grid, 0)));
+      // the admin's answers: the suggestion or another channel or none; a note of their own — now and then with a contact
+      const answers = new Map<string, EscortAnswer>(
+        preview.map((x) => [x.key, { channel: g.chance(0.6) ? x.suggested : g.pick([null, ...IMPORT_CHANNELS]), note: g.chance(0.5) ? sprinkle(g, g.pick(NOTES), 0.3) : "" }]),
+      );
       const choices = new Map(preview.filter((x) => x.status === "ambiguous").map((x) => [x.key, x.match?.candidates.length ? ({ action: "merge", target: x.match.candidates[0].id } as Choice) : ({ action: "skip" } as Choice)]));
-      const p = escortsPayload(preview, choices);
+      let p = escortsPayload(preview, choices, answers);
+      if (p == null) {
+        // a note holds a contact: nothing is sent — the admin takes it out
+        refused++;
+        expect([...answers.values()].some((a) => a.channel && hasContact(a.note)), `seed ${seed}`).toBe(true);
+        for (const [k, a] of answers) answers.set(k, { ...a, note: hasContact(a.note) ? g.pick(NOTES) : a.note });
+        p = escortsPayload(preview, choices, answers);
+      }
       expect(p, `seed ${seed}`).not.toBeNull();
       for (const row of p!.rows) {
-        expect(leaked([row.secretary_note], [...phones, ...typed.phones], [...emails, ...typed.emails]), `seed ${seed}`).toEqual([]);
+        expect(Object.keys(row).every((k) => PREFS_KEYS.includes(k)), `seed ${seed}`).toBe(true);
+        expect(leaked([row.note]), `seed ${seed}`).toEqual([]);
+        // not a word of the file: the note is the admin's
+        expect((row.note ?? "").split(/[^א-ת]+/).filter((w) => fileWords.has(w) && !NOTES.join(" ").includes(w)), `seed ${seed}`).toEqual([]);
         expect(() => cleanPrefsRow(row), `seed ${seed}`).not.toThrow();
-        if (row.secretary_note) notes++;
+        rowsSent++;
       }
     }
-    expect(notes).toBeGreaterThan(CASES / 2); // not vacuous: notes are kept — without their numbers
+    expect(rowsSent).toBeGreaterThan(CASES / 2); // not vacuous: channels are sent
+    expect(refused).toBeGreaterThan(10); // and a note with a contact was held back
   });
 });
 
-describe("invariant 2: an escort's name never lands in a saved note unless the admin edited it out", () => {
-  it(`${CASES} random escorts' files: named by first name, surname, whole, after a prefix letter — never pre-ticked, never kept`, () => {
-    const CHANNELS = ["דרך המזכירה", "רק בוואטסאפ", "רק במייל", "להתקשר בטלפון", "לפנות דרך המזכירות"];
-    let kept = 0;
-    let locked = 0;
+/** An escort's made-up name — words of seven letters, never a speaker's (3–6) nor a word that is no one's name. */
+function escortPerson(g: R): { first: string; last: string } {
+  const w = (): string => {
+    const x = word(g, 7, 7);
+    return NOT_A_NAME.has(x) ? w() : x;
+  };
+  return { first: w(), last: w() };
+}
+/** A word of a name as a text may write it: after up to four prefix letters, with niqqud or a mark inside. */
+function spelled(g: R, w: string): string {
+  const prefix = g.pick(["", "", "ו", "ל", "ש", "וה", "מה", "וכש", "ושכש"]);
+  const mark = g.pick(["", "", "", "‌", "­", "​", "ִ"]);
+  const at = 1 + g.int(w.length - 1);
+  return `${prefix}${w.slice(0, at)}${mark}${w.slice(at)}`;
+}
+/** The escorts' cell as last year wrote it — and the words of every name it gives (a nickname in brackets too). */
+function escortCell(g: R, a: { first: string; last: string }, b: { first: string; last: string }): [string, string[]] {
+  const nick = word(g, 7, 7);
+  return g.pick([
+    () => [`${a.first} ${a.last}`, [a.first, a.last]],
+    () => [`${a.first} ${a.last} ${phone(g)}`, [a.first, a.last]],
+    () => [`${a.first} ${a.last} (שנה ב)`, [a.first, a.last]],
+    () => [`${a.first} ${a.last} ו${b.first} ${b.last}`, [a.first, a.last, b.first, b.last]],
+    () => [`${a.first} ${a.last} (ו${b.first} ${b.last})`, [a.first, a.last, b.first, b.last]],
+    () => [`${a.first} (${nick}) ${a.last}`, [a.first, a.last, nick]],
+    () => [`${a.first} ${a.last} [מחליפה: ${b.first} ${b.last}]`, [a.first, a.last, b.first, b.last]],
+    () => [`${a.first[0]}. ${a.last}`, [a.last]],
+  ] as (() => [string, string[]])[])();
+}
+
+describe("invariant 2: an escort's name never reaches the payload", () => {
+  it(`(c) ${CASES} random escorts' files — named every way in the phrases, whatever the admin answers: no escort's word is sent`, () => {
+    let warned = 0;
+    let sent = 0;
     for (let seed = 1; seed <= CASES; seed++) {
       const g = rng(30_000 + seed);
-      // a made-up name — never one of the words that are no one's name («של», «אין», «עם»…: escorts.ts NOT_A_NAME)
-      const nameWord = (min: number, max: number): string => {
-        const w = word(g, min, max);
-        return NOT_A_NAME.has(w) ? nameWord(min, max) : w;
-      };
-      const people = Array.from({ length: 2 + g.int(4) }, () => ({ first: nameWord(2, 5), last: nameWord(3, 6) }));
-      const roster = Array.from({ length: g.int(3) }, () => ({ first: nameWord(2, 5), last: nameWord(3, 6) }));
-      // the escorts' cells as last year wrote them: a phone beside the name, «(שנה ב)», two joined by «ו», « - », an
-      // initial, fillers — and the words of each name the file holds (an initial holds none of the first name)
-      const known: string[][] = roster.map((x) => [x.first, x.last, `${x.first} ${x.last}`]);
-      const cells = Array.from({ length: 2 + g.int(5) }, (_, i) => {
-        const a = people[i % people.length];
-        const b = people[(i + 1) % people.length];
-        const full = (x: { first: string; last: string }) => [x.first, x.last, `${x.first} ${x.last}`];
-        const [cell, names] = g.pick([
-          () => [`${a.first} ${a.last}`, [full(a)]],
-          () => [`${a.first} ${a.last} ${phone(g)}`, [full(a)]],
-          () => [`${a.first} ${a.last} (שנה ב)`, [full(a)]],
-          () => [`${a.first} ${a.last} ו${b.first} ${b.last}`, [full(a), full(b)]],
-          () => [`${a.first} ${a.last} - ${phone(g)}`, [full(a)]],
-          () => [`${a.first[0]}. ${a.last}`, [[a.last]]],
-          () => [g.pick(["אין", "מגיע לבד", "—", "TBD", "?"]), []],
-        ] as (() => [string, string[][]])[])();
-        known.push(...names);
-        return cell;
+      made = { phones: [], emails: [] };
+      const people = Array.from({ length: 2 + g.int(3) }, () => escortPerson(g));
+      const said: string[] = [];
+      const rows = Array.from({ length: 2 + g.int(5) }, (_, i) => {
+        const [cell, ws] = escortCell(g, people[i % people.length], people[(i + 1) % people.length]);
+        said.push(...ws);
+        const phrase = `${g.pick(["דרך המזכירה", "רק בוואטסאפ", "רק במייל", "להתקשר"])} ${g.pick(["עם", "מול", ""])} ${spelled(g, g.pick(ws.length ? ws : [people[0].first]))}`;
+        return [g.pick(POOL).name, cell, phrase];
       });
-      const rows = cells.map((cell) => {
-        const said = known.length ? g.pick(g.pick(known)) : null;
-        const prefix = g.pick(["", "", "ו", "ל", "ש", "וה", "מה"]);
-        const named = said ? `${g.pick(CHANNELS)} ${g.pick(["עם", "מול", "דרך", ""])} ${prefix}${said}`.replace(/\s+/g, " ") : null;
-        const plain = g.pick(CHANNELS);
-        return [g.pick(POOL).name, cell, named && g.chance(0.6) ? `${named}\n${plain}` : plain];
+      const head = ["מרצה", g.pick(["מלווה", "מלוה", "מלווה/ת", "ליווי", "חניך/ה", "שם החניך/ה"]), "הערות"];
+      const grid = [head, ...rows];
+      // the wizard asks which column: the admin answers it (escortCols ∪ the answer)
+      const cols = new Set([...escortColumns(grid, 0), 1]);
+      const m: Mapping = ["speaker", null, "phrases"];
+      const read = readEscorts(grid, m, { headerRow: 0, titles: DEFAULT_TITLES });
+      const preview = previewEscorts(read, CTX, escortNames(grid, 0, cols));
+      warned += preview.flatMap((x) => x.phrases).filter((p) => p.escort).length;
+      const answers = new Map<string, EscortAnswer>(preview.map((x) => [x.key, { channel: g.pick([x.suggested, ...IMPORT_CHANNELS]), note: g.chance(0.3) ? "בבוקר" : "" }]));
+      const p = escortsPayload(preview, new Map(), answers)!;
+      const text = JSON.stringify(p);
+      for (const w of said) expect(text.includes(w), `seed ${seed}: «${w}» in ${text}`).toBe(false);
+      expect(text.replace(/בבוקר/g, ""), `seed ${seed}`).not.toMatch(/[א-ת]/); // not one Hebrew letter of the file
+      sent += p.rows.length;
+    }
+    expect(sent).toBeGreaterThan(CASES); // not vacuous: rows are sent
+    expect(warned).toBeGreaterThan(CASES); // and the names are said beside their phrases
+  });
+
+  it(`(b) ${CASES} random tracking sheets — the escorts' column asked for and never read; a line naming an escort proposed «לא לייבא»`, () => {
+    let proposed = 0;
+    for (let seed = 1; seed <= CASES; seed++) {
+      const g = rng(40_000 + seed);
+      made = { phones: [], emails: [] };
+      const people = Array.from({ length: 2 + g.int(3) }, () => escortPerson(g));
+      const said: string[] = [];
+      const rows = Array.from({ length: 1 + g.int(6) }, (_, i) => {
+        const [cell, ws] = escortCell(g, people[i % people.length], people[(i + 1) % people.length]);
+        said.push(...ws);
+        const w = g.pick(ws.length ? ws : [people[0].first]);
+        const line = g.pick(["", "", `\n${spelled(g, w)}`, `\n(מלווה: ${w})`, `\n(${w})`, `\nהמלווה ${w}`, `\n${NAME(g)}`, `\n(ישיבת ${word(g)})`]);
+        return [`${TITLE(g)}${NAME(g)}${line}`, g.pick(["ראשון 8:30", "שני 10:00", "שלישי 11:30"]), words(g, 2), cell];
       });
-      const grid = [["מרצה", "מלווה", "הערות"], ...rows];
-      const read = readEscorts(grid, ["speaker", null, "phrases"], { headerRow: 0, titles: DEFAULT_TITLES });
-      const names = [...escortNames(grid, 0, escortColumns(grid, 0)), ...roster.map((r) => `${r.first} ${r.last}`)];
-      const everyone = [...new Set(known.flat().flatMap((n) => n.split(" ")))].filter((w) => w.length >= 2);
-      const holds = (text: string) => text.split(/[^א-ת]+/).some((w) => everyone.some((n) => w === n || (/^[והבכלמש]{1,2}$/.test(w.slice(0, w.length - n.length)) && w.endsWith(n))));
-      const ps = phrasesOf(read, names);
-      for (const p of ps) {
-        if (!holds(p.text)) continue;
-        expect(p.contact, `seed ${seed}: «${p.text}» pre-ticked`).toBe(false);
-        expect(p.escort, `seed ${seed}: «${p.text}»`).not.toBeNull();
-        locked++;
-      }
-      // ticked anyway — unedited, and edited with the name still in it
-      const ticked = new Set(ps.map((p) => p.key));
-      const editedKeepingName = new Map(ps.filter((p) => holds(p.text)).map((p) => [p.key, `${p.text} בבקשה`] as const));
-      for (const edits of [new Map<string, string>(), editedKeepingName]) {
-        const out = escortsPayload(previewEscorts(read, ticked, CTX, edits, names), new Map())!;
-        for (const row of out.rows) {
-          expect(holds(row.secretary_note ?? ""), `seed ${seed}: «${row.secretary_note}»`).toBe(false);
-          if (row.secretary_note) kept++;
+      const head = ["מרצה", "שיעור ב", "כותרת", g.pick(["מלווה", "מלוה", "מלווה/ת", "ליווי", "חניך/ה", "שם החניך/ה"])];
+      const grid = [head, ...rows];
+      expect(escortLike(grid, 0), `seed ${seed}`).toBe(true); // the wizard asks
+      const cols = new Set([...escortColumns(grid, 0), 3]); // …and the admin answers
+      const m: Mapping = ["speaker", "when", "title", null];
+      const escorts = escortNames(grid, 0, cols);
+      const base = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true, escorts };
+      const first = readTracking(grid, m, base);
+      for (const l of first.lines) {
+        if (said.some((w) => foldContact(l.text).replace(/[֑-ׇ]/g, "").includes(w)) || /מלוו/.test(l.text)) {
+          expect(l.as, `seed ${seed}: «${l.text}»`).toBe("skip");
+          proposed++;
         }
       }
+      // the proposals accepted, the rest decided at random
+      const lineAs = new Map(first.lines.map((l) => [l.id, l.as ?? g.pick(LINE_AS)] as const));
+      const read = readTracking(grid, m, { ...base, lineAs });
+      const speakers = previewTrackingSpeakers(read, CTX);
+      const choices = new Map<string, Choice>(speakers.filter((s) => s.status === "ambiguous").map((s) => [s.speaker.key, { action: s.match.allowNew ? "new" : "skip" } as Choice]));
+      const plans = planLessons(read, { decisions: new Map(doubleGroups(read).map((x) => [x.id, "parallel" as const])), categories: new Map(), sources: new Map(), alias: speakerAliases(speakers, choices) })!;
+      const p = archivePayload(plans, speakers, choices, { label: "ארכיון", start_date: null, source: "tracking-5786", titles_from: null })!;
+      const text = JSON.stringify(p);
+      for (const w of said) expect(text.includes(w), `seed ${seed}: «${w}»`).toBe(false);
     }
-    expect(locked).toBeGreaterThan(CASES); // not vacuous: names were placed, and caught
-    expect(kept).toBeGreaterThan(CASES / 2); // and the channel phrases without a name are still kept
+    expect(proposed).toBeGreaterThan(CASES / 2); // not vacuous: escorts' lines were placed, and proposed «לא לייבא»
+  });
+
+  it(`(a) ${CASES} random candidates' tables — a name beside or under the candidate's that names an escort proposed «לא לייבא»`, () => {
+    let proposed = 0;
+    for (let seed = 1; seed <= CASES; seed++) {
+      const g = rng(50_000 + seed);
+      made = { phones: [], emails: [] };
+      const people = Array.from({ length: 2 + g.int(3) }, () => escortPerson(g));
+      const said: string[] = [];
+      const rows = Array.from({ length: 1 + g.int(6) }, (_, i) => {
+        const [cell, ws] = escortCell(g, people[i % people.length], people[(i + 1) % people.length]);
+        said.push(...ws);
+        const w = g.pick(ws.length ? ws : [people[0].first]);
+        const extra = g.pick(["", "", `\n${spelled(g, w)}`, ` + ${w}`, `\n(מלווה: ${w})`, `\n${NAME(g)}`, ` + ${NAME(g)}`]);
+        return [`${TITLE(g)}${NAME(g)}${extra}`, cell];
+      });
+      const grid = [["מרצה", g.pick(["מלווה", "מלוה", "ליווי", "חניך/ה"])], ...rows];
+      const cols = escortColumns(grid, 0);
+      expect([...cols], `seed ${seed}`).toEqual([1]);
+      const o = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true, escorts: escortNames(grid, 0, cols) };
+      const first = readCandidateSheet(grid, ["name", null], o);
+      for (const l of first.lines) {
+        if (said.some((w) => foldContact(l.text).replace(/[֑-ׇ]/g, "").includes(w)) || /מלוו/.test(l.text)) {
+          expect(l.as, `seed ${seed}: «${l.text}»`).toBe("skip");
+          proposed++;
+        }
+      }
+      const lineAs = new Map(first.lines.map((l) => [l.id, l.as ?? g.pick(LINE_AS)] as const));
+      const preview = previewCandidates(readCandidateSheet(grid, ["name", null], { ...o, lineAs }).rows, CTX);
+      const choices = new Map<string, Choice>();
+      for (const r of undecided(preview, choices)) choices.set(r.ref, r.match?.allowNew ? { action: "new" } : { action: "skip" });
+      const text = JSON.stringify(candidatesPayload(preview, choices, "x", null));
+      for (const w of said) expect(text.includes(w), `seed ${seed}: «${w}»`).toBe(false);
+    }
+    expect(proposed).toBeGreaterThan(CASES / 2);
   });
 });

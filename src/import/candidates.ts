@@ -5,7 +5,11 @@
 // «הצעה» the admin may turn off. Matching: src/import/match.ts. A phone or an e-mail anywhere else in the row is
 // taken out (stripContacts): one in the name's cell becomes the row's phone or e-mail when that column is empty and
 // it is the only one; every other is dropped, and the row says so — never kept in a name, a title, the affiliation, a
-// tag or the note (supabase/schema.sql refuses one: «contact_in_text»).
+// tag or the note (supabase/schema.sql refuses one: «contact_in_text»). The name's cell is read as the tracking sheet
+// reads a speaker's (DECISIONS «סבב רביעי»): its first name is the row's candidate; any other — beside it («פלוני +
+// פלמוני») or on a line under it — is an ExtraLine (src/import/lines.ts): another candidate (its name and title only),
+// the row's affiliation, or left out — the read proposes only an institution's affiliation and an escort's «לא
+// לייבא», and «ייבוא» waits for the rest.
 import type { CandidatesPayload, ContactFlags, SpeakerRow } from "../data/imports";
 import { IMPORT_RULES } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
@@ -14,8 +18,9 @@ import type { Gender, Speaker } from "../domain/types";
 import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
+import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
-import { pickTitleCell, splitTitle, titleGender } from "./speakerName";
+import { pickTitleCell, splitSpeakers, splitTitle, titleGender } from "./speakerName";
 import type { Grid } from "./table";
 
 export interface CandidateData {
@@ -33,6 +38,8 @@ export interface CandidateData {
 
 export interface CandidateRead {
   row: number;
+  /** Its key — the row's number; another name of the row's cell, «row:index» (its ExtraLine's id). */
+  ref: string;
   data: CandidateData | null;
   /** Why the row is «מדולג» (null: it was read). */
   skip: string | null;
@@ -46,6 +53,10 @@ export interface ReadOptions {
   titles: readonly string[];
   /** «הצעה»: gender from the title הרב / הרבנית. */
   genderFromTitle: boolean;
+  /** The escorts' names (a column the admin named, or found): a name of the cell that holds one is proposed «לא לייבא». */
+  escorts?: readonly string[];
+  /** The admin's choice for another name of a cell (ExtraLine.id → what it is). */
+  lineAs?: ReadonlyMap<string, LineAs>;
 }
 
 const chars = (s: string) => [...s].length;
@@ -62,16 +73,24 @@ export function splitTopics(cell: string): { tags: string[]; rest: string[] } {
   return { tags, rest };
 }
 
-export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): CandidateRead[] {
+/** The candidates' table: a row per candidate (and per other name of a cell the admin made one), and the cells' other names. */
+export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { rows: CandidateRead[]; lines: ExtraLine[] } {
   const names = columnNames(grid, o.headerRow);
   const seen = new Map<string, number>();
-  return dataRows(grid, o.headerRow).map(({ row, cells }) => {
+  const escorts = escortWords(o.escorts ?? []);
+  const lines: ExtraLine[] = [];
+  const out: CandidateRead[] = [];
+  for (const { row, cells } of dataRows(grid, o.headerRow)) {
     const warnings: string[] = [];
-    const skip = (why: string): CandidateRead => ({ row, data: null, skip: why, warnings });
-    // the name's cell without a phone or an e-mail in it — one may be the row's (below)
+    const skip = (why: string): CandidateRead => ({ row, ref: String(row), data: null, skip: why, warnings });
+    // the name's cell without a phone or an e-mail in it — one may be the row's (below); its names, line by line
     const inName = stripContacts(cellOf(cells, m, "name"));
-    const raw = oneLine(inName.text);
-    if (!raw) return skip("אין שם");
+    const parts = inName.text.split("\n").flatMap((line) => splitSpeakers(line));
+    const raw = oneLine(parts[0] ?? "");
+    if (!raw) {
+      out.push(skip("אין שם"));
+      continue;
+    }
     let { title, name } = splitTitle(raw, o.titles);
     const notes: string[] = [];
     /** A field's text with every contact taken out — said once per field. */
@@ -88,14 +107,32 @@ export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): Candidat
         warnings.push(`התואר «${titleCell}» לא ברשימת התארים — נשמר בהערה`);
       }
     }
-    if (chars(name) > LIMITS.name) return skip(`השם ארוך מ-${LIMITS.name} תווים`);
+    if (chars(name) > LIMITS.name) {
+      out.push(skip(`השם ארוך מ-${LIMITS.name} תווים`));
+      continue;
+    }
     const key = nameKey(name);
-    if (!key) return skip("אין שם");
+    if (!key) {
+      out.push(skip("אין שם"));
+      continue;
+    }
     const first = seen.get(key);
-    if (first != null) return skip(`כפול בטבלה (כמו שורה ${first})`);
+    if (first != null) {
+      out.push(skip(`כפול בטבלה (כמו שורה ${first})`));
+      continue;
+    }
     seen.set(key, row);
+    // the cell's other names: each an ExtraLine — the admin's choice, or the read's «הצעה»
+    const lineAff: string[] = [];
+    const extras: { ref: string; raw: string }[] = [];
+    parts.slice(1).forEach((part, k) => {
+      const l = extraLine(`${row}:${k + 2}`, row, part, { key, name }, escorts, o.lineAs);
+      lines.push(l);
+      if (l.as === "affiliation") lineAff.push(affiliationText(part));
+      else if (l.as === "speaker") extras.push({ ref: l.id, raw: part });
+    });
     const gender = o.genderFromTitle ? titleGender(title) : null;
-    let affiliation: string | null = oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")) || null;
+    let affiliation: string | null = [oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")), ...lineAff].filter(Boolean).join(", ") || null;
     if (affiliation && chars(affiliation) > LIMITS.affiliation) {
       notes.push(`מוסד: ${affiliation}`);
       warnings.push("המוסד ארוך — נשמר בהערה");
@@ -119,18 +156,47 @@ export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): Candidat
       warnings.push("המייל שהיה בתא השם נשמר כמייל של המרצה");
     } else if (mails.some((x) => x !== email.value) || inName.emails.length > mails.length) warnings.push("הוסר מייל מתא השם — לא נשמר");
     // the note's lines: a phone or an e-mail in them replaced (the note is the speaker's private note, never a contact)
-    const lines = noteLines([...labelledCells(cells, m, "status", names), ...labelledCells(cells, m, "note", names)]);
-    const sc = scrubContacts([...notes, ...lines].join("\n"));
+    const lines2 = noteLines([...labelledCells(cells, m, "status", names), ...labelledCells(cells, m, "note", names)]);
+    const sc = scrubContacts([...notes, ...lines2].join("\n"));
     if (sc.scrubbed) warnings.push("הוסר טלפון או מייל מההערה — לא נשמר");
     const note = sc.text.trim() || null;
-    if (note && chars(note) > IMPORT_RULES.contact_notes) return skip(`ההערות ארוכות מ-${IMPORT_RULES.contact_notes} תווים`);
-    return {
+    if (note && chars(note) > IMPORT_RULES.contact_notes) {
+      out.push(skip(`ההערות ארוכות מ-${IMPORT_RULES.contact_notes} תווים`));
+      continue;
+    }
+    out.push({
       row,
+      ref: String(row),
       skip: null,
       warnings,
       data: { title, name, key, gender, affiliation, topics: tags, phone: phone.value, phoneKey: phone.key, email: email.value, notes: note },
-    };
-  });
+    });
+    // another candidate from the cell: its name and title only — the row's other columns are the first's
+    for (const x of extras) {
+      const sub = splitTitle(oneLine(x.raw), o.titles);
+      const k = nameKey(sub.name);
+      const at = seen.get(k);
+      const why = !k ? "אין שם" : chars(sub.name) > LIMITS.name ? `השם ארוך מ-${LIMITS.name} תווים` : at != null ? `כפול בטבלה (כמו שורה ${at})` : null;
+      if (why) {
+        out.push({ row, ref: x.ref, data: null, skip: why, warnings: [] });
+        continue;
+      }
+      seen.set(k, row);
+      out.push({
+        row,
+        ref: x.ref,
+        skip: null,
+        warnings: ["שם נוסף מתא השם — רק השם והתואר (שאר העמודות של השורה למרצה הראשון/ה)"],
+        data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation: null, topics: [], phone: null, phoneKey: null, email: null, notes: null },
+      });
+    }
+  }
+  return { rows: out, lines };
+}
+
+/** The candidates' rows (readCandidateSheet's). */
+export function readCandidates(grid: Grid, m: Mapping, o: ReadOptions): CandidateRead[] {
+  return readCandidateSheet(grid, m, o).rows;
 }
 
 /** What import_lookup is asked: every pool speaker a row could complete, and every row's phone key. */
@@ -176,20 +242,20 @@ export function previewCandidates(rows: CandidateRead[], ctx: MatchContext): Can
   });
   // the rows new to the pool, against the earlier ones of the table: the same phone, or a name 0.6 alike
   const fresh = out.filter((r) => r.status === "new" && r.data);
-  const sheet = sheetMatches(fresh.map((r) => ({ ref: String(r.row), key: r.data!.key, phoneKey: r.data!.phoneKey, label: `שורה ${r.row} · ${nameOf(r.data!)}` })));
-  return out.map((r) => (sheet.has(String(r.row)) && r.match ? { ...r, status: "ambiguous" as const, match: ambiguousInSheet(r.match, sheet.get(String(r.row))) } : r));
+  const sheet = sheetMatches(fresh.map((r) => ({ ref: r.ref, key: r.data!.key, phoneKey: r.data!.phoneKey, label: `שורה ${r.row} · ${nameOf(r.data!)}` })));
+  return out.map((r) => (sheet.has(r.ref) && r.match ? { ...r, status: "ambiguous" as const, match: ambiguousInSheet(r.match, sheet.get(r.ref)) } : r));
 }
 
 const nameOf = (d: CandidateData) => `${d.title ? `${d.title} ` : ""}${d.name}`;
 
-/** Each row's action as the commit takes it — «כמו שורה N» followed (null: undecided). */
-export function resolvedRows(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>): Map<number, Resolved | null> {
-  const by = new Map(rows.map((r) => [String(r.row), r]));
+/** Each row's action as the commit takes it, by its ref — «כמו שורה N» followed (null: undecided). */
+export function resolvedRows(rows: CandidatePreview[], choices: ReadonlyMap<string, Choice>): Map<string, Resolved | null> {
+  const by = new Map(rows.map((r) => [r.ref, r]));
   const own = (ref: string) => {
     const r = by.get(ref);
-    return r && r.data ? actionOf(r.status, r.match, choices.get(r.row)) : null;
+    return r && r.data ? actionOf(r.status, r.match, choices.get(ref)) : null;
   };
-  return new Map(rows.filter((r) => r.data).map((r) => [r.row, resolveChoice(String(r.row), own)]));
+  return new Map(rows.filter((r) => r.data).map((r) => [r.ref, resolveChoice(r.ref, own)]));
 }
 
 /** A row's commit line (null: left out). «כמו שורה N»: a new row under row N's name (`as`) — the commit completes that speaker. */
@@ -211,20 +277,20 @@ export function speakerRowOf(row: number, d: CandidateData, a: Resolved, as: Can
 }
 
 /** The «עמום» rows still waiting for the admin's choice — or whose «כמו שורה N» names a row left out. */
-export function undecided(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>): CandidatePreview[] {
+export function undecided(rows: CandidatePreview[], choices: ReadonlyMap<string, Choice>): CandidatePreview[] {
   const res = resolvedRows(rows, choices);
-  return rows.filter((r) => r.data && res.get(r.row) == null);
+  return rows.filter((r) => r.data && res.get(r.ref) == null);
 }
 
 /** The commit's payload — null while an «עמום» row waits for a choice. */
-export function candidatesPayload(rows: CandidatePreview[], choices: ReadonlyMap<number, Choice>, source: string, titlesFrom: number | null): CandidatesPayload | null {
+export function candidatesPayload(rows: CandidatePreview[], choices: ReadonlyMap<string, Choice>, source: string, titlesFrom: number | null): CandidatesPayload | null {
   const res = resolvedRows(rows, choices);
-  if (rows.some((r) => r.data && res.get(r.row) == null)) return null;
-  const by = new Map(rows.map((r) => [String(r.row), r]));
+  if (rows.some((r) => r.data && res.get(r.ref) == null)) return null;
+  const by = new Map(rows.map((r) => [r.ref, r]));
   const out: SpeakerRow[] = [];
   for (const r of rows) {
     if (!r.data) continue;
-    const a = res.get(r.row)!;
+    const a = res.get(r.ref)!;
     const line = speakerRowOf(r.row, r.data, a, a.action === "new" && a.as != null ? (by.get(a.as)?.data ?? null) : null);
     if (line) out.push(line);
   }

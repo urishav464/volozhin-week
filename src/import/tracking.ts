@@ -3,10 +3,10 @@
 //   * when: «שיעור ב» read by parseWhen; unreadable → the row is «מדולג» with the reason. Only a start written: the
 //     end of the grid's lesson row that starts then — else «מדולג».
 //   * speakers: one or more names per row, each matched to the pool as the candidates are (one choice per speaker,
-//     not per row). A line of one name under another in the cell may be its affiliation («(ישיבת דוגמה)»: ExtraLine,
-//     «הצעה» — in brackets or with an institution's word; any other line the admin decides). The row's phone goes to
-//     its speaker's contacts — decided after the admin's choices: to the one speaker of the row still imported
-//     (planLessons), never when two are.
+//     not per row). A name on a line under the first is an ExtraLine (src/import/lines.ts): «מרצה נוסף/ת», «שיוך
+//     מוסדי» or «לא לייבא» — the read proposes an affiliation only for an institution's word («ישיבת…»), «לא לייבא»
+//     for an escort's name; any other line the admin decides. The row's phone goes to its speaker's contacts — decided
+//     after the admin's choices: to the one speaker of the row still imported (planLessons), never when two are.
 //   * a phone or an e-mail in the speaker's cell (beside a name, a line of its own, «(טל' …)») or in the title is
 //     taken out (stripContacts) — never a name, an affiliation or a title: the speaker cell's one phone is the row's
 //     when «טלפון» is empty, its one e-mail the speaker's when the row has one; any other is dropped, and said.
@@ -34,6 +34,7 @@ import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import type { MatchContext } from "./candidates";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
+import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { type SourcesRule, sourcesKey, translateSources } from "./sources";
 import { splitSpeakers, splitTitle, titleGender } from "./speakerName";
@@ -57,13 +58,11 @@ const DOUBLE_MARK = /[ \t\-–—־,]*\(?[ \t]*(?<![א-ת])כפולה(?![א-ת])
 const PARENTS = /^[\s\-–—־,.:()]*שיעור\s+להורים/;
 /** A memorial row: a speaker, title or time cell that BEGINS with «זמן זיכרון» («זמן זיכרון א», «זמן זיכרון – …»). */
 const MEMORIAL = /^\s*זמן\s*זיכרון/;
-/** A line wholly in brackets: «(ישיבת דוגמה)». */
-const BRACKETED = /^\((.+)\)$/;
-/** A line naming an institution: «ישיבת…», «מכון…», «מדרשת…», «אוניברסיטת…», «מכללת…», «בית מדרש…» and the like. */
-const INSTITUTION =
-  /(?<![א-ת])(?:ה?ישיב(?:ת|ה)|ה?מכון|ה?מדרש(?:ת|ה)|בית ה?מדרש|ה?אוניברסיט(?:ת|ה)|ה?מכלל(?:ת|ה)|ה?אולפנ(?:ת|ה)|בית ה?ספר|ה?קהיל(?:ת|ה)|בית ה?כנסת|ה?מרכז|ה?עמות(?:ת|ה)|ה?תנוע(?:ת|ה)|ה?ארגון|ה?מוסד|ה?כולל|ה?סמינר|ה?מכינ(?:ת|ה))(?![א-ת])/;
-/** «(כפולה)» or «- כפולה» set off in a title: no marker — the title is never cut — but said («השורה לא סומנה ככפולה»). */
-const DOUBLE_SET_OFF = /\(\s*כפולה\s*\)|[-–—־,]\s*כפולה\s*$|^\s*כפולה\s*[-–—־,:]/m;
+/**
+ * «כפולה» set off in a title — in any bracket («(כפולה)», «[כפולה]», «(כפולה!)»), after a dash or a comma at the end
+ * («- כפולה.»), or before one at the start: no marker — the title is never cut — but said («השורה לא סומנה ככפולה»).
+ */
+const DOUBLE_SET_OFF = /[([{]\s*כפולה\s*[.!?]*\s*[)\]}]|[-–—־,]\s*כפולה\s*[.!?]*\s*$|^\s*כפולה\s*[.!?]*\s*[-–—־,:]/m;
 const chars = (s: string) => [...s].length;
 const oneLine = (s: string) => s.replace(/\n/g, " ").trim();
 
@@ -106,31 +105,7 @@ export interface TrackingSpeaker {
   rows: number[];
 }
 
-export type LineAs = "affiliation" | "speaker";
-
-/**
- * A line under a name in the speaker's cell (a Word cell's second paragraph, a Sheets cell's Alt+Enter) that holds one
- * name-like text: the affiliation of the name above it, or a speaker of its own — the read's «הצעה», which the admin
- * may turn. A line wholly in brackets, or one with an institution's word («ישיבת…», «מכון…»), is an affiliation; a
- * title, or a name the sheet or the pool has, is a speaker; any other line (a name new to both — a first-time guest?)
- * is undecided: «ייבוא» waits for the admin's choice, as it waits for an «עמום».
- */
-export interface ExtraLine {
-  /** «row:index» — the admin's choice is kept by it. */
-  id: string;
-  row: number;
-  /** The line as written. */
-  text: string;
-  /** The speaker above it (its key): whose affiliation it would be. */
-  of: string;
-  ofName: string;
-  /** What it is read as — the read's own («הצעה») or the admin's; null: undecided — neither, until chosen. */
-  as: LineAs | null;
-  /** The admin turned it. */
-  chosen: boolean;
-  /** Why the read made it what it is. */
-  why: string;
-}
+export type { ExtraLine, LineAs };
 
 export interface TrackingRead {
   rows: TrackingRow[];
@@ -143,8 +118,8 @@ export interface TrackingOptions {
   headerRow: number | null;
   titles: readonly string[];
   genderFromTitle: boolean;
-  /** The pool's name keys (once checked): a line that is one of them is a speaker. */
-  known?: ReadonlySet<string>;
+  /** The escorts' names (the column the admin named): a line that holds one is proposed «לא לייבא». */
+  escorts?: readonly string[];
   /** The admin's choice for a line (ExtraLine.id → what it is). */
   lineAs?: ReadonlyMap<string, LineAs>;
 }
@@ -168,14 +143,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
   const data = dataRows(grid, o.headerRow);
   // each speaker cell without its phones and e-mails — a contact is never a name, a line or an affiliation
   const stripped = new Map(data.map(({ row, cells }) => [row, stripContacts(cellOf(cells, m, "speaker"))]));
-  // the sheet's own names: every name on a first line, or beside another on its line — a line under a name that is
-  // one of them is a speaker, not an institution
-  const sheetKeys = new Set<string>();
-  for (const { row } of data) {
-    cellLines(stripped.get(row)!.text).forEach((line, i) => {
-      if (i === 0 || line.length > 1) for (const raw of line) sheetKeys.add(nameKey(splitTitle(raw, o.titles).name));
-    });
-  }
+  const escorts = escortWords(o.escorts ?? []);
   const speakers = new Map<string, TrackingSpeaker>();
   const lines: ExtraLine[] = [];
   const rows = data.map(({ row, cells }): TrackingRow => {
@@ -210,7 +178,9 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
     const whenParents = PARENTS.test(bare);
     const rest = bare.replace(PARENTS, "").replace(/[\s,.()-]+/g, " ").trim();
     if (rest) notes.push(`שיעור ב: ${whenCell}`);
-    // the speakers: each line's names; a line of one name under another may be its affiliation (ExtraLine)
+    // the speakers: the first line's names; every name on a line under it is an ExtraLine — a speaker, the
+    // affiliation of the name above, or left out, as the admin chooses (the read proposes only an institution's
+    // affiliation and an escort's «לא לייבא»)
     const speakerKeys: string[] = [];
     const affiliations: { key: string; text: string }[] = [];
     let above: { key: string; name: string } | null = null;
@@ -221,28 +191,14 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
         const { title, name } = splitTitle(raw, o.titles);
         const key = nameKey(name);
         if (!key) continue;
-        if (i > 0 && line.length === 1 && above) {
-          const id = `${row}:${index}`;
-          const bracket = BRACKETED.exec(raw.trim());
-          const read: [LineAs | null, string] = bracket
-            ? ["affiliation", "בסוגריים"]
-            : title
-              ? ["speaker", `בתואר ${title}`]
-              : sheetKeys.has(key)
-                ? ["speaker", "שם שמופיע בגיליון"]
-                : o.known?.has(key)
-                  ? ["speaker", "שם שבמאגר"]
-                  : INSTITUTION.test(raw)
-                    ? ["affiliation", "שם של מוסד"]
-                    : [null, "בלי תואר ובלי שם של מוסד, ולא שם שבגיליון או במאגר"];
-          const chosen = o.lineAs?.get(id);
-          const as = chosen ?? read[0];
-          lines.push({ id, row, text: raw.trim(), of: above.key, ofName: above.name, as, chosen: chosen != null && chosen !== read[0], why: read[1] });
-          if (as === "affiliation") {
-            affiliations.push({ key: above.key, text: (bracket ? bracket[1] : raw).trim() });
+        if (i > 0 && above) {
+          const l = extraLine(`${row}:${index}`, row, raw, above, escorts, o.lineAs);
+          lines.push(l);
+          if (l.as === "affiliation") {
+            affiliations.push({ key: above.key, text: affiliationText(raw) });
             continue;
           }
-          if (as == null) continue; // undecided: neither, until the admin chooses («ייבוא» waits)
+          if (l.as !== "speaker") continue; // «לא לייבא», or undecided: none, until the admin chooses («ייבוא» waits)
         }
         if (chars(name) > LIMITS.name) return { ...base, skip: `שם המרצה ארוך מ-${LIMITS.name} תווים` };
         if (!speakerKeys.includes(key)) speakerKeys.push(key);
@@ -594,6 +550,17 @@ export function planLessons(read: TrackingRead, input: PlanInput): LessonPlan[] 
     placed.push(p);
   }
   return plans.sort((a, b) => a.rows[0] - b.rows[0]);
+}
+
+/** The rows left out anyway — by the read («מדולג»: no time, a memorial…) or by the plan: a line of one waits for nothing. */
+export function skippedRows(read: TrackingRead, plans: readonly LessonPlan[] | null): Set<number> {
+  return new Set([...read.rows.filter((r) => r.skip).map((r) => r.row), ...(plans ?? []).filter((p) => p.skip).flatMap((p) => p.rows)]);
+}
+
+/** The lines still waiting for the admin's choice — never one of a row left out anyway (deciding it changes nothing). */
+export function openLines(read: TrackingRead, plans: readonly LessonPlan[] | null): ExtraLine[] {
+  const skipped = skippedRows(read, plans);
+  return read.lines.filter((l) => l.as == null && !skipped.has(l.row));
 }
 
 export interface TrackingSpeakerPreview {

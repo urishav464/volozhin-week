@@ -40,7 +40,7 @@ export const FIELDS: Record<ImportKind, readonly FieldDef[]> = {
   ],
   escorts: [
     { key: "speaker", label: "מרצה", headers: ["מרצה"] },
-    { key: "phrases", label: "ניסוחים (רק אלה על ערוץ הקשר נשמרים)", headers: [], multi: true },
+    { key: "phrases", label: "ניסוחים (רק מציעים ערוץ — לא נשמרים)", headers: [], multi: true },
   ],
 };
 

@@ -43,6 +43,12 @@ export const IMPORT_LIMITS = {
   nesting: 32,
   /** An xlsx's shared strings. */
   sharedStrings: 200_000,
+  /**
+   * The sheets a workbook lists («הצעה»: Excel's own old limit, 255; a real file has a few): each one is a «גיליון»
+   * option drawn on the screen — 144K of them in an 11KB file froze the page (DECISIONS «ביקורת: ייבוא ואבן דרך 6»,
+   * סבב רביעי).
+   */
+  sheets: 255,
   /** The commit's rows (supabase/schema.sql «Import 5786» holds the same). */
   commitRows: 1_000,
 } as const;

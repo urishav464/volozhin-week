@@ -1,31 +1,45 @@
-// (c) Last year's escorts' file → only how each speaker is reached: the phrases about the contact channel («דרך
-// המזכירה», «רק בוואטסאפ») go to speaker_contacts.secretary_note, and the channel itself to speakers.contact_pref when
-// the ticked phrases name exactly one. The admin ticks which phrases are about the channel — a heuristic pre-ticks
-// («הצעה»); phrases about payment or transport are dropped (they are derived from the lesson), and so is every other
-// phrase left unticked. The escorts' names are never imported: no field takes them; a column headed «מלווה» — in the
-// header row chosen, or in a row below it among the table's first rows — cannot be mapped at all, in any kind
-// (escortColumns), unless the header row chosen names that column as a field («מרצה»); and their names, as the file
-// writes them and as an edition's roster has them, are read in the page only to keep them OUT of a phrase — word by
-// word: a phrase holding ANY word of an escort's name (a first name alone, a surname alone, a Hebrew prefix letter
-// before it) is never pre-ticked, and cannot be ticked — nor kept, ticked or edited — while it holds one (a phrase's
-// text is editable before it is ticked). A phone or an e-mail in a phrase is taken out of it (stripContacts) and said:
-// the note says how, never a number. A speaker not in the pool is «מדולג» (the escorts' file adds no one).
-import type { ContactFlags, EscortsPayload, PrefsRow } from "../data/imports";
+// (c) Last year's escorts' file → only how each speaker is reached (DECISIONS «סבב רביעי»): for each speaker the admin
+// CHOOSES a contact channel from a fixed list (IMPORT_CHANNELS: the pool's four, and «אחר»), pre-selected from the
+// file's phrases («דרך המזכירה», «רק בוואטסאפ») by a heuristic («הצעה»), and may TYPE a short note of their own — an
+// empty field, never filled from the file. Only those two travel: the payload has no field for the file's text, and the
+// commit refuses a row with any other key. The phrases are SHOWN, read-only, as the reason for the suggestion — a phone
+// or an e-mail taken out of them first (stripContacts), a phrase about payment or transport set apart (derived from the
+// lesson). So the escorts' names cannot reach the database by this path, however the file spells them: nothing the
+// file says is saved. They are still kept OUT of what the wizard reads — the escorts' column is asked for, never
+// guessed (ImportTab: «באיזו עמודה שמות המלווים?»), and it cannot be mapped (escortColumns) — and they are read, in the
+// page only, to SAY so beside a phrase that names one (namedEscort: a visual warning) and, in the tracking sheet and
+// the candidates, to propose «לא לייבא את השורה» for a line of a speaker's cell that names one. A speaker not in the
+// pool is «מדולג» (the escorts' file adds no one).
+import type { ContactFlags, EscortsPayload, ImportChannel, PrefsRow } from "../data/imports";
+import { IMPORT_CHANNELS } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
 import { nameKey } from "../domain/nameKey";
-import type { ContactPref } from "../domain/types";
+import type { ContactPref, Speaker } from "../domain/types";
+import { CONTACT_PREF_LABEL } from "../lib/labels";
 import type { MatchContext } from "./candidates";
 import { columnsOf, FIELDS, HEADER_SEARCH, headerKey, type Mapping } from "./fields";
-import { stripContacts } from "./phone";
+import { foldContact, hasContact, stripContacts } from "./phone";
 import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
 import { cellOf, dataRows, type HeaderAt } from "./rows";
 import { splitSpeakers, splitTitle } from "./speakerName";
 import type { Grid } from "./table";
 
-/** A column the escorts' names are in — its header in the header row chosen: never read. */
-export const ESCORT_COLUMN = /מלוו/;
-/** A cell that reads as that column's header wherever it stands («מלווה», «מלווה/ת», «המלווה», «שם המלווה», «מלווים», «מלווה 2»). */
-const ESCORT_HEADER = /^(?:שם)?ה?מלוו(?:ה|ת|ים|ות|הת)?[0-9]*$/;
+export { IMPORT_CHANNELS };
+export type { ImportChannel };
+
+/** The list the admin chooses from, as the wizard says it. */
+export const CHANNEL_LABEL: Record<ImportChannel, string> = { ...CONTACT_PREF_LABEL, other: "אחר (כותבים בהערה)" };
+
+/**
+ * A word that speaks of an escort or a trainee, anywhere in a header or a phrase: «מלווה», «מלוה» (one vav), «מלווה/ת»,
+ * «ליווי», «חניך/ה», «שם החניך/ה».
+ */
+export const ESCORT_COLUMN = /מלוו|מלוה|ליוו|חניכ|חניך/;
+/**
+ * A cell that reads as that column's header wherever it stands (compared by headerKey): «מלווה», «מלוה», «מלווה/ת»,
+ * «המלווה», «שם המלווה», «מלווים», «מלווה 2», «ליווי», «חניך/ה», «שם החניך/ה», «חניכים».
+ */
+const ESCORT_HEADER = /^(?:שם)?ה?(?:מלוו?(?:ה|ת|ים|ות|הת|ית)?|ליווי?|חניכ(?:ה|ים|ות)|חניך(?:ה)?)[0-9]*$/;
 export const looksLikeEscortHeader = (cell: string) => ESCORT_HEADER.test(headerKey(cell));
 
 /** Every header a kind reads by itself («מרצה», «טלפון», «שיעור ב»…), as compared. */
@@ -35,7 +49,9 @@ const FIELD_HEADERS = new Set(Object.values(FIELDS).flatMap((fs) => fs.flatMap((
  * The columns the escorts' names are in — never mappable, in any kind: the header row's cell says so, or a cell of the
  * header row chosen or a row below it, among the table's first rows, reads as that header (the header row chosen too
  * high, or none). The rows ABOVE the header row chosen are not looked at — a title paragraph «מלווים» over the table
- * blocks nothing — and a column whose header in the row chosen is a field's own («מרצה») is never blocked.
+ * blocks nothing — and a column whose header in the row chosen is a field's own («מרצה») is never blocked. A guard
+ * only: in the escorts' file the admin is always asked which column it is, and in the tracking sheet whenever a
+ * header or a first row looks like one (escortLike).
  */
 export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
   const out = new Set<number>();
@@ -50,57 +66,71 @@ export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
   return out;
 }
 
+/**
+ * Does the table look like it has an escorts' column — a header of the header row chosen speaks of escorts or trainees
+ * («מלוה», «ליווי», «שם החניך/ה»…), or a cell of its first rows reads as such a header (the header row chosen wrong, or
+ * none): the tracking sheet then asks which column is theirs.
+ */
+export function escortLike(grid: Grid, headerRow: HeaderAt): boolean {
+  if (headerRow != null && (grid[headerRow] ?? []).some((c) => ESCORT_COLUMN.test(c))) return true;
+  return grid.slice(0, HEADER_SEARCH).some((r) => r.some(looksLikeEscortHeader));
+}
+
 /** A value of the escorts' column that names no one: «אין», «לא צריך», «מגיע/ה לבד», «—», «TBD», «?». */
 const FILLER = /^(?:אין(?: מלווה| מלווים| צורך)?|בלי(?: מלווה)?|ללא(?: מלווה)?|לא(?: צריך| צריכה| צריך\/ה| רלוונטי| ידוע)?|מגיע(?:\/ה|ה)?(?: לבד)?|מגיעים לבד|לבד|עצמאי(?:\/ת|ת)?|tbd|x|\?+|[-–—־.]+)$/i;
-/** Words that are no one's name, in a value of that column («חניך X ו…», «(שנה ב)» aside): never a reason to lock a phrase. */
-export const NOT_A_NAME: ReadonlySet<string> = new Set(["אין", "לא", "צריך", "צריכה", "מגיע", "מגיעה", "מגיעים", "לבד", "ללא", "בלי", "עם", "של", "את", "או", "גם", "רק", "הרב", "הרבנית", "רב", "דר", "פרופ", "שנה", "שנת", "מלווה", "מלווים", "מלוות", "tbd"]);
+/** Words that are no one's name, in a value of that column («חניך X ו…», «(שנה ב)», «מחליפה:» aside). */
+export const NOT_A_NAME: ReadonlySet<string> = new Set([
+  "אין", "לא", "צריך", "צריכה", "מגיע", "מגיעה", "מגיעים", "לבד", "ללא", "בלי", "עם", "של", "את", "או", "גם", "רק", "הרב", "הרבנית", "רב", "דר", "פרופ", "שנה", "שנת",
+  "מלווה", "מלווים", "מלוות", "מחליף", "מחליפה", "במקום", "tbd",
+]);
 
 /**
- * The escorts' names as the file writes them — the data cells of their columns, by line, comma, «+», « / » or « - »;
- * a phone, an e-mail, a bracket («(שנה ב)») and digits out; a value that names no one («אין», «מגיע/ה לבד») skipped —
- * read only to keep them out of the phrases (namedEscort); never imported, never kept.
+ * The escorts' names as the file writes them — the data cells of their columns, by line, comma, «+», a bracket, « / »
+ * or « - » (what a bracket holds is a name too: a second escort, a nickname, a stand-in); a phone, an e-mail and digits
+ * out; a value that names no one («אין», «מגיע/ה לבד») skipped — read only in the page (namedEscort); never imported.
  */
 export function escortNames(grid: Grid, headerRow: HeaderAt, columns: ReadonlySet<number>): string[] {
   const out = new Set<string>();
   for (const { cells } of dataRows(grid, headerRow)) {
     for (const i of columns) {
-      const cell = stripContacts(cells[i] ?? "").text.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/g, " ").replace(/[0-9]+/g, " ");
-      for (const n of cell.split(/\n|[,;+()[\]{}]|\s[/\-–—־]\s/)) {
+      const cell = stripContacts(cells[i] ?? "").text.replace(/[0-9]+/g, " ");
+      for (const n of cell.split(/\n|[,;:+()[\]{}]|\s[/\-–—־]\s/)) {
         const name = n.replace(/\s+/g, " ").trim();
-        if ([...name].length >= 2 && !looksLikeEscortHeader(name) && !FILLER.test(name.replace(/[.:!]+$/, ""))) out.add(name);
+        // a part with no word of a name («(שנה ב)», «מחליפה»): no one
+        if ([...name].length >= 2 && !looksLikeEscortHeader(name) && !FILLER.test(name.replace(/[.:!]+$/, "")) && escortWords([name]).size > 0) out.add(name);
       }
     }
   }
   return [...out];
 }
 
-const WORD = /[A-Za-z\u05D0-\u05EA]+/g;
-/** A text's words as compared: quote marks out («ג'ני» is «גני» on both sides), Latin in lower case. */
-const wordsOf = (s: string) => (s.replace(/["'״׳`]/g, "").match(WORD) ?? []).map((w) => w.toLowerCase());
+const WORD = /[A-Za-zא-ת]+/g;
+/** A text's words as compared: what shows nothing and the niqqud out, quote marks out («ג'ני» is «גני»), Latin in lower case. */
+const wordsOf = (s: string) => (foldContact(s).replace(/[֑-ׇ"'״׳`]/g, "").match(WORD) ?? []).map((w) => w.toLowerCase());
 
 /**
  * The words an escort may be named by: every word of 2 letters or more of each name (a first name, a surname); a word
- * that begins with «ו» after the first («… וחניכה …») also without it — two names joined. Words that are no one's name
+ * that begins with «ו» also without it — two names joined («… וחניכה …», «(ונועם …)»). Words that are no one's name
  * (NOT_A_NAME) aside.
  */
 export function escortWords(names: readonly string[]): Set<string> {
   const out = new Set<string>();
   for (const n of names) {
-    wordsOf(n).forEach((w, i) => {
-      if (NOT_A_NAME.has(w)) return;
+    for (const w of wordsOf(n)) {
+      if (NOT_A_NAME.has(w)) continue;
       if (w.length >= 2) out.add(w);
-      if (i > 0 && w.startsWith("ו") && w.length >= 3 && !NOT_A_NAME.has(w.slice(1))) out.add(w.slice(1));
-    });
+      if (w.startsWith("ו") && w.length >= 3 && !NOT_A_NAME.has(w.slice(1))) out.add(w.slice(1));
+    }
   }
   return out;
 }
 
-/** The escort's word a phrase holds — a word of it, alone or after one or two Hebrew prefix letters (ו ה ב כ ל מ ש) — or null. */
-export function namedEscort(phrase: string, names: readonly string[] | ReadonlySet<string>): string | null {
+/** The escort's word a text holds — a word of it, alone or after up to four Hebrew prefix letters (ו ה ב כ ל מ ש) — or null. A warning, and a default; never a gate. */
+export function namedEscort(text: string, names: readonly string[] | ReadonlySet<string>): string | null {
   const words = names instanceof Set ? names : escortWords(names as readonly string[]);
   if (words.size === 0) return null;
-  for (const w of wordsOf(phrase)) {
-    for (let k = 0; k <= 2 && w.length - k >= 2; k++) {
+  for (const w of wordsOf(text)) {
+    for (let k = 0; k <= 4 && w.length - k >= 2; k++) {
       if (k > 0 && !/^[והבכלמש]+$/.test(w.slice(0, k))) break;
       if (words.has(w.slice(k))) return w.slice(k);
     }
@@ -108,8 +138,8 @@ export function namedEscort(phrase: string, names: readonly string[] | ReadonlyS
   return null;
 }
 
-/** It speaks of the escort («המלווה יתאם…»): not pre-ticked — the channel is the speaker's, and a name may be beside it. */
-export const mentionsEscort = (phrase: string) => ESCORT_COLUMN.test(phrase);
+/** It speaks of the escort («המלווה יתאם…», «החניכה»). */
+export const mentionsEscort = (text: string) => ESCORT_COLUMN.test(text);
 
 const CHANNELS: [RegExp, ContactPref][] = [
   [/מזכיר/, "secretary"],
@@ -118,7 +148,6 @@ const CHANNELS: [RegExp, ContactPref][] = [
   [/מייל|אימייל|דוא["״]?ל|e-?mail/i, "email"],
   [/טלפון|להתקשר|בנייד|נייד|שיחה/, "phone"],
 ];
-const CONTACT_WORDS = /דרך|לפנות|פנייה|ליצור קשר|יצירת קשר|לא לשלוח|לא להתקשר|זמין|בשעות/;
 const MONEY_OR_TRANSPORT = /תשלום|לשלם|שכר|כסף|העברה בנקאית|חשבונית|קבלה|₪|ש["״]ח|שקל|הסעה|נסיעה|לנסוע|חניה|חנייה|לאסוף|איסוף|נהג|מונית|רכבת|אוטובוס|דלק|טרמפ/;
 
 /** The one channel a phrase names, or null. */
@@ -127,22 +156,18 @@ export function channelOf(phrase: string): ContactPref | null {
   return found.length === 1 ? found[0] : null;
 }
 
-/** About payment or transport: dropped, never ticked (derived from the lesson). */
+/** About payment or transport: set apart (derived from the lesson), never a reason for the channel. */
 export const isMoneyOrTransport = (phrase: string) => MONEY_OR_TRANSPORT.test(phrase);
-
-/** About the contact channel — the heuristic that pre-ticks a phrase («הצעה»); never one that speaks of the escort. */
-export const isContactPhrase = (phrase: string) =>
-  !isMoneyOrTransport(phrase) && !mentionsEscort(phrase) && (CHANNELS.some(([re]) => re.test(phrase)) || CONTACT_WORDS.test(phrase));
 
 /** A cell's phrases: split at lines, semicolons, bullets and sentence ends — never at an initial («ח. לדוגמה»). */
 export function splitPhrases(cell: string): string[] {
   return cell
-    .split(/\n|;|•|(?<!(?:^|[\s(])[A-Za-z\u05D0-\u05EA])\.(?=\s|$)/)
+    .split(/\n|;|•|(?<!(?:^|[\s(])[A-Za-zא-ת])\.(?=\s|$)/)
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => [...p].length >= 2);
 }
 
-/** A phrase as the table groups it. */
+/** A phrase as compared (the same phrase twice is shown once). */
 export const phraseKey = (p: string) => p.replace(/\s+/g, " ").trim().toLowerCase();
 
 export interface EscortsRow {
@@ -151,8 +176,7 @@ export interface EscortsRow {
   /** The speaker's name key, and the name as written. */
   key: string;
   name: string;
-  /** Its phrases — a phone or an e-mail taken out of the cell first (stripContacts), then split: a number broken over a
-   * line is one number, never two «phrases» of digits. */
+  /** Its phrases — a phone or an e-mail taken out of the cell first (stripContacts), then split. Shown, never sent. */
   phrases: string[];
   /** A phone or an e-mail was taken out of its cells (said in the preview). */
   contactsOut: boolean;
@@ -176,37 +200,23 @@ export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: number | nul
   });
 }
 
-export interface Phrase {
-  key: string;
+/** A phrase of the file as the preview shows it — read-only: the reason for the channel proposed. */
+export interface ShownPhrase {
   text: string;
-  count: number;
+  /** The channel it names (one), or null. */
   channel: ContactPref | null;
-  /** The heuristic's tick («הצעה») — never on a phrase that names an escort or speaks of one. */
-  contact: boolean;
-  /** About payment or transport: dropped. */
+  /** About payment or transport: no reason for anything. */
   money: boolean;
-  /** The escort's name it holds (namedEscort): not tickable until edited out. */
+  /** An escort's word it holds (namedEscort) — said beside it; nothing of it is saved in any case. */
   escort: string | null;
-  /** It speaks of the escort («המלווה…»). */
+  /** It speaks of the escort. */
   mentions: boolean;
 }
 
-/** The phrases, grouped; `names`: the escorts' (escortNames, and an edition's roster) — a phrase holding one is never pre-ticked. */
-export function phrasesOf(rows: EscortsRow[], names: readonly string[] = []): Phrase[] {
-  const m = new Map<string, Phrase>();
-  const words = escortWords(names);
-  for (const r of rows) {
-    if (r.skip) continue;
-    for (const p of r.phrases) {
-      const k = phraseKey(p);
-      const escort = namedEscort(p, words);
-      const mentions = mentionsEscort(p);
-      const e = m.get(k) ?? { key: k, text: p, count: 0, channel: channelOf(p), contact: isContactPhrase(p) && !escort, money: isMoneyOrTransport(p), escort, mentions };
-      e.count++;
-      m.set(k, e);
-    }
-  }
-  return [...m.values()];
+/** The channel the phrases suggest («הצעה»): the one channel those not about payment or transport name — else none. */
+export function suggestChannel(phrases: readonly Pick<ShownPhrase, "channel" | "money">[]): ImportChannel | null {
+  const found = [...new Set(phrases.filter((p) => !p.money && p.channel).map((p) => p.channel!))];
+  return found.length === 1 ? found[0] : null;
 }
 
 export interface EscortsPreview {
@@ -216,80 +226,89 @@ export interface EscortsPreview {
   status: RowStatus;
   reason: string | null;
   match: SpeakerMatch | null;
-  contact_pref: ContactPref | null;
-  secretary_note: string | null;
+  /** The pool speaker it completes («תואם»), for what a choice would fill. */
+  target: Speaker | null;
+  /** The file's phrases about the speaker, each once — shown, never sent. */
+  phrases: ShownPhrase[];
+  /** The list's pre-selection («הצעה»). */
+  suggested: ImportChannel | null;
   warnings: string[];
-  fills: string[];
 }
 
-/** A phrase's text as the admin edited it (spaces single) — its own text when not edited. */
-export const editedText = (p: string, edits: ReadonlyMap<string, string> | undefined) => (edits?.get(phraseKey(p)) ?? p).replace(/\s+/g, " ").trim();
-
-/**
- * One line per speaker: their ticked phrases (as edited), the one channel those name, and what would be filled. A
- * phrase about payment or transport, or one that still holds an escort's name (a word of it), is never kept — ticked or
- * not; a phone or an e-mail (the file's, or one typed into an edit) is taken out of a phrase kept, and said.
- */
-export function previewEscorts(rows: EscortsRow[], ticked: ReadonlySet<string>, ctx: MatchContext, edits?: ReadonlyMap<string, string>, names: readonly string[] = []): EscortsPreview[] {
+/** One line per speaker of the pool: the file's phrases (shown), the channel they suggest, the match. */
+export function previewEscorts(rows: EscortsRow[], ctx: MatchContext, names: readonly string[] = []): EscortsPreview[] {
   const by = new Map<string, EscortsRow[]>();
   for (const r of rows) if (!r.skip) by.set(r.key, [...(by.get(r.key) ?? []), r]);
   const out: EscortsPreview[] = [];
-  for (const r of rows) {
-    if (r.skip) out.push({ key: r.key, name: r.name, rows: [r.row], status: "skip", reason: r.skip, match: null, contact_pref: null, secretary_note: null, warnings: [], fills: [] });
-  }
+  const blank = { match: null, target: null, phrases: [], suggested: null, warnings: [] };
+  for (const r of rows) if (r.skip) out.push({ key: r.key, name: r.name, rows: [r.row], status: "skip", reason: r.skip, ...blank });
   const words = escortWords(names);
   for (const [key, rs] of by) {
-    let typedOut = false;
-    const phrases = [
-      ...new Set(
-        rs
-          .flatMap((r) => r.phrases)
-          .filter((p) => ticked.has(phraseKey(p)))
-          .map((p) => {
-            const st = stripContacts(editedText(p, edits));
-            if (st.phones.length || st.emails.length) typedOut = true;
-            return st.text.replace(/\s+/g, " ").trim();
-          })
-          .filter((p) => [...p].length >= 2 && !isMoneyOrTransport(p) && namedEscort(p, words) == null),
-      ),
-    ];
-    const channels = [...new Set(phrases.map(channelOf).filter((c): c is ContactPref => c != null))];
-    const warnings: string[] = [];
-    if (typedOut || rs.some((r) => r.contactsOut)) warnings.push("הוסר טלפון או מייל מהניסוחים — לא נשמר (ההערה אומרת איך פונים, לא מספר)");
-    let note: string | null = phrases.join(" · ") || null;
-    if (note && [...note].length > LIMITS.secretary_note) {
-      warnings.push(`הניסוחים ארוכים מ-${LIMITS.secretary_note} תווים — לא נשמרים`);
-      note = null;
+    const seen = new Set<string>();
+    const phrases: ShownPhrase[] = [];
+    for (const p of rs.flatMap((r) => r.phrases)) {
+      if (seen.has(phraseKey(p))) continue;
+      seen.add(phraseKey(p));
+      phrases.push({ text: p, channel: channelOf(p), money: isMoneyOrTransport(p), escort: namedEscort(p, words), mentions: mentionsEscort(p) });
     }
-    const base = { key, name: rs[0].name, rows: rs.map((r) => r.row), contact_pref: channels.length === 1 ? channels[0] : null, secretary_note: note, warnings };
-    if (!note && base.contact_pref == null) {
-      out.push({ ...base, status: "skip", reason: "אין ניסוח מסומן על ערוץ הקשר", match: null, fills: [] });
-      continue;
-    }
+    const warnings = rs.some((r) => r.contactsOut) ? ["הוסר טלפון או מייל מהניסוחים שבקובץ (לא נשמרים בכל מקרה — נשמרים רק הערוץ וההערה שלך)"] : [];
+    const base = { key, name: rs[0].name, rows: rs.map((r) => r.row), phrases, suggested: suggestChannel(phrases), warnings };
     const m = matchSpeaker(key, null, ctx.pool, new Map());
     if (m.status === "new") {
-      out.push({ ...base, status: "skip", reason: "לא במאגר — קודם מייבאים את המועמדים או את גיליון המעקב", match: null, fills: [] });
+      out.push({ ...base, status: "skip", reason: "לא במאגר — קודם מייבאים את המועמדים או את גיליון המעקב", match: null, target: null });
       continue;
     }
-    const match = { ...m, allowNew: false };
-    const target = m.status === "match" ? ctx.pool.find((s) => s.id === m.target) : undefined;
-    const fills = target
-      ? fillPlan(target, ctx.flags.get(target.id) as ContactFlags | undefined, { title: null, gender: null, affiliation: null, topics: [], phone: null, email: null, notes: null, contact_pref: base.contact_pref, secretary_note: note })
-      : [];
-    out.push({ ...base, status: m.status, reason: null, match, fills });
+    const target = m.status === "match" ? (ctx.pool.find((s) => s.id === m.target) ?? null) : null;
+    out.push({ ...base, status: m.status, reason: null, match: { ...m, allowNew: false }, target });
   }
   return out.sort((a, b) => a.rows[0] - b.rows[0]);
 }
 
-/** The commit's payload — null while an «עמום» speaker waits for a choice. */
-export function escortsPayload(rows: EscortsPreview[], choices: ReadonlyMap<string, Choice>): EscortsPayload | null {
+/** The admin's answer for a speaker: the channel from the list (null: nothing is saved for them), and their own note. */
+export interface EscortAnswer {
+  channel: ImportChannel | null;
+  note: string;
+}
+
+/** What is wrong with a note the admin typed (it blocks «ייבוא»), or null. */
+export function noteProblem(note: string): string | null {
+  const t = note.trim();
+  if (hasContact(t)) return "בהערה יש טלפון או מייל — מוחקים אותו (ההערה אומרת איך פונים, לא מספר)";
+  if ([...t].length > LIMITS.secretary_note) return `ההערה ארוכה מ-${LIMITS.secretary_note} תווים`;
+  return null;
+}
+
+/** What an answer would save for a speaker: nothing (null) — no channel, or «אחר» with no note — or its channel and note. */
+export function answerSaves(a: EscortAnswer | undefined): { contact_pref: ContactPref | null; note: string | null } | null {
+  if (!a?.channel) return null;
+  const note = a.note.trim() || null;
+  if (a.channel === "other" && !note) return null;
+  return { contact_pref: a.channel === "other" ? null : a.channel, note };
+}
+
+/** What a speaker of the pool would get — only what is empty (the commit fills, never overwrites). */
+export function escortFills(target: Speaker, flags: ContactFlags | undefined, a: EscortAnswer | undefined): string[] {
+  const saves = answerSaves(a);
+  if (!saves) return [];
+  return fillPlan(target, flags, { title: null, gender: null, affiliation: null, topics: [], phone: null, email: null, notes: null, contact_pref: saves.contact_pref, secretary_note: saves.note });
+}
+
+/**
+ * The commit's payload: for each speaker the admin gave a channel, that channel and the admin's own note — nothing of
+ * the file. Null while an «עמום» speaker with a channel waits for a choice, or while a note has a problem (noteProblem).
+ */
+export function escortsPayload(rows: EscortsPreview[], choices: ReadonlyMap<string, Choice>, answers: ReadonlyMap<string, EscortAnswer>): EscortsPayload | null {
   const out: PrefsRow[] = [];
   for (const r of rows) {
     if (r.status === "skip") continue;
-    const a = actionOf(r.status, r.match, choices.get(r.key));
-    if (a == null) return null;
-    if (a.action !== "merge") continue;
-    out.push({ row: r.rows[0], speaker_id: a.target, contact_pref: r.contact_pref, secretary_note: r.secretary_note });
+    const a = answers.get(r.key);
+    const saves = answerSaves(a);
+    if (!saves) continue;
+    if (noteProblem(a!.note)) return null;
+    const act = actionOf(r.status, r.match, choices.get(r.key));
+    if (act == null) return null;
+    if (act.action !== "merge") continue;
+    out.push({ row: r.rows[0], speaker_id: act.target, channel: a!.channel!, note: saves.note });
   }
   return { rows: out };
 }

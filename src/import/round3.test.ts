@@ -10,7 +10,7 @@ import { DEFAULT_TITLES } from "../data/speakerRules";
 import type { Speaker } from "../domain/types";
 import { contextOf, previewCandidates, readCandidates } from "./candidates";
 import { documentGrid, readDocx } from "./docxRead";
-import { escortColumns, escortNames, escortsPayload, namedEscort, phrasesOf, previewEscorts, readEscorts, splitPhrases } from "./escorts";
+import { escortColumns, escortNames, escortsPayload, namedEscort, previewEscorts, readEscorts, splitPhrases } from "./escorts";
 import { defaultMapping, findHeaderRow, type Mapping } from "./fields";
 import { IMPORT_LIMITS } from "./limits";
 import { hasContact, scrubContacts, stripContacts } from "./phone";
@@ -241,7 +241,9 @@ describe("סבב שלישי: a phone or an e-mail in the speaker's cell is never
 
   it("stripContacts: the labels and brackets go with them; two numbers in one cell; a second line; a date, a range of years or times stay", () => {
     expect(stripContacts("(טל' 000-000-0095)")).toEqual({ text: "", phones: ["000-000-0095"], emails: [] });
-    expect(stripContacts("פלוני אלמוני - 000-000-0001 / 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001", "000-000-0002"], emails: [] });
+    // «/» is a phone's separator too (סבב רביעי): the two numbers are one run — kept together, as the phone column keeps them
+    expect(stripContacts("פלוני אלמוני - 000-000-0001 / 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001 / 000-000-0002"], emails: [] });
+    expect(stripContacts("פלוני אלמוני - 000-000-0001, 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001", "000-000-0002"], emails: [] });
     expect(stripContacts("פלוני\nמייל: someone@example.org")).toEqual({ text: "פלוני", phones: [], emails: ["someone@example.org"] });
     expect(stripContacts("+972-00-000-0003 או 000-000-0004").text).toBe("");
     for (const t of ["12.3.2026 20:00", "1948-1967", "8.30-10.00", "תשפ״ו 2025–2026"]) {
@@ -287,16 +289,18 @@ describe("סבב שלישי: an escort is named by ANY word of the name — a fi
     expect(splitPhrases("ח. לדוגמה במייל. רק בערב")).toEqual(["ח. לדוגמה במייל", "רק בערב"]); // an initial is no sentence end
   });
 
-  it("a first name or a surname alone locks the phrase; a filler value locks nothing", () => {
-    const ps = phrasesOf(rows, names);
-    expect(ps.map((p) => [p.text, p.contact, p.escort])).toEqual([
-      ["לתאם עם חניך בוואטסאפ", false, "חניך"],
-      ["דוגמנית תתקשר ערב לפני דרך המזכירה", false, "דוגמנית"],
-      ["לתאם מול חניכה דלת בטלפון", false, "חניכה"],
-      ["חניך הא יתאם במייל", false, "חניך"],
-      ["אין לו וואטסאפ — רק דרך המזכירה", true, null], // «אין» in the escorts' column is nobody's name
-      ["רק במייל", true, null],
-      ["ח. לדוגמה במייל", false, "לדוגמה"],
+  it("a first name or a surname alone is said beside the phrase; a filler value names no one (a warning — nothing of the file is saved, סבב רביעי)", () => {
+    const pool = [1, 2, 3, 4, 5, 6, 7].map((i) => sp(i, `מרצה 0${i}`));
+    const ctx = contextOf(pool, { phones: [], contacts: [] });
+    const ps = previewEscorts(rows, ctx, names).flatMap((x) => x.phrases);
+    expect(ps.map((p) => [p.text, p.escort])).toEqual([
+      ["לתאם עם חניך בוואטסאפ", "חניך"],
+      ["דוגמנית תתקשר ערב לפני דרך המזכירה", "דוגמנית"],
+      ["לתאם מול חניכה דלת בטלפון", "חניכה"],
+      ["חניך הא יתאם במייל", "חניך"],
+      ["אין לו וואטסאפ — רק דרך המזכירה", null], // «אין» in the escorts' column is nobody's name
+      ["רק במייל", null],
+      ["ח. לדוגמה במייל", "לדוגמה"],
     ]);
     expect(namedEscort("שירה תתקשר יום לפני דרך המזכירה", ["שירה לדוגמה"])).toBe("שירה");
     expect(namedEscort("להתקשר לשירה דרך המזכירה", ["שירה לדוגמה"])).toBe("שירה"); // a prefix letter
@@ -304,13 +308,20 @@ describe("סבב שלישי: an escort is named by ANY word of the name — a fi
     expect(namedEscort("דרך המזכירה", ["שירה לדוגמה"])).toBeNull();
   });
 
-  it("ticked anyway, none is kept; the demo's commit stores no escort's word", () => {
+  it("the payload is the channel chosen and the admin's own note — no escort's word, whatever the phrases said", () => {
     const pool = [1, 2, 3, 4, 5, 6, 7].map((i) => sp(i, `מרצה 0${i}`));
     const ctx = contextOf(pool, { phones: [], contacts: [] });
-    const all = new Set(phrasesOf(rows, names).map((p) => p.key));
-    const preview = previewEscorts(rows, all, ctx, new Map(), names);
-    const payload = escortsPayload(preview, new Map())!;
-    expect(payload.rows.map((x) => x.secretary_note)).toEqual(["אין לו וואטסאפ — רק דרך המזכירה", "רק במייל"]);
-    expect(JSON.stringify(payload)).not.toMatch(/חניכ?ה?|דוגמנית|דלת|לדוגמה/);
+    const preview = previewEscorts(rows, ctx, names);
+    const answers = new Map(preview.map((x) => [x.key, { channel: x.suggested, note: "" }]));
+    const payload = escortsPayload(preview, new Map(), answers)!;
+    expect(payload.rows.map((x) => [x.row, x.channel, x.note])).toEqual([
+      [2, "whatsapp", null],
+      [3, "secretary", null],
+      [4, "phone", null],
+      [5, "email", null],
+      [7, "email", null],
+      [8, "email", null],
+    ]);
+    expect(JSON.stringify(payload)).not.toMatch(/[א-ת]/); // not one Hebrew letter of the file
   });
 });
