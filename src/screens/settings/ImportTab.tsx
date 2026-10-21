@@ -678,6 +678,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
             titles={titles}
             escorts={escortsNamed}
             lines={lines}
+            skipped={lineSkipped}
             onLine={(lineId, as) => setLineAs((cur) => new Map(cur).set(lineId, as))}
             onEdit={(from, e) => {
               const now = (allTrackSpeakers ?? []).filter((x) => x.speaker.from.some((k) => from.includes(k))).map((x) => x.speaker.key);

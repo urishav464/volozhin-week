@@ -658,7 +658,7 @@ test.describe("demo build — the import of 5786", () => {
     const tr = (...cells: string[]) => `<tr>${cells.map(td).join("")}</tr>`;
     await page.goto(`${demoUrl()}/settings/import`);
     await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
-    await paste(page, `<table>${tr("מרצה", "שיעור ב", "כותרת")}${tr("מרצה 07-מכון לדוגמה", "ראשון 8:30", "כותרת אלף")}${tr("מרצה 12 / ישיבת הגולן", "ראשון 10:00", "כותרת בית")}${tr("מרצה 03 + גימל בדיקתית", "ראשון 11:30", "כותרת גימל")}${tr("מרצה 12ב", "ראשון 14:30", "כותרת דלת")}</table>`, "");
+    await paste(page, `<table>${tr("מרצה", "שיעור ב", "כותרת")}${tr("מרצה 07-מכון לדוגמה", "ראשון 8:30", "כותרת אלף")}${tr("מרצה 12 / ישיבת הגולן", "ראשון 10:00", "כותרת בית")}${tr("מרצה 03 + גימל בדיקתית", "ראשון 11:30", "כותרת גימל")}${tr("מרצה 12ב", "ראשון 14:30", "כותרת דלת")}${tr("מרצה 03ב", "ראשון 16:00", "כותרת הא")}${tr("מרצה 05 + גימל בדיקתית", "ראשון", "כותרת וו")}</table>`, "");
     await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב שישי");
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
     const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
@@ -666,14 +666,28 @@ test.describe("demo build — the import of 5786", () => {
     const speakers = page.getByRole("list", { name: "המרצים בגיליון" });
     await expect(speakers).not.toContainText("ישיבת הגולן —");
     const card = (name: string) => speakers.locator(":scope > li").filter({ hasText: name });
-    // the name beside «מרצה 03» is a co-speaker («הצעה»); its card's «עריכה» says what it is
+    // the name beside «מרצה 03» is a co-speaker («הצעה»); its card's «עריכה» says what it is — that line alone: the one
+    // beside «מרצה 05» is of a row left out anyway (no time), and waits for nothing here either
     await card("גימל בדיקתית").getByRole("button", { name: "עריכה" }).click();
+    const gimel = card("גימל בדיקתית").getByRole("group", { name: "עריכה" });
+    await expect(gimel.getByRole("radio", { name: "מרצה נוסף/ת" })).toHaveCount(1);
+    await expect(lines.locator('li[data-line="7:2"]').getByRole("radio", { name: "מרצה נוסף/ת" })).toBeDisabled();
+    // a title saved: the card keeps the keyboard
+    await gimel.getByLabel("תואר").selectOption("הרבנית");
+    await gimel.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" })).toBeFocused();
     // by the keyboard: the arrows check each choice they pass — the card goes with the first that is no speaker, and the
     // keyboard goes on at the same choice of the line in «שם נוסף בתא של המרצה»
+    await card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" }).click();
     await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "מרצה נוסף/ת" }).focus();
     await page.keyboard.press("ArrowDown");
     const line = lines.locator('li[data-line="4:2"]');
     await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).toBeFocused();
+    // back up: the card comes back, and the keyboard stays in the list (the saved title's hand-off was spent)
+    await page.keyboard.press("ArrowUp");
+    await expect(card("גימל בדיקתית")).toHaveCount(1);
+    await expect(line.getByRole("radio", { name: "מרצה נוסף/ת" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await expect(line.getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeFocused();
     await expect(line.getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeChecked();
@@ -689,18 +703,30 @@ test.describe("demo build — the import of 5786", () => {
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
     // a later card edited into an earlier one's name: the two are one, and the keyboard goes on at the card that stays
-    await card("מרצה 12ב").getByRole("button", { name: "עריכה" }).click();
-    const late = card("מרצה 12ב").getByRole("group", { name: "עריכה" });
-    await late.getByLabel("שם", { exact: true }).fill("מרצה 12");
+    await speakers.getByRole("button", { name: "עריכה — מרצה 03ב", exact: true }).click();
+    const late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
+    await late.getByLabel("שם", { exact: true }).fill("מרצה 03");
     await late.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(card("מרצה 03ב")).toHaveCount(0);
+    await expect(card("מרצה 03")).toContainText("שורות 4, 6");
+    await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).toBeFocused();
+    // …at its form's name when its own «עריכה» is open (no «עריכה» button shown), and back to «עריכה» when that closes
+    await speakers.getByRole("button", { name: "עריכה — מרצה 12", exact: true }).click();
+    const open12 = speakers.getByRole("group", { name: "עריכה" });
+    await speakers.getByRole("button", { name: "עריכה — מרצה 12ב", exact: true }).click();
+    const late12 = card("מרצה 12ב").getByRole("group", { name: "עריכה" });
+    await late12.getByLabel("שם", { exact: true }).fill("מרצה 12");
+    await late12.getByRole("button", { name: "שמירת העריכה" }).click();
     await expect(card("מרצה 12ב")).toHaveCount(0);
+    await expect(open12.getByLabel("שם", { exact: true })).toBeFocused();
+    await open12.getByRole("button", { name: "ביטול", exact: true }).click();
     await expect(card("מרצה 12")).toContainText("שורות 3, 5");
-    await expect(card("מרצה 12").getByRole("button", { name: "עריכה — מרצה 12" })).toBeFocused();
+    await expect(speakers.getByRole("button", { name: "עריכה — מרצה 12", exact: true })).toBeFocused();
     await expect(page.getByRole("list", { name: "השיעורים" }).locator("li").filter({ hasText: "כותרת אלף" })).toContainText("מרצה 07");
     await noSidewaysScroll(page);
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
-    await expect(page.getByText(/4 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();
+    await expect(page.getByText(/5 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();
   });
 
   test("סבב שישי — the escorts' file: «הרב מרצה 05 (ישיבת בדיקה)» is the pool's מרצה 05; «רק בוואטסאפ, לא להתקשר בשבת» proposes WhatsApp", async ({ page }, info) => {

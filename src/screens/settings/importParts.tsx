@@ -2,7 +2,7 @@
 // categories, the sources' words, the escorts' phrases, and the preview «חדש · תואם · עמום · מדולג» — a choice for
 // every «עמום», and what a match would fill; «עריכה» of a speaker card's name, title and affiliation. Lists, one card per
 // row, the same at every width.
-import { useEffect, useId, useRef, useState } from "react";
+import { type Ref, useEffect, useId, useRef, useState } from "react";
 import { fmtRange } from "../../domain/time";
 import { dayLabel } from "../../reader/model";
 import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
@@ -167,6 +167,7 @@ function EditSpeaker({
   onLine,
   onSave,
   onCancel,
+  nameRef,
 }: {
   start: SpeakerEdit;
   titles: readonly string[];
@@ -175,14 +176,13 @@ function EditSpeaker({
   onLine?: (id: string, as: LineAs) => void;
   onSave: (e: SpeakerEdit) => void;
   onCancel: () => void;
+  /** The name's field (Editable's, which focuses it). */
+  nameRef: Ref<HTMLInputElement>;
 }) {
   const id = useId();
   const [title, setTitle] = useState(start.title ?? "");
   const [name, setName] = useState(start.name);
   const [affiliation, setAffiliation] = useState(start.affiliation ?? "");
-  // opened by «עריכה»: the keyboard goes on into the form, to the name
-  const nameRef = useRef<HTMLInputElement>(null);
-  useEffect(() => nameRef.current?.focus(), []);
   const value: SpeakerEdit = { title: title || null, name, affiliation: affiliation || null };
   const problem = editProblem(value, titles);
   const escort = namedEscort(name, escorts);
@@ -240,7 +240,7 @@ function Editable({
   lines,
   onLine,
   onEdit,
-  focusEdit = 0,
+  focusEdit = false,
 }: {
   fields: SpeakerEdit;
   edited: boolean;
@@ -250,18 +250,24 @@ function Editable({
   onLine?: (id: string, as: LineAs) => void;
   /** The admin's reading (null: back to the file's). */
   onEdit: (e: SpeakerEdit | null) => void;
-  /** Set by a list whose cards an «עריכה» merges: changes when this card's «עריכה» takes the keyboard — also as it mounts. */
-  focusEdit?: number;
+  /** Set by a list whose cards an «עריכה» merges: true for the render after which this card takes the keyboard — also as it mounts. */
+  focusEdit?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // opened by «עריכה»: the keyboard goes on into the form, to the name
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (open) nameRef.current?.focus();
+  }, [open]);
   // the form closed (saved or cancelled), or the edit taken back: the keyboard returns to this card's «עריכה»
   const editRef = useRef<HTMLButtonElement>(null);
   const [refocus, setRefocus] = useState(0);
   useEffect(() => {
     if (refocus) editRef.current?.focus();
   }, [refocus]);
+  // the list's hand-off: to «עריכה», or — the card's own form open, so no «עריכה» shown — to the form's name
   useEffect(() => {
-    if (focusEdit) editRef.current?.focus();
+    if (focusEdit) (editRef.current ?? nameRef.current)?.focus();
   }, [focusEdit]);
   const close = () => {
     setOpen(false);
@@ -300,6 +306,7 @@ function Editable({
             close();
           }}
           onCancel={close}
+          nameRef={nameRef}
         />
       )}
     </>
@@ -502,6 +509,7 @@ export function SpeakersPreview({
   titles,
   escorts,
   lines,
+  skipped = new Set(),
   onLine,
   onEdit,
 }: {
@@ -517,13 +525,19 @@ export function SpeakersPreview({
   escorts: readonly string[];
   /** The sheet's lines (a speaker's names beside or under another are turned in its «עריכה»). */
   lines: ExtraLine[];
+  /** Rows left out anyway: their lines wait for nothing (LinesTable's), so a card's form does not offer them. */
+  skipped?: ReadonlySet<number>;
   onLine: (id: string, as: LineAs) => void;
   /** «עריכה» of a speaker (by its keys as read; null: back to what was read). */
   onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
   // an «עריכה» saved into an earlier card's name merges the two, and the card that had the keyboard goes: it goes on at
   // the «עריכה» of the card that now holds its first key as read
-  const [focus, setFocus] = useState<{ key: string; n: number } | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  // delivered once: the cards' effects run before this one, and a card that mounts again later takes nothing
+  useEffect(() => {
+    if (focus != null) setFocus(null);
+  }, [focus]);
   // a card's form holds only the lines it is a speaker by, so any choice there takes the line (and the radio) out of the
   // card, often the card itself: the keyboard goes on at the same choice of the same line in «שם נוסף בתא של המרצה»,
   // which stays (and the arrows go on from there)
@@ -569,16 +583,16 @@ export function SpeakersPreview({
                 edited={s.edited}
                 titles={titles}
                 escorts={escorts}
-                lines={lines.filter((l) => s.lines.includes(l.id))}
+                lines={lines.filter((l) => s.lines.includes(l.id) && !skipped.has(l.row))}
                 onLine={(id, as) => {
                   onLine(id, as);
                   setLineFocus({ id, as });
                 }}
                 onEdit={(e) => {
                   onEdit(s.from, e);
-                  setFocus((f) => ({ key: s.from[0], n: (f?.n ?? 0) + 1 }));
+                  setFocus(s.from[0]);
                 }}
-                focusEdit={focus && s.from.includes(focus.key) ? focus.n : 0}
+                focusEdit={focus != null && s.from.includes(focus)}
               />
               <SpeakerDecision
                 name={name}
