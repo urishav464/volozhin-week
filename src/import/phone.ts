@@ -65,7 +65,7 @@ export function normalizeEmail(raw: string | null | undefined): { value: string 
 /** White space, as JavaScript's \s. */
 export const CONTACT_WS = " \\t\\n\\r\\f\\v\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff";
 /**
- * What shows nothing, taken out before a contact is looked for: Unicode's format characters (Cf, as of Unicode 16.0 —
+ * What shows nothing, taken out before a contact is looked for: Unicode's format characters (Cf, as of Unicode 17.0 —
  * the soft hyphen, zero widths, bidi controls, tags…), NEL (U+0085) and U+180E. Inclusive ranges of code points.
  */
 export const FORMAT_RANGES: readonly (readonly [number, number])[] = [
@@ -74,16 +74,18 @@ export const FORMAT_RANGES: readonly (readonly [number, number])[] = [
   [0x13430, 0x1343f], [0x1bca0, 0x1bca3], [0x1d173, 0x1d17a], [0xe0001, 0xe0001], [0xe0020, 0xe007f],
 ];
 /**
- * The «0» of every set of ten decimal digits beside ASCII's (Unicode's Nd, as of 16.0): Arabic-Indic ٠, Persian ۰,
+ * The «0» of every set of ten decimal digits beside ASCII's (Unicode's Nd, as of 17.0): Arabic-Indic ٠, Persian ۰,
  * fullwidth ０, the mathematical ones… — each folded to 0–9.
  */
 export const DIGIT_ZEROS: readonly number[] = [
   0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xde6, 0xe50, 0xed0, 0xf20, 0x1040, 0x1090, 0x17e0, 0x1810,
   0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0, 0xff10, 0x104a0, 0x10d30,
   0x10d40, 0x11066, 0x110f0, 0x11136, 0x111d0, 0x112f0, 0x11450, 0x114d0, 0x11650, 0x116c0, 0x116d0, 0x116da, 0x11730, 0x118e0, 0x11950, 0x11bf0,
-  0x11c50, 0x11d50, 0x11da0, 0x11f50, 0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce, 0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140,
+  0x11c50, 0x11d50, 0x11da0, 0x11de0, 0x11f50, 0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce, 0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140,
   0x1e2f0, 0x1e4f0, 0x1e5f1, 0x1e950, 0x1fbf0,
 ];
+/** The Unicode the two lists are of (17.0 added one set of digits, U+11DE0; no format character). */
+export const FOLD_UNICODE = "17.0";
 const pgHex = (cp: number) => (cp <= 0xffff ? `\\u${cp.toString(16).padStart(4, "0")}` : `\\U${cp.toString(16).padStart(8, "0")}`);
 /** FORMAT_RANGES as app.contact_fold writes them: a PostgreSQL bracket expression. */
 export const PG_FORMAT_CLASS = `[${FORMAT_RANGES.map(([a, b]) => (a === b ? pgHex(a) : `${pgHex(a)}-${pgHex(b)}`)).join("")}]`;

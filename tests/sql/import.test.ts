@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { jsonbText, labelKey } from "../../src/data/importRules";
-import { DIGIT_ZEROS, EMAIL_RUN, FORMAT_RANGES, foldContact, hasContact, PG_DIGITS_FROM, PG_DIGITS_TO, PG_FORMAT_CLASS, PHONE, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
+import { DIGIT_ZEROS, EMAIL_RUN, FOLD_UNICODE, FORMAT_RANGES, foldContact, hasContact, PG_DIGITS_FROM, PG_DIGITS_TO, PG_FORMAT_CLASS, PHONE, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
 import { SCHEMA, as, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -577,13 +577,30 @@ describe("the import of 5786", () => {
       const chars = edges.map((cp) => `a${String.fromCodePoint(cp)}b`);
       const f = await db.query("select o, app.contact_fold(x) as f from unnest($1::text[]) with ordinality as u(x, o) order by o", [chars]);
       expect(f.rows.filter((x) => x.f !== foldContact(chars[Number(x.o) - 1])).map((x) => chars[Number(x.o) - 1].codePointAt(1)!.toString(16))).toEqual([]);
-      // the lists are this runtime's Unicode: every format character and every decimal digit it knows
-      for (let cp = 0; cp <= 0x10ffff; cp++) {
-        if (cp >= 0xd800 && cp <= 0xdfff) continue;
-        const ch = String.fromCodePoint(cp);
-        if (/\p{Cf}/u.test(ch)) expect(foldContact(ch), cp.toString(16)).toBe("");
-        else if (/\p{Nd}/u.test(ch)) expect(foldContact(ch), cp.toString(16)).toMatch(/^[0-9]$/);
+      // the lists are of FOLD_UNICODE: a runtime of that Unicode or an older one holds them to every format character and
+      // every decimal digit it knows; one of a newer Unicode (CI's Node 22 is of the newest ICU) only to what they name —
+      // its new digits are text to the rule until the lists are brought up to it, in both twins
+      const runtime = Number(process.versions.unicode);
+      if (runtime <= Number(FOLD_UNICODE)) {
+        for (let cp = 0; cp <= 0x10ffff; cp++) {
+          if (cp >= 0xd800 && cp <= 0xdfff) continue;
+          const ch = String.fromCodePoint(cp);
+          if (/\p{Cf}/u.test(ch)) expect(foldContact(ch), cp.toString(16)).toBe("");
+          else if (/\p{Nd}/u.test(ch)) expect(foldContact(ch), cp.toString(16)).toMatch(/^[0-9]$/);
+        }
       }
+      // and what they name is what they say, wherever this runtime knows the character (Unicode never takes a Cf or an Nd back)
+      const known = (ch: string) => !/\p{Cn}/u.test(ch);
+      for (const z of DIGIT_ZEROS)
+        for (let d = 0; d <= 9; d++) {
+          const ch = String.fromCodePoint(z + d);
+          if (known(ch)) expect(/\p{Nd}/u.test(ch) && foldContact(ch) === String(d), (z + d).toString(16)).toBe(true);
+        }
+      for (const [lo, hi] of FORMAT_RANGES)
+        for (let cp = lo; cp <= hi; cp++) {
+          const ch = String.fromCodePoint(cp);
+          if (cp !== 0x85 && cp !== 0x180e && known(ch)) expect(/\p{Cf}/u.test(ch), cp.toString(16)).toBe(true);
+        }
       // and what the browser scrubs or strips never holds one
       for (const x of sample) {
         expect(hasContact(scrubContacts(x).text), JSON.stringify(x)).toBe(false);

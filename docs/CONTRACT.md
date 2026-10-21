@@ -1188,8 +1188,8 @@ payload. One definition, written the same on both sides (the function's expressi
 `EMAIL_RUN`, and `app.contact_fold`'s lists are `FORMAT_RANGES` and `DIGIT_ZEROS`, character for character) and held
 equal string for string (`tests/sql/import.test.ts`: fixed cases, 10,000 seeded ones — 4,000 of them built of the
 numbering plan's pieces — and the fold character by character). The text is **folded** first (`app.contact_fold` ≡
-`foldContact`): what shows nothing taken out — Unicode's format characters (Cf, as of 16.0: bidi controls, zero widths,
-the soft hyphen, tags), NEL (U+0085) and U+180E — and every decimal digit of every script written as its ASCII digit
+`foldContact`): what shows nothing taken out — Unicode's format characters (Cf, as of 17.0: bidi controls, zero widths,
+the soft hyphen, tags), NEL (U+0085) and U+180E — and every decimal digit of every script (Nd, as of 17.0) written as its ASCII digit
 (٠, ۰, ０, 𝟎 → 0). Then: an **e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth
 «＠»), a dot after it; or, in the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its
 last part letters; or a **phone by Israel's numbering plan** — never «any seven digits» (since «סבב חמישי»):
