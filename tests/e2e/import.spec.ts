@@ -419,9 +419,11 @@ test.describe("demo build — the import of 5786", () => {
     await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב שלישי");
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
 
-    // the contacts are no lines: only the co-speaker (waiting) and the institution («הצעה: שם של מוסד») are asked about
+    // the contacts are no lines: only the second name (waiting), the institution («הצעה: שם של מוסד») and the name beside
+    // the first («הצעה: … מרצה נוסף/ת», סבב שישי) are asked about
     const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
-    await expect(lines.getByRole("listitem")).toHaveCount(2);
+    await expect(lines.getByRole("listitem")).toHaveCount(3);
+    await expect(lines.locator('li[data-line="7:2"]')).toContainText("הצעה: שם ליד השם — מרצה נוסף/ת");
     await expect(lines).not.toContainText("000-000");
     await expect(lines).not.toContainText("example.org");
     await expect(lines.locator('li[data-line="5:2"]')).toContainText("הצעה: שם של מוסד");
@@ -566,9 +568,9 @@ test.describe("demo build — the import of 5786", () => {
 
     const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
     await expect(lines.locator('li[data-line="2:1.1"]').getByRole("radio", { name: "שיוך מוסדי של מרצה 07" })).toBeChecked();
-    await expect(lines.locator('li[data-line="3:1.1"]').getByRole("radio", { name: "לא לייבא את השורה" })).toBeChecked();
+    await expect(lines.locator('li[data-line="3:1.1"]').getByRole("radio", { name: "לא לייבא את הסוגריים (המרצה נשאר/ת)" })).toBeChecked();
     await expect(lines.locator('li[data-line="3:1.1"]')).toContainText("הצעה: שם מעמודת המלווים («שירה»)");
-    await expect(lines.locator('li[data-line="4:2"]').getByRole("radio", { name: "לא לייבא את השורה" })).toBeChecked();
+    await expect(lines.locator('li[data-line="4:2"]').getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeChecked();
     await expect(lines.locator('li[data-line="5:1.1"]')).toContainText("צריך לבחור");
     await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeDisabled();
     // the names as the pool has them: מרצה 07 is the pool's, never a second «מרצה 07 (מכון לדוגמה)»
@@ -582,7 +584,7 @@ test.describe("demo build — the import of 5786", () => {
     await expect(lessons).toContainText("עיון בתהלים 119:1-176");
     await expect(lessons).not.toContainText("הוסר טלפון");
     await noSidewaysScroll(page);
-    await lines.locator('li[data-line="5:1.1"]').getByRole("radio", { name: "לא לייבא את השורה" }).check();
+    await lines.locator('li[data-line="5:1.1"]').getByRole("radio", { name: "לא לייבא את הסוגריים (המרצה נשאר/ת)" }).check();
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
     await expect(page.getByText(/4 שיעורים במחזור «ארכיון סבב חמישי»/)).toBeVisible();
@@ -602,6 +604,100 @@ test.describe("demo build — the import of 5786", () => {
     await card.getByRole("radio", { name: /להשלים את .*מרצה 07/ }).check();
     await expect(card).toContainText("יושלם (רק מה שחסר): ערוץ קשר");
     await expect(card).not.toContainText("אין מה להשלים");
+    await noSidewaysScroll(page);
+  });
+
+  test("סבב שישי — «עריכה»: a glued name corrected, matched again to the pool; a tail after « - » split by itself; a contact in an edit refused", async ({ page }, info) => {
+    test.skip(info.project.name === "tablet", "two widths are enough for this flow");
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
+    const td = (x: string) => `<td>${x}</td>`;
+    await paste(page, `<table><tr>${td("מרצה")}</tr><tr>${td("הרב מרצה 07-ישיבת בדיקה")}</tr><tr>${td("הרב מרצה 12 - ישיבת הר בדיקה")}</tr><tr>${td("ד\"ר מרצה 03, הרבנית חדשה בדיקתית")}</tr></table>`, "");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
+    // a tail after « - » is a line of the name by itself — the name the pool's, the tail its affiliation («הצעה»)
+    const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
+    await expect(lines.locator('li[data-line="3:1.1"]').getByRole("radio", { name: "שיוך מוסדי של מרצה 12" })).toBeChecked();
+    await expect(preview.locator('li[data-ref="3"]')).toContainText(/כבר במאגר: (\S+ )?מרצה 12/);
+    await expect(lines.locator('li[data-line="4:1.1"]')).toContainText("צריך לבחור");
+    await expect(lines.locator('li[data-line="4:1.1"]').getByRole("radio", { name: "לא לייבא את החלק הזה (המרצה נשאר/ת)" })).toBeVisible();
+    await expect(page.getByText(/כל שורה או סוגריים אחרים מחכים להחלטה/)).toBeVisible();
+    // a bare hyphen is never a split: the glued name is «חדש» — «עריכה» corrects it
+    const glued = preview.locator('li[data-ref="2"]');
+    await expect(glued).toContainText("מרצה 07-ישיבת בדיקה");
+    await expect(glued).toContainText("חדש");
+    await glued.getByRole("button", { name: "עריכה" }).click();
+    const form = glued.getByRole("group", { name: "עריכה" });
+    await expect(form.getByLabel("תואר")).toHaveValue("הרב");
+    await form.getByLabel("שם", { exact: true }).fill("מרצה 07 000-000-0001");
+    await expect(form).toContainText("יש כאן טלפון או מייל");
+    await expect(form.getByRole("button", { name: "שמירת העריכה" })).toBeDisabled();
+    await form.getByLabel("שם", { exact: true }).fill("מרצה 07");
+    await form.getByLabel("שיוך מוסדי").fill("ישיבת בדיקה");
+    await noSidewaysScroll(page);
+    await form.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(glued).toContainText("נערך ידנית");
+    await expect(glued).toContainText("תואם");
+    await expect(glued).toContainText("כבר במאגר: מרצה 07");
+    await expect(glued).toContainText("יושלם (רק מה שחסר): תואר: הרב"); // the pool's מרצה 07 has its gender and an affiliation already
+    // taken back: what was read, again
+    await glued.getByRole("button", { name: "ביטול העריכה" }).click();
+    await expect(glued).toContainText("חדש");
+    await expect(glued).not.toContainText("נערך ידנית");
+    await noSidewaysScroll(page);
+  });
+
+  test("סבב שישי — the tracking sheet: «עריכה» of a speaker card, and which names beside another are speakers", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough");
+    const td = (x: string) => `<td>${x}</td>`;
+    const tr = (...cells: string[]) => `<tr>${cells.map(td).join("")}</tr>`;
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
+    await paste(page, `<table>${tr("מרצה", "שיעור ב", "כותרת")}${tr("מרצה 07-מכון לדוגמה", "ראשון 8:30", "כותרת אלף")}${tr("מרצה 12 / ישיבת הגולן", "ראשון 10:00", "כותרת בית")}${tr("מרצה 03 + גימל בדיקתית", "ראשון 11:30", "כותרת גימל")}</table>`, "");
+    await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב שישי");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
+    await expect(lines.locator('li[data-line="3:2"]').getByRole("radio", { name: "שיוך מוסדי של מרצה 12" })).toBeChecked(); // never a speaker «ישיבת הגולן»
+    const speakers = page.getByRole("list", { name: "המרצים בגיליון" });
+    await expect(speakers).not.toContainText("ישיבת הגולן —");
+    const card = (name: string) => speakers.locator(":scope > li").filter({ hasText: name });
+    // the name beside «מרצה 03» is a co-speaker («הצעה»); its card's «עריכה» says what it is
+    await card("גימל בדיקתית").getByRole("button", { name: "עריכה" }).click();
+    // (the card goes with the choice: it is no speaker now)
+    await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "לא לייבא את השם הזה" }).click();
+    await expect(card("גימל בדיקתית")).toHaveCount(0);
+    await expect(lines.locator('li[data-line="4:2"]').getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeChecked();
+    // the glued one corrected: the pool's מרצה 07, with its affiliation
+    await card("מרצה 07-מכון לדוגמה").getByRole("button", { name: "עריכה" }).click();
+    const form = card("מרצה 07-מכון לדוגמה").getByRole("group", { name: "עריכה" });
+    await form.getByLabel("שם", { exact: true }).fill("מרצה 07");
+    await form.getByLabel("שיוך מוסדי").fill("מכון לדוגמה");
+    await form.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(card("מרצה 07")).toContainText("נערך ידנית");
+    await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
+    await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
+    await expect(page.getByRole("list", { name: "השיעורים" }).locator("li").filter({ hasText: "כותרת אלף" })).toContainText("מרצה 07");
+    await noSidewaysScroll(page);
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(page.getByText(/3 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();
+  });
+
+  test("סבב שישי — the escorts' file: «הרב מרצה 05 (ישיבת בדיקה)» is the pool's מרצה 05; «רק בוואטסאפ, לא להתקשר בשבת» proposes WhatsApp", async ({ page }, info) => {
+    test.skip(info.project.name !== "phone", "one width is enough");
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "קובץ המלווים" }).check();
+    await page.getByLabel("הדבקת טבלה").fill("מרצה\tמלווה\tהערות\nהרב מרצה 05 (ישיבת בדיקה)\tשירה בדקני\tרק בוואטסאפ, לא להתקשר בשבת\nמרצה 12 - מלווה: שירה\t\tדרך המזכירה");
+    await page.getByRole("button", { name: "קריאת הטקסט שהוקלד" }).click();
+    await page.getByLabel("הערות", { exact: true }).selectOption("phrases");
+    await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("1");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const card = (name: string) => page.getByRole("list", { name: "תצוגה מקדימה" }).locator(":scope > li").filter({ hasText: name });
+    await expect(card("מרצה 05")).toContainText("תואם");
+    await expect(card("מרצה 05")).not.toContainText("ישיבת בדיקה");
+    await expect(card("מרצה 05").getByLabel("ערוץ הקשר")).toHaveValue("whatsapp");
+    await expect(card("מרצה 12")).toContainText("תואם");
+    await expect(card("מרצה 12").getByLabel("ערוץ הקשר")).toHaveValue("secretary");
     await noSidewaysScroll(page);
   });
 
@@ -672,6 +768,55 @@ test.describe("mock build — on the wire", () => {
     for (const fn of ["import_lookup", "import_commit"]) {
       expect(sb.calls.filter((c) => c.path === `/rest/v1/rpc/${fn}`).every((c) => c.auth === `Bearer ${session.access_token}`)).toBe(true);
     }
+  });
+
+  test("סבב שישי — «עריכה» on the wire: the edited name matched to the pool, its affiliation and title in import_commit; one more import_lookup for the speaker it now is", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const week = demoWeek();
+    week.edition.id = 7;
+    week.edition.kind = "real";
+    const sb = new FakeSupabase({
+      status: 200,
+      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email: "admin@example.org", display_name: "מדריך/ה לדוגמה", global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] },
+    });
+    sb.answers.set("editions", [week.edition]);
+    sb.answers.set("load_week", week);
+    sb.tables.set("speakers", week.speakers);
+    sb.answers.set("import_lookup", { phones: [], contacts: [] });
+    sb.answers.set("import_commit", { created: 0, merged: 1, filled: 1, contacts: 0, notes: 0, lessons: 0, replaced: 0, edition_id: null, speakers: [{ row: 2, speaker_id: 7, created: false }] });
+    await sb.attach(page);
+    const session = await signIn(page, "admin@example.org");
+    sb.token = session.access_token;
+    const target = week.speakers.find((x) => x.name === "מרצה 07")!;
+
+    await page.goto(`${mockUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
+    await paste(page, "<table><tr><td>מרצה</td></tr><tr><td>הרב מרצה 07-ישיבת בדיקה</td></tr></table>", "");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const card = page.getByRole("list", { name: "תצוגה מקדימה" }).locator('li[data-ref="2"]');
+    await expect(card).toContainText("חדש");
+    expect(sb.rpc.get("import_lookup")).toHaveLength(1);
+    await card.getByRole("button", { name: "עריכה" }).click();
+    const form = card.getByRole("group", { name: "עריכה" });
+    await form.getByLabel("שם", { exact: true }).fill("מרצה 07");
+    await form.getByLabel("שיוך מוסדי").fill("ישיבת בדיקה");
+    await form.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(card).toContainText("כבר במאגר: מרצה 07");
+    // what the match would fill is asked about the speaker it now is (its contacts' booleans, never their values)
+    await expect.poll(() => sb.rpc.get("import_lookup")?.length).toBe(2);
+    expect(sb.rpc.get("import_lookup")![1]).toEqual({ p_speakers: [target.id], p_phone_keys: [] });
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(toast(page, "הייבוא נשמר")).toBeVisible();
+    expect(sb.rpc.get("import_commit")).toEqual([
+      {
+        p_kind: "candidates",
+        p_payload: {
+          source: "brainstorm-5786", titles_from: 7,
+          rows: [{ row: 2, action: "merge", speaker_id: target.id, title: "הרב", name: "מרצה 07", gender: "m", affiliation: "ישיבת בדיקה", topics: [], phone: null, email: null, notes: null }],
+        },
+      },
+    ]);
   });
 
   test("סבב רביעי — the escorts' file on the wire: import_commit carries only {row, speaker_id, channel, note} — not one word of the file", async ({ page }, info) => {

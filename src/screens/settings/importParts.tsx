@@ -1,7 +1,8 @@
 // The import wizard's review and preview (src/screens/settings/ImportTab.tsx): the «כפולה» groups, topics →
 // categories, the sources' words, the escorts' phrases, and the preview «חדש · תואם · עמום · מדולג» — a choice for
-// every «עמום», and what a match would fill. Lists, one card per row, the same at every width.
-import { useId } from "react";
+// every «עמום», and what a match would fill; «עריכה» of a speaker card's name, title and affiliation. Lists, one card per
+// row, the same at every width.
+import { useId, useState } from "react";
 import { fmtRange } from "../../domain/time";
 import { dayLabel } from "../../reader/model";
 import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
@@ -15,10 +16,12 @@ import { LIMITS } from "../../data/speakerRules";
 import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
 import { DESIGN_SOURCES, sourcesKey, type SourcesRule, SUGGESTED_SOURCES } from "../../import/sources";
 import { ARCHIVE_ROOM, parallelRoomName } from "../../data/importRules";
+import { editProblem, type SpeakerEdit } from "../../import/edit";
+import type { LineKind } from "../../import/lines";
 import { scrubContacts } from "../../import/phone";
 import type { DoubleGroup, ExtraLine, GroupDecision, LessonPlan, LineAs, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
-import { Badge, INPUT, Panel } from "./kit";
+import { Badge, Button, INPUT, Panel } from "./kit";
 
 export const STATUS: Record<RowStatus, { label: string; tone: "ok" | "accent" | "bad" | "muted" }> = {
   new: { label: "חדש", tone: "ok" },
@@ -151,6 +154,133 @@ function Warnings({ items }: { items: string[] }) {
 
 const genderSaid = (g: string | null) => (g === "m" ? "מגדר: זכר (הצעה, מהתואר)" : g === "f" ? "מגדר: נקבה (הצעה, מהתואר)" : null);
 
+/**
+ * «עריכה» of a speaker card (DECISIONS «סבב שישי»): its name, title and affiliation as the admin reads them — they
+ * replace what was read, are matched again, and are checked as the file's text is (no phone, no e-mail; a title from the
+ * list; the pool's lengths). In the tracking sheet also what the names beside or under another that it is are.
+ */
+function EditSpeaker({
+  start,
+  titles,
+  escorts,
+  lines = [],
+  onLine,
+  onSave,
+  onCancel,
+}: {
+  start: SpeakerEdit;
+  titles: readonly string[];
+  escorts: readonly string[];
+  lines?: ExtraLine[];
+  onLine?: (id: string, as: LineAs) => void;
+  onSave: (e: SpeakerEdit) => void;
+  onCancel: () => void;
+}) {
+  const id = useId();
+  const [title, setTitle] = useState(start.title ?? "");
+  const [name, setName] = useState(start.name);
+  const [affiliation, setAffiliation] = useState(start.affiliation ?? "");
+  const value: SpeakerEdit = { title: title || null, name, affiliation: affiliation || null };
+  const problem = editProblem(value, titles);
+  const escort = namedEscort(name, escorts);
+  return (
+    <div role="group" aria-label="עריכה" className="mt-1.5 rounded-lg border border-line bg-paper p-2.5">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="min-w-0">
+          <label htmlFor={`${id}-t`} className="mb-0.5 block text-sm font-semibold">
+            תואר
+          </label>
+          <select id={`${id}-t`} value={title} onChange={(e) => setTitle(e.target.value)} className={INPUT}>
+            <option value="">בלי תואר</option>
+            {titles.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-0">
+          <label htmlFor={`${id}-n`} className="mb-0.5 block text-sm font-semibold">
+            שם
+          </label>
+          <input id={`${id}-n`} value={name} onChange={(e) => setName(e.target.value)} aria-describedby={`${id}-p`} className={INPUT} />
+        </div>
+        <div className="min-w-0">
+          <label htmlFor={`${id}-a`} className="mb-0.5 block text-sm font-semibold">
+            שיוך מוסדי
+          </label>
+          <input id={`${id}-a`} value={affiliation} onChange={(e) => setAffiliation(e.target.value)} aria-describedby={`${id}-p`} className={INPUT} />
+        </div>
+      </div>
+      <p id={`${id}-p`} className={`mt-1 text-sm ${problem || escort ? "text-bad" : "text-ink-soft"}`}>
+        {problem ?? (escort ? `בשם יש מילה מעמודת המלווים («${escort}»).` : "מה שכותבים כאן מחליף את מה שנקרא מהקובץ ונבדק שוב מול המאגר. מגדר — רק מהתואר. בלי טלפון ובלי מייל.")}
+      </p>
+      {lines.map((l) => (
+        <LineChoice key={l.id} line={l} onChoose={(as) => onLine?.(l.id, as)} legend={`שורה ${l.row}: «${l.text}» ליד ${l.ofName} — מה זה?`} />
+      ))}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button kind="primary" disabled={!!problem} onClick={() => onSave(value)}>
+          שמירת העריכה
+        </Button>
+        <Button onClick={onCancel}>ביטול</Button>
+      </div>
+    </div>
+  );
+}
+
+/** A card's «עריכה» button and form, and «נערך ידנית» once edited (with «ביטול העריכה»: back to what was read). */
+function Editable({
+  fields,
+  edited,
+  titles,
+  escorts,
+  lines,
+  onLine,
+  onEdit,
+}: {
+  fields: SpeakerEdit;
+  edited: boolean;
+  titles: readonly string[];
+  escorts: readonly string[];
+  lines?: ExtraLine[];
+  onLine?: (id: string, as: LineAs) => void;
+  /** The admin's reading (null: back to the file's). */
+  onEdit: (e: SpeakerEdit | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {edited && <Badge tone="neutral">נערך ידנית</Badge>}
+        {!open && (
+          <Button kind="quiet" onClick={() => setOpen(true)}>
+            עריכה
+          </Button>
+        )}
+        {edited && !open && (
+          <Button kind="quiet" onClick={() => onEdit(null)}>
+            ביטול העריכה
+          </Button>
+        )}
+      </div>
+      {open && (
+        <EditSpeaker
+          start={fields}
+          titles={titles}
+          escorts={escorts}
+          lines={lines}
+          onLine={onLine}
+          onSave={(e) => {
+            onEdit(e);
+            setOpen(false);
+          }}
+          onCancel={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 // ------------------------------------------------------------------ (a) the candidates
 
 export function CandidatesPreview({
@@ -159,6 +289,9 @@ export function CandidatesPreview({
   choices,
   resolved,
   onChoose,
+  titles,
+  escorts,
+  onEdit,
 }: {
   rows: CandidatePreview[];
   pool: MatchContext;
@@ -166,6 +299,10 @@ export function CandidatesPreview({
   /** Each row's action as the commit takes it, by its ref (null: undecided). */
   resolved: Map<string, Resolved | null>;
   onChoose: (key: string, c: Choice | null) => void;
+  titles: readonly string[];
+  escorts: readonly string[];
+  /** «עריכה» of a row (by its ref; null: back to what was read). */
+  onEdit: (ref: string, e: SpeakerEdit | null) => void;
 }) {
   return (
     <Panel title="תצוגה מקדימה">
@@ -184,6 +321,7 @@ export function CandidatesPreview({
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
               {r.skip && <p className="text-sm text-ink-soft">{r.skip}</p>}
+              {r.fields && <Editable fields={r.fields} edited={!!r.edited} titles={titles} escorts={escorts} onEdit={(e) => onEdit(r.ref, e)} />}
               {d && (
                 <>
                   <Facts items={[genderSaid(d.gender), d.affiliation, d.topics.join(", "), d.phone && "יש טלפון", d.email && "יש מייל", d.notes && "יש הערות"]} />
@@ -335,6 +473,11 @@ export function SpeakersPreview({
   resolved,
   onChoose,
   postPhones = new Map(),
+  titles,
+  escorts,
+  lines,
+  onLine,
+  onEdit,
 }: {
   rows: TrackingSpeakerPreview[];
   pool: MatchContext;
@@ -344,6 +487,13 @@ export function SpeakersPreview({
   onChoose: (key: string, c: Choice | null) => void;
   /** A row's phone the admin's choices give a speaker (phonesAfterChoices) — what the payload will send. */
   postPhones?: ReadonlyMap<string, { value: string; key: string | null; row: number }>;
+  titles: readonly string[];
+  escorts: readonly string[];
+  /** The sheet's lines (a speaker's names beside or under another are turned in its «עריכה»). */
+  lines: ExtraLine[];
+  onLine: (id: string, as: LineAs) => void;
+  /** «עריכה» of a speaker (by its keys as read; null: back to what was read). */
+  onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
   return (
     <Panel title="המרצים">
@@ -376,6 +526,16 @@ export function SpeakersPreview({
                 ]}
               />
               {owner && <p className="text-sm text-bad">הטלפון משורה {post!.row} כבר במאגר אצל {owner.title ? `${owner.title} ` : ""}{owner.name} — לבדוק שזה אותו אדם.</p>}
+              {s.nameWarning && <p className="text-sm text-bad">{s.nameWarning}</p>}
+              <Editable
+                fields={{ title: s.title, name: s.name, affiliation: s.affiliation }}
+                edited={s.edited}
+                titles={titles}
+                escorts={escorts}
+                lines={lines.filter((l) => s.lines.includes(l.id))}
+                onLine={onLine}
+                onEdit={(e) => onEdit(s.from, e)}
+              />
               <SpeakerDecision
                 name={name}
                 status={r.status}
@@ -461,25 +621,51 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
 
 // ------------------------------------------------------------------ (c) the escorts' file — see EscortsPreview below
 
-const LINE_AS_LABEL: Record<LineAs, (of: string) => string> = {
+/** «לא לייבא» says what is left out — only the line, the name, the brackets or the part: the speaker stays. */
+const SKIP_LABEL: Record<LineKind, string> = {
+  under: "לא לייבא את השורה",
+  beside: "לא לייבא את השם הזה",
+  bracket: "לא לייבא את הסוגריים (המרצה נשאר/ת)",
+  tail: "לא לייבא את החלק הזה (המרצה נשאר/ת)",
+};
+const LINE_AS_LABEL: Record<LineAs, (l: ExtraLine) => string> = {
   speaker: () => "מרצה נוסף/ת",
-  affiliation: (of) => `שיוך מוסדי של ${of}`,
-  skip: () => "לא לייבא את השורה",
+  affiliation: (l) => `שיוך מוסדי של ${l.ofName}`,
+  skip: (l) => SKIP_LABEL[l.kind],
 };
 
+/** A line's three choices. */
+function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: ExtraLine; onChoose: (as: LineAs) => void; legend: string; disabled?: boolean }) {
+  const id = useId();
+  return (
+    <fieldset className="mt-1 min-w-0" disabled={disabled}>
+      <legend className="sr-only">{legend}</legend>
+      <div className="flex flex-wrap gap-1.5">
+        {(["speaker", "affiliation", "skip"] as const).map((as) => (
+          <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
+            <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(as)} className="accent-ink" />
+            {LINE_AS_LABEL[as](l)}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 /**
- * A speaker cell's other names (a line under the first, a bracket at the end of a name; in the candidates also one
- * beside it, in the tracking sheet one beside it that names an escort): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the
- * read proposes only an institution's affiliation and an escort's «לא לייבא» («הצעה»); any other waits for the admin.
- * A line of a row left out anyway waits for nothing.
+ * A speaker cell's other names (a line under the first, a name beside it, a bracket at the end of a name, what follows
+ * «, », « - » or «והרב…»): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the read proposes («הצעה») an institution's
+ * affiliation, an escort's «לא לייבא» (the whole line one escort's name, or a word about one), and in the tracking sheet
+ * a co-speaker for a name beside the first; any other waits for the admin — a line that only shares a word with an
+ * escort's name too, said in red. A line of a row left out anyway waits for nothing.
  */
 export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: ExtraLine[]; skipped?: ReadonlySet<number>; onChoose: (id: string, as: LineAs) => void }) {
-  const id = useId();
   return (
     <Panel title="שם נוסף בתא של המרצה" aside="מרצה נוסף/ת, שיוך מוסדי או לא לייבא">
       <p className="mb-2 text-sm text-ink-soft">
-        שורה מתחת לשם, או סוגריים בסוף השם, עם שם של מוסד (ישיבת…, מכון…, מדרשת…) מוצעים כשיוך המוסדי של השם, ועם שם מעמודת המלווים — «לא לייבא» <Badge tone="accent">הצעה</Badge>.
-        כל אחר מחכה להחלטה. השם עצמו נבדק מול המאגר בלי הסוגריים. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
+        שורה מתחת לשם, שם ליד השם, סוגריים בסוף השם, או מה שבא אחרי «, », « - » או «והרב…» באותה שורה: עם שם של מוסד (ישיבת…, מכון…, מדרשת…) מוצעים כשיוך המוסדי של השם;
+        כשכולם שם של מלווה (או מדברים על מלווה) — «לא לייבא»; ובגיליון המעקב שם ליד השם — מרצה נוסף/ת <Badge tone="accent">הצעה</Badge>. כל שורה או סוגריים אחרים מחכים להחלטה — גם
+        כשיש בהם רק מילה אחת משם של מלווה. השם עצמו נבדק מול המאגר בלי מה שהופרד ממנו. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
       </p>
       <ul aria-label="שמות נוספים בתא המרצה" className="space-y-2">
         {lines.map((l) => {
@@ -493,23 +679,14 @@ export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: Ex
                   <span className="text-ink-soft">(השורה מדולגת — אין צורך להחליט)</span>
                 ) : l.as == null ? (
                   <>
-                    <Badge tone="bad">צריך לבחור</Badge> <span className="text-ink-soft">({l.why})</span>
+                    <Badge tone="bad">צריך לבחור</Badge> <span className={l.held ? "text-bad" : "text-ink-soft"}>({l.why})</span>
                   </>
                 ) : (
                   !l.chosen && <Badge tone="accent">הצעה: {l.why}</Badge>
                 )}
+                {l.held && l.as != null && l.as !== "skip" && <span className="text-bad"> — {l.why}</span>}
               </p>
-              <fieldset className="mt-1 min-w-0" disabled={gone}>
-                <legend className="sr-only">«{l.text}» — מה זה?</legend>
-                <div className="flex flex-wrap gap-1.5">
-                  {(["speaker", "affiliation", "skip"] as const).map((as) => (
-                    <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-                      <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(l.id, as)} className="accent-ink" />
-                      {LINE_AS_LABEL[as](l.ofName)}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
+              <LineChoice line={l} onChoose={(as) => onChoose(l.id, as)} legend={`«${l.text}» — מה זה?`} disabled={gone} />
             </li>
           );
         })}
