@@ -404,7 +404,7 @@ export function DoubleGroups({ groups, read, decisions, onDecide }: { groups: Do
                   </p>
                 ))}
               </div>
-              <fieldset data-decide className="min-w-0">
+              <fieldset className="min-w-0">
                 <legend className="sr-only">{rowsSaid(g.rows)}: מה הן?</legend>
                 <div className="flex flex-wrap gap-1.5">
                   {(["parallel", "merge"] as const).map((d) => (
@@ -535,8 +535,8 @@ export function SpeakersPreview({
   /** «עריכה» of a speaker (by its keys as read; null: back to what was read). */
   onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
-  // an «עריכה» saved into an earlier card's name merges the two, and the card that had the focus goes: it goes on at the
-  // «עריכה» of the card that now holds its first key as read — however it was saved (a screen reader's action is a click),
+  // an «עריכה» saved changes the card's key (a new card), or merges it into an earlier card's name: the card that had the
+  // focus goes, and it goes on at the «עריכה» of the card that now holds its first key as read — however it was saved (a screen reader's action is a click),
   // but the page scrolls to it only from the keyboard: a click or a tap leaves the page where it was
   const [focus, setFocus] = useState<{ key: string; scroll: boolean } | null>(null);
   // delivered once: the cards' effects run before this one, and a card that mounts again later takes nothing
@@ -566,8 +566,7 @@ export function SpeakersPreview({
           const owners = post?.key ? (pool.phones.get(post.key) ?? []).filter((id) => !(target?.action === "merge" && target.target === id)) : [];
           const owner = owners.length ? pool.pool.find((x) => x.id === owners[0]) : undefined;
           return (
-            // keyed by its first key as read, which an «עריכה» keeps: the card stays, and the keyboard returns to it
-            <li key={s.from[0] ?? s.key} data-undecided={open || undefined} className="py-2">
+            <li key={s.key} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>
@@ -707,20 +706,16 @@ function LineChoice({
   onChoose,
   legend,
   disabled = false,
-  decide = false,
 }: {
   line: ExtraLine;
   onChoose: (as: LineAs, byKeyboard: boolean) => void;
   legend: string;
   disabled?: boolean;
-  /** The decision its row waits for («לראשונה שמחכה להחלטה» goes to it). */
-  decide?: boolean;
 }) {
   const id = useId();
   const keyed = useRef(false);
   return (
     <fieldset
-      data-decide={decide || undefined}
       className="mt-1 min-w-0"
       disabled={disabled}
       onKeyDown={() => (keyed.current = true)}
@@ -773,7 +768,7 @@ export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: Ex
                 )}
                 {l.held && l.as != null && l.as !== "skip" && <span className="text-bad"> — {l.why}</span>}
               </p>
-              <LineChoice line={l} onChoose={(as) => onChoose(l.id, as)} legend={`«${l.text}» — מה זה?`} disabled={gone} decide />
+              <LineChoice line={l} onChoose={(as) => onChoose(l.id, as)} legend={`«${l.text}» — מה זה?`} disabled={gone} />
             </li>
           );
         })}

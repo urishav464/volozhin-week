@@ -540,7 +540,6 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               </label>
               <select
                 id={`${id}-escort`}
-                data-decide
                 value={escortAsked ?? ""}
                 onChange={(e) => {
                   const v = e.target.value === "" ? null : e.target.value === "none" ? "none" : Number(e.target.value);
@@ -726,7 +725,8 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                     onClick={() => {
                       const el = document.querySelector<HTMLElement>("[data-undecided]");
                       el?.scrollIntoView({ block: "center" });
-                      // the decision itself (data-decide) — a group's checked choice, else its first; not a field before it
+                      // the decision itself — marked data-decide where a field comes before it (an open «עריכה» form, the
+                      // escorts' channel and note): a group's checked choice, else its first; else the row's first control
                       const decide = el?.querySelector<HTMLElement>("[data-decide]");
                       const target = decide?.matches("input, select")
                         ? decide

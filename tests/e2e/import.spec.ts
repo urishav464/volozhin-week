@@ -717,7 +717,7 @@ test.describe("demo build — the import of 5786", () => {
     await form.getByLabel("שיוך מוסדי").fill("מכון לדוגמה");
     await form.getByRole("button", { name: "שמירת העריכה" }).click();
     await expect(card("מרצה 07")).toContainText("נערך ידנית");
-    await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // the same card, its key as read kept
+    await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // a new key, a new card: the focus handed to it
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
     // a later card edited into an earlier one's name: the two are one, and the focus goes on at the card that stays —
