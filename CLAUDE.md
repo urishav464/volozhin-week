@@ -213,13 +213,17 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
   normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
   `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
-  first five rows (`findHeaderRow`, the admin may choose another); an escorts' column — by its header in the header row
-  chosen or a row below it among those five, never a column that row names as a field — is never mappable, in any kind
-  (`escortColumns`), and its names, word by word (`escortWords`: a first name or a surname alone, a prefix letter
-  allowed), only keep a phrase from being saved), matching (`match.ts`) and the three kinds (`candidates.ts`,
-  `tracking.ts`, `escorts.ts`). **A phone or an e-mail lands only in phone / email:** the wizard takes it out of every
-  other field (`stripContacts`; a note's are replaced, `scrubContacts`), attaching one only when unambiguous, and
-  `import_commit` refuses one anywhere else (`app.has_contact` ≡ `hasContact`, written alike — `contact_in_text`);
+  first five rows (`findHeaderRow`, the admin may choose another); the escorts' column is ASKED for, never guessed —
+  always in the escorts' file, in the tracking sheet when a header or a first row looks like one (`escortLike`) — and
+  never mappable in any kind (`escortColumns` a guard besides)), matching (`match.ts`) and the three kinds
+  (`candidates.ts`, `tracking.ts`, `escorts.ts`; a speaker cell's other names are `lines.ts` ExtraLines in both of the
+  first two: «מרצה נוסף/ת» · «שיוך מוסדי» · «לא לייבא», only an institution's word or an escort's name proposed).
+  **The escorts' file sends nothing of the file** (DECISIONS «סבב רביעי»): a channel chosen from a fixed list
+  (`IMPORT_CHANNELS`, the phrases only suggest it) and the admin's own note — `import_commit` refuses an escorts' row
+  with any other key. **A phone or an e-mail lands only in phone / email:** the wizard takes it out of every other
+  field (`stripContacts`; a note's are replaced, `scrubContacts`), attaching one only when unambiguous, and
+  `import_commit` refuses one anywhere else (`app.has_contact` ≡ `hasContact` on the text folded alike — every digit
+  ASCII, format characters out: `app.contact_fold` ≡ `foldContact` — `contact_in_text`);
   `src/import/privacy.property.test.ts` holds both privacy invariants on thousands of seeded random tables.
   `port.imports` (`src/data/imports.ts`, `importRules.ts`) → `import_lookup` (booleans, never a contact's value) and
   `import_commit` — a global admin's, SECURITY DEFINER, one transaction, every row or none (`import_bad_row`

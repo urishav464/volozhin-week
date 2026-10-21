@@ -1181,13 +1181,21 @@ equal value for value (`tests/sql/import.test.ts`).
 ## A contact inside text — `app.has_contact(text)` ≡ `hasContact` (`src/import/phone.ts`) — `contact_in_text`
 A phone or an e-mail is kept in `speaker_contacts`' `phone` and `email` only — **never** in any other text of the
 payload. One definition, written the same on both sides (the function's expressions are the browser's `PHONE_RUN`,
-`EMAIL_RUN`, `NOT_A_PHONE`, `CONTACT_MARKS`, character for character) and held equal string for string
-(`tests/sql/import.test.ts`, fixed cases and 4,000 seeded ones): an **e-mail** — no space, `@`, `<`, `>`, `(` or `)`
-around one `@`, a dot after it; or a **phone** — a run from a digit (a `+` before it) to a digit of digits, white
-space, the marks a copy carries (bidi controls, zero widths, the soft hyphen), dashes of every kind, brackets and dots,
-with **7 digits or more**, unless the run without its marks is a date («12.3.2026», an hour after it allowed), a range
-of years («1948-1967») or a range of times written with dots («8.30-10.00»). White space is written out (JavaScript's
-`\s`), never `[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
+`EMAIL_RUN`, `NOT_A_PHONE`, and `app.contact_fold`'s lists are `FORMAT_RANGES` and `DIGIT_ZEROS`, character for
+character) and held equal string for string (`tests/sql/import.test.ts`, fixed cases, 6,000 seeded ones, and the
+fold character by character). The text is **folded** first (`app.contact_fold` ≡ `foldContact`): what shows nothing
+taken out — Unicode's format characters (Cf, as of 16.0: bidi controls, zero widths, the soft hyphen, tags), NEL
+(U+0085) and U+180E — and every decimal digit of every script written as its ASCII digit (٠, ۰, ０, 𝟎 → 0). Then: an
+**e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth «＠»), a dot after it; or, in
+the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its last part letters; or a
+**phone** — a run from a digit (a `+` or a `(` before it) to a digit of digits, white space, dashes of every kind,
+brackets, dots, «/», «·», «•», «‧» and «_» — «:» and «,» only right before a digit — that never starts inside a number,
+right after «20:» or «8.», or at a time («20:00 (…)»: the time stays), with **7 digits or more**, unless the run is a
+date («12.3.2026», an hour after it allowed: «20», «20:00»), a range of dates whose year is at its end
+(«14.2-18.2.2027», «14.2.2027-18.2.2027»), years — a range or a chain by dashes, commas or slashes («1948-1967»,
+«1948-1967-1973») — a range of times written with dots («8.30-10.00»), or chapters: groups of one or two digits by
+dashes or commas, the first not `0` («1-2-3-4-5-6-7»). White space is written out (JavaScript's `\s`), never
+`[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
 space, which the definition reads alike): a row's → `import_bad_row` «row:contact_in_text»; the payload's `label` or
 `source` → `contact_in_text` (no row). The wizard never sends one: it takes every contact out of every non-contact
 field first (`stripContacts`; a note's are replaced — `scrubContacts`), attaching one to the row's phone or e-mail
@@ -1273,10 +1281,17 @@ speakers (as above), then:
 - The archive's lessons are in `speaker_history` like any edition's; after the week, the archive is a past year for
   `edition_returning` and `speaker_reviews` (its kind is `archive`).
 
-### `escorts` — `{rows: PrefsRow[]}`
-`rows` an array → else `bad_value`. Each row: an object; `speaker_id` a pool speaker → else `stale`; `contact_pref`
-null or a channel (`app.pick_contact_pref`) → else `bad_value`; `secretary_note` a block ≤ 300 with no phone or
-e-mail — the note says how, never a number → else `contact_in_text`. **Fill only what is empty:** `speakers.contact_pref` (`version + 1`), `speaker_contacts.secretary_note`. No speaker is added.
+### `escorts` — `{rows: PrefsRow[]}` (schema v12, «סבב רביעי»)
+A row is **the channel the admin chose from a fixed list and a note the admin typed — nothing of the file's text**:
+the wizard shows the file's phrases only as the reason for the list's pre-selection («הצעה»), and the payload has no
+field for them. `rows` an array → else `bad_value`. Each row, in this order: an object whose keys are only `row`,
+`speaker_id`, `channel` and `note` → else `bad_value` (a phrase, an old page's `secretary_note` or `contact_pref`,
+any other key — refused before the speaker is looked up); `speaker_id` a pool speaker → else `stale`; `channel` a
+string, one of **`phone` · `whatsapp` · `email` · `secretary` · `other`** (the list: the pool's `contact_pref`, and
+«אחר» — none of them) → else `bad_value`; `note` absent, null or a string → else `bad_value`, then a block ≤ 300
+with no phone or e-mail — the note says how, never a number → else `contact_in_text`. **Fill only what is empty:**
+`speakers.contact_pref` ← the channel (`version + 1`; `other` leaves it as it is), `speaker_contacts.secretary_note`
+← the note. No speaker is added.
 
 ### The result and the log
 `{created, merged, filled, contacts, notes, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}`
@@ -1290,7 +1305,7 @@ with the counts and the source. **Never a name, a phone, an e-mail or a note.**
 
 ## Errors (the import)
 
-`not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `name_required bad_phone
+`not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `contact_in_text name_required bad_phone
 bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amount room_taken speaker_busy`; for
 `tracking`, `label_required not_sunday label_ambiguous edition_exists archive_reviewed stale`. The payload's size is
 the bytes of its jsonb text (`p_payload::text`; the engine writes the same text, `jsonbText`). The browser's own, before anything is sent:
