@@ -21,7 +21,7 @@ import { DAYS, type Day, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { rowActive } from "../../grid/layout";
-import { Badge, Button, Confirm, Field, INPUT, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, INPUT, useFocusBack, useRunner } from "../settings/kit";
 import { dayLabel } from "../public/parts";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
@@ -366,6 +366,8 @@ function NotYet({
 function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }: { g: KkGroup; groups: KkGroup[]; week: Week; kk: KkData; admin: boolean; books: boolean; busy: string | null; act: Act; port: DataPort }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «מחיקה» takes it back
+  const focusBack = useFocusBack();
   const names = useMemo(() => new Map(week.roster.map((r) => [r.id, r.full_name])), [week.roster]);
   const leaders = kk.leaders.filter((x) => x.group_id === g.id);
   const signups = kk.signups.filter((s) => s.group_id === g.id).sort((a, b) => (names.get(a.roster_id) ?? "").localeCompare(names.get(b.roster_id) ?? "", "he"));
@@ -427,14 +429,17 @@ function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }: { g: 
             confirm="מחיקה"
             busy={busy === `delete-${g.id}`}
             onConfirm={() => void act(`delete-${g.id}`, () => port.kk.deleteGroup(g.id), "הקבוצה נמחקה").then(() => setDeleting(false))}
-            onCancel={() => setDeleting(false)}
+            onCancel={() => {
+              setDeleting(false);
+              focusBack.back();
+            }}
           />
         ) : (
           <div className="flex flex-wrap gap-1">
             <Button onClick={() => setEditing(true)} aria-label={`עריכה: ${g.title}`}>
               עריכה
             </Button>
-            <Button kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקה: ${g.title}`}>
+            <Button ref={focusBack.ref()} kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקה: ${g.title}`}>
               מחיקה
             </Button>
           </div>

@@ -15,7 +15,7 @@ import { whatsappTextHref } from "../../domain/contactLinks";
 import { escortable } from "../../domain/escorts";
 import { israelMoment } from "../../domain/israelTime";
 import type { Edition, Week } from "../../domain/types";
-import { Badge, Button, Confirm, EditionPicker, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   data: DataPort;
@@ -288,6 +288,8 @@ function LinkRow({
 }) {
   const { busy, run } = useAction();
   const [asking, setAsking] = useState<"replace" | "revoke" | null>(null);
+  // «חזרה» takes the confirm (and its focus) away: the button that asked takes it back
+  const focusBack = useFocusBack();
   const live = link != null && linkState(link) === "live";
   const all = [...cells, <StateBadge key="s" link={link} />];
   const mine = issued.of(scope, subject);
@@ -324,7 +326,10 @@ function LinkRow({
             confirm={asking === "replace" ? "קישור חדש במקומו" : "כן, לבטל את הקישור"}
             cancel="חזרה"
             onConfirm={() => void (asking === "replace" ? issue() : revoke())}
-            onCancel={() => setAsking(null)}
+            onCancel={() => {
+              setAsking(null);
+              focusBack.back(asking);
+            }}
           />
         }
       />
@@ -337,10 +342,10 @@ function LinkRow({
       actions={
         archived ? undefined : live ? (
           <>
-            <Button onClick={() => setAsking("replace")} busy={busy === `issue-${scope}-${subject}`} aria-label={`קישור חדש: ${who}`}>
+            <Button ref={focusBack.ref("replace")} onClick={() => setAsking("replace")} busy={busy === `issue-${scope}-${subject}`} aria-label={`קישור חדש: ${who}`}>
               קישור חדש
             </Button>
-            <Button kind="danger" onClick={() => setAsking("revoke")} busy={busy === `revoke-${link!.id}`} aria-label={`ביטול הקישור: ${who}`}>
+            <Button ref={focusBack.ref("revoke")} kind="danger" onClick={() => setAsking("revoke")} busy={busy === `revoke-${link!.id}`} aria-label={`ביטול הקישור: ${who}`}>
               ביטול הקישור
             </Button>
           </>

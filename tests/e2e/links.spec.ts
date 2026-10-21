@@ -138,9 +138,13 @@ test.describe("demo build", () => {
     await expect(page.getByText("בתוקף עד").first()).toBeVisible();
     await noSidewaysScroll(page);
 
-    // replace מלווה ב׳'s link: asked first, then a new token, once
-    await page.getByRole("button", { name: "קישור חדש: מלווה לדוגמה ב׳" }).click();
+    // replace מלווה ב׳'s link: asked first («חזרה» backs out, the focus back at the button that asked), then a new token, once
+    const replaceB = page.getByRole("button", { name: "קישור חדש: מלווה לדוגמה ב׳" });
+    await replaceB.click();
     await expect(page.getByText("הקישור הקיים של מלווה לדוגמה ב׳ יפסיק לעבוד מיד")).toBeVisible();
+    await page.getByRole("button", { name: "חזרה" }).press("Enter");
+    await expect(replaceB).toBeFocused();
+    await replaceB.click();
     await page.getByRole("button", { name: "קישור חדש במקומו" }).click();
     const box = page.getByRole("region", { name: "הקישור החדש: מלווה לדוגמה ב׳" });
     await expect(box).toContainText("הקישור החדש: מלווה לדוגמה ב׳");
@@ -183,11 +187,13 @@ test.describe("demo build", () => {
     await expect(box).toHaveCount(0);
     expect(await page.content()).not.toContain(token);
 
-    // revoke the sign-up link: asked first — «חזרה» backs out, «כן, לבטל» revokes
-    await page.getByRole("button", { name: "ביטול הקישור: הרשמה למכריכה לכריכה" }).click();
+    // revoke the sign-up link: asked first — «חזרה» backs out (the focus back at the button that asked), «כן, לבטל» revokes
+    const revokeKk = page.getByRole("button", { name: "ביטול הקישור: הרשמה למכריכה לכריכה" });
+    await revokeKk.click();
     await expect(page.getByRole("button", { name: "חזרה" })).toBeFocused();
-    await page.getByRole("button", { name: "חזרה" }).click();
-    await page.getByRole("button", { name: "ביטול הקישור: הרשמה למכריכה לכריכה" }).click();
+    await page.getByRole("button", { name: "חזרה" }).press("Enter");
+    await expect(revokeKk).toBeFocused();
+    await revokeKk.click();
     await page.getByRole("button", { name: "כן, לבטל את הקישור" }).click();
     await expect(toast(page, "הקישור בוטל. הוא כבר לא נפתח.")).toBeVisible();
     await expect(page.getByRole("button", { name: "הנפקת קישור: הרשמה למכריכה לכריכה" })).toBeVisible();
@@ -320,8 +326,12 @@ test.describe("demo build", () => {
     await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("3");
     await expect(books.getByRole("checkbox", { name: /^הוזמן/ })).toBeChecked();
 
-    // a group with someone in it is not deleted
-    await g.getByRole("button", { name: "מחיקה: ספר חדש לדוגמה" }).click();
+    // a group with someone in it is not deleted; the confirm cancelled first: the focus back at «מחיקה»
+    const del = g.getByRole("button", { name: "מחיקה: ספר חדש לדוגמה" });
+    await del.click();
+    await g.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(del).toBeFocused();
+    await del.click();
     await g.getByRole("button", { name: "מחיקה", exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "יש נרשמים לקבוצה הזו" })).toBeVisible();
     await expect(g).toBeVisible();
