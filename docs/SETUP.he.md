@@ -240,7 +240,7 @@
 
 ## Security Advisor
 
-ב-Supabase: **Advisors → Security Advisor**. אחרי ההרצה של גרסה 12 נשארות בערך 63 אזהרות (Warnings), כולן משני הסוגים האלה, ושום שגיאה (Error). שום דבר אחר לא צפוי. אם מופיע משהו אחר, מעתיקים אותו ל-Claude.
+ב-Supabase: **Advisors → Security Advisor**. אחרי ההרצה של גרסה 12 נשארות בדיוק 71 אזהרות (Warnings), ושום שגיאה (Error): 64 «Signed-In Users…», 6 «Public Can Execute…» ואחת «Leaked Password Protection». שום דבר אחר לא צפוי. אם מופיע משהו אחר, או מספר אחר, מעתיקים אותו ל-Claude.
 
 - **«Signed-In Users Can Execute SECURITY DEFINER Function»** — זה בכוונה. כל כתיבה מהדפדפן היא פונקציה כזו: היא בודקת בעצמה מי קורא/ת לה (חבר/ת צוות, איזה תפקיד, איזה מחזור) ורק אז כותבת. הרשימה המדויקת של הפונקציות שמותר להפעיל קבועה בבדיקות (`tests/sql/schema.test.ts`), וכל שינוי בה נעשה בכוונה. **לא מבטלים את ההרשאות האלה**: בלעדיהן האתר לא יכול לשמור כלום.
 - **«Public Can Execute SECURITY DEFINER Function»** — בדיוק שש פונקציות: אלה של הקישורים בלי חשבון (`escort_view`, `escort_tick`, `escort_pickup`, `kk_form`, `kk_signup`, `schedule_view`). כל אחת דורשת טוקן של קישור, עונה תשובה אחת לכל קישור שגוי (`link_invalid`), ויש עליה מגבלת קצב. `ping` כבר לא ברשימה הזו (מגרסה 12 היא רצה בהרשאות של מי שקורא/ת לה).
