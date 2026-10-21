@@ -37,7 +37,7 @@ const r = (speaker: string, when: string, title = "", phone = "") => [speaker, w
 describe("סבב רביעי, 4: a phone or an e-mail in every form the reviewers wrote — and years, dates and chapters never one", () => {
   it("other separators, other digits, what shows nothing: each is a phone (hasContact ≡ app.has_contact)", () => {
     for (const t of [
-      "000/000/0091", "000 / 000 / 0092", "000·000·0093", "000•000•0094", "000,000,0095", "000_000_0096", "000‧000‧0097", "000:000:0098",
+      "000/000/0091", ["052", "000", "0092"].join(" / "), "000·000·0093", "000•000•0094", "000,000,0095", "000_000_0096", "000‧000‧0097", "000:000:0098",
       "０００－０００－００９９", "٠٠٠-٠٠٠-٠١٠٠", "۰۰۰-۰۰۰-۰۱۰۱", "000᠎000᠎0103", "000\u0085000\u00850104", "000⁣000\u{e0020}0105",
     ]) {
       expect(hasContact(`מרצה ${t}`), JSON.stringify(t)).toBe(true);

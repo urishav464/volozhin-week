@@ -19,7 +19,7 @@ import { CONTACT_PREF_LABEL } from "../lib/labels";
 import type { MatchContext } from "./candidates";
 import { columnsOf, FIELDS, HEADER_SEARCH, headerKey, type Mapping } from "./fields";
 import { foldContact, hasContact, stripContacts } from "./phone";
-import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerMatch } from "./match";
+import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerFill, type SpeakerMatch } from "./match";
 import { cellOf, dataRows, type HeaderAt } from "./rows";
 import { splitSpeakers, splitTitle } from "./speakerName";
 import type { Grid } from "./table";
@@ -288,9 +288,14 @@ export function answerSaves(a: EscortAnswer | undefined): { contact_pref: Contac
 
 /** What a speaker of the pool would get — only what is empty (the commit fills, never overwrites). */
 export function escortFills(target: Speaker, flags: ContactFlags | undefined, a: EscortAnswer | undefined): string[] {
+  const fill = escortFill(a);
+  return fill ? fillPlan(target, flags, fill) : [];
+}
+
+/** What an answer would fill, as a speaker's fill (only the channel and the note) — null: it saves nothing. */
+export function escortFill(a: EscortAnswer | undefined): SpeakerFill | null {
   const saves = answerSaves(a);
-  if (!saves) return [];
-  return fillPlan(target, flags, { title: null, gender: null, affiliation: null, topics: [], phone: null, email: null, notes: null, contact_pref: saves.contact_pref, secretary_note: saves.note });
+  return saves ? { title: null, gender: null, affiliation: null, topics: [], phone: null, email: null, notes: null, contact_pref: saves.contact_pref, secretary_note: saves.note } : null;
 }
 
 /**

@@ -57,7 +57,8 @@ export function normalizeEmail(raw: string | null | undefined): { value: string 
 
 // ---- A phone or an e-mail inside text: ONE definition — the browser's (here) and the database's (app.contact_fold and
 // app.has_contact in supabase/schema.sql, the import's backstop) are written the same and held equal by
-// tests/sql/import.test.ts. The text is FOLDED first (foldContact ≡ app.contact_fold): the characters that show nothing
+// tests/sql/import.test.ts. A phone by Israel's numbering plan, never «any seven digits» (PHONE, DECISIONS «סבב
+// חמישי»). The text is FOLDED first (foldContact ≡ app.contact_fold): the characters that show nothing
 // are taken out (Unicode's format characters, NEL, U+180E) and every decimal digit of every script is written as its
 // ASCII digit (٠١٢, ０１２ → 012) — a number shown on the screen is a number here. White space is written out
 // (JavaScript's \s; PostgreSQL's [[:space:]] depends on the locale), and so are the dashes.
@@ -106,14 +107,68 @@ export function foldContact(text: string | null | undefined): string {
 
 /** Dashes beside the ASCII one (which is written last in a class, as itself). */
 const UDASH = "\\u05be\\u2010-\\u2015\\u2212\\ufe58\\ufe63\\uff0d";
-/** What a phone's digits are written apart with: spaces, dashes, brackets, dots, «/», «·», «•», «‧», «_». */
-const PHONE_SEPS = `${CONTACT_WS}${UDASH}()./\\u00b7\\u2022\\u2027_-`;
+const W = `[${CONTACT_WS}]`;
+/** «.» unless between two groups of one or two digits (a date's «12.3»), «:» only between two groups of three or more. */
+const DOT_COLON = "[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3})";
 /**
- * A run that may be a phone: a digit (a «+» or a «(» before it), 5+ of digits and PHONE_SEPS — «:» and «,» only right
- * before a digit («000:000:0000», «000,0000000»; never a list's «, ») — and a digit. It never starts inside a number,
- * right after a time's «20:» or «8.», or at a time («20:00 (טל' …)»: the time stays, the run is the phone).
+ * What an Israeli number's digits are written apart with (DECISIONS «סבב חמישי»): spaces, dashes, brackets, «·», «•»,
+ * «‧», «_», «|», «;»; «,» right before a digit («000,0000000» — never a list's «, »); «.» and «/» unless they stand
+ * between two groups of one or two digits (a date's «12.3», «05/10»); «:» only between two groups of three digits or
+ * more («000:000:0000» — never a time's «20:00» or a verse's «119:1»).
  */
-export const PHONE_RUN = `(?:\\+|\\()?(?<![0-9])(?<![0-9][:.])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))[0-9](?:[0-9${PHONE_SEPS}]|[:,](?=[0-9])){5,}[0-9]`;
+const APART =
+  `(?:[${CONTACT_WS}${UDASH}()\\u00b7\\u2022\\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|${DOT_COLON})*`;
+/**
+ * …and one separator of a number of no fixed length (abroad, «00…», beside a word): «/», «,», «;» and «|» only right
+ * between two digits — never with a space beside them, as between two numbers («… / …», «…, …»).
+ */
+const APART_ONE = `(?:[${CONTACT_WS}${UDASH}()\\u00b7\\u2022\\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|${DOT_COLON})`;
+/** Never a time («20:00», «8.30») or a date with a four-digit year («05-10-2026», «05.2026», «2026-02-10») from here. */
+const NOT_DATE =
+  "(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))";
+/** n more digits, each after its separators (an Israeli number's: its length is fixed). */
+const more = (n: string) => `(?:${APART}[0-9])${n}`;
+/** Where a number may begin: never inside a number, right after a time's «20:» or «8.» or a list's «1,», at a time or at a date. */
+const AT = `(?<![0-9])(?<![0-9][:.,])${NOT_DATE}`;
+/**
+ * Where it ends: never inside a number, at a time's hour («… 20» of «20:00»), or at a group of one or two digits that a
+ * date's «.» or «/» goes on from («… 12» of «12.3.2026»).
+ */
+const END = "(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))";
+/** Israel's national number after its 0: a landline (2, 3, 4, 8, 9 and seven digits), a mobile or a 07X (5 or 7 and eight). */
+const NATIONAL = `(?:[23489]${more("{7}")}|[57]${more("{8}")})`;
+/** An Israeli number: 0 and the national number; 972 or +972 (and a 0, «(0)») before it; 1-700, 1-800, 1-599 and six digits. */
+const ISRAELI = `(?:0${APART}${NATIONAL}|(?:\\+${APART})?9${APART}7${APART}2${APART}(?:0${APART})?${NATIONAL}|1${APART}(?:7${APART}0${APART}0|8${APART}0${APART}0|5${APART}9${APART}9)${more("{6}")})`;
+/**
+ * n more digits of a number of no fixed length: a group after a separator never begins a time, a date or an Israeli
+ * number — it never runs into one («טל' 1234567 050-…», «… 12-3-2026»).
+ */
+const moreOne = (n: string) => `(?:(?:${APART_ONE}+${NOT_DATE}(?!${ISRAELI}${END}))?[0-9])${n}`;
+const L = "A-Za-z\\u05d0-\\u05ea";
+/**
+ * A word that says a phone follows (or went before): טלפון, נייד, פלאפון, סלולרי, פקס (after up to two prefix letters:
+ * «בטלפון», «והנייד»), «טל'», «פל'» (with ׳ . or :); tel, telephone, phone, mobile, mob, fax, cell; ☎ ☏ 📞 📱.
+ */
+const MARKER =
+  `(?:(?<![${L}])[\\u05d5\\u05d1\\u05dc\\u05d4\\u05de\\u05e9]{0,2}(?:\\u05d8\\u05dc\\u05e4\\u05d5\\u05df|\\u05e0\\u05d9\\u05d9\\u05d3|\\u05e4\\u05dc\\u05d0\\u05e4\\u05d5\\u05df|\\u05e1\\u05dc\\u05d5\\u05dc\\u05e8\\u05d9|\\u05e4\\u05e7\\u05e1)(?![${L}])` +
+  `|(?<![${L}])[\\u05d5\\u05d1\\u05dc\\u05d4\\u05de\\u05e9]{0,2}(?:\\u05d8\\u05dc|\\u05e4\\u05dc)[\\u0027\\u05f3.:]` +
+  "|(?<![A-Za-z])(?:[Tt][Ee][Ll](?:[Ee][Pp][Hh][Oo][Nn][Ee])?|[Pp][Hh][Oo][Nn][Ee]|[Mm][Oo][Bb](?:[Ii][Ll][Ee])?|[Ff][Aa][Xx]|[Cc][Ee][Ll][Ll])(?![A-Za-z])" +
+  "|\\u260e|\\u260f|\u{1f4de}|\u{1f4f1})";
+/** What may stand between a marker and its number: up to four of spaces, dashes, brackets and punctuation. */
+const GAP = `[${CONTACT_WS}${UDASH}().:,;/|*#=>\\u0027\\u0022\\u05f3\\u05f4\\ufe0f-]{0,4}`;
+/** A star number («*2345», in a Hebrew text also «2345*»). */
+const STAR = `(?:\\*${W}*[0-9]{4}|(?<![0-9])[0-9]{4}${W}*\\*)`;
+/**
+ * A phone in a text — by Israel's numbering plan, never «any seven digits» (DECISIONS «סבב חמישי»): (a) an Israeli
+ * number (ISRAELI); (b) a number abroad: «+» or «00» and 8–15 digits; (c) 7–15 digits beside a word that says a phone
+ * (MARKER, before or after, GAP apart), and a star number beside one. Its digits apart by APART; an opening bracket before
+ * it taken with it. Everything else — verses («תהלים 119:1-176»), dates and times in every form (the xlsx reader's
+ * «2026-02-10 08:30» too), pages, prices, years — is text.
+ */
+export const PHONE =
+  `(?=[(+*0-9])(?:\\(${W}*)?(?:(?<![0-9])\\+${APART_ONE}*[0-9]${moreOne("{7,14}")}|${AT}(?:${ISRAELI}|0${APART_ONE}*0${moreOne("{6,13}")})` +
+  `|(?<=${MARKER}${GAP})(?:\\+${APART_ONE}*)?${AT}[0-9]${moreOne("{6,14}")}|${AT}[0-9]${moreOne("{6,14}")}${END}(?=${GAP}${MARKER})` +
+  `|(?<=${MARKER}${GAP})${STAR}|${STAR}(?![0-9])(?=${GAP}${MARKER}))${END}`;
 const NOT_MAIL = `${CONTACT_WS}@\\uff20<>()`;
 /**
  * An e-mail: no space, @, <, >, ( or ) around an @ (or «@@», or a fullwidth «＠») and a dot after it — or, in the usual
@@ -122,37 +177,16 @@ const NOT_MAIL = `${CONTACT_WS}@\\uff20<>()`;
 export const EMAIL_RUN =
   `(?:[^${NOT_MAIL}]+[@\\uff20]+[^${NOT_MAIL}]+\\.[^${NOT_MAIL}]+` +
   `|[A-Za-z0-9._%+-]+[${CONTACT_WS}]*[@\\uff20](?:[${CONTACT_WS}]*[@\\uff20])*[${CONTACT_WS}]*[A-Za-z0-9-]+(?:[${CONTACT_WS}]*\\.[${CONTACT_WS}]*[A-Za-z0-9-]+)*[${CONTACT_WS}]*\\.[${CONTACT_WS}]*[A-Za-z]{2,})`;
-const W = `[${CONTACT_WS}]`;
-const YEAR = "(?:1[89]|20)[0-9]{2}";
-const YY = "(?:[0-9]{2}|[0-9]{4})";
-const DM = "[0-9]{1,2}[./][0-9]{1,2}";
-/**
- * Digits that are no phone (a run, whole): a date («12.3.2026», and an hour after it: «20», «20:00»); a range of dates
- * whose year is written at its end («14.2-18.2.2027», «14.2.2027-18.2.2027»); years — a range or a chain, by dashes,
- * commas or slashes («1948-1967», «1948-1967-1973»); a range of times written with dots («8.30-10.00»); and chapters —
- * groups of one or two digits by dashes or commas, the first not 0 («1-2-3-4-5-6-7»).
- */
-export const NOT_A_PHONE =
-  `^(?:${DM}[./]${YY}(?:${W}+[0-9]{1,2}(?:[.:][0-9]{2})?)?` +
-  `|${DM}(?:[./]${YY})?${W}*[${UDASH}-]${W}*${DM}[./]${YY}` +
-  `|${YEAR}(?:${W}*[${UDASH},/-]${W}*${YEAR})+` +
-  `|[0-9]{1,2}[.:][0-9]{2}${W}*[${UDASH}-]${W}*[0-9]{1,2}[.:][0-9]{2}` +
-  `|[1-9][0-9]?(?:${W}*[${UDASH},-]${W}*[0-9]{1,2}){2,})$`;
 
-const PHONE_G = new RegExp(PHONE_RUN, "g");
+const PHONE_1 = new RegExp(PHONE);
+const PHONE_G = new RegExp(PHONE, "g");
 const EMAIL_1 = new RegExp(EMAIL_RUN);
 const EMAIL_G = new RegExp(EMAIL_RUN, "g");
-const NOT_PHONE = new RegExp(NOT_A_PHONE);
-
-/** A run of PHONE_RUN that is a phone: 7 digits or more, and no date, range or chapters. */
-const phoneRun = (m: string) => m.replace(/[^0-9]/g, "").length >= 7 && !NOT_PHONE.test(m);
 
 /** Does the text hold a phone or an e-mail — app.has_contact, the commit's backstop («contact_in_text»). */
 export function hasContact(text: string | null | undefined): boolean {
   const t = foldContact(text);
-  if (EMAIL_1.test(t)) return true;
-  for (const m of t.matchAll(PHONE_G)) if (phoneRun(m[0])) return true;
-  return false;
+  return EMAIL_1.test(t) || PHONE_1.test(t);
 }
 
 const SENT_PHONE = "\u0001";
@@ -172,7 +206,6 @@ function markContacts(text: string, found: (kind: "phone" | "email", m: string) 
       return SENT_MAIL;
     })
     .replace(PHONE_G, (m) => {
-      if (!phoneRun(m)) return m;
       const open = m.startsWith("(") && unclosed(m);
       found("phone", open ? m.slice(1) : m);
       return SENT_PHONE + (open ? OPEN : "");
@@ -194,8 +227,10 @@ export function scrubContacts(text: string): { text: string; scrubbed: boolean }
   return { text: out, scrubbed: true };
 }
 
-/** A label written before a contact («טל'», «טלפון:», «נייד», «מייל:», «email:») — taken out with it. */
-const LABEL = /(?:(?<![A-Za-z\u05D0-\u05EA])[ובל]?(?:טלפון|נייד|פלאפון|סלולרי|מייל|אימייל|דוא["״׳']?ל)['׳.:]?|(?<![A-Za-z\u05D0-\u05EA])[ובל]?(?:טל|פל)['׳.:]|(?<![A-Za-z])(?:e-?mail|phone|mobile|mail|tel|mob)[.:])[ \t]*[:\-–]?[ \t]*$/i;
+/** A label written before a contact («טל'», «טלפון:», «והנייד», «פקס», «מייל:», «email:», «tel») — taken out with it. */
+const LABEL = /(?:(?<![A-Za-z\u05D0-\u05EA])[ובלהמש]{0,2}(?:טלפון|נייד|פלאפון|סלולרי|פקס|מייל|אימייל|דוא["״׳']?ל)['׳.:]?|(?<![A-Za-z\u05D0-\u05EA])[ובלהמש]{0,2}(?:טל|פל)['׳.:]|(?<![A-Za-z])(?:e-?mail|telephone|phone|mobile|mail|tel|mob|fax|cell)(?![A-Za-z])[.:]?|☎|☏|📞|📱)[ \t\ufe0f]*[:\-–]?[ \t]*$/i;
+/** …and one written after it — in brackets («(נייד)»), or alone where the part ends («… נייד», «… ☎») — taken out with it. */
+const LABEL_AFTER = /^[ \t]*(?:\([ \t]*(?:(?<![A-Za-z\u05D0-\u05EA])[ובלהמש]{0,2}(?:טלפון|נייד|פלאפון|סלולרי|פקס)(?![A-Za-z\u05D0-\u05EA])|(?<![A-Za-z])(?:telephone|tel|phone|mobile|mob|fax|cell)(?![A-Za-z])|[☎☏📞📱])[ \t]*\)|(?:(?<![A-Za-z\u05D0-\u05EA])[ובלהמש]{0,2}(?:טלפון|נייד|פלאפון|סלולרי|פקס)(?![A-Za-z\u05D0-\u05EA])|(?<![A-Za-z])(?:telephone|tel|phone|mobile|mob|fax|cell)(?![A-Za-z])|[☎☏📞📱])(?=[ \t]*(?:$|[,;/|·\-–—])))/iu;
 const SEP = "[ \\t,;/|·\\-–—]";
 
 export interface Stripped {
@@ -229,6 +264,7 @@ export function stripContacts(text: string): Stripped {
       // a label before it; two of them with only «או», «/», «,» between are one
       .split(SENT_PHONE)
       .map((part, i, all) => (i < all.length - 1 ? part.replace(LABEL, "") : part))
+      .map((part, i) => (i > 0 ? part.replace(LABEL_AFTER, "") : part))
       .join(SENT_PHONE)
       .replace(new RegExp(`${SENT_PHONE}(?:${SEP}*(?:או|or)?${SEP}*${SENT_PHONE})+`, "g"), SENT_PHONE)
       // brackets holding only it

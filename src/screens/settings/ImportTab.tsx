@@ -183,11 +183,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const grid = table?.grid ?? [];
   const names = useMemo(() => columnNames(grid, headerRow), [grid, headerRow]);
   const rows = useMemo(() => dataRows(grid, headerRow), [grid, headerRow]);
-  // the escorts' columns: the one the admin names — always asked in the escorts' file, and in the tracking sheet when a
-  // header or a first row speaks of escorts or trainees — and, as a guard, any found (a header in the header row, or
-  // one in the first rows). Never mapped, never read, whatever the mapping says.
+  // the escorts' columns: the one the admin names — always asked in the escorts' file, and in the tracking sheet and the
+  // candidates when a header or a first row speaks of escorts or trainees (DECISIONS «סבב חמישי», 5) — and, as a guard,
+  // any found (a header in the header row, or one in the first rows). Never mapped, never read, whatever the mapping says.
   const foundEscort = useMemo(() => escortColumns(grid, headerRow), [grid, headerRow]);
-  const askEscort = !!table && (kind === "escorts" || (kind === "tracking" && escortLike(grid, headerRow)));
+  const askEscort = !!table && (kind === "escorts" || ((kind === "tracking" || kind === "candidates") && escortLike(grid, headerRow)));
   const escortCols = useMemo(() => (typeof escortAsked === "number" ? new Set([...foundEscort, escortAsked]) : foundEscort), [foundEscort, escortAsked]);
   const read = useMemo(() => mapping.map((f, i) => (escortCols.has(i) ? null : f)), [mapping, escortCols]);
   // the escorts' names — as the file writes them (and, for the escorts' file, as the rosters have them): read in the page
@@ -509,7 +509,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               <p id={`${id}-escort-hint`} className="mt-1 text-xs text-ink-soft">
                 {kind === "escorts"
                   ? "לא מנחשים לבד. העמודה שנבחרת לא נקראת, והשמות שבה לא נשמרים. גם שום ניסוח מהקובץ לא נשמר — רק הערוץ שבוחרים לכל מרצה וההערה שכותבים."
-                  : "בגיליון יש כותרת או שורה שמדברת על מלווים או חניכים. העמודה שנבחרת לא נקראת, והשמות שבה לא נשמרים."}
+                  : "בטבלה יש כותרת או שורה שמדברת על מלווים או חניכים. העמודה שנבחרת לא נקראת, והשמות שבה לא נשמרים; שם שלהם בתא של מרצה מוצע «לא לייבא»."}
               </p>
             </div>
           )}

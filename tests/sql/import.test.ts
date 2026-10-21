@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { jsonbText, labelKey } from "../../src/data/importRules";
-import { DIGIT_ZEROS, EMAIL_RUN, FORMAT_RANGES, foldContact, hasContact, NOT_A_PHONE, PG_DIGITS_FROM, PG_DIGITS_TO, PG_FORMAT_CLASS, PHONE_RUN, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
+import { DIGIT_ZEROS, EMAIL_RUN, FORMAT_RANGES, foldContact, hasContact, PG_DIGITS_FROM, PG_DIGITS_TO, PG_FORMAT_CLASS, PHONE, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
 import { SCHEMA, as, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -494,9 +494,9 @@ describe("the import of 5786", () => {
   });
 
   describe("סבב שלישי: a phone or an e-mail only in phone and e-mail — app.has_contact, the browser's hasContact", () => {
-    it("is written with the browser's very expressions — and answers as it does, string for string (fixed cases and 4,000 seeded ones)", async () => {
+    it("is written with the browser's very expressions — and answers as it does, string for string (fixed cases and 10,000 seeded ones)", async () => {
       const def = String((await db.query("select pg_get_functiondef('app.has_contact(text)'::regprocedure) as d")).rows[0].d);
-      for (const part of [PHONE_RUN, EMAIL_RUN, NOT_A_PHONE]) expect(def).toContain(part);
+      for (const part of [PHONE, EMAIL_RUN]) expect(def).toContain(part);
       const fold = String((await db.query("select pg_get_functiondef('app.contact_fold(text)'::regprocedure) as d")).rows[0].d);
       for (const part of [PG_FORMAT_CLASS, PG_DIGITS_FROM, PG_DIGITS_TO]) expect(fold).toContain(part);
       const fixed = [
@@ -513,16 +513,51 @@ describe("the import of 5786", () => {
         // …and what is no phone: years, dates and chapters — never cut from a title
         "1948-1967-1973", "1948, 1967, 1973", "1948/1967", "14.2-18.2.2027", "14.2.2027-18.2.2027", "12.3-15.3.2026", "1-2-3-4-5-6-7", "1, 2, 3, 4, 5, 6, 7",
         "1,2,3,4,5,6,7", "12-13-14-15", "פרקים 12, 13, 14, 15", "05-21-23-45-67", "12/3", "8 @ 10.30", "a @ b. c",
+        // סבב חמישי: by the numbering plan — Israeli numbers (built here, so no number is written in this file), abroad, beside a word…
+        ...[["052", "1234567"], ["03", "1234567"], ["077", "1234567"], ["1", "800", "123456"], ["972", "52", "1234567"], ["+44", "20", "79460958"], ["00", "33", "123456789"]].flatMap((p) => [p.join(""), p.join("-"), p.join(" / "), `שם ${p.join(" ")} שם`]),
+        ["052", "123", "4567"].join("|"), ["052", "123", "4567"].join(";"), ["052", "123", "4567"].join(":"), ["02", "123", "4567"].join(":"), ["052", "1234567"].join(".").concat(".12"),
+        "טל' 1234567", "נייד: 1234567", "בטלפון 1234567", "tel 1234567", "☎ 1234567", "📞1234567", "1234567 (נייד)", "טל' *2345", "2345* טלפון", "*2345", "2345*", "טל' 123456",
+        "טל 1234567", "Tel Aviv 1234567", "telephone: 12345678", "פקס 12345678", "📱 +1234567",
+        // …and what is text: verses, dates and times in every form (the xlsx reader's ISO too), pages, prices, years
+        "תהלים 119:1-176", "ישעיהו 40:1-41:10", "בראשית 28:10-32:3", "12.3 20:00", "12/3 20:00", "14.2 08:30", "12.3.2026 10:00-11:30", "12.3 10:00-11:30",
+        "14-18/2/2027", "14-18.2.2027", "2026-02-10", "2026-02-10 08:30", "05.10.2026 08:30", "05-10-2026 20:00", "05-10-2026 20", "05.10-07.10.26", "05/10/2026 08:30",
+        "עמ' 112,134,156", "עמ' 1203-1305", "1 • 2 • 3 • 4 • 5 • 6 • 7", "1,500,000 ₪", "1,000,000,000", "1948 1967 1973", "1948-67-73", "5786-5787", "ISBN 978-965-000-000-0",
+        "20:00-21:00-22:00", "18:00-19:00 20:00-21:00", "טל' 1234567 12.3.2026", "טל' 1234567 05-10-2026 08:30", "טל' 1234567 2026-02-10 08:30",
+        // the residuals (DECISIONS «סבב חמישי»): six digits, «at», no 0 and no word, an e-mail with no TLD or a comma for its dot
+        "123456", "someone(at)example.org", "521234567", "someone@example", "someone@example,org",
       ];
       // seeded strings of digits, separators, marks, letters and @ — the corners where two engines could part
-      const ALPHABET = [..."0123456789 -.()+/:@,ab\n\t\u00a0\u200f\u200b\u2011\u2013\u2003\ufeff\u00ad\u05beאב<>·•‧_\u0085\u180e\u2028\u200d\u2060\u2066＠oz", "\u{e0020}", "\u{1d7ce}", "\u{1d7d9}"];
+      const ALPHABET = [
+        ..."0123456789 -.()+/:@,ab\n\t\u00a0\u200f\u200b\u2011\u2013\u2003\ufeff\u00ad\u05beאב<>·•‧_\u0085\u180e\u2028\u200d\u2060\u2066＠oz|;*",
+        "\u{e0020}", "\u{1d7ce}", "\u{1d7d9}",
+        // סבב חמישי: the numbering plan's corners — its prefixes, the words that say a phone, a date's and a time's shapes
+        "05", "07", "02", "972", "+972", "00", "1-800-", "טל' ", "נייד ", "טלפון: ", "tel:", "☎", "📞", "2026-", "12.3.", ":30",
+      ];
       // a digit: ASCII mostly — Arabic-Indic, Persian, fullwidth, Devanagari now and then
       const DIGITS = [0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x660, 0x6f0, 0xff10, 0x966];
       let a = 7;
       const next = () => ((a = (Math.imul(a, 1103515245) + 12345) >>> 0) / 4294967296);
       const digit = () => String.fromCodePoint(DIGITS[Math.floor(next() * DIGITS.length)] + Math.floor(next() * 10));
       const random = Array.from({ length: 6000 }, () => Array.from({ length: Math.floor(next() * 24) }, () => (next() < 0.55 ? digit() : ALPHABET[Math.floor(next() * ALPHABET.length)])).join(""));
-      const sample = [...fixed, ...random];
+      // …and 4,000 built of the numbering plan's own pieces (סבב חמישי): numbers by the plan — and a digit short or long —
+      // with every separator, beside dates, times, verses, prices and the words that say a phone
+      const ds = (n: number) => Array.from({ length: n }, () => digit()).join("");
+      const pick = <T,>(xs: readonly T[]) => xs[Math.floor(next() * xs.length)];
+      const SEPS = ["", "-", " ", ".", "/", " / ", ":", ",", ", ", "|", ";", "·", "_", "\u200f-\u200f", "\n", "(", ") "];
+      const number = () => {
+        const head = pick(["05", "07", "02", "03", "04", "08", "09", "06", "01", "00", "1-800", "1700", "972", "+972", "+44", "+1", "0", ""]);
+        const parts = [head + ds(Math.floor(next() * 3)), ds(1 + Math.floor(next() * 4)), ds(1 + Math.floor(next() * 5))];
+        return parts.join(pick(SEPS));
+      };
+      const piece = () =>
+        pick([
+          number, number, number,
+          () => `${ds(2)}.${ds(1)}.20${ds(2)}`, () => `20${ds(2)}-${ds(2)}-${ds(2)} ${ds(2)}:${ds(2)}`, () => `${ds(2)}:${ds(2)}-${ds(2)}:${ds(2)}`, () => `${ds(3)}:${ds(1)}-${ds(3)}`,
+          () => `${ds(1)},${ds(3)},${ds(3)}`, () => `19${ds(2)}-19${ds(2)}`, () => `*${ds(4)}`, () => `${ds(4)}*`,
+          () => pick(["טל' ", "נייד ", "טלפון: ", "בטלפון ", "tel ", "☎", "📞", "פקס ", " (נייד)", "טל ", "Tel Aviv ", "שם ", "עמ' ", "₪", "@", "a@example.org"]),
+        ])();
+      const built = Array.from({ length: 4000 }, () => Array.from({ length: 1 + Math.floor(next() * 4) }, piece).join(pick([" ", "", ", ", "\n", " - "])));
+      const sample = [...fixed, ...random, ...built];
       const r = await db.query("select o, app.has_contact(x) as h from unnest($1::text[]) with ordinality as u(x, o) order by o", [sample]);
       const differ = r.rows.filter((x) => x.h !== hasContact(sample[Number(x.o) - 1])).map((x) => JSON.stringify(sample[Number(x.o) - 1]));
       expect(differ).toEqual([]);
@@ -573,6 +608,20 @@ describe("the import of 5786", () => {
       expect(await count("select count(*) as n from public.editions where label in ('בדיקת מספר בטקסט', 'ארכיון 000-000-0079')")).toBe(0);
       // what is no phone is accepted: a date, a range of years or of times
       expect(await commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה עם תאריכים", { affiliation: "מוסד 1948-1967", notes: "נקבע 12.3.2026 20:00, 8.30-10.00" })] })).toMatchObject({ created: 1 });
+    });
+
+    it("סבב חמישי: by the numbering plan — a realistic number refused in any field; verses, dates and times, pages, prices stored whole", async () => {
+      // every number is built here from its parts: no phone is written in this file
+      const n = (...parts: string[]) => parts.join("");
+      const cand = (bad: Record<string, unknown>) => commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(5, "מרצה לבדיקה", bad)] });
+      for (const bad of [{ name: `מרצה לבדיקה ${n("052", "-", "1234567")}` }, { affiliation: `מכון ${n("03", " ", "1234567")}` }, { topics: [n("+44", " 20 ", "7946 0958")] }, { notes: `טל' ${n("123", "-", "4567")}` }, { notes: `${n("1-800", "-123-", "456")} (מוקד)` }]) {
+        expect(await refusal(cand(bad)), JSON.stringify(bad)).toBe("import_bad_row 5:contact_in_text");
+      }
+      const text = { title: "עיון בתהלים 119:1-176", sources_kind: "other", sources_note: "ישעיהו 40:1-41:10, עמ' 112,134,156", import_note: "אושר בתאריך: 2026-02-10 08:30\nהסעה: 1,500,000 ₪ (לא באמת), 05.10.2026 08:30" };
+      const lesson = { row: 2, day: 0, start_min: 510, end_min: 600, room: 0, category_id: null, audience: null, print_when: "none", pay_amount: null, speakers: [0], ...text };
+      await commit("tracking", { label: "ארכיון סבב חמישי", start_date: null, source: "tracking-5786", titles_from: null, speakers: [row(2, "מרצה עם פסוקים")], lessons: [lesson] });
+      const stored = (await db.query("select l.title, l.sources_note, n.note from public.lessons l join public.editions e on e.id = l.edition_id left join public.lesson_import_notes n on n.lesson_id = l.id where e.label = 'ארכיון סבב חמישי'")).rows;
+      expect(stored).toEqual([{ title: text.title, sources_note: text.sources_note, note: text.import_note }]);
     });
   });
 });

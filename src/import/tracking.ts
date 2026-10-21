@@ -3,9 +3,11 @@
 //   * when: «שיעור ב» read by parseWhen; unreadable → the row is «מדולג» with the reason. Only a start written: the
 //     end of the grid's lesson row that starts then — else «מדולג».
 //   * speakers: one or more names per row, each matched to the pool as the candidates are (one choice per speaker,
-//     not per row). A name on a line under the first is an ExtraLine (src/import/lines.ts): «מרצה נוסף/ת», «שיוך
-//     מוסדי» or «לא לייבא» — the read proposes an affiliation only for an institution's word («ישיבת…»), «לא לייבא»
-//     for an escort's name; any other line the admin decides. The row's phone goes to its speaker's contacts — decided
+//     not per row). A name on a line under the first, a bracket at the end of a name («פלוני (ישיבת בדיקה)» — the name
+//     is «פלוני»), and a name beside the first that names an escort («פלוני + שירה…») are ExtraLines
+//     (src/import/lines.ts): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the read proposes an affiliation only for an
+//     institution's word («ישיבת…»), «לא לייבא» for an escort's name; any other line the admin decides; any other name
+//     beside the first is a co-speaker. The row's phone goes to its speaker's contacts — decided
 //     after the admin's choices: to the one speaker of the row still imported (planLessons), never when two are.
 //   * a phone or an e-mail in the speaker's cell (beside a name, a line of its own, «(טל' …)») or in the title is
 //     taken out (stripContacts) — never a name, an affiliation or a title: the speaker cell's one phone is the row's
@@ -34,7 +36,7 @@ import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import type { MatchContext } from "./candidates";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
-import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs } from "./lines";
+import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs, lineProposal, trailingBrackets } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { type SourcesRule, sourcesKey, translateSources } from "./sources";
 import { splitSpeakers, splitTitle, titleGender } from "./speakerName";
@@ -58,11 +60,17 @@ const DOUBLE_MARK = /[ \t\-–—־,]*\(?[ \t]*(?<![א-ת])כפולה(?![א-ת])
 const PARENTS = /^[\s\-–—־,.:()]*שיעור\s+להורים/;
 /** A memorial row: a speaker, title or time cell that BEGINS with «זמן זיכרון» («זמן זיכרון א», «זמן זיכרון – …»). */
 const MEMORIAL = /^\s*זמן\s*זיכרון/;
+/** «כפולה», or «שיעור כפול», as words of their own. */
+const DOUBLE_WORDS = "(?<![א-ת])(?:כפולה|שיעור\\s+כפול)(?![א-ת])";
 /**
- * «כפולה» set off in a title — in any bracket («(כפולה)», «[כפולה]», «(כפולה!)»), after a dash or a comma at the end
- * («- כפולה.»), or before one at the start: no marker — the title is never cut — but said («השורה לא סומנה ככפולה»).
+ * «כפולה» (or «שיעור כפול») set off in a title — in any bracket («(כפולה)», «[כפולה]», «(שיעור כפול)»), after a dash
+ * or a comma at the end («- כפולה.») or between two in the middle («נאמנות - כפולה - חלק א»), before one at the start, or
+ * the whole title: no marker — the title is never cut — but said («השורה לא סומנה ככפולה»).
  */
-const DOUBLE_SET_OFF = /[([{]\s*כפולה\s*[.!?]*\s*[)\]}]|[-–—־,]\s*כפולה\s*[.!?]*\s*$|^\s*כפולה\s*[.!?]*\s*[-–—־,:]/m;
+const DOUBLE_SET_OFF = new RegExp(
+  `[([{]\\s*${DOUBLE_WORDS}\\s*[.!?]*\\s*[)\\]}]|[-–—־,]\\s*${DOUBLE_WORDS}\\s*[.!?]*\\s*(?:$|[-–—־,])|^\\s*${DOUBLE_WORDS}\\s*[.!?]*\\s*(?:[-–—־,:]|$)`,
+  "m",
+);
 const chars = (s: string) => [...s].length;
 const oneLine = (s: string) => s.replace(/\n/g, " ").trim();
 
@@ -180,35 +188,50 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
     if (rest) notes.push(`שיעור ב: ${whenCell}`);
     // the speakers: the first line's names; every name on a line under it is an ExtraLine — a speaker, the
     // affiliation of the name above, or left out, as the admin chooses (the read proposes only an institution's
-    // affiliation and an escort's «לא לייבא»)
+    // affiliation and an escort's «לא לייבא») — and so is a name beside the first that names an escort («פלוני + שירה…»),
+    // and a bracket at the end of a name («פלוני (ישיבת בדיקה)», «מרצה 12 (מלווה: …)»): the name is «פלוני»
     const speakerKeys: string[] = [];
     const affiliations: { key: string; text: string }[] = [];
     let above: { key: string; name: string } | null = null;
+    let tooLong = false;
+    /** A line of a cell, decided: its affiliation kept, or the speaker it is (a name — «false» when too long). */
+    const decide = (l: ExtraLine, of: { key: string }, raw: string): boolean => {
+      lines.push(l);
+      if (l.as === "affiliation") affiliations.push({ key: of.key, text: affiliationText(raw) });
+      // «לא לייבא», or undecided: none, until the admin chooses («ייבוא» waits)
+      return l.as !== "speaker" || speak(affiliationText(raw), l.id);
+    };
+    /** A name of the row («הרב פלוני (ישיבת בדיקה)»), its brackets apart — each a line of it; false: too long. */
+    const speak = (raw: string, id: string): boolean => {
+      const { name: bare, brackets } = trailingBrackets(raw);
+      const { title, name } = splitTitle(bare, o.titles);
+      const key = nameKey(name);
+      if (!key) return true;
+      if (chars(name) > LIMITS.name) return false;
+      if (!speakerKeys.includes(key)) speakerKeys.push(key);
+      const s = speakers.get(key) ?? { key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: null, phone: null, phoneKey: null, email: null, rows: [] };
+      if (!s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
+      if (!s.rows.includes(row)) s.rows.push(row);
+      speakers.set(key, s);
+      const me = { key, name };
+      for (const [k, b] of brackets.entries()) if (!decide(extraLine(`${id}.${k + 1}`, row, b, me, escorts, o.lineAs), me, b)) return false;
+      above = me;
+      return true;
+    };
     let index = 0;
     for (const [i, line] of cellLines(speakerCell).entries()) {
-      for (const raw of line) {
+      for (const [j, raw] of line.entries()) {
         index++;
-        const { title, name } = splitTitle(raw, o.titles);
-        const key = nameKey(name);
-        if (!key) continue;
-        if (i > 0 && above) {
-          const l = extraLine(`${row}:${index}`, row, raw, above, escorts, o.lineAs);
-          lines.push(l);
-          if (l.as === "affiliation") {
-            affiliations.push({ key: above.key, text: affiliationText(raw) });
-            continue;
-          }
-          if (l.as !== "speaker") continue; // «לא לייבא», or undecided: none, until the admin chooses («ייבוא» waits)
-        }
-        if (chars(name) > LIMITS.name) return { ...base, skip: `שם המרצה ארוך מ-${LIMITS.name} תווים` };
-        if (!speakerKeys.includes(key)) speakerKeys.push(key);
-        const s = speakers.get(key) ?? { key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: null, phone: null, phoneKey: null, email: null, rows: [] };
-        if (!s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
-        s.rows.push(row);
-        speakers.set(key, s);
-        above = { key, name };
+        const id = `${row}:${index}`;
+        if (!nameKey(splitTitle(raw, o.titles).name)) continue;
+        // a line under the first, or a name beside the first that names an escort: a line to decide
+        const asLine = above != null && (i > 0 || (j > 0 && lineProposal(raw, escorts)[0] === "skip"));
+        tooLong = asLine && above ? !decide(extraLine(id, row, raw, above, escorts, o.lineAs), above, raw) : !speak(raw, id);
+        if (tooLong) break;
       }
+      if (tooLong) break;
     }
+    if (tooLong) return { ...base, skip: `שם המרצה ארוך מ-${LIMITS.name} תווים` };
     // a speaker's affiliation lines, together (the first row that gives one; never past the pool's limit)
     for (const key of new Set(affiliations.map((a) => a.key))) {
       const s = speakers.get(key);

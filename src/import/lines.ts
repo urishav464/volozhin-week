@@ -1,9 +1,11 @@
 // A speaker cell's other names — a line under the first (a Word cell's second paragraph, a Sheets cell's Alt+Enter),
-// or a name beside it («פלוני + פלמוני» in a candidates' row) — in the tracking sheet and in the candidates alike
-// (DECISIONS «סבב רביעי»). Each is one of three — «מרצה נוסף/ת», «שיוך מוסדי» of the name above, or «לא לייבא את
-// השורה» — and the read proposes only two («הצעה»): an affiliation, when the line holds an institution's word
-// («ישיבת…», «מכון…»); «לא לייבא», when it names an escort (a word of the escorts' column, or «מלווה»/«חניך»). Every
-// other line — in brackets or not, with a title or not — waits for the admin's choice, and «ייבוא» waits with it.
+// a name beside it («פלוני + פלמוני» in a candidates' row; in the tracking sheet, one that names an escort), or a
+// bracket at the end of a name, on its own line («הרב פלוני (ישיבת בדיקה)», «מרצה 12 (מלווה: …)») — in the tracking
+// sheet and in the candidates alike (DECISIONS «סבב רביעי», «סבב חמישי»). Each is one of three — «מרצה נוסף/ת», «שיוך
+// מוסדי» of the name it stands by, or «לא לייבא את השורה» — and the read proposes only two («הצעה»): an affiliation,
+// when the line holds an institution's word («ישיבת…», «מכון…»); «לא לייבא», when it names an escort (a word of the
+// escorts' column, or «מלווה»/«חניך»). Every other line — in brackets or not, with a title or not — waits for the
+// admin's choice, and «ייבוא» waits with it. A name is matched to the pool without its brackets («פלוני»).
 import { escortWords, mentionsEscort, namedEscort } from "./escorts";
 
 export type LineAs = "affiliation" | "speaker" | "skip";
@@ -38,8 +40,28 @@ export function lineProposal(raw: string, escorts: ReadonlySet<string>): [LineAs
   return [null, "בלי שם של מוסד"];
 }
 
-/** A line as an affiliation: without the brackets around it («(ישיבת דוגמה)»). */
-export const affiliationText = (raw: string) => (/^\((.+)\)$/.exec(raw.trim())?.[1] ?? raw).trim();
+/** A line as an affiliation (or a name): without the brackets around it («(ישיבת דוגמה)», «[…]», one left open «(…»). */
+export const affiliationText = (raw: string) => (/^[([{]\s*(.+?)\s*[)\]}]?$/.exec(raw.trim())?.[1] ?? raw).trim();
+
+/**
+ * A name's brackets at its end, on its own line («הרב פלוני (ישיבת בדיקה)», «מרצה 12 (מלווה: שירה)», «פלוני (א) (ב)»,
+ * one left open «פלוני (ישיבת…»): the name before them, and each bracket in order — each a line of that name. A name
+ * that is only a bracket, or a bracket in its middle («פלוני (בן) אלמוני»), is left whole.
+ */
+export function trailingBrackets(raw: string): { name: string; brackets: string[] } {
+  let name = raw.trim();
+  const brackets: string[] = [];
+  for (;;) {
+    const open = Math.max(name.lastIndexOf("("), name.lastIndexOf("["), name.lastIndexOf("{"));
+    const before = name.slice(0, Math.max(open, 0)).trimEnd();
+    if (open <= 0 || !BRACKET.test(name.slice(open)) || !before || /[([{]$/.test(before)) break;
+    brackets.unshift(name.slice(open).trim());
+    name = before;
+  }
+  return { name, brackets };
+}
+/** One bracket to the end: no other bracket inside it; its closing one may be missing. */
+const BRACKET = /^[([{][^()[\]{}]*[)\]}]?\s*$/;
 
 /** One line of a cell, read: the proposal, and the admin's choice over it. */
 export function extraLine(id: string, row: number, raw: string, of: { key: string; name: string }, escorts: ReadonlySet<string>, lineAs?: ReadonlyMap<string, LineAs>): ExtraLine {

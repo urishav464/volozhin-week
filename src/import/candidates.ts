@@ -6,10 +6,11 @@
 // taken out (stripContacts): one in the name's cell becomes the row's phone or e-mail when that column is empty and
 // it is the only one; every other is dropped, and the row says so — never kept in a name, a title, the affiliation, a
 // tag or the note (supabase/schema.sql refuses one: «contact_in_text»). The name's cell is read as the tracking sheet
-// reads a speaker's (DECISIONS «סבב רביעי»): its first name is the row's candidate; any other — beside it («פלוני +
-// פלמוני») or on a line under it — is an ExtraLine (src/import/lines.ts): another candidate (its name and title only),
-// the row's affiliation, or left out — the read proposes only an institution's affiliation and an escort's «לא
-// לייבא», and «ייבוא» waits for the rest.
+// reads a speaker's (DECISIONS «סבב רביעי», «סבב חמישי»): its first name is the row's candidate; any other — beside it
+// («פלוני + פלמוני»), on a line under it, or a bracket at the end of a name («הרב פלוני (ישיבת בדיקה)», «… (מלווה: …)»)
+// — is an ExtraLine (src/import/lines.ts): another candidate (its name and title only, and its own bracket's
+// affiliation), the row's affiliation, or left out — the read proposes only an institution's affiliation and an
+// escort's «לא לייבא», and «ייבוא» waits for the rest. The name is matched to the pool without its brackets.
 import type { CandidatesPayload, ContactFlags, SpeakerRow } from "../data/imports";
 import { IMPORT_RULES } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
@@ -18,7 +19,7 @@ import type { Gender, Speaker } from "../domain/types";
 import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
-import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs } from "./lines";
+import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs, trailingBrackets } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { pickTitleCell, splitSpeakers, splitTitle, titleGender } from "./speakerName";
 import type { Grid } from "./table";
@@ -91,7 +92,9 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       out.push(skip("אין שם"));
       continue;
     }
-    let { title, name } = splitTitle(raw, o.titles);
+    // a bracket at the end of the name («הרב פלוני (ישיבת בדיקה)», «… (מלווה: …)»): a line of its own — the name is «פלוני»
+    const { name: bare, brackets } = trailingBrackets(raw);
+    let { title, name } = splitTitle(bare, o.titles);
     const notes: string[] = [];
     /** A field's text with every contact taken out — said once per field. */
     const clean = (text: string, field: string) => {
@@ -122,15 +125,17 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       continue;
     }
     seen.set(key, row);
-    // the cell's other names: each an ExtraLine — the admin's choice, or the read's «הצעה»
+    // the cell's other names and the name's brackets: each an ExtraLine — the admin's choice, or the read's «הצעה»
     const lineAff: string[] = [];
     const extras: { ref: string; raw: string }[] = [];
-    parts.slice(1).forEach((part, k) => {
-      const l = extraLine(`${row}:${k + 2}`, row, part, { key, name }, escorts, o.lineAs);
+    const decide = (id: string, part: string) => {
+      const l = extraLine(id, row, part, { key, name }, escorts, o.lineAs);
       lines.push(l);
       if (l.as === "affiliation") lineAff.push(affiliationText(part));
-      else if (l.as === "speaker") extras.push({ ref: l.id, raw: part });
-    });
+      else if (l.as === "speaker") extras.push({ ref: l.id, raw: affiliationText(part) });
+    };
+    brackets.forEach((b, k) => decide(`${row}:1.${k + 1}`, b));
+    parts.slice(1).forEach((part, k) => decide(`${row}:${k + 2}`, part));
     const gender = o.genderFromTitle ? titleGender(title) : null;
     let affiliation: string | null = [oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")), ...lineAff].filter(Boolean).join(", ") || null;
     if (affiliation && chars(affiliation) > LIMITS.affiliation) {
@@ -171,9 +176,12 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       warnings,
       data: { title, name, key, gender, affiliation, topics: tags, phone: phone.value, phoneKey: phone.key, email: email.value, notes: note },
     });
-    // another candidate from the cell: its name and title only — the row's other columns are the first's
-    for (const x of extras) {
-      const sub = splitTitle(oneLine(x.raw), o.titles);
+    // another candidate from the cell: its name and title only — the row's other columns are the first's; a bracket at
+    // the end of its name a line of its own (its affiliation, or left out — or another candidate)
+    for (let e = 0; e < extras.length; e++) {
+      const x = extras[e];
+      const split = trailingBrackets(oneLine(x.raw));
+      const sub = splitTitle(split.name, o.titles);
       const k = nameKey(sub.name);
       const at = seen.get(k);
       const why = !k ? "אין שם" : chars(sub.name) > LIMITS.name ? `השם ארוך מ-${LIMITS.name} תווים` : at != null ? `כפול בטבלה (כמו שורה ${at})` : null;
@@ -182,12 +190,23 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
         continue;
       }
       seen.set(k, row);
+      const aff: string[] = [];
+      split.brackets.forEach((b, j) => {
+        const l = extraLine(`${x.ref}.${j + 1}`, row, b, { key: k, name: sub.name }, escorts, o.lineAs);
+        lines.push(l);
+        if (l.as === "affiliation") aff.push(affiliationText(b));
+        else if (l.as === "speaker") extras.push({ ref: l.id, raw: affiliationText(b) });
+      });
+      const affiliation = aff.join(", ") || null;
       out.push({
         row,
         ref: x.ref,
         skip: null,
-        warnings: ["שם נוסף מתא השם — רק השם והתואר (שאר העמודות של השורה למרצה הראשון/ה)"],
-        data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation: null, topics: [], phone: null, phoneKey: null, email: null, notes: null },
+        warnings: [
+          aff.length ? "שם נוסף מתא השם — רק השם, התואר והשיוך שבסוגריים (שאר העמודות של השורה למרצה הראשון/ה)" : "שם נוסף מתא השם — רק השם והתואר (שאר העמודות של השורה למרצה הראשון/ה)",
+          ...(affiliation && chars(affiliation) > LIMITS.affiliation ? [`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`] : []),
+        ],
+        data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation: affiliation && chars(affiliation) <= LIMITS.affiliation ? affiliation : null, topics: [], phone: null, phoneKey: null, email: null, notes: null },
       });
     }
   }

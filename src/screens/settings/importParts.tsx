@@ -9,7 +9,7 @@ import type { Category, PrintWhen, SourcesKind } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import type { CandidatePreview, MatchContext } from "../../import/candidates";
 import {
-  answerSaves, CHANNEL_LABEL, type EscortAnswer, escortFills, type EscortsPreview as EscortsRowPreview, IMPORT_CHANNELS, type ImportChannel, namedEscort, noteProblem, type ShownPhrase,
+  answerSaves, CHANNEL_LABEL, type EscortAnswer, escortFill, escortFills, type EscortsPreview as EscortsRowPreview, IMPORT_CHANNELS, type ImportChannel, namedEscort, noteProblem, type ShownPhrase,
 } from "../../import/escorts";
 import { LIMITS } from "../../data/speakerRules";
 import { actionOf, type Choice, fillPlan, type Resolved, type RowStatus, type SpeakerFill, type SpeakerMatch } from "../../import/match";
@@ -468,17 +468,18 @@ const LINE_AS_LABEL: Record<LineAs, (of: string) => string> = {
 };
 
 /**
- * A speaker cell's other names (a line under the first; in the candidates also one beside it): «מרצה נוסף/ת», «שיוך
- * מוסדי» or «לא לייבא» — the read proposes only an institution's affiliation and an escort's «לא לייבא» («הצעה»); any
- * other waits for the admin. A line of a row left out anyway waits for nothing.
+ * A speaker cell's other names (a line under the first, a bracket at the end of a name; in the candidates also one
+ * beside it, in the tracking sheet one beside it that names an escort): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the
+ * read proposes only an institution's affiliation and an escort's «לא לייבא» («הצעה»); any other waits for the admin.
+ * A line of a row left out anyway waits for nothing.
  */
 export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: ExtraLine[]; skipped?: ReadonlySet<number>; onChoose: (id: string, as: LineAs) => void }) {
   const id = useId();
   return (
     <Panel title="שם נוסף בתא של המרצה" aside="מרצה נוסף/ת, שיוך מוסדי או לא לייבא">
       <p className="mb-2 text-sm text-ink-soft">
-        שורה עם שם של מוסד (ישיבת…, מכון…, מדרשת…) מוצעת כשיוך המוסדי של השם שמעליה, ושורה עם שם מעמודת המלווים — «לא לייבא» <Badge tone="accent">הצעה</Badge>. כל
-        שורה אחרת, בסוגריים או לא, מחכה להחלטה. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
+        שורה מתחת לשם, או סוגריים בסוף השם, עם שם של מוסד (ישיבת…, מכון…, מדרשת…) מוצעים כשיוך המוסדי של השם, ועם שם מעמודת המלווים — «לא לייבא» <Badge tone="accent">הצעה</Badge>.
+        כל אחר מחכה להחלטה. השם עצמו נבדק מול המאגר בלי הסוגריים. השיוך משלים את «מוסד» של המרצה, רק אם הוא ריק.
       </p>
       <ul aria-label="שמות נוספים בתא המרצה" className="space-y-2">
         {lines.map((l) => {
@@ -633,7 +634,8 @@ export function EscortsPreview({
                     <p className="mt-0.5 text-sm text-ink-soft">{fills.length ? `יושלם (רק מה שחסר): ${fills.join(", ")}` : "אין מה להשלים — שום דבר לא נדרס."}</p>
                   )}
                   {saves && r.status === "ambiguous" && r.match && (
-                    <SpeakerDecision name={r.name} status={r.status} match={r.match} fill={null} pool={null} choice={choices.get(r.key)} onChoose={(c) => onChoose(r.key, c)} />
+                    // the speaker chosen: what the answer will fill there (only what is missing) — as a match says it
+                    <SpeakerDecision name={r.name} status={r.status} match={r.match} fill={escortFill(a)} pool={pool} choice={choices.get(r.key)} onChoose={(c) => onChoose(r.key, c)} />
                   )}
                 </>
               )}

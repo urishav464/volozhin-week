@@ -79,7 +79,7 @@ describe("phones and e-mails", () => {
   });
 
   it("takes every phone and e-mail out of free text the team reads, and says so", () => {
-    expect(scrubContacts("הסעה מהתחנה, נהג 011-111-1111, או x@example.org")).toEqual({ text: "הסעה מהתחנה, נהג [טלפון הוסר], או [מייל הוסר]", scrubbed: true });
+    expect(scrubContacts("הסעה מהתחנה, נהג 000-111-1111, או x@example.org")).toEqual({ text: "הסעה מהתחנה, נהג [טלפון הוסר], או [מייל הוסר]", scrubbed: true });
     expect(scrubContacts("300 ש״ח, שיעור 8:30-10:00")).toEqual({ text: "300 ש״ח, שיעור 8:30-10:00", scrubbed: false });
   });
 });

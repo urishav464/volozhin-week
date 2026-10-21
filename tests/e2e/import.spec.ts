@@ -66,6 +66,9 @@ test.describe("demo build — the import of 5786", () => {
     await expect(page.getByLabel("טווח ימים", { exact: true })).toHaveValue("status");
     await expect(page.getByLabel("חניך/ה", { exact: true })).toHaveValue("");
     await page.getByLabel("מוסד", { exact: true }).selectOption("affiliation");
+    // a header that speaks of trainees: the candidates ask which column is theirs too (סבב חמישי) — «בדיקה» waits for it
+    await expect(page.getByRole("button", { name: "בדיקה מול המאגר" })).toBeDisabled();
+    await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("4");
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
 
     const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
@@ -544,6 +547,64 @@ test.describe("demo build — the import of 5786", () => {
     await expect(page.getByText("נוספו 3 מרצים למאגר (ממתינים לאישור)")).toBeVisible();
   });
 
+  test("סבב חמישי — a bracket on the name's own line, a name beside it that names an escort: lines to decide; «מרצה 07 (מכון לדוגמה)» is מרצה 07", async ({ page }, info) => {
+    test.skip(info.project.name === "tablet", "two widths are enough for this flow");
+    const td = (x: string) => `<td>${x.split("\n").map((l) => `<p class=MsoNormal>${l}</p>`).join("")}</td>`;
+    const tr = (...cells: string[]) => `<tr>${cells.map(td).join("")}</tr>`;
+    const html = `<table class=MsoTableGrid>${tr("מרצה", "שיעור ב", "כותרת", "מלווה")}${[
+      tr("מרצה 07 (מכון לדוגמה)", "ראשון 8:30", "כותרת אלף", ""),
+      tr("מרצה 12 (מלווה: שירה בדקני)", "ראשון 10:00", "כותרת בית", "שירה בדקני"),
+      tr("מרצה 03 + נועם ניסיוני", "ראשון 11:30", "כותרת גימל", "נועם ניסיוני"),
+      tr("הרב חדש בדיקתי (ירושלים)", "שני 8:30", "עיון בתהלים 119:1-176", ""),
+    ].join("")}</table>`;
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
+    await paste(page, html, "");
+    await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב חמישי");
+    await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("3");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+
+    const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
+    await expect(lines.locator('li[data-line="2:1.1"]').getByRole("radio", { name: "שיוך מוסדי של מרצה 07" })).toBeChecked();
+    await expect(lines.locator('li[data-line="3:1.1"]').getByRole("radio", { name: "לא לייבא את השורה" })).toBeChecked();
+    await expect(lines.locator('li[data-line="3:1.1"]')).toContainText("הצעה: שם מעמודת המלווים («שירה»)");
+    await expect(lines.locator('li[data-line="4:2"]').getByRole("radio", { name: "לא לייבא את השורה" })).toBeChecked();
+    await expect(lines.locator('li[data-line="5:1.1"]')).toContainText("צריך לבחור");
+    await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeDisabled();
+    // the names as the pool has them: מרצה 07 is the pool's, never a second «מרצה 07 (מכון לדוגמה)»
+    const speakers = page.getByRole("list", { name: "המרצים בגיליון" });
+    await expect(speakers.getByRole("listitem").filter({ hasText: "מרצה 07" })).toContainText("כבר במאגר: מרצה 07");
+    await expect(speakers).not.toContainText("(מכון לדוגמה)");
+    await expect(speakers).not.toContainText("שירה");
+    await expect(speakers).not.toContainText("נועם");
+    // a verse in a title is text: whole, and no «הוסר טלפון»
+    const lessons = page.getByRole("list", { name: "השיעורים" });
+    await expect(lessons).toContainText("עיון בתהלים 119:1-176");
+    await expect(lessons).not.toContainText("הוסר טלפון");
+    await noSidewaysScroll(page);
+    await lines.locator('li[data-line="5:1.1"]').getByRole("radio", { name: "לא לייבא את השורה" }).check();
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(page.getByText(/4 שיעורים במחזור «ארכיון סבב חמישי»/)).toBeVisible();
+  });
+
+  test("סבב חמישי — the escorts' file: a speaker «עמום» completed from the pool says what will be filled", async ({ page }, info) => {
+    test.skip(info.project.name === "tablet", "two widths are enough for this flow");
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "קובץ המלווים" }).check();
+    await page.getByLabel("הדבקת טבלה").fill("מרצה\tמלווה\tהערות\nמרצה 007\tשירה בדקני\tדרך המזכירה");
+    await page.getByRole("button", { name: "קריאת הטקסט שהוקלד" }).click();
+    await page.getByLabel("הערות", { exact: true }).selectOption("phrases");
+    await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("1");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    const card = page.getByRole("list", { name: "תצוגה מקדימה" }).locator(":scope > li").filter({ hasText: "מרצה 007" });
+    await expect(card).toContainText("עמום");
+    await card.getByRole("radio", { name: /להשלים את .*מרצה 07/ }).check();
+    await expect(card).toContainText("יושלם (רק מה שחסר): ערוץ קשר");
+    await expect(card).not.toContainText("אין מה להשלים");
+    await noSidewaysScroll(page);
+  });
+
   test("a file that is not an Office file is refused in Hebrew; nothing is read", async ({ page }, info) => {
     test.skip(info.project.name !== "phone", "one width is enough");
     await page.goto(`${demoUrl()}/settings/import`);
@@ -585,6 +646,7 @@ test.describe("mock build — on the wire", () => {
     await page.getByRole("radio", { name: "המועמדים (רשימת המרצים מהסיעור)" }).check();
     const html = "<table><tr><td>מרצה</td><td>טלפון</td><td>חניך/ה</td><td>טווח ימים</td></tr><tr><td>הרב מרצה בדיקת חיבור</td><td>000-000-0004</td><td>חניך/ה שלא נקרא/ת</td><td>נסגר</td></tr></table>";
     await paste(page, html, "");
+    await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("2"); // a trainees' header: asked (סבב חמישי)
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
     await expect(page.getByRole("list", { name: "תצוגה מקדימה" }).getByRole("listitem")).toHaveCount(1);
     expect(sb.rpc.get("import_lookup")).toEqual([{ p_speakers: [], p_phone_keys: ["0000000004"] }]);

@@ -241,8 +241,8 @@ describe("סבב שלישי: a phone or an e-mail in the speaker's cell is never
 
   it("stripContacts: the labels and brackets go with them; two numbers in one cell; a second line; a date, a range of years or times stay", () => {
     expect(stripContacts("(טל' 000-000-0095)")).toEqual({ text: "", phones: ["000-000-0095"], emails: [] });
-    // «/» is a phone's separator too (סבב רביעי): the two numbers are one run — kept together, as the phone column keeps them
-    expect(stripContacts("פלוני אלמוני - 000-000-0001 / 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001 / 000-000-0002"], emails: [] });
+    // «/» between two numbers, a space beside it (סבב חמישי): two phones — a number of no fixed length never runs into the next
+    expect(stripContacts("פלוני אלמוני - 000-000-0001 / 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001", "000-000-0002"], emails: [] });
     expect(stripContacts("פלוני אלמוני - 000-000-0001, 000-000-0002")).toEqual({ text: "פלוני אלמוני", phones: ["000-000-0001", "000-000-0002"], emails: [] });
     expect(stripContacts("פלוני\nמייל: someone@example.org")).toEqual({ text: "פלוני", phones: [], emails: ["someone@example.org"] });
     expect(stripContacts("+972-00-000-0003 או 000-000-0004").text).toBe("");
