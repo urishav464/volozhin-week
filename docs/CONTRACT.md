@@ -1180,21 +1180,34 @@ equal value for value (`tests/sql/import.test.ts`).
 
 ## A contact inside text — `app.has_contact(text)` ≡ `hasContact` (`src/import/phone.ts`) — `contact_in_text`
 A phone or an e-mail is kept in `speaker_contacts`' `phone` and `email` only — **never** in any other text of the
-payload. One definition, written the same on both sides (the function's expressions are the browser's `PHONE_RUN`,
-`EMAIL_RUN`, `NOT_A_PHONE`, and `app.contact_fold`'s lists are `FORMAT_RANGES` and `DIGIT_ZEROS`, character for
-character) and held equal string for string (`tests/sql/import.test.ts`, fixed cases, 6,000 seeded ones, and the
-fold character by character). The text is **folded** first (`app.contact_fold` ≡ `foldContact`): what shows nothing
-taken out — Unicode's format characters (Cf, as of 16.0: bidi controls, zero widths, the soft hyphen, tags), NEL
-(U+0085) and U+180E — and every decimal digit of every script written as its ASCII digit (٠, ۰, ０, 𝟎 → 0). Then: an
-**e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth «＠»), a dot after it; or, in
-the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its last part letters; or a
-**phone** — a run from a digit (a `+` or a `(` before it) to a digit of digits, white space, dashes of every kind,
-brackets, dots, «/», «·», «•», «‧» and «_» — «:» and «,» only right before a digit — that never starts inside a number,
-right after «20:» or «8.», or at a time («20:00 (…)»: the time stays), with **7 digits or more**, unless the run is a
-date («12.3.2026», an hour after it allowed: «20», «20:00»), a range of dates whose year is at its end
-(«14.2-18.2.2027», «14.2.2027-18.2.2027»), years — a range or a chain by dashes, commas or slashes («1948-1967»,
-«1948-1967-1973») — a range of times written with dots («8.30-10.00»), or chapters: groups of one or two digits by
-dashes or commas, the first not `0` («1-2-3-4-5-6-7»). White space is written out (JavaScript's `\s`), never
+payload. One definition, written the same on both sides (the function's expressions are the browser's `PHONE` and
+`EMAIL_RUN`, and `app.contact_fold`'s lists are `FORMAT_RANGES` and `DIGIT_ZEROS`, character for character) and held
+equal string for string (`tests/sql/import.test.ts`: fixed cases, 10,000 seeded ones — 4,000 of them built of the
+numbering plan's pieces — and the fold character by character). The text is **folded** first (`app.contact_fold` ≡
+`foldContact`): what shows nothing taken out — Unicode's format characters (Cf, as of 16.0: bidi controls, zero widths,
+the soft hyphen, tags), NEL (U+0085) and U+180E — and every decimal digit of every script written as its ASCII digit
+(٠, ۰, ０, 𝟎 → 0). Then: an **e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth
+«＠»), a dot after it; or, in the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its
+last part letters; or a **phone by Israel's numbering plan** — never «any seven digits» (since «סבב חמישי»):
+- an **Israeli number**: `0` and a landline (2, 3, 4, 8, 9 and seven digits) or a mobile / 07X (5 or 7 and eight
+  digits); `972` or `+972` before it, a `0` (or «(0)») after it or not; `1-700`, `1-800`, `1-599` and six digits. Its
+  digits apart by white space, dashes of every kind, brackets, «·», «•», «‧», «_», «|», «;», «,» right before a digit,
+  «.» and «/» unless between two groups of one or two digits (a date's «12.3», «05/10»), «:» only between two groups
+  of three or more («000:000:0000» — never a time's «20:00», a verse's «119:1»);
+- a **number abroad**: `+` or `00` and 8–15 digits;
+- **7–15 digits beside a word that says a phone** — «טל'» / «טל.» / «טל:», «טלפון», «נייד», «פלאפון», «סלולרי»,
+  «פקס», «פל'» (after up to two prefix letters: «בטלפון», «והנייד»), tel, telephone, phone, mobile, mob, fax, cell, ☎,
+  ☏, 📞, 📱 — before it or after it, up to four spaces, dashes, brackets or punctuation apart; and a **star number**
+  («*2345», «2345*») only beside such a word.
+A number never begins inside a number, right after a time's «20:» or «8.» or a list's «1,», at a time («20:00»,
+«8.30») or at a date whose year has four digits («05-10-2026», «05.2026», «2026-02-10»); it never ends at a time's
+hour or at a group of one or two digits that a date's «.» or «/» goes on from. A number of no fixed length (abroad,
+«00…», beside a word) takes «/», «,», «;», «|» only right between two digits, and a group after a separator never
+begins a time, a date or an Israeli number: it never runs into the next number. Everything else is **text**: verses
+(«תהלים 119:1-176», «ישעיהו 40:1-41:10»), dates and times in every form (the xlsx reader's own «2026-02-10 08:30»),
+page lists, prices («1,500,000 ₪»), years and their chains. Not recognised (DECISIONS «סבב חמישי»): six digits, «at» for
+the `@`, a phone typed with no `0` and no such word in free text, an e-mail with no TLD or a comma for its dot. White
+space is written out (JavaScript's `\s`), never
 `[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
 space, which the definition reads alike): a row's → `import_bad_row` «row:contact_in_text»; the payload's `label` or
 `source` → `contact_in_text` (no row). The wizard never sends one: it takes every contact out of every non-contact
