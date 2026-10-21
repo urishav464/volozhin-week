@@ -240,6 +240,7 @@ function Editable({
   lines,
   onLine,
   onEdit,
+  focusEdit = 0,
 }: {
   fields: SpeakerEdit;
   edited: boolean;
@@ -249,6 +250,8 @@ function Editable({
   onLine?: (id: string, as: LineAs) => void;
   /** The admin's reading (null: back to the file's). */
   onEdit: (e: SpeakerEdit | null) => void;
+  /** Set by a list whose cards an «עריכה» merges: changes when this card's «עריכה» takes the keyboard — also as it mounts. */
+  focusEdit?: number;
 }) {
   const [open, setOpen] = useState(false);
   // the form closed (saved or cancelled), or the edit taken back: the keyboard returns to this card's «עריכה»
@@ -257,6 +260,9 @@ function Editable({
   useEffect(() => {
     if (refocus) editRef.current?.focus();
   }, [refocus]);
+  useEffect(() => {
+    if (focusEdit) editRef.current?.focus();
+  }, [focusEdit]);
   const close = () => {
     setOpen(false);
     setRefocus((n) => n + 1);
@@ -515,6 +521,16 @@ export function SpeakersPreview({
   /** «עריכה» of a speaker (by its keys as read; null: back to what was read). */
   onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
+  // an «עריכה» saved into an earlier card's name merges the two, and the card that had the keyboard goes: it goes on at
+  // the «עריכה» of the card that now holds its first key as read
+  const [focus, setFocus] = useState<{ key: string; n: number } | null>(null);
+  // a card's form holds only the lines it is a speaker by, so any choice there takes the line (and the radio) out of the
+  // card, often the card itself: the keyboard goes on at the same choice of the same line in «שם נוסף בתא של המרצה»,
+  // which stays (and the arrows go on from there)
+  const [lineFocus, setLineFocus] = useState<{ id: string; as: LineAs } | null>(null);
+  useEffect(() => {
+    if (lineFocus) document.querySelector<HTMLInputElement>(`li[data-line="${lineFocus.id}"] input[value="${lineFocus.as}"]`)?.focus();
+  }, [lineFocus]);
   return (
     <Panel title="המרצים">
       <Counts statuses={rows.map((r) => r.status)} />
@@ -554,8 +570,15 @@ export function SpeakersPreview({
                 titles={titles}
                 escorts={escorts}
                 lines={lines.filter((l) => s.lines.includes(l.id))}
-                onLine={onLine}
-                onEdit={(e) => onEdit(s.from, e)}
+                onLine={(id, as) => {
+                  onLine(id, as);
+                  setLineFocus({ id, as });
+                }}
+                onEdit={(e) => {
+                  onEdit(s.from, e);
+                  setFocus((f) => ({ key: s.from[0], n: (f?.n ?? 0) + 1 }));
+                }}
+                focusEdit={focus && s.from.includes(focus.key) ? focus.n : 0}
               />
               <SpeakerDecision
                 name={name}
@@ -664,7 +687,7 @@ function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: Ext
       <div className="flex flex-wrap gap-1.5">
         {(["speaker", "affiliation", "skip"] as const).map((as) => (
           <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={`${id}-${l.id}`} checked={l.as === as} onChange={() => onChoose(as)} className="accent-ink" />
+            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={() => onChoose(as)} className="accent-ink" />
             {LINE_AS_LABEL[as](l)}
           </label>
         ))}

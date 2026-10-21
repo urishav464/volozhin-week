@@ -658,7 +658,7 @@ test.describe("demo build — the import of 5786", () => {
     const tr = (...cells: string[]) => `<tr>${cells.map(td).join("")}</tr>`;
     await page.goto(`${demoUrl()}/settings/import`);
     await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
-    await paste(page, `<table>${tr("מרצה", "שיעור ב", "כותרת")}${tr("מרצה 07-מכון לדוגמה", "ראשון 8:30", "כותרת אלף")}${tr("מרצה 12 / ישיבת הגולן", "ראשון 10:00", "כותרת בית")}${tr("מרצה 03 + גימל בדיקתית", "ראשון 11:30", "כותרת גימל")}</table>`, "");
+    await paste(page, `<table>${tr("מרצה", "שיעור ב", "כותרת")}${tr("מרצה 07-מכון לדוגמה", "ראשון 8:30", "כותרת אלף")}${tr("מרצה 12 / ישיבת הגולן", "ראשון 10:00", "כותרת בית")}${tr("מרצה 03 + גימל בדיקתית", "ראשון 11:30", "כותרת גימל")}${tr("מרצה 12ב", "ראשון 14:30", "כותרת דלת")}</table>`, "");
     await page.getByLabel("שם המחזור בארכיון").fill("ארכיון סבב שישי");
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
     const lines = page.getByRole("list", { name: "שמות נוספים בתא המרצה" });
@@ -668,10 +668,16 @@ test.describe("demo build — the import of 5786", () => {
     const card = (name: string) => speakers.locator(":scope > li").filter({ hasText: name });
     // the name beside «מרצה 03» is a co-speaker («הצעה»); its card's «עריכה» says what it is
     await card("גימל בדיקתית").getByRole("button", { name: "עריכה" }).click();
-    // (the card goes with the choice: it is no speaker now)
-    await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "לא לייבא את השם הזה" }).click();
-    await expect(card("גימל בדיקתית")).toHaveCount(0);
-    await expect(lines.locator('li[data-line="4:2"]').getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeChecked();
+    // by the keyboard: the arrows check each choice they pass — the card goes with the first that is no speaker, and the
+    // keyboard goes on at the same choice of the line in «שם נוסף בתא של המרצה»
+    await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "מרצה נוסף/ת" }).focus();
+    await page.keyboard.press("ArrowDown");
+    const line = lines.locator('li[data-line="4:2"]');
+    await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(line.getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeFocused();
+    await expect(line.getByRole("radio", { name: "לא לייבא את השם הזה" })).toBeChecked();
+    await expect(card("גימל בדיקתית")).toHaveCount(0); // it is no speaker now, and no affiliation
     // the glued one corrected: the pool's מרצה 07, with its affiliation
     await card("מרצה 07-מכון לדוגמה").getByRole("button", { name: "עריכה" }).click();
     const form = card("מרצה 07-מכון לדוגמה").getByRole("group", { name: "עריכה" });
@@ -682,11 +688,19 @@ test.describe("demo build — the import of 5786", () => {
     await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // the same card, its key as read kept
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
+    // a later card edited into an earlier one's name: the two are one, and the keyboard goes on at the card that stays
+    await card("מרצה 12ב").getByRole("button", { name: "עריכה" }).click();
+    const late = card("מרצה 12ב").getByRole("group", { name: "עריכה" });
+    await late.getByLabel("שם", { exact: true }).fill("מרצה 12");
+    await late.getByRole("button", { name: "שמירת העריכה" }).click();
+    await expect(card("מרצה 12ב")).toHaveCount(0);
+    await expect(card("מרצה 12")).toContainText("שורות 3, 5");
+    await expect(card("מרצה 12").getByRole("button", { name: "עריכה — מרצה 12" })).toBeFocused();
     await expect(page.getByRole("list", { name: "השיעורים" }).locator("li").filter({ hasText: "כותרת אלף" })).toContainText("מרצה 07");
     await noSidewaysScroll(page);
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
-    await expect(page.getByText(/3 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();
+    await expect(page.getByText(/4 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();
   });
 
   test("סבב שישי — the escorts' file: «הרב מרצה 05 (ישיבת בדיקה)» is the pool's מרצה 05; «רק בוואטסאפ, לא להתקשר בשבת» proposes WhatsApp", async ({ page }, info) => {
