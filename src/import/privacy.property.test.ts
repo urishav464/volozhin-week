@@ -14,7 +14,10 @@
 //      never sent); in the tracking sheet and the candidates, the escorts' column is asked for and never read, and a
 //      speaker cell's line that names an escort is proposed «לא לייבא» — by first name, surname, after up to four
 //      prefix letters, with niqqud or a mark inside, «(מלווה: …)», a nickname the escorts' cell gives in brackets — on
-//      a line under the name, in a bracket on the name's own line («מרצה 12 (מלווה: …)»), or beside it («פלוני + שירה…»).
+//      a line under the name, in a bracket on the name's own line («מרצה 12 (מלווה: …)»), after «, » or « - » on it
+//      («מרצה 12 - מלווה: …»), or beside it («פלוני + שירה…»); a line that only shares a word with an escort's name is
+//      held for the admin's choice, said in red (DECISIONS «סבב שישי») — the admin, told so, makes it a speaker (its own
+//      brackets then apart, proposed again) or leaves it out.
 // Every person and number here is made up at run time (the digits from the seed): none is in this file.
 import { describe, expect, it } from "vitest";
 import { cleanLessonRow, cleanPrefsRow, cleanSpeakerRow, PREFS_KEYS } from "../data/importRules";
@@ -23,7 +26,7 @@ import type { Speaker } from "../domain/types";
 import { candidatesPayload, contextOf, type MatchContext, previewCandidates, readCandidateSheet, undecided } from "./candidates";
 import { type EscortAnswer, escortColumns, escortLike, escortNames, escortsPayload, IMPORT_CHANNELS, NOT_A_NAME, previewEscorts, readEscorts } from "./escorts";
 import type { Mapping } from "./fields";
-import type { ExtraLine, LineAs } from "./lines";
+import { type ExtraLine, type LineAs, nameTails } from "./lines";
 import type { Choice } from "./match";
 import { foldContact, hasContact } from "./phone";
 import { archivePayload, doubleGroups, planLessons, previewTrackingSpeakers, readTracking, resolvedSpeakers, speakerAliases } from "./tracking";
@@ -186,10 +189,33 @@ function nonPhone(g: R): string {
 }
 
 /**
+ * The reviewers' shapes of סבב שישי: a date «dd-mm-yy» (dashes or spaces) right before a phone — never its start — and an
+ * amount, a count or a year right after a +972 / 00972 number — never in it. The text that must survive, and the cell.
+ */
+function beside(g: R, seed: number): { np: string; cell: string } {
+  const p2 = (x: number) => String(x).padStart(2, "0");
+  if (g.chance(0.5)) {
+    const sep = g.pick(["-", " "]);
+    const np = [p2(1 + g.int(31)), p2(1 + g.int(12)), p2(g.int(100))].join(sep);
+    expect(hasContact(np), `seed ${seed}: ${JSON.stringify(np)}`).toBe(false);
+    const gap = g.pick([" ", "\n", " (", " - "]);
+    return { np, cell: `${words(g, 1)} ${np}${gap}${phone(g)}${gap === " (" ? ")" : ""}` };
+  }
+  const b = digits(g, 3);
+  const c = digits(g, 4);
+  const nat = `5${g.int(10)}`;
+  made.phones.push(`0${nat}${b}${c}`);
+  const intl = g.pick([`+972 ${nat}-${b}-${c}`, `+972-${nat}-${b}${c}`, `00972-${nat}-${b}${c}`, `+972 (0)${nat} ${b}${c}`]);
+  const np = g.pick(["400 ₪", "350 ₪ לשיעור", "1,500 ₪", "2 נוסעים", "40 משתתפים", "1948-1949", "40,000 ש\"ח", "14-18.2.2027"]);
+  return { np, cell: `${intl}${g.pick([" - ", "\n", " "])}${np} ${words(g, 1)}` };
+}
+
+/**
  * Every line of a cell decided — the read's own proposal kept where it has one, the rest at random — read again until
  * no new line appears (a line made a speaker may bring brackets of its own). `seen`: each line as first read (its «הצעה»).
+ * A line held for an escort's word (said in red): `held` picks what the admin does with it.
  */
-function decideAll<T extends { lines: ExtraLine[] }>(g: R, read: (lineAs: ReadonlyMap<string, LineAs>) => T): { read: T; seen: ExtraLine[] } {
+function decideAll<T extends { lines: ExtraLine[] }>(g: R, read: (lineAs: ReadonlyMap<string, LineAs>) => T, held: readonly LineAs[] = LINE_AS): { read: T; seen: ExtraLine[] } {
   const lineAs = new Map<string, LineAs>();
   const seen: ExtraLine[] = [];
   for (;;) {
@@ -198,10 +224,19 @@ function decideAll<T extends { lines: ExtraLine[] }>(g: R, read: (lineAs: Readon
     if (fresh.length === 0) return { read: r, seen };
     for (const l of fresh) {
       seen.push(l);
-      lineAs.set(l.id, l.as ?? g.pick(LINE_AS));
+      lineAs.set(l.id, l.as ?? g.pick(l.held ? held : LINE_AS));
     }
   }
 }
+/** The admin, told in red that a line holds an escort's word: a speaker (its own brackets then apart) or left out. */
+const HELD: readonly LineAs[] = ["speaker", "skip"];
+/**
+ * A line that holds an escort's word is proposed «לא לייבא», or held for the admin — or it is a name beside the first
+ * proposed a co-speaker whose own name holds none (its brackets and tails are lines of their own once it speaks).
+ */
+const escortLineOk = (l: ExtraLine, said: readonly string[]) =>
+  l.as === "skip" || l.held || (l.kind === "beside" && l.as === "speaker" && !said.some((w) => fold(nameTails(l.text, DEFAULT_TITLES).name).includes(w)));
+const fold = (t: string) => foldContact(t).replace(/[֑-ׇ]/g, "");
 
 /** What a field kept of the case's contacts: one (hasContact), the last 7 digits of a phone, or an address. */
 function leaked(fields: (string | null | undefined)[]): string[] {
@@ -244,7 +279,7 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
       const g = rng(seed);
       made = { phones: [], emails: [] };
       const rows = Array.from({ length: 1 + g.int(6) }, () => [
-        sprinkle(g, `${TITLE(g)}${NAME(g)}${g.pick(["", "", ` + ${NAME(g)}`, `\n${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\n${contact(g)}`, ` (ישיבת ${word(g)})`, ` (${words(g, 1)})`, ` (${contact(g)})`, ` + ${NAME(g)} (מכון ${word(g)})`])}`, 0.4),
+        sprinkle(g, `${TITLE(g)}${NAME(g)}${g.pick(["", "", ` + ${NAME(g)}`, `\n${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\n${contact(g)}`, ` (ישיבת ${word(g)})`, ` (${words(g, 1)})`, ` (${contact(g)})`, ` + ${NAME(g)} (מכון ${word(g)})`, ` - ישיבת ${word(g)}`, `, ${contact(g)}`, ` – ${words(g, 2)}`, ` והרב ${NAME(g)}`])}`, 0.4),
         sprinkle(g, g.pick(["", "הרב", "רבי", words(g, 1)]), 0.2),
         sprinkle(g, g.chance(0.5) ? `ישיבת ${word(g)}` : "", 0.3),
         sprinkle(g, `${words(g, 1)}, ${words(g, 2)}`, 0.3),
@@ -282,7 +317,7 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
       made = { phones: [], emails: [] };
       const speakerCell = () => {
         const first = `${TITLE(g)}${NAME(g)}`;
-        const second = g.pick(["", ` + ${NAME(g)}`, ` / ${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\nמכון ${word(g)}`, `\n${NAME(g)}`, `\n${contact(g)}`, ` ${phone(g)}`, ` (ישיבת ${word(g)})`, ` (${words(g, 1)})`, ` (${contact(g)})`]);
+        const second = g.pick(["", ` + ${NAME(g)}`, ` / ${NAME(g)}`, `\n(ישיבת ${word(g)})`, `\nמכון ${word(g)}`, `\n${NAME(g)}`, `\n${contact(g)}`, ` ${phone(g)}`, ` (ישיבת ${word(g)})`, ` (${words(g, 1)})`, ` (${contact(g)})`, ` - ישיבת ${word(g)}`, `, ${NAME(g)}`, ` — ${contact(g)}`, ` וד"ר ${NAME(g)}`, ` / ישיבת ${word(g)}`]);
         return sprinkle(g, first + second, 0.3);
       };
       const rows = Array.from({ length: 1 + g.int(6) }, () => [
@@ -382,6 +417,8 @@ describe("invariant 1: a phone or an e-mail lands only in a contact field — an
         expect(hasContact(np), `seed ${seed}: ${JSON.stringify(np)}`).toBe(false);
         const t = `${words(g, 1)} ${np} ${words(g, 1)}`;
         const c = g.chance(0.5) ? contact(g) : null;
+        // סבב שישי: a two-digit-year date right before a phone, and an amount, a count or a year right after a +972 one
+        if (g.chance(0.2)) return beside(g, seed);
         return { np, cell: c ? g.pick([`${c} ${t}`, `${t} ${c}`, `${t}\n${c}`, `${c}\n${t}`, `${t} - ${c}`, `${t}, ${c} ${words(g, 1)}`]) : t };
       };
       // the tracking sheet: the title and a note column
@@ -496,6 +533,8 @@ describe("invariant 2: an escort's name never reaches the payload", () => {
           "", "", `\n${spelled(g, w)}`, `\n(מלווה: ${w})`, `\n(${w})`, `\nהמלווה ${w}`, `\n${NAME(g)}`, `\n(ישיבת ${word(g)})`,
           // on the name's own line (סבב חמישי): a bracket at its end, or a name beside it
           ` (מלווה: ${w})`, ` (${spelled(g, w)})`, ` (ישיבת ${word(g)})`, ` + ${spelled(g, w)}`, ` / ${w}`, ` + ${NAME(g)} (${w})`,
+          // …and after «, » or a spaced dash (סבב שישי)
+          ` - מלווה: ${w}`, `, מלווה: ${w}`, ` – ${spelled(g, w)}`, ` - ${w}`, `, ${w}`, ` (מלווה: ${w}) - ישיבת ${word(g)}`, ` – ישיבת ${word(g)} – מלווה: ${w}`, ` + ${NAME(g)} - ${w}`,
         ]);
         return [`${TITLE(g)}${NAME(g)}${line}`, g.pick(["ראשון 8:30", "שני 10:00", "שלישי 11:30"]), words(g, 2), cell];
       });
@@ -506,14 +545,16 @@ describe("invariant 2: an escort's name never reaches the payload", () => {
       const m: Mapping = ["speaker", "when", "title", null];
       const escorts = escortNames(grid, 0, cols);
       const base = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true, escorts };
-      // the proposals accepted, the rest decided at random
-      const { read, seen } = decideAll(g, (lineAs) => readTracking(grid, m, { ...base, lineAs }));
+      // the proposals accepted, the rest decided at random — a line held for an escort's word as the admin told so does
+      const { read, seen } = decideAll(g, (lineAs) => readTracking(grid, m, { ...base, lineAs }), HELD);
       for (const l of seen) {
-        if (said.some((w) => foldContact(l.text).replace(/[֑-ׇ]/g, "").includes(w)) || /מלוו/.test(l.text)) {
-          expect(l.as, `seed ${seed}: «${l.text}»`).toBe("skip");
+        if (said.some((w) => fold(l.text).includes(w)) || /מלוו/.test(l.text)) {
+          expect(escortLineOk(l, said), `seed ${seed}: «${l.text}» ${l.as}`).toBe(true);
           proposed++;
         }
       }
+      // and no name or affiliation as read holds one (nothing glued to a name on its own line)
+      for (const s of read.speakers) for (const w of said) expect(fold(`${s.name} ${s.affiliation ?? ""}`).includes(w), `seed ${seed}: «${s.name}»`).toBe(false);
       const speakers = previewTrackingSpeakers(read, CTX);
       const choices = new Map<string, Choice>(speakers.filter((s) => s.status === "ambiguous").map((s) => [s.speaker.key, { action: s.match.allowNew ? "new" : "skip" } as Choice]));
       const plans = planLessons(read, { decisions: new Map(doubleGroups(read).map((x) => [x.id, "parallel" as const])), categories: new Map(), sources: new Map(), alias: speakerAliases(speakers, choices) })!;
@@ -539,6 +580,8 @@ describe("invariant 2: an escort's name never reaches the payload", () => {
           "", "", `\n${spelled(g, w)}`, ` + ${w}`, `\n(מלווה: ${w})`, `\n${NAME(g)}`, ` + ${NAME(g)}`,
           // a bracket at the end of the name (סבב חמישי) — of the candidate, or of a name beside it
           ` (מלווה: ${w})`, ` (${spelled(g, w)})`, ` (ישיבת ${word(g)})`, ` + ${NAME(g)} (${spelled(g, w)})`,
+          // …and after «, » or a spaced dash (סבב שישי)
+          ` - מלווה: ${w}`, `, ${spelled(g, w)}`, ` — ${w}`, ` - ישיבת ${word(g)}, מלווה: ${w}`,
         ]);
         return [`${TITLE(g)}${NAME(g)}${extra}`, cell];
       });
@@ -546,10 +589,10 @@ describe("invariant 2: an escort's name never reaches the payload", () => {
       const cols = escortColumns(grid, 0);
       expect([...cols], `seed ${seed}`).toEqual([1]);
       const o = { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true, escorts: escortNames(grid, 0, cols) };
-      const { read, seen } = decideAll(g, (lineAs) => readCandidateSheet(grid, ["name", null], { ...o, lineAs }));
+      const { read, seen } = decideAll(g, (lineAs) => readCandidateSheet(grid, ["name", null], { ...o, lineAs }), HELD);
       for (const l of seen) {
-        if (said.some((w) => foldContact(l.text).replace(/[֑-ׇ]/g, "").includes(w)) || /מלוו/.test(l.text)) {
-          expect(l.as, `seed ${seed}: «${l.text}»`).toBe("skip");
+        if (said.some((w) => fold(l.text).includes(w)) || /מלוו/.test(l.text)) {
+          expect(escortLineOk(l, said), `seed ${seed}: «${l.text}» ${l.as}`).toBe(true);
           proposed++;
         }
       }

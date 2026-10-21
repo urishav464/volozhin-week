@@ -123,13 +123,36 @@ const APART =
  * between two digits — never with a space beside them, as between two numbers («… / …», «…, …»).
  */
 const APART_ONE = `(?:[${CONTACT_WS}${UDASH}()\\u00b7\\u2022\\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|${DOT_COLON})`;
-/** Never a time («20:00», «8.30») or a date with a four-digit year («05-10-2026», «05.2026», «2026-02-10») from here. */
+/** A two-digit-year date's day (to 31) and month (to 12). */
+const DAY = "(?:0?[1-9]|[12][0-9]|3[01])";
+const MON = "(?:0?[1-9]|1[0-2])";
+/**
+ * Its year, where the date ends: two digits that the same separator does not go on from — with a dash, no digit after it
+ * («03-12-34-56-7», «02-12-34-567» are numbers); with a space, no more pairs («03 12 34 56 7», «05 01 23 45 67» are
+ * numbers; «03 11 25 052 …», «06 09 44 04 123 …» and «07 04 69 09‑123‑…» are a date and a phone).
+ */
+const yearEnd = (sep: string) => `[0-9]{2}(?![0-9])${sep === "-" ? "(?!-[0-9])" : "(?! [0-9]{2} [0-9]{1,2}(?![0-9]))"}`;
+/**
+ * Never a time («20:00», «8.30»), a date with a four-digit year («05-10-2026», «05.2026», «2026-02-10») or a date with a
+ * two-digit year written with dashes or with spaces («05-10-26», «03 11 25» — DECISIONS «סבב שישי») from here; a run of
+ * pairs that goes on past its «year» with the same separator («03-12-34-56-7») is a number, not a date.
+ */
 const NOT_DATE =
-  "(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))";
+  "(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))" +
+  ["-", " "].map((sep) => `(?!${DAY}${sep}${MON}${sep}${yearEnd(sep)})`).join("");
 /** n more digits, each after its separators (an Israeli number's: its length is fixed). */
 const more = (n: string) => `(?:${APART}[0-9])${n}`;
+/**
+ * Never at the month or the year of a two-digit-year date either («04-05-26 052…»: «05-26 052…» is no mobile) — the day
+ * (and month) behind, the rest of the date ahead, with the same separator; a day that a group of digits goes on from
+ * («17 09 11 07-…»: «09 11» is no date's day and month) is none.
+ */
+const dateStart = (sep: string) => `(?:^|[^0-9${sep}]|[^0-9]${sep})`;
+const NOT_IN_DATE = ["-", " "]
+  .map((sep) => `(?:(?<!${dateStart(sep)}${DAY}${sep})|(?!${MON}${sep}${yearEnd(sep)}))(?:(?<!${dateStart(sep)}${DAY}${sep}${MON}${sep})|(?!${yearEnd(sep)}))`)
+  .join("");
 /** Where a number may begin: never inside a number, right after a time's «20:» or «8.» or a list's «1,», at a time or at a date. */
-const AT = `(?<![0-9])(?<![0-9][:.,])${NOT_DATE}`;
+const AT = `(?<![0-9])(?<![0-9][:.,])${NOT_DATE}${NOT_IN_DATE}`;
 /**
  * Where it ends: never inside a number, at a time's hour («… 20» of «20:00»), or at a group of one or two digits that a
  * date's «.» or «/» goes on from («… 12» of «12.3.2026»).
@@ -137,8 +160,11 @@ const AT = `(?<![0-9])(?<![0-9][:.,])${NOT_DATE}`;
 const END = "(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))";
 /** Israel's national number after its 0: a landline (2, 3, 4, 8, 9 and seven digits), a mobile or a 07X (5 or 7 and eight). */
 const NATIONAL = `(?:[23489]${more("{7}")}|[57]${more("{8}")})`;
-/** An Israeli number: 0 and the national number; 972 or +972 (and a 0, «(0)») before it; 1-700, 1-800, 1-599 and six digits. */
-const ISRAELI = `(?:0${APART}${NATIONAL}|(?:\\+${APART})?9${APART}7${APART}2${APART}(?:0${APART})?${NATIONAL}|1${APART}(?:7${APART}0${APART}0|8${APART}0${APART}0|5${APART}9${APART}9)${more("{6}")})`;
+/**
+ * An Israeli number — its length fixed: 0 and the national number; 972, +972 or 00972 (and a 0, «(0)») before it; 1-700,
+ * 1-800, 1-599 and six digits.
+ */
+const ISRAELI = `(?:0${APART}${NATIONAL}|(?:(?:\\+|0${APART}0)${APART})?9${APART}7${APART}2${APART}(?:0${APART})?${NATIONAL}|1${APART}(?:7${APART}0${APART}0|8${APART}0${APART}0|5${APART}9${APART}9)${more("{6}")})`;
 /**
  * n more digits of a number of no fixed length: a group after a separator never begins a time, a date or an Israeli
  * number — it never runs into one («טל' 1234567 050-…», «… 12-3-2026»).
@@ -160,13 +186,14 @@ const GAP = `[${CONTACT_WS}${UDASH}().:,;/|*#=>\\u0027\\u0022\\u05f3\\u05f4\\ufe
 const STAR = `(?:\\*${W}*[0-9]{4}|(?<![0-9])[0-9]{4}${W}*\\*)`;
 /**
  * A phone in a text — by Israel's numbering plan, never «any seven digits» (DECISIONS «סבב חמישי»): (a) an Israeli
- * number (ISRAELI); (b) a number abroad: «+» or «00» and 8–15 digits; (c) 7–15 digits beside a word that says a phone
- * (MARKER, before or after, GAP apart), and a star number beside one. Its digits apart by APART; an opening bracket before
- * it taken with it. Everything else — verses («תהלים 119:1-176»), dates and times in every form (the xlsx reader's
- * «2026-02-10 08:30» too), pages, prices, years — is text.
+ * number (ISRAELI), tried first — «+972 …» and «00972 …» are Israeli, of a fixed length, never a number abroad that runs
+ * on into an amount after it (DECISIONS «סבב שישי»); (b) a number abroad: «+» or «00» and 8–15 digits; (c) 7–15 digits
+ * beside a word that says a phone (MARKER, before or after, GAP apart), and a star number beside one. Its digits apart by
+ * APART; an opening bracket before it taken with it. Everything else — verses («תהלים 119:1-176»), dates and times in
+ * every form (the xlsx reader's «2026-02-10 08:30» too), pages, prices, years — is text.
  */
 export const PHONE =
-  `(?=[(+*0-9])(?:\\(${W}*)?(?:(?<![0-9])\\+${APART_ONE}*[0-9]${moreOne("{7,14}")}|${AT}(?:${ISRAELI}|0${APART_ONE}*0${moreOne("{6,13}")})` +
+  `(?=[(+*0-9])(?:\\(${W}*)?(?:${AT}${ISRAELI}|(?<![0-9])\\+${APART_ONE}*[0-9]${moreOne("{7,14}")}|${AT}0${APART_ONE}*0${moreOne("{6,13}")}` +
   `|(?<=${MARKER}${GAP})(?:\\+${APART_ONE}*)?${AT}[0-9]${moreOne("{6,14}")}|${AT}[0-9]${moreOne("{6,14}")}${END}(?=${GAP}${MARKER})` +
   `|(?<=${MARKER}${GAP})${STAR}|${STAR}(?![0-9])(?=${GAP}${MARKER}))${END}`;
 const NOT_MAIL = `${CONTACT_WS}@\\uff20<>()`;
@@ -194,10 +221,22 @@ const SENT_MAIL = "\u0003";
 /** A run that took a «(» with it (and not its «)»): the «)» after it goes too. */
 const OPEN = "\u0002";
 const unclosed = (m: string) => (m.match(/\(/g)?.length ?? 0) > (m.match(/\)/g)?.length ?? 0);
+/**
+ * A number's rest after a phone taken out (DECISIONS «סבב שישי»): one or two spaces, dashes or brackets, then a group of
+ * three digits or more and the groups a space or a dash goes on with — four digits or more in all («[…]-1234567»,
+ * «[…] 123 4567») — leave with it. Never a time, a date or a year from there («… 1948-1949»), never a group of one or
+ * two («1,500 ₪», «2 נוסעים»), never three alone («400 ₪»), never past a line, and never one that goes on with «.», «,»,
+ * «:» or «/» and a digit (an amount, a time).
+ */
+const REST = new RegExp(
+  `${SENT_PHONE}[ \\t${UDASH}()-]{1,2}${NOT_DATE}(?!(?:1[89]|20)[0-9]{2}(?![0-9]))[0-9]{3,}(?:[ \\t${UDASH}-][0-9]+)*(?![0-9])(?![.,:/][0-9])`,
+  "g",
+);
+const restOut = (m: string) => (m.replace(/[^0-9]/g, "").length >= 4 ? SENT_PHONE : m);
 
 /**
  * The folded text with each e-mail and each phone in it as a sentinel — the brackets that held only it out with it
- * («(טל' …)» keeps no «(»). `found` hears each, as written.
+ * («(טל' …)» keeps no «(»), and a number's rest right after it (REST). `found` hears each, as written.
  */
 function markContacts(text: string, found: (kind: "phone" | "email", m: string) => void): string {
   return foldContact(text)
@@ -211,7 +250,8 @@ function markContacts(text: string, found: (kind: "phone" | "email", m: string) 
       return SENT_PHONE + (open ? OPEN : "");
     })
     .replace(new RegExp(`([${SENT_PHONE}${SENT_MAIL}])${OPEN}[ \\t]*\\)`, "g"), "$1")
-    .replace(new RegExp(OPEN, "g"), "");
+    .replace(new RegExp(OPEN, "g"), "")
+    .replace(REST, restOut);
 }
 
 /** Free text with every phone and e-mail in it replaced — what the team may read of last year's notes. */

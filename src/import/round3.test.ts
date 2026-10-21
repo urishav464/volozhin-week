@@ -319,6 +319,7 @@ describe("סבב שלישי: an escort is named by ANY word of the name — a fi
       [3, "secretary", null],
       [4, "phone", null],
       [5, "email", null],
+      [6, "secretary", null], // «אין לו וואטסאפ — רק דרך המזכירה»: a channel after «אין» is not asked for (סבב שישי)
       [7, "email", null],
       [8, "email", null],
     ]);

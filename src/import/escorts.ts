@@ -21,7 +21,7 @@ import { columnsOf, FIELDS, HEADER_SEARCH, headerKey, type Mapping } from "./fie
 import { foldContact, hasContact, stripContacts } from "./phone";
 import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerFill, type SpeakerMatch } from "./match";
 import { cellOf, dataRows, type HeaderAt } from "./rows";
-import { splitSpeakers, splitTitle } from "./speakerName";
+import { nameTails, splitSpeakers, splitTitle } from "./speakerName";
 import type { Grid } from "./table";
 
 export { IMPORT_CHANNELS };
@@ -125,17 +125,45 @@ export function escortWords(names: readonly string[]): Set<string> {
   return out;
 }
 
+/** A word as one of a set's — alone or after up to four Hebrew prefix letters (ו ה ב כ ל מ ש): that word, or null. */
+function wordIn(w: string, words: ReadonlySet<string>): string | null {
+  for (let k = 0; k <= 4 && w.length - k >= 2; k++) {
+    if (k > 0 && !/^[והבכלמש]+$/.test(w.slice(0, k))) break;
+    if (words.has(w.slice(k))) return w.slice(k);
+  }
+  return null;
+}
+
 /** The escort's word a text holds — a word of it, alone or after up to four Hebrew prefix letters (ו ה ב כ ל מ ש) — or null. A warning, and a default; never a gate. */
 export function namedEscort(text: string, names: readonly string[] | ReadonlySet<string>): string | null {
   const words = names instanceof Set ? names : escortWords(names as readonly string[]);
   if (words.size === 0) return null;
   for (const w of wordsOf(text)) {
-    for (let k = 0; k <= 4 && w.length - k >= 2; k++) {
-      if (k > 0 && !/^[והבכלמש]+$/.test(w.slice(0, k))) break;
-      if (words.has(w.slice(k))) return w.slice(k);
-    }
+    const hit = wordIn(w, words);
+    if (hit) return hit;
   }
   return null;
+}
+
+/** The escorts' names as a line is compared with them: every word (escortWords), and each name's own words. */
+export interface EscortIndex {
+  words: ReadonlySet<string>;
+  people: readonly ReadonlySet<string>[];
+}
+export const escortIndex = (names: readonly string[]): EscortIndex => ({
+  words: escortWords(names),
+  people: names.map((n) => escortWords([n])).filter((p) => p.size > 0),
+});
+
+/**
+ * Is a text ONE escort's name and nothing else — every word of it of 2 letters or more (a word that is no one's name, a
+ * title, aside) a word of the same escort's name («(נועה חניכתי)», «שירה» alone)? A line that is, is «לא לייבא» by
+ * itself; one that only shares a word with a name («הרב דוד כהן» beside «שירה כהן») waits for the admin (DECISIONS
+ * «סבב שישי»).
+ */
+export function allOfOneEscort(text: string, index: EscortIndex): boolean {
+  const ws = wordsOf(text).filter((w) => w.length >= 2 && !NOT_A_NAME.has(w));
+  return ws.length > 0 && index.people.some((p) => ws.every((w) => wordIn(w, p) != null));
 }
 
 /** It speaks of the escort («המלווה יתאם…», «החניכה»). */
@@ -150,19 +178,30 @@ const CHANNELS: [RegExp, ContactPref][] = [
 ];
 const MONEY_OR_TRANSPORT = /תשלום|לשלם|שכר|כסף|העברה בנקאית|חשבונית|קבלה|₪|ש["״]ח|שקל|הסעה|נסיעה|לנסוע|חניה|חנייה|לאסוף|איסוף|נהג|מונית|רכבת|אוטובוס|דלק|טרמפ/;
 
-/** The one channel a phrase names, or null. */
+/** «לא», «אין», «בלי» (and «ולא»…): a channel word up to two words after one is not asked for («לא להתקשר בשבת»). */
+const NEGATION = /^ו?(?:לא|אין|בלי)$/;
+const negated = (phrase: string, at: number) =>
+  phrase
+    .slice(0, at)
+    .replace(/[A-Za-zא-ת]+$/, "")
+    .split(/[^A-Za-zא-ת]+/)
+    .filter(Boolean)
+    .slice(-2)
+    .some((w) => NEGATION.test(w));
+
+/** The one channel a phrase names — a channel word after «לא», «אין» or «בלי» (two words at most) aside — or null. */
 export function channelOf(phrase: string): ContactPref | null {
-  const found = CHANNELS.filter(([re]) => re.test(phrase)).map(([, c]) => c);
+  const found = CHANNELS.filter(([re]) => [...phrase.matchAll(new RegExp(re.source, `${re.flags}g`))].some((m) => !negated(phrase, m.index))).map(([, c]) => c);
   return found.length === 1 ? found[0] : null;
 }
 
 /** About payment or transport: set apart (derived from the lesson), never a reason for the channel. */
 export const isMoneyOrTransport = (phrase: string) => MONEY_OR_TRANSPORT.test(phrase);
 
-/** A cell's phrases: split at lines, semicolons, bullets and sentence ends — never at an initial («ח. לדוגמה»). */
+/** A cell's phrases: split at lines, semicolons, bullets, «, » and sentence ends — never at an initial («ח. לדוגמה»). */
 export function splitPhrases(cell: string): string[] {
   return cell
-    .split(/\n|;|•|(?<!(?:^|[\s(])[A-Za-zא-ת])\.(?=\s|$)/)
+    .split(/\n|;|•|,\s|(?<!(?:^|[\s(])[A-Za-zא-ת])\.(?=\s|$)/)
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => [...p].length >= 2);
 }
@@ -184,9 +223,10 @@ export interface EscortsRow {
 
 export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: number | null; titles: readonly string[] }): EscortsRow[] {
   return dataRows(grid, o.headerRow).map(({ row, cells }) => {
-    // the speaker as named — a phone or an e-mail beside the name is no part of it (matched by the name alone)
+    // the speaker as named — a phone or an e-mail beside the name is no part of it, nor its brackets or what follows
+    // «, », « - » or «והרב…» (nameTails): matched by the bare name alone; nothing of them is ever sent in this kind
     const [first] = splitSpeakers(stripContacts(cellOf(cells, m, "speaker")).text);
-    const { name } = splitTitle(first ?? "", o.titles);
+    const { name } = splitTitle(nameTails(first ?? "", o.titles).name, o.titles);
     const key = nameKey(name);
     let contactsOut = false;
     const phrases = columnsOf(m, "phrases").flatMap((i) => {

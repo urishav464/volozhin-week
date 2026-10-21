@@ -525,6 +525,14 @@ describe("the import of 5786", () => {
         "20:00-21:00-22:00", "18:00-19:00 20:00-21:00", "טל' 1234567 12.3.2026", "טל' 1234567 05-10-2026 08:30", "טל' 1234567 2026-02-10 08:30",
         // the residuals (DECISIONS «סבב חמישי»): six digits, «at», no 0 and no word, an e-mail with no TLD or a comma for its dot
         "123456", "someone(at)example.org", "521234567", "someone@example", "someone@example,org",
+        // סבב שישי: a two-digit-year date (dashes or spaces) is text, never a phone's start — at its day, its month or its
+        // year — and pairs that go on past it are a number; +972 and 00972 of a fixed length, an amount after them text
+        "05-10-26", "03 11 25", "04-05-26", "31-12-25", "1-1-26", "05-10-26 - 07-10-26", "07-03-26 - 09-03-26", "32-01-26", "05-13-26",
+        ...["03-11-25", "04-05-26", "03 11 25", "09-01-26"].flatMap((d) => [" ", "\n", " (", " - "].flatMap((sep) => [`אישר ${d}${sep}${["052", "1234567"].join("-")}`, `אישר ${d}${sep}${["072", "123", "4567"].join(" ")}`])),
+        ["03", "12", "34", "56", "7"].join("-"), ["03", "12", "34", "56", "7"].join(" "), ["02", "12", "34", "567"].join("-"), ["05", "01", "23", "45", "67"].join(" "),
+        `06 09 44 ${["04", "123", "4567"].join(" ")}`, `17 09 11 ${["07", "12", "34", "56", "78"].join("-")}`, `16 11 09 ${["1", "599", "123", "456"].join("-")}`,
+        ...[" - 400 ₪", "\n350 ₪", " 1,500 ₪", " 2 נוסעים", " 1948-1949", " 40,000"].flatMap((after) => [`${["+972", "52", "123", "4567"].join(" ")}${after}`, `${["00972", "52", "1234567"].join("-")}${after}`]),
+        ["+972", "1", "2345", "6789"].join(" "), ["00972", "12345678"].join(""),
       ];
       // seeded strings of digits, separators, marks, letters and @ — the corners where two engines could part
       const ALPHABET = [
@@ -554,6 +562,7 @@ describe("the import of 5786", () => {
           number, number, number,
           () => `${ds(2)}.${ds(1)}.20${ds(2)}`, () => `20${ds(2)}-${ds(2)}-${ds(2)} ${ds(2)}:${ds(2)}`, () => `${ds(2)}:${ds(2)}-${ds(2)}:${ds(2)}`, () => `${ds(3)}:${ds(1)}-${ds(3)}`,
           () => `${ds(1)},${ds(3)},${ds(3)}`, () => `19${ds(2)}-19${ds(2)}`, () => `*${ds(4)}`, () => `${ds(4)}*`,
+          () => `${ds(2)}-${ds(2)}-${ds(2)}`, () => `${ds(2)} ${ds(2)} ${ds(2)}`, () => `00972${pick(SEPS)}${ds(2)}`,
           () => pick(["טל' ", "נייד ", "טלפון: ", "בטלפון ", "tel ", "☎", "📞", "פקס ", " (נייד)", "טל ", "Tel Aviv ", "שם ", "עמ' ", "₪", "@", "a@example.org"]),
         ])();
       const built = Array.from({ length: 4000 }, () => Array.from({ length: 1 + Math.floor(next() * 4) }, piece).join(pick([" ", "", ", ", "\n", " - "])));

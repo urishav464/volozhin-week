@@ -6,11 +6,13 @@
 // taken out (stripContacts): one in the name's cell becomes the row's phone or e-mail when that column is empty and
 // it is the only one; every other is dropped, and the row says so — never kept in a name, a title, the affiliation, a
 // tag or the note (supabase/schema.sql refuses one: «contact_in_text»). The name's cell is read as the tracking sheet
-// reads a speaker's (DECISIONS «סבב רביעי», «סבב חמישי»): its first name is the row's candidate; any other — beside it
-// («פלוני + פלמוני»), on a line under it, or a bracket at the end of a name («הרב פלוני (ישיבת בדיקה)», «… (מלווה: …)»)
-// — is an ExtraLine (src/import/lines.ts): another candidate (its name and title only, and its own bracket's
-// affiliation), the row's affiliation, or left out — the read proposes only an institution's affiliation and an
-// escort's «לא לייבא», and «ייבוא» waits for the rest. The name is matched to the pool without its brackets.
+// reads a speaker's (DECISIONS «סבב רביעי», «סבב חמישי», «סבב שישי»): its first name is the row's candidate; any other
+// — beside it («פלוני + פלמוני»), on a line under it, a bracket at the end of a name («הרב פלוני (ישיבת בדיקה)», «…
+// (מלווה: …)»), or what follows «, », « - » or «והרב…» on its line — is an ExtraLine (src/import/lines.ts): another
+// candidate (its name and title only, and its own brackets' affiliation), the row's affiliation, or left out — the read
+// proposes only an institution's affiliation and an escort's «לא לייבא», and «ייבוא» waits for the rest. The name is
+// matched to the pool without its brackets and tails. The admin's «עריכה» (src/import/edit.ts) replaces a row's
+// name, title and affiliation as read — matched again, checked again.
 import type { CandidatesPayload, ContactFlags, SpeakerRow } from "../data/imports";
 import { IMPORT_RULES } from "../data/importRules";
 import { LIMITS } from "../data/speakerRules";
@@ -19,7 +21,9 @@ import type { Gender, Speaker } from "../domain/types";
 import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
-import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs, trailingBrackets } from "./lines";
+import { type SpeakerEdit, validEdit } from "./edit";
+import { mentionsEscort, namedEscort } from "./escorts";
+import { affiliationText, type ExtraLine, extraLine, type LineAs, lineContext, type LineKind, nameTails } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { pickTitleCell, splitSpeakers, splitTitle, titleGender } from "./speakerName";
 import type { Grid } from "./table";
@@ -46,6 +50,10 @@ export interface CandidateRead {
   skip: string | null;
   /** What the row will not keep, said beside it («הטלפון לא נשמר»). */
   warnings: string[];
+  /** Its name, title and affiliation as they stand — what «עריכה» starts from (null: the row has no name to edit). */
+  fields?: SpeakerEdit | null;
+  /** The admin edited them («נערך ידנית»). */
+  edited?: boolean;
 }
 
 export interface ReadOptions {
@@ -58,6 +66,8 @@ export interface ReadOptions {
   escorts?: readonly string[];
   /** The admin's choice for another name of a cell (ExtraLine.id → what it is). */
   lineAs?: ReadonlyMap<string, LineAs>;
+  /** The admin's «עריכה» of a row (its ref → name, title, affiliation): replaces what was read. */
+  edits?: ReadonlyMap<string, SpeakerEdit>;
 }
 
 const chars = (s: string) => [...s].length;
@@ -78,7 +88,7 @@ export function splitTopics(cell: string): { tags: string[]; rest: string[] } {
 export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { rows: CandidateRead[]; lines: ExtraLine[] } {
   const names = columnNames(grid, o.headerRow);
   const seen = new Map<string, number>();
-  const escorts = escortWords(o.escorts ?? []);
+  const lc = lineContext(o.escorts ?? [], o.titles);
   const lines: ExtraLine[] = [];
   const out: CandidateRead[] = [];
   for (const { row, cells } of dataRows(grid, o.headerRow)) {
@@ -92,9 +102,11 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       out.push(skip("אין שם"));
       continue;
     }
-    // a bracket at the end of the name («הרב פלוני (ישיבת בדיקה)», «… (מלווה: …)»): a line of its own — the name is «פלוני»
-    const { name: bare, brackets } = trailingBrackets(raw);
+    // a bracket at the end of the name («הרב פלוני (ישיבת בדיקה)», «… (מלווה: …)») and what follows «, », « - » or
+    // «והרב…» («הרב פלוני - ישיבת בדיקה»): lines of their own — the name is «פלוני»
+    const { name: bare, brackets, tails } = nameTails(raw, o.titles);
     let { title, name } = splitTitle(bare, o.titles);
+    const edit = validEdit(o.edits?.get(String(row)), o.titles);
     const notes: string[] = [];
     /** A field's text with every contact taken out — said once per field. */
     const clean = (text: string, field: string) => {
@@ -110,8 +122,11 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
         warnings.push(`התואר «${titleCell}» לא ברשימת התארים — נשמר בהערה`);
       }
     }
+    // the admin's «עריכה»: the name and the title as they wrote them (the affiliation below)
+    if (edit) ({ title, name } = edit);
+    const fields = (affiliation: string | null): SpeakerEdit => ({ title, name, affiliation });
     if (chars(name) > LIMITS.name) {
-      out.push(skip(`השם ארוך מ-${LIMITS.name} תווים`));
+      out.push({ ...skip(`השם ארוך מ-${LIMITS.name} תווים`), fields: fields(null), edited: !!edit });
       continue;
     }
     const key = nameKey(name);
@@ -121,23 +136,28 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
     }
     const first = seen.get(key);
     if (first != null) {
-      out.push(skip(`כפול בטבלה (כמו שורה ${first})`));
+      out.push({ ...skip(`כפול בטבלה (כמו שורה ${first})`), fields: fields(edit?.affiliation ?? null), edited: !!edit });
       continue;
     }
     seen.set(key, row);
+    const nameWarning = escortInName(name, lc.escorts.words);
+    if (nameWarning) warnings.push(nameWarning);
     // the cell's other names and the name's brackets: each an ExtraLine — the admin's choice, or the read's «הצעה»
     const lineAff: string[] = [];
     const extras: { ref: string; raw: string }[] = [];
-    const decide = (id: string, part: string) => {
-      const l = extraLine(id, row, part, { key, name }, escorts, o.lineAs);
+    const decide = (id: string, part: string, kind: LineKind) => {
+      const l = extraLine(id, row, part, { key, name }, lc, o.lineAs, kind);
       lines.push(l);
       if (l.as === "affiliation") lineAff.push(affiliationText(part));
       else if (l.as === "speaker") extras.push({ ref: l.id, raw: affiliationText(part) });
     };
-    brackets.forEach((b, k) => decide(`${row}:1.${k + 1}`, b));
-    parts.slice(1).forEach((part, k) => decide(`${row}:${k + 2}`, part));
+    [...brackets, ...tails].forEach((b, k) => decide(`${row}:1.${k + 1}`, b, k < brackets.length ? "bracket" : "tail"));
+    // a name beside it on the first line («פלוני + פלמוני»), or a line under it
+    const firstLine = inName.text.split("\n").map((line) => splitSpeakers(line).length)[0] ?? 1;
+    parts.slice(1).forEach((part, k) => decide(`${row}:${k + 2}`, part, k + 1 < firstLine ? "beside" : "under"));
     const gender = o.genderFromTitle ? titleGender(title) : null;
-    let affiliation: string | null = [oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")), ...lineAff].filter(Boolean).join(", ") || null;
+    let affiliation: string | null = edit ? edit.affiliation : [oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")), ...lineAff].filter(Boolean).join(", ") || null;
+    if (edit) clean(cellOf(cells, m, "affiliation"), "מוסד"); // a contact in the column is still said
     if (affiliation && chars(affiliation) > LIMITS.affiliation) {
       notes.push(`מוסד: ${affiliation}`);
       warnings.push("המוסד ארוך — נשמר בהערה");
@@ -174,43 +194,61 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
       ref: String(row),
       skip: null,
       warnings,
+      fields: fields(affiliation),
+      edited: !!edit,
       data: { title, name, key, gender, affiliation, topics: tags, phone: phone.value, phoneKey: phone.key, email: email.value, notes: note },
     });
     // another candidate from the cell: its name and title only — the row's other columns are the first's; a bracket at
     // the end of its name a line of its own (its affiliation, or left out — or another candidate)
     for (let e = 0; e < extras.length; e++) {
       const x = extras[e];
-      const split = trailingBrackets(oneLine(x.raw));
-      const sub = splitTitle(split.name, o.titles);
+      const split = nameTails(oneLine(x.raw), o.titles);
+      const xEdit = validEdit(o.edits?.get(x.ref), o.titles);
+      const sub = xEdit ? { title: xEdit.title, name: xEdit.name } : splitTitle(split.name, o.titles);
       const k = nameKey(sub.name);
       const at = seen.get(k);
       const why = !k ? "אין שם" : chars(sub.name) > LIMITS.name ? `השם ארוך מ-${LIMITS.name} תווים` : at != null ? `כפול בטבלה (כמו שורה ${at})` : null;
       if (why) {
-        out.push({ row, ref: x.ref, data: null, skip: why, warnings: [] });
+        out.push({ row, ref: x.ref, data: null, skip: why, warnings: [], fields: k ? { ...sub, affiliation: xEdit?.affiliation ?? null } : null, edited: !!xEdit });
         continue;
       }
       seen.set(k, row);
       const aff: string[] = [];
-      split.brackets.forEach((b, j) => {
-        const l = extraLine(`${x.ref}.${j + 1}`, row, b, { key: k, name: sub.name }, escorts, o.lineAs);
+      [...split.brackets, ...split.tails].forEach((b, j) => {
+        const l = extraLine(`${x.ref}.${j + 1}`, row, b, { key: k, name: sub.name }, lc, o.lineAs, j < split.brackets.length ? "bracket" : "tail");
         lines.push(l);
         if (l.as === "affiliation") aff.push(affiliationText(b));
         else if (l.as === "speaker") extras.push({ ref: l.id, raw: affiliationText(b) });
       });
-      const affiliation = aff.join(", ") || null;
+      const joined = xEdit ? xEdit.affiliation : aff.join(", ") || null;
+      const affiliation = joined && chars(joined) <= LIMITS.affiliation ? joined : null;
+      const nameWarning = escortInName(sub.name, lc.escorts.words);
       out.push({
         row,
         ref: x.ref,
         skip: null,
         warnings: [
           aff.length ? "שם נוסף מתא השם — רק השם, התואר והשיוך שבסוגריים (שאר העמודות של השורה למרצה הראשון/ה)" : "שם נוסף מתא השם — רק השם והתואר (שאר העמודות של השורה למרצה הראשון/ה)",
-          ...(affiliation && chars(affiliation) > LIMITS.affiliation ? [`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`] : []),
+          ...(joined && !affiliation ? [`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`] : []),
+          ...(nameWarning ? [nameWarning] : []),
         ],
-        data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation: affiliation && chars(affiliation) <= LIMITS.affiliation ? affiliation : null, topics: [], phone: null, phoneKey: null, email: null, notes: null },
+        fields: { ...sub, affiliation },
+        edited: !!xEdit,
+        data: { title: sub.title, name: sub.name, key: k, gender: o.genderFromTitle ? titleGender(sub.title) : null, affiliation, topics: [], phone: null, phoneKey: null, email: null, notes: null },
       });
     }
   }
   return { rows: out, lines };
+}
+
+/**
+ * A name that still holds an escort's word, or a word about one, once its brackets and tails are apart («מרצה 12 בליווי
+ * שירה»): said beside the card — «עריכה» corrects it (DECISIONS «סבב שישי»).
+ */
+export function escortInName(name: string, escorts: ReadonlySet<string>): string | null {
+  const w = namedEscort(name, escorts);
+  if (w) return `בשם יש מילה מעמודת המלווים («${w}») — אם היא לא חלק מהשם, מתקנים ב«עריכה»`;
+  return mentionsEscort(name) ? "בשם יש מילה על מלווה או חניך/ה — אם היא לא חלק מהשם, מתקנים ב«עריכה»" : null;
 }
 
 /** The candidates' rows (readCandidateSheet's). */

@@ -324,7 +324,9 @@ describe("סבב שני: a second line in the speaker's cell — an affiliation 
   it("a line in brackets with an institution is the affiliation of the name above — one speaker, the row's phone theirs, the payload's «מוסד»", () => {
     const read = track([withPhone("הרב אלפא דוגמני\n(ישיבת דוגמה)", "ראשון 8:30", "000-000-0011")]);
     expect(read.speakers.map((s) => [s.key, s.title, s.affiliation, s.phone])).toEqual([["אלפא דוגמני", "הרב", "ישיבת דוגמה", "0000000011"]]);
-    expect(read.lines).toEqual([{ id: "2:2", row: 2, text: "(ישיבת דוגמה)", of: "אלפא דוגמני", ofName: "אלפא דוגמני", as: "affiliation", chosen: false, why: "שם של מוסד" }]);
+    expect(read.lines).toEqual([
+      { id: "2:2", row: 2, text: "(ישיבת דוגמה)", kind: "under", of: "אלפא דוגמני", ofName: "אלפא דוגמני", as: "affiliation", chosen: false, why: "שם של מוסד", escort: null, held: false },
+    ]);
     const plans = plan(read);
     expect(plans[0].warnings).toEqual([]);
     const p = archivePayload(plans, previewTrackingSpeakers(read, EMPTY), new Map(), { label: "x", start_date: null, source: "x", titles_from: null })!;

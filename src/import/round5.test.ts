@@ -59,6 +59,7 @@ describe("סבב חמישי, 1: a bracket on the name's own line, and a name bes
       ["5:2", "נועם ניסיוני", "מרצה 03", "skip"], // beside the first, naming an escort: a line, proposed «לא לייבא»
       ["6:2", "תמר בדקנית", "מרצה 03", "skip"],
       ["7:1.1", "(ירושלים)", "בית בדיקתי", null], // no institution's word: waits for the admin
+      ["8:2", "גימל בדיקתי", "מרצה 07", "speaker"], // a name beside the first, naming no one: proposed a co-speaker (סבב שישי)
     ]);
     // a co-speaker who names no escort stays a speaker, as before
     expect(read.speakers.map((s) => [s.title, s.name, s.affiliation])).toEqual([

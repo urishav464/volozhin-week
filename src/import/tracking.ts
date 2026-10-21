@@ -3,11 +3,12 @@
 //   * when: «שיעור ב» read by parseWhen; unreadable → the row is «מדולג» with the reason. Only a start written: the
 //     end of the grid's lesson row that starts then — else «מדולג».
 //   * speakers: one or more names per row, each matched to the pool as the candidates are (one choice per speaker,
-//     not per row). A name on a line under the first, a bracket at the end of a name («פלוני (ישיבת בדיקה)» — the name
-//     is «פלוני»), and a name beside the first that names an escort («פלוני + שירה…») are ExtraLines
-//     (src/import/lines.ts): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the read proposes an affiliation only for an
-//     institution's word («ישיבת…»), «לא לייבא» for an escort's name; any other line the admin decides; any other name
-//     beside the first is a co-speaker. The row's phone goes to its speaker's contacts — decided
+//     not per row). A name on a line under the first, a name beside it («פלוני + פלמוני», « / »), a bracket at the end
+//     of a name («פלוני (ישיבת בדיקה)» — the name is «פלוני»), and what follows «, », « - » or «והרב…» on its line, are
+//     ExtraLines (src/import/lines.ts): «מרצה נוסף/ת», «שיוך מוסדי» or «לא לייבא» — the read proposes an affiliation
+//     for an institution's word («ישיבת…»), «לא לייבא» for an escort's name alone, and a co-speaker for a name beside
+//     the first; any other line the admin decides. The admin's «עריכה» (src/import/edit.ts, by the speaker's key as
+//     read) replaces its name, title and affiliation. The row's phone goes to its speaker's contacts — decided
 //     after the admin's choices: to the one speaker of the row still imported (planLessons), never when two are.
 //   * a phone or an e-mail in the speaker's cell (beside a name, a line of its own, «(טל' …)») or in the title is
 //     taken out (stripContacts) — never a name, an affiliation or a title: the speaker cell's one phone is the row's
@@ -36,7 +37,9 @@ import type { Mapping } from "./fields";
 import { actionOf, ambiguousInSheet, type Choice, fillPlan, matchSpeaker, type Resolved, resolveChoice, type RowStatus, sheetMatches, type SpeakerMatch } from "./match";
 import type { MatchContext } from "./candidates";
 import { normalizeEmail, normalizePhone, scrubContacts, stripContacts } from "./phone";
-import { affiliationText, escortWords, type ExtraLine, extraLine, type LineAs, lineProposal, trailingBrackets } from "./lines";
+import { escortInName } from "./candidates";
+import { type SpeakerEdit, validEdit } from "./edit";
+import { affiliationText, type ExtraLine, extraLine, type LineAs, lineContext, nameTails } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
 import { type SourcesRule, sourcesKey, translateSources } from "./sources";
 import { splitSpeakers, splitTitle, titleGender } from "./speakerName";
@@ -111,6 +114,14 @@ export interface TrackingSpeaker {
   email: string | null;
   /** The rows it teaches in. */
   rows: number[];
+  /** Its keys as read — what an «עריכה» is kept by (more than one: names the admin edited into one). */
+  from: string[];
+  /** The admin edited its name, title or affiliation («נערך ידנית»). */
+  edited: boolean;
+  /** The lines (names beside or under another) chosen or proposed as it — «עריכה» may turn them. */
+  lines: string[];
+  /** Its name still holds an escort's word (escortInName): said beside it. */
+  nameWarning: string | null;
 }
 
 export type { ExtraLine, LineAs };
@@ -130,6 +141,8 @@ export interface TrackingOptions {
   escorts?: readonly string[];
   /** The admin's choice for a line (ExtraLine.id → what it is). */
   lineAs?: ReadonlyMap<string, LineAs>;
+  /** The admin's «עריכה» of a speaker (its key as read → name, title, affiliation): replaces what was read. */
+  edits?: ReadonlyMap<string, SpeakerEdit>;
 }
 
 /** A cell that only says «כפולה» marks the row; it is not a value. */
@@ -151,7 +164,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
   const data = dataRows(grid, o.headerRow);
   // each speaker cell without its phones and e-mails — a contact is never a name, a line or an affiliation
   const stripped = new Map(data.map(({ row, cells }) => [row, stripContacts(cellOf(cells, m, "speaker"))]));
-  const escorts = escortWords(o.escorts ?? []);
+  const lc = lineContext(o.escorts ?? [], o.titles);
   const speakers = new Map<string, TrackingSpeaker>();
   const lines: ExtraLine[] = [];
   const rows = data.map(({ row, cells }): TrackingRow => {
@@ -199,22 +212,37 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
       lines.push(l);
       if (l.as === "affiliation") affiliations.push({ key: of.key, text: affiliationText(raw) });
       // «לא לייבא», or undecided: none, until the admin chooses («ייבוא» waits)
-      return l.as !== "speaker" || speak(affiliationText(raw), l.id);
+      return l.as !== "speaker" || speak(affiliationText(raw), l.id, l.kind === "beside" || l.kind === "under" ? l.id : null);
     };
-    /** A name of the row («הרב פלוני (ישיבת בדיקה)»), its brackets apart — each a line of it; false: too long. */
-    const speak = (raw: string, id: string): boolean => {
-      const { name: bare, brackets } = trailingBrackets(raw);
-      const { title, name } = splitTitle(bare, o.titles);
+    /**
+     * A name of the row («הרב פלוני (ישיבת בדיקה)», «הרב פלוני - ישיבת בדיקה»), its brackets and tails apart — each a
+     * line of it — and the admin's «עריכה» over it; false: too long. `line`: the line it was (a name beside or under).
+     */
+    const speak = (raw: string, id: string, line: string | null = null): boolean => {
+      const { name: bare, brackets, tails } = nameTails(raw, o.titles);
+      const read = splitTitle(bare, o.titles);
+      const readKey = nameKey(read.name);
+      if (!readKey) return true;
+      const edit = validEdit(o.edits?.get(readKey), o.titles);
+      const { title, name } = edit ?? read;
       const key = nameKey(name);
-      if (!key) return true;
       if (chars(name) > LIMITS.name) return false;
       if (!speakerKeys.includes(key)) speakerKeys.push(key);
-      const s = speakers.get(key) ?? { key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: null, phone: null, phoneKey: null, email: null, rows: [] };
-      if (!s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
+      const s: TrackingSpeaker = speakers.get(key) ?? {
+        key, title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: null, phone: null, phoneKey: null, email: null, rows: [], from: [], edited: false, lines: [],
+        nameWarning: escortInName(name, lc.escorts.words),
+      };
+      // the admin's reading wins over the file's; the file's fills only what it leaves empty
+      if (edit && !s.edited) Object.assign(s, { title, name, gender: o.genderFromTitle ? titleGender(title) : null, affiliation: edit.affiliation, edited: true, nameWarning: escortInName(name, lc.escorts.words) });
+      else if (!s.edited && !s.title && title) Object.assign(s, { title, gender: o.genderFromTitle ? titleGender(title) : null });
+      if (!s.from.includes(readKey)) s.from.push(readKey);
+      if (line && !s.lines.includes(line)) s.lines.push(line);
       if (!s.rows.includes(row)) s.rows.push(row);
       speakers.set(key, s);
       const me = { key, name };
-      for (const [k, b] of brackets.entries()) if (!decide(extraLine(`${id}.${k + 1}`, row, b, me, escorts, o.lineAs), me, b)) return false;
+      for (const [k, b] of [...brackets, ...tails].entries()) {
+        if (!decide(extraLine(`${id}.${k + 1}`, row, b, me, lc, o.lineAs, k < brackets.length ? "bracket" : "tail"), me, b)) return false;
+      }
       above = me;
       return true;
     };
@@ -224,9 +252,10 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
         index++;
         const id = `${row}:${index}`;
         if (!nameKey(splitTitle(raw, o.titles).name)) continue;
-        // a line under the first, or a name beside the first that names an escort: a line to decide
-        const asLine = above != null && (i > 0 || (j > 0 && lineProposal(raw, escorts)[0] === "skip"));
-        tooLong = asLine && above ? !decide(extraLine(id, row, raw, above, escorts, o.lineAs), above, raw) : !speak(raw, id);
+        // a line under the first, or a name beside it: a line to decide — beside the first it is proposed a co-speaker,
+        // unless it names an escort or an institution (DECISIONS «סבב שישי»)
+        const beside = i === 0 && j > 0;
+        tooLong = above ? !decide(extraLine(id, row, raw, above, lc, o.lineAs, beside ? "beside" : "under", beside), above, raw) : !speak(raw, id);
         if (tooLong) break;
       }
       if (tooLong) break;
@@ -235,7 +264,7 @@ export function readTracking(grid: Grid, m: Mapping, o: TrackingOptions): Tracki
     // a speaker's affiliation lines, together (the first row that gives one; never past the pool's limit)
     for (const key of new Set(affiliations.map((a) => a.key))) {
       const s = speakers.get(key);
-      if (!s || s.affiliation) continue;
+      if (!s || s.affiliation || s.edited) continue;
       const text = affiliations.filter((a) => a.key === key).map((a) => a.text).join(", ");
       if (chars(text) > LIMITS.affiliation) warnings.push(`השיוך המוסדי ארוך מ-${LIMITS.affiliation} תווים — לא נשמר`);
       else s.affiliation = text;

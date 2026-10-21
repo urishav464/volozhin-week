@@ -34,7 +34,7 @@ describe("(a) the candidates", () => {
   it("reads each row: title split, gender «הצעה» from it, tags, the phone apart, statuses and notes as lines", () => {
     const read = readCandidates(grid, m, { headerRow: 0, titles: DEFAULT_TITLES, genderFromTitle: true });
     expect(read[0]).toEqual({
-      row: 2, ref: "2", skip: null, warnings: [],
+      row: 2, ref: "2", skip: null, warnings: [], fields: { title: "הרב", name: "דוגמה אלף", affiliation: "מוסד לדוגמה" }, edited: false,
       data: { title: "הרב", name: "דוגמה אלף", key: "דוגמה אלף", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך", "פילוסופיה"], phone: "0000000001", phoneKey: "0000000001", email: null, notes: "טווח ימים: א-ב" },
     });
     expect(read[1].data).toMatchObject({ title: "הרבנית", gender: "f", notes: "טווח ימים: נסגר\nהערות: הערה לדוגמה" });
