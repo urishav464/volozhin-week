@@ -672,16 +672,22 @@ test.describe("demo build — the import of 5786", () => {
     const gimel = card("גימל בדיקתית").getByRole("group", { name: "עריכה" });
     await expect(gimel.getByRole("radio", { name: "מרצה נוסף/ת" })).toHaveCount(1);
     await expect(lines.locator('li[data-line="7:2"]').getByRole("radio", { name: "מרצה נוסף/ת" })).toBeDisabled();
-    // a title saved: the card keeps the keyboard
+    // a title saved by the keyboard: the card keeps it
     await gimel.getByLabel("תואר").selectOption("הרבנית");
-    await gimel.getByRole("button", { name: "שמירת העריכה" }).click();
+    await gimel.getByRole("button", { name: "שמירת העריכה" }).press("Enter");
     await expect(card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" })).toBeFocused();
+    // by the mouse, a choice in the form leaves the keyboard (and the page) where they were
+    await card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" }).click();
+    await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "שיוך מוסדי של מרצה 03" }).click();
+    const line = lines.locator('li[data-line="4:2"]');
+    await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).toBeChecked();
+    await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).not.toBeFocused();
+    await line.getByRole("radio", { name: "מרצה נוסף/ת" }).click(); // back: a speaker, and its card, again
     // by the keyboard: the arrows check each choice they pass — the card goes with the first that is no speaker, and the
     // keyboard goes on at the same choice of the line in «שם נוסף בתא של המרצה»
     await card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" }).click();
     await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "מרצה נוסף/ת" }).focus();
     await page.keyboard.press("ArrowDown");
-    const line = lines.locator('li[data-line="4:2"]');
     await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).toBeFocused();
     // back up: the card comes back, and the keyboard stays in the list (the saved title's hand-off was spent)
     await page.keyboard.press("ArrowUp");
@@ -702,13 +708,22 @@ test.describe("demo build — the import of 5786", () => {
     await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // the same card, its key as read kept
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
-    // a later card edited into an earlier one's name: the two are one, and the keyboard goes on at the card that stays
+    // a later card edited into an earlier one's name: the two are one. Saved by the mouse, the page stays where it was…
     await speakers.getByRole("button", { name: "עריכה — מרצה 03ב", exact: true }).click();
-    const late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
+    let late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
     await late.getByLabel("שם", { exact: true }).fill("מרצה 03");
     await late.getByRole("button", { name: "שמירת העריכה" }).click();
     await expect(card("מרצה 03ב")).toHaveCount(0);
     await expect(card("מרצה 03")).toContainText("שורות 4, 6");
+    await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).not.toBeFocused();
+    // …taken back, and saved by the keyboard: the keyboard goes on at the card that stays
+    await card("מרצה 03").getByRole("button", { name: "ביטול העריכה" }).click();
+    await expect(card("מרצה 03ב")).toHaveCount(1);
+    await speakers.getByRole("button", { name: "עריכה — מרצה 03ב", exact: true }).click();
+    late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
+    await late.getByLabel("שם", { exact: true }).fill("מרצה 03");
+    await late.getByRole("button", { name: "שמירת העריכה" }).press("Enter");
+    await expect(card("מרצה 03ב")).toHaveCount(0);
     await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).toBeFocused();
     // …at its form's name when its own «עריכה» is open (no «עריכה» button shown), and back to «עריכה» when that closes
     await speakers.getByRole("button", { name: "עריכה — מרצה 12", exact: true }).click();
@@ -716,7 +731,7 @@ test.describe("demo build — the import of 5786", () => {
     await speakers.getByRole("button", { name: "עריכה — מרצה 12ב", exact: true }).click();
     const late12 = card("מרצה 12ב").getByRole("group", { name: "עריכה" });
     await late12.getByLabel("שם", { exact: true }).fill("מרצה 12");
-    await late12.getByRole("button", { name: "שמירת העריכה" }).click();
+    await late12.getByRole("button", { name: "שמירת העריכה" }).press("Enter");
     await expect(card("מרצה 12ב")).toHaveCount(0);
     await expect(open12.getByLabel("שם", { exact: true })).toBeFocused();
     await open12.getByRole("button", { name: "ביטול", exact: true }).click();

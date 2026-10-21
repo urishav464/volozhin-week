@@ -173,8 +173,9 @@ function EditSpeaker({
   titles: readonly string[];
   escorts: readonly string[];
   lines?: ExtraLine[];
-  onLine?: (id: string, as: LineAs) => void;
-  onSave: (e: SpeakerEdit) => void;
+  onLine?: (id: string, as: LineAs, byKeyboard: boolean) => void;
+  /** byKeyboard: «שמירת העריכה» pressed by the keyboard (a click's detail is 0). */
+  onSave: (e: SpeakerEdit, byKeyboard: boolean) => void;
   onCancel: () => void;
   /** The name's field (Editable's, which focuses it). */
   nameRef: Ref<HTMLInputElement>;
@@ -219,10 +220,10 @@ function EditSpeaker({
         {problem ?? (escort ? `בשם יש מילה מעמודת המלווים («${escort}»).` : "מה שכותבים כאן מחליף את מה שנקרא מהקובץ ונבדק שוב מול המאגר. מגדר — רק מהתואר. בלי טלפון ובלי מייל.")}
       </p>
       {lines.map((l) => (
-        <LineChoice key={l.id} line={l} onChoose={(as) => onLine?.(l.id, as)} legend={`שורה ${l.row}: «${l.text}» ליד ${l.ofName} — מה זה?`} />
+        <LineChoice key={l.id} line={l} onChoose={(as, byKeyboard) => onLine?.(l.id, as, byKeyboard)} legend={`שורה ${l.row}: «${l.text}» ליד ${l.ofName} — מה זה?`} />
       ))}
       <div className="mt-2 flex flex-wrap gap-2">
-        <Button kind="primary" disabled={!!problem} onClick={() => onSave(value)}>
+        <Button kind="primary" disabled={!!problem} onClick={(ev) => onSave(value, ev.detail === 0)}>
           שמירת העריכה
         </Button>
         <Button onClick={onCancel}>ביטול</Button>
@@ -247,9 +248,9 @@ function Editable({
   titles: readonly string[];
   escorts: readonly string[];
   lines?: ExtraLine[];
-  onLine?: (id: string, as: LineAs) => void;
-  /** The admin's reading (null: back to the file's). */
-  onEdit: (e: SpeakerEdit | null) => void;
+  onLine?: (id: string, as: LineAs, byKeyboard: boolean) => void;
+  /** The admin's reading (null: back to the file's); byKeyboard: saved or taken back by the keyboard. */
+  onEdit: (e: SpeakerEdit | null, byKeyboard: boolean) => void;
   /** Set by a list whose cards an «עריכה» merges: true for the render after which this card takes the keyboard — also as it mounts. */
   focusEdit?: boolean;
 }) {
@@ -285,8 +286,8 @@ function Editable({
         {edited && !open && (
           <Button
             kind="quiet"
-            onClick={() => {
-              onEdit(null);
+            onClick={(ev) => {
+              onEdit(null, ev.detail === 0);
               setRefocus((n) => n + 1);
             }}
           >
@@ -301,8 +302,8 @@ function Editable({
           escorts={escorts}
           lines={lines}
           onLine={onLine}
-          onSave={(e) => {
-            onEdit(e);
+          onSave={(e, byKeyboard) => {
+            onEdit(e, byKeyboard);
             close();
           }}
           onCancel={close}
@@ -532,7 +533,8 @@ export function SpeakersPreview({
   onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
   // an «עריכה» saved into an earlier card's name merges the two, and the card that had the keyboard goes: it goes on at
-  // the «עריכה» of the card that now holds its first key as read
+  // the «עריכה» of the card that now holds its first key as read. Only from the keyboard — a click or a tap leaves the
+  // page where it was (a focus scrolls to the card, perhaps far up)
   const [focus, setFocus] = useState<string | null>(null);
   // delivered once: the cards' effects run before this one, and a card that mounts again later takes nothing
   useEffect(() => {
@@ -540,7 +542,7 @@ export function SpeakersPreview({
   }, [focus]);
   // a card's form holds only the lines it is a speaker by, so any choice there takes the line (and the radio) out of the
   // card, often the card itself: the keyboard goes on at the same choice of the same line in «שם נוסף בתא של המרצה»,
-  // which stays (and the arrows go on from there)
+  // which stays (and the arrows go on from there). Only from the keyboard: that list is above, and a click stays put
   const [lineFocus, setLineFocus] = useState<{ id: string; as: LineAs } | null>(null);
   useEffect(() => {
     if (lineFocus) document.querySelector<HTMLInputElement>(`li[data-line="${lineFocus.id}"] input[value="${lineFocus.as}"]`)?.focus();
@@ -584,13 +586,13 @@ export function SpeakersPreview({
                 titles={titles}
                 escorts={escorts}
                 lines={lines.filter((l) => s.lines.includes(l.id) && !skipped.has(l.row))}
-                onLine={(id, as) => {
+                onLine={(id, as, byKeyboard) => {
                   onLine(id, as);
-                  setLineFocus({ id, as });
+                  if (byKeyboard) setLineFocus({ id, as });
                 }}
-                onEdit={(e) => {
+                onEdit={(e, byKeyboard) => {
                   onEdit(s.from, e);
-                  setFocus(s.from[0]);
+                  if (byKeyboard) setFocus(s.from[0]);
                 }}
                 focusEdit={focus != null && s.from.includes(focus)}
               />
@@ -692,8 +694,8 @@ const LINE_AS_LABEL: Record<LineAs, (l: ExtraLine) => string> = {
   skip: (l) => SKIP_LABEL[l.kind],
 };
 
-/** A line's three choices. */
-function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: ExtraLine; onChoose: (as: LineAs) => void; legend: string; disabled?: boolean }) {
+/** A line's three choices (byKeyboard: chosen by the arrows or the space bar — the radio «:focus-visible» as it changes). */
+function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: ExtraLine; onChoose: (as: LineAs, byKeyboard: boolean) => void; legend: string; disabled?: boolean }) {
   const id = useId();
   return (
     <fieldset className="mt-1 min-w-0" disabled={disabled}>
@@ -701,7 +703,7 @@ function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: Ext
       <div className="flex flex-wrap gap-1.5">
         {(["speaker", "affiliation", "skip"] as const).map((as) => (
           <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={() => onChoose(as)} className="accent-ink" />
+            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={(e) => onChoose(as, e.currentTarget.matches(":focus-visible"))} className="accent-ink" />
             {LINE_AS_LABEL[as](l)}
           </label>
         ))}
