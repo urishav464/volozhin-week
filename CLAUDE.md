@@ -217,17 +217,22 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   always in the escorts' file, in the tracking sheet and the candidates when a header or a first row looks like one
   (`escortLike`) — and never mappable in any kind (`escortColumns` a guard besides)), matching (`match.ts`) and the
   three kinds (`candidates.ts`, `tracking.ts`, `escorts.ts`; a speaker cell's other names are `lines.ts` ExtraLines in
-  both of the first two — a line under the name, a bracket at its end on its own line (`trailingBrackets`: the name is
-  matched without it), in the candidates a name beside it, in the tracking sheet one beside it that names an escort:
-  «מרצה נוסף/ת» · «שיוך מוסדי» · «לא לייבא», only an institution's word or an escort's name proposed).
+  both of the first two — a line under the name, a name beside it, a bracket at its end and what follows «, », a spaced
+  dash or «והרב…» on its own line (`nameTails` in `speakerName.ts`: the name is matched without them; the escorts'
+  file matches the bare name): «מרצה נוסף/ת» · «שיוך מוסדי» · «לא לייבא», proposed only for an institution's word,
+  a line that IS one escort's name (`allOfOneEscort`) or speaks of one, and in the tracking sheet a co-speaker beside
+  the first — a line that only shares a word with an escort's name is `held`, undecided, said in red). **«עריכה»**
+  (`edit.ts`, DECISIONS «סבב שישי»): the admin corrects a speaker card's name, title and affiliation; the readers apply
+  it (candidates by the row's ref, the tracking sheet by the key as read), so it is matched again and checked again.
   **The escorts' file sends nothing of the file** (DECISIONS «סבב רביעי»): a channel chosen from a fixed list
   (`IMPORT_CHANNELS`, the phrases only suggest it) and the admin's own note — `import_commit` refuses an escorts' row
   with any other key. **A phone or an e-mail lands only in phone / email:** the wizard takes it out of every other
   field (`stripContacts`; a note's are replaced, `scrubContacts`), attaching one only when unambiguous, and
   `import_commit` refuses one anywhere else (`app.has_contact` ≡ `hasContact` on the text folded alike — every digit
   ASCII, format characters out: `app.contact_fold` ≡ `foldContact` — `contact_in_text`). A phone in text is one by
-  Israel's numbering plan, abroad («+»/«00» and 8–15 digits) or 7–15 digits beside «טל'»/«נייד»/☎ — never «any seven
-  digits» (`PHONE`; verses, dates, times, prices are text; its residuals in DECISIONS «סבב חמישי»);
+  Israel's numbering plan (+972 / 00972 of a fixed length, tried first), abroad («+»/«00» and 8–15 digits) or 7–15
+  digits beside «טל'»/«נייד»/☎ — never «any seven digits», never from a date's day, month or year (`PHONE`; verses,
+  dates, times, prices are text; a number's rest leaves with it, `REST`; its residuals in DECISIONS «סבב שישי»);
   `src/import/privacy.property.test.ts` holds both privacy invariants on thousands of seeded random tables.
   `port.imports` (`src/data/imports.ts`, `importRules.ts`) → `import_lookup` (booleans, never a contact's value) and
   `import_commit` — a global admin's, SECURITY DEFINER, one transaction, every row or none (`import_bad_row`

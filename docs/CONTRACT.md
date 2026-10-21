@@ -1165,7 +1165,11 @@ an edition's admin included → `forbidden`).
 **What travels.** The files never reach the server. The wizard («הגדרות ← ייבוא», `src/screens/settings/ImportTab.tsx`)
 reads a paste or an .xlsx/.docx in the page (`src/import/`), the admin maps, reviews and decides, and only the
 reviewed rows arrive, as one payload. Nothing raw is stored — not in the database, not in the browser's storage. The
-pool is read as `load_week` gives a speaker (`port.imports.pool()`: `speakers` without any contact column).
+pool is read as `load_week` gives a speaker (`port.imports.pool()`: `speakers` without any contact column). The admin
+may correct a speaker card's name, title and affiliation in the preview («עריכה», DECISIONS «סבב שישי»): what travels
+is then the corrected values, in the same fields — the payload's shape is unchanged, and they are checked as any row is
+(below; the wizard refuses an edit with a phone or an e-mail before it is saved). A pool speaker a correction now
+matches is asked about with one more `import_lookup` (its booleans only).
 
 ## `lookup(speakers[], phoneKeys[])` — `import_lookup(p_speakers bigint[], p_phone_keys text[])` → `jsonb`
 `stable`. At most 5000 of each (`import_too_big`). Returns `{phones: [{key, speaker_id}], contacts: [{speaker_id,
@@ -1189,8 +1193,9 @@ the soft hyphen, tags), NEL (U+0085) and U+180E — and every decimal digit of e
 (٠, ۰, ０, 𝟎 → 0). Then: an **e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth
 «＠»), a dot after it; or, in the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its
 last part letters; or a **phone by Israel's numbering plan** — never «any seven digits» (since «סבב חמישי»):
-- an **Israeli number**: `0` and a landline (2, 3, 4, 8, 9 and seven digits) or a mobile / 07X (5 or 7 and eight
-  digits); `972` or `+972` before it, a `0` (or «(0)») after it or not; `1-700`, `1-800`, `1-599` and six digits. Its
+- an **Israeli number**, of a fixed length and tried first: `0` and a landline (2, 3, 4, 8, 9 and seven digits) or a
+  mobile / 07X (5 or 7 and eight digits); `972`, `+972` or `00972` before it, a `0` (or «(0)») after it or not — so a
+  sum after «+972 52-…» stays text (since «סבב שישי»); `1-700`, `1-800`, `1-599` and six digits. Its
   digits apart by white space, dashes of every kind, brackets, «·», «•», «‧», «_», «|», «;», «,» right before a digit,
   «.» and «/» unless between two groups of one or two digits (a date's «12.3», «05/10»), «:» only between two groups
   of three or more («000:000:0000» — never a time's «20:00», a verse's «119:1»);
@@ -1200,7 +1205,9 @@ last part letters; or a **phone by Israel's numbering plan** — never «any sev
   ☏, 📞, 📱 — before it or after it, up to four spaces, dashes, brackets or punctuation apart; and a **star number**
   («*2345», «2345*») only beside such a word.
 A number never begins inside a number, right after a time's «20:» or «8.» or a list's «1,», at a time («20:00»,
-«8.30») or at a date whose year has four digits («05-10-2026», «05.2026», «2026-02-10»); it never ends at a time's
+«8.30»), at a date whose year has four digits («05-10-2026», «05.2026», «2026-02-10»), or at the day, the month or the
+year of a date with a two-digit year written with dashes or with spaces («05-10-26», «03 11 25»: a day to 31, a month to
+12 — pairs that the same separator goes on with, «03-12-34-56-7», are a number; since «סבב שישי»); it never ends at a time's
 hour or at a group of one or two digits that a date's «.» or «/» goes on from. A number of no fixed length (abroad,
 «00…», beside a word) takes «/», «,», «;», «|» only right between two digits, and a group after a separator never
 begins a time, a date or an Israeli number: it never runs into the next number. Everything else is **text**: verses
@@ -1211,7 +1218,8 @@ space is written out (JavaScript's `\s`), never
 `[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
 space, which the definition reads alike): a row's → `import_bad_row` «row:contact_in_text»; the payload's `label` or
 `source` → `contact_in_text` (no row). The wizard never sends one: it takes every contact out of every non-contact
-field first (`stripContacts`; a note's are replaced — `scrubContacts`), attaching one to the row's phone or e-mail
+field first (`stripContacts`; a note's are replaced — `scrubContacts`; four digits or more right after one, a group of
+three or more first, leave with it — never a time, a date, a year or «1,500»), attaching one to the row's phone or e-mail
 only when that is unambiguous, else dropping it with a warning beside the row; `src/import/privacy.property.test.ts`
 holds it on thousands of random tables, and that the backstop never refuses what the wizard sends.
 
