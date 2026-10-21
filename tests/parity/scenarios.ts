@@ -1077,20 +1077,30 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", importArchive: { label: "בדיקת חמישי", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 2, day: 4, start: 1050, end: 1140, speakers: [0] }] } },
   ],
 
+  // סבב רביעי: a channel chosen from the list and the admin's own note — no key for the file's text
   "the import: the escorts' file — the channel and the note, only where empty": [
-    { as: "B", importPrefs: [{ row: 2, speaker: "אלפא", contact_pref: "secretary", secretary_note: "דרך המזכירה" }] },
+    { as: "B", importPrefs: [{ row: 2, speaker: "אלפא", channel: "secretary", note: "בבוקר" }] },
     {
       as: "admin",
       importPrefs: [
-        { row: 2, speaker: "אלפא", contact_pref: "secretary", secretary_note: "דרך המזכירה" }, // its note is there: only the channel
-        { row: 3, speaker: "בטא", contact_pref: "whatsapp", secretary_note: "רק בוואטסאפ" },
-        { row: 4, speaker: "גמא", contact_pref: null, secretary_note: "רק בבוקר" },
+        { row: 2, speaker: "אלפא", channel: "secretary", note: "בבוקר" }, // its note is there: only the channel
+        { row: 3, speaker: "בטא", channel: "whatsapp", note: "רק בערב" },
+        { row: 4, speaker: "גמא", channel: "other", note: "רק בבוקר" }, // «אחר»: the note only, contact_pref left
       ],
     },
-    { as: "admin", importPrefs: [{ row: 2, speaker: "בטא", contact_pref: "phone", secretary_note: "אחר" }] }, // nothing empty is left
-    { as: "admin", importPrefs: [{ row: 2, speaker: "דלתא", contact_pref: "email" }, { row: 4, speaker: "אין כזה", contact_pref: "email" }] },
-    { as: "admin", importPrefs: [{ row: 5, speaker: "דלתא", contact_pref: "sms" }] },
-    { as: "admin", importPrefs: [{ row: 6, speaker: "דלתא", secretary_note: "א".repeat(301) }] },
+    { as: "admin", importPrefs: [{ row: 2, speaker: "בטא", channel: "phone", note: "אחר" }] }, // nothing empty is left
+    { as: "admin", importPrefs: [{ row: 2, speaker: "דלתא", channel: "email" }, { row: 4, speaker: "אין כזה", channel: "email" }] },
+    { as: "admin", importPrefs: [{ row: 5, speaker: "דלתא", channel: "sms" }] },
+    { as: "admin", importPrefs: [{ row: 6, speaker: "דלתא", channel: "phone", note: "א".repeat(301) }] },
+    // the file's words have no field: a row that brings any other key is refused — before the speaker is looked up
+    { as: "admin", importPrefs: [{ row: 7, speaker: "דלתא", channel: "phone", extra: { secretary_note: "דרך המזכירה" } }] },
+    { as: "admin", importPrefs: [{ row: 8, speaker: "אין כזה", channel: "phone", extra: { phrases: ["דרך המזכירה"] } }] },
+    { as: "admin", importPrefs: [{ row: 9, speaker: "דלתא", extra: { contact_pref: "phone" } }] },
+    { as: "admin", importPrefs: [{ row: 10, speaker: "דלתא" }] }, // no channel
+    { as: "admin", importPrefs: [{ row: 11, speaker: "דלתא", channel: 5 }] },
+    { as: "admin", importPrefs: [{ row: 12, speaker: "דלתא", channel: "phone", note: 5 }] },
+    { as: "admin", importPrefs: [{ row: 13, speaker: "דלתא", channel: "other", note: null }] }, // «אחר» with no note: nothing to fill
+    { as: "admin", importPrefs: [{ row: 14, speaker: "דלתא", channel: "email", note: "  \r\n " }] }, // a blank note is none
   ],
 
   // סבב שלישי: the backstop of the wizard's stripContacts — a phone or an e-mail only in phone / email (app.has_contact)
@@ -1130,9 +1140,14 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", importArchive: { label: "ארכיון 000-000-0079", speakers: [], lessons: [] } },
     { as: "admin", importArchive: { label: "ארכיון תקין", source: "tracking 000-000-0080", speakers: [], lessons: [] } },
     { as: "admin", importArchive: { label: "בדיקת טלפון בטקסט", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0], title: "תש״ח 1948-1967" }] } },
-    { as: "admin", importPrefs: [{ row: 2, speaker: "אלפא", contact_pref: "secretary" }, { row: 3, speaker: "בטא", secretary_note: "דרך המזכירה 000-000-0081" }] },
-    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", secretary_note: "רק במייל: someone@example.org" }] },
-    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", secretary_note: "דרך המזכירה" }] },
+    { as: "admin", importPrefs: [{ row: 2, speaker: "אלפא", channel: "secretary" }, { row: 3, speaker: "בטא", channel: "phone", note: "בבוקר 000-000-0081" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "email", note: "רק במייל: someone@example.org" }] },
+    // סבב רביעי: the reviewers' forms — other digits, a separator, a spaced e-mail, what shows nothing
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "בערב ٠٠٠-٠٠٠-٠٠٨٢" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "בערב 000/000/0083" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "email", note: "someone @example.org" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "000\u0085000\u00850084" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "secretary", note: "בבוקר, 1948-1967-1973" }] },
   ],
 
   // after the week (milestone 6)

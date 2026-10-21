@@ -9,7 +9,7 @@ import {
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
   FOREIGN_TRAINEE, type KkStepFields, planLine, purgeRead, reviewLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
-  type Step, transportLine, transportRead,
+  prefsRow, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -479,7 +479,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       }
       if ("importPrefs" in step) {
         const idOf = await idsOf(step.importPrefs.map((r) => r.speaker));
-        const rows = step.importPrefs.map((r) => ({ row: r.row, speaker_id: idOf(r.speaker), contact_pref: r.contact_pref ?? null, secretary_note: r.secretary_note ?? null }));
+        const rows = step.importPrefs.map((r) => prefsRow(r, idOf(r.speaker)));
         return importCall(step.as, "escorts", { rows });
       }
       if ("importLookup" in step) {

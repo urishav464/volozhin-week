@@ -6,8 +6,8 @@ import type { ContactPref, Gender, PrintWhen, SourcesKind } from "../domain/type
 import { hasContact } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { CommandError } from "./commands";
-import type { ArchiveLessonRow, ImportKind, PrefsRow, SpeakerRow } from "./imports";
-import { cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle } from "./speakerRules";
+import type { ArchiveLessonRow, ImportChannel, ImportKind, SpeakerRow } from "./imports";
+import { cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, CONTACT_PREFS, LIMITS, pickGender, pickTitle } from "./speakerRules";
 import { cleanAmount, pickPrintWhen, pickSourcesKind, STAGE_LIMITS } from "./stageRules";
 
 const fail = (code: string): never => {
@@ -123,11 +123,29 @@ export function cleanLessonRow(l: ArchiveLessonRow, categories: ReadonlySet<numb
   return { row: l.row, day: l.day, start_min: l.start_min, end_min: l.end_min, room: l.room, title, category_id: l.category_id ?? null, audience, sources_kind, print_when, sources_note, pay_amount, import_note, speakers: refs };
 }
 
-/** app.import_prefs_row's checks: a speaker that exists is checked by the caller (stale). */
-export function cleanPrefsRow(p: PrefsRow): { row: number; speaker_id: number; contact_pref: ContactPref | null; secretary_note: string | null } {
-  const secretary_note = cleanBlock(p.secretary_note, LIMITS.secretary_note);
-  if (hasContact(secretary_note)) fail("contact_in_text");
-  return { row: p.row, speaker_id: p.speaker_id, contact_pref: pickContactPref(p.contact_pref), secretary_note };
+/** The escorts' import's channels, in the list's order: the pool's contact_pref, then «other». */
+export const IMPORT_CHANNELS: readonly ImportChannel[] = [...CONTACT_PREFS, "other"];
+/** The only keys an escorts' row may have — no field for the file's text exists (DECISIONS «סבב רביעי»). */
+export const PREFS_KEYS: readonly string[] = ["row", "speaker_id", "channel", "note"];
+
+/** import_commit's first check of an escorts' row: an object, with no key but PREFS_KEYS (bad_value). */
+export function prefsKeys(p: unknown): Record<string, unknown> {
+  if (p == null || typeof p !== "object" || Array.isArray(p)) fail("bad_value");
+  if (Object.keys(p as object).some((k) => !PREFS_KEYS.includes(k))) fail("bad_value");
+  return p as Record<string, unknown>;
+}
+
+/**
+ * import_commit's checks of an escorts' row, in its order — a speaker that exists is checked by the caller (stale),
+ * after prefsKeys: the channel one of IMPORT_CHANNELS, the note a string (or none) ≤ 300 with no phone or e-mail in it.
+ */
+export function cleanPrefsRow(p: unknown): { row: number; speaker_id: number; contact_pref: ContactPref | null; note: string | null } {
+  const r = prefsKeys(p);
+  if (typeof r.channel !== "string" || !IMPORT_CHANNELS.includes(r.channel as ImportChannel)) fail("bad_value");
+  if (r.note != null && typeof r.note !== "string") fail("bad_value");
+  const note = cleanBlock(r.note as string | null | undefined, LIMITS.secretary_note);
+  if (hasContact(note)) fail("contact_in_text");
+  return { row: r.row as number, speaker_id: r.speaker_id as number, contact_pref: r.channel === "other" ? null : (r.channel as ContactPref), note };
 }
 
 /**

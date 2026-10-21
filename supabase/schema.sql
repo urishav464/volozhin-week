@@ -4703,7 +4703,9 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
 --                                  someone wrote «איך עבר» on one of them
 --                                  (`archive_reviewed`: a review goes with its
 --                                  lesson, and is never lost to a re-run)
---                   'escorts'    → contact_pref and speaker_contacts.secretary_note
+--                   'escorts'    → contact_pref and speaker_contacts.secretary_note: the
+--                                  channel the admin chose from a fixed list, the
+--                                  note the admin typed — never the file's text
 -- Re-runnable: a 'new' speaker whose name key the pool already has completes
 -- that speaker instead of adding a second one. A phone is never a reason to
 -- merge on its own: the preview shows a phone the pool has («אותו טלפון כמו …»)
@@ -4764,21 +4766,31 @@ create or replace function app.phone_key(p text) returns text
               from (select regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) a) b
   $$;
 
--- A phone or an e-mail inside text (src/import/phone.ts hasContact holds the same — the same expressions, written
--- out, held equal by tests/sql/import.test.ts): an e-mail (no space, @, <, >, ( or ) around one @, a dot after
--- it); or a run of digits, spaces, marks, dashes, brackets and dots from a digit to a digit with 7 digits or more —
--- not a date («12.3.2026»), a range of years («1948-1967») or of times («8.30-10.00»). White space and the marks a
--- copy carries (bidi controls, zero widths) are written out: [[:space:]] would depend on the locale. The import's
+-- A phone or an e-mail inside text (src/import/phone.ts foldContact and hasContact hold the same — the same
+-- expressions and lists, written out, held equal by tests/sql/import.test.ts). The text is folded first
+-- (app.contact_fold): what shows nothing out (Unicode's format characters — bidi controls, zero widths, the soft
+-- hyphen, tags — NEL and U+180E) and every decimal digit of every script as its ASCII digit (٠, ０ → 0). Then: an
+-- e-mail (no space, @, <, >, ( or ) around an @ — «@@» and «＠» too — and a dot after it; or, in the usual letters,
+-- spaces around the @ and the dots); or a run from a digit (a «+» or «(» before it) to a digit of digits, spaces,
+-- dashes, brackets, dots, «/», «·», «•», «‧», «_» — «:» and «,» only right before a digit — never starting inside a
+-- number, right after «20:» or at a time («20:00»), with 7 digits or more and not a date («12.3.2026», «… 20:00»),
+-- a range of dates («14.2-18.2.2027»), years («1948-1967», «1948-1967-1973»), a range of times («8.30-10.00») or
+-- chapters («1-2-3-4-5-6-7»). White space is written out: [[:space:]] would depend on the locale. The import's
 -- backstop: a contact is kept in speaker_contacts' phone and e-mail only («contact_in_text»).
+create or replace function app.contact_fold(p text) returns text
+  language sql immutable set search_path = ''
+  as $$ select translate(regexp_replace(coalesce(p, ''), '[\u0085\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]', '', 'g'), U&'\0660\0661\0662\0663\0664\0665\0666\0667\0668\0669\06f0\06f1\06f2\06f3\06f4\06f5\06f6\06f7\06f8\06f9\07c0\07c1\07c2\07c3\07c4\07c5\07c6\07c7\07c8\07c9\0966\0967\0968\0969\096a\096b\096c\096d\096e\096f\09e6\09e7\09e8\09e9\09ea\09eb\09ec\09ed\09ee\09ef\0a66\0a67\0a68\0a69\0a6a\0a6b\0a6c\0a6d\0a6e\0a6f\0ae6\0ae7\0ae8\0ae9\0aea\0aeb\0aec\0aed\0aee\0aef\0b66\0b67\0b68\0b69\0b6a\0b6b\0b6c\0b6d\0b6e\0b6f\0be6\0be7\0be8\0be9\0bea\0beb\0bec\0bed\0bee\0bef\0c66\0c67\0c68\0c69\0c6a\0c6b\0c6c\0c6d\0c6e\0c6f\0ce6\0ce7\0ce8\0ce9\0cea\0ceb\0cec\0ced\0cee\0cef\0d66\0d67\0d68\0d69\0d6a\0d6b\0d6c\0d6d\0d6e\0d6f\0de6\0de7\0de8\0de9\0dea\0deb\0dec\0ded\0dee\0def\0e50\0e51\0e52\0e53\0e54\0e55\0e56\0e57\0e58\0e59\0ed0\0ed1\0ed2\0ed3\0ed4\0ed5\0ed6\0ed7\0ed8\0ed9\0f20\0f21\0f22\0f23\0f24\0f25\0f26\0f27\0f28\0f29\1040\1041\1042\1043\1044\1045\1046\1047\1048\1049\1090\1091\1092\1093\1094\1095\1096\1097\1098\1099\17e0\17e1\17e2\17e3\17e4\17e5\17e6\17e7\17e8\17e9\1810\1811\1812\1813\1814\1815\1816\1817\1818\1819\1946\1947\1948\1949\194a\194b\194c\194d\194e\194f\19d0\19d1\19d2\19d3\19d4\19d5\19d6\19d7\19d8\19d9\1a80\1a81\1a82\1a83\1a84\1a85\1a86\1a87\1a88\1a89\1a90\1a91\1a92\1a93\1a94\1a95\1a96\1a97\1a98\1a99\1b50\1b51\1b52\1b53\1b54\1b55\1b56\1b57\1b58\1b59\1bb0\1bb1\1bb2\1bb3\1bb4\1bb5\1bb6\1bb7\1bb8\1bb9\1c40\1c41\1c42\1c43\1c44\1c45\1c46\1c47\1c48\1c49\1c50\1c51\1c52\1c53\1c54\1c55\1c56\1c57\1c58\1c59\a620\a621\a622\a623\a624\a625\a626\a627\a628\a629\a8d0\a8d1\a8d2\a8d3\a8d4\a8d5\a8d6\a8d7\a8d8\a8d9\a900\a901\a902\a903\a904\a905\a906\a907\a908\a909\a9d0\a9d1\a9d2\a9d3\a9d4\a9d5\a9d6\a9d7\a9d8\a9d9\a9f0\a9f1\a9f2\a9f3\a9f4\a9f5\a9f6\a9f7\a9f8\a9f9\aa50\aa51\aa52\aa53\aa54\aa55\aa56\aa57\aa58\aa59\abf0\abf1\abf2\abf3\abf4\abf5\abf6\abf7\abf8\abf9\ff10\ff11\ff12\ff13\ff14\ff15\ff16\ff17\ff18\ff19\+0104a0\+0104a1\+0104a2\+0104a3\+0104a4\+0104a5\+0104a6\+0104a7\+0104a8\+0104a9\+010d30\+010d31\+010d32\+010d33\+010d34\+010d35\+010d36\+010d37\+010d38\+010d39\+010d40\+010d41\+010d42\+010d43\+010d44\+010d45\+010d46\+010d47\+010d48\+010d49\+011066\+011067\+011068\+011069\+01106a\+01106b\+01106c\+01106d\+01106e\+01106f\+0110f0\+0110f1\+0110f2\+0110f3\+0110f4\+0110f5\+0110f6\+0110f7\+0110f8\+0110f9\+011136\+011137\+011138\+011139\+01113a\+01113b\+01113c\+01113d\+01113e\+01113f\+0111d0\+0111d1\+0111d2\+0111d3\+0111d4\+0111d5\+0111d6\+0111d7\+0111d8\+0111d9\+0112f0\+0112f1\+0112f2\+0112f3\+0112f4\+0112f5\+0112f6\+0112f7\+0112f8\+0112f9\+011450\+011451\+011452\+011453\+011454\+011455\+011456\+011457\+011458\+011459\+0114d0\+0114d1\+0114d2\+0114d3\+0114d4\+0114d5\+0114d6\+0114d7\+0114d8\+0114d9\+011650\+011651\+011652\+011653\+011654\+011655\+011656\+011657\+011658\+011659\+0116c0\+0116c1\+0116c2\+0116c3\+0116c4\+0116c5\+0116c6\+0116c7\+0116c8\+0116c9\+0116d0\+0116d1\+0116d2\+0116d3\+0116d4\+0116d5\+0116d6\+0116d7\+0116d8\+0116d9\+0116da\+0116db\+0116dc\+0116dd\+0116de\+0116df\+0116e0\+0116e1\+0116e2\+0116e3\+011730\+011731\+011732\+011733\+011734\+011735\+011736\+011737\+011738\+011739\+0118e0\+0118e1\+0118e2\+0118e3\+0118e4\+0118e5\+0118e6\+0118e7\+0118e8\+0118e9\+011950\+011951\+011952\+011953\+011954\+011955\+011956\+011957\+011958\+011959\+011bf0\+011bf1\+011bf2\+011bf3\+011bf4\+011bf5\+011bf6\+011bf7\+011bf8\+011bf9\+011c50\+011c51\+011c52\+011c53\+011c54\+011c55\+011c56\+011c57\+011c58\+011c59\+011d50\+011d51\+011d52\+011d53\+011d54\+011d55\+011d56\+011d57\+011d58\+011d59\+011da0\+011da1\+011da2\+011da3\+011da4\+011da5\+011da6\+011da7\+011da8\+011da9\+011f50\+011f51\+011f52\+011f53\+011f54\+011f55\+011f56\+011f57\+011f58\+011f59\+016130\+016131\+016132\+016133\+016134\+016135\+016136\+016137\+016138\+016139\+016a60\+016a61\+016a62\+016a63\+016a64\+016a65\+016a66\+016a67\+016a68\+016a69\+016ac0\+016ac1\+016ac2\+016ac3\+016ac4\+016ac5\+016ac6\+016ac7\+016ac8\+016ac9\+016b50\+016b51\+016b52\+016b53\+016b54\+016b55\+016b56\+016b57\+016b58\+016b59\+016d70\+016d71\+016d72\+016d73\+016d74\+016d75\+016d76\+016d77\+016d78\+016d79\+01ccf0\+01ccf1\+01ccf2\+01ccf3\+01ccf4\+01ccf5\+01ccf6\+01ccf7\+01ccf8\+01ccf9\+01d7ce\+01d7cf\+01d7d0\+01d7d1\+01d7d2\+01d7d3\+01d7d4\+01d7d5\+01d7d6\+01d7d7\+01d7d8\+01d7d9\+01d7da\+01d7db\+01d7dc\+01d7dd\+01d7de\+01d7df\+01d7e0\+01d7e1\+01d7e2\+01d7e3\+01d7e4\+01d7e5\+01d7e6\+01d7e7\+01d7e8\+01d7e9\+01d7ea\+01d7eb\+01d7ec\+01d7ed\+01d7ee\+01d7ef\+01d7f0\+01d7f1\+01d7f2\+01d7f3\+01d7f4\+01d7f5\+01d7f6\+01d7f7\+01d7f8\+01d7f9\+01d7fa\+01d7fb\+01d7fc\+01d7fd\+01d7fe\+01d7ff\+01e140\+01e141\+01e142\+01e143\+01e144\+01e145\+01e146\+01e147\+01e148\+01e149\+01e2f0\+01e2f1\+01e2f2\+01e2f3\+01e2f4\+01e2f5\+01e2f6\+01e2f7\+01e2f8\+01e2f9\+01e4f0\+01e4f1\+01e4f2\+01e4f3\+01e4f4\+01e4f5\+01e4f6\+01e4f7\+01e4f8\+01e4f9\+01e5f1\+01e5f2\+01e5f3\+01e5f4\+01e5f5\+01e5f6\+01e5f7\+01e5f8\+01e5f9\+01e5fa\+01e950\+01e951\+01e952\+01e953\+01e954\+01e955\+01e956\+01e957\+01e958\+01e959\+01fbf0\+01fbf1\+01fbf2\+01fbf3\+01fbf4\+01fbf5\+01fbf6\+01fbf7\+01fbf8\+01fbf9', '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789') $$;
+
 create or replace function app.has_contact(p text) returns boolean
   language sql immutable set search_path = ''
   as $$
-    select coalesce(p, '') ~ '[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+@[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+\.[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@<>()]+'
+    select f.t ~ '(?:[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+[@\uff20]+[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+\.[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+|[A-Za-z0-9._%+-]+[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[@\uff20](?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[@\uff20])*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z0-9-]+(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\.[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z0-9-]+)*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\.[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z]{2,})'
         or exists (
              select 1
-               from regexp_matches(coalesce(p, ''), '\+?[0-9][0-9 \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().-]{5,}[0-9]', 'g') as m(x)
+               from regexp_matches(f.t, '(?:\+|\()?(?<![0-9])(?<![0-9][:.])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))[0-9](?:[0-9 \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()./\u00b7\u2022\u2027_-]|[:,](?=[0-9])){5,}[0-9]', 'g') as m(x)
               where char_length(regexp_replace(m.x[1], '[^0-9]', '', 'g')) >= 7
-                and regexp_replace(m.x[1], '[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069]', '', 'g') !~ '^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[0-9]{1,2})?|(?:1[89]|20)[0-9]{2}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:1[89]|20)[0-9]{2}|[0-9]{1,2}[.:][0-9]{2}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{1,2}[.:][0-9]{2})$')
+                and m.x[1] !~ '^(?:[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[0-9]{1,2}(?:[.:][0-9]{2})?)?|[0-9]{1,2}[./][0-9]{1,2}(?:[./](?:[0-9]{2}|[0-9]{4}))?[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{1,2}[./][0-9]{1,2}[./](?:[0-9]{2}|[0-9]{4})|(?:1[89]|20)[0-9]{2}(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d,/-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:1[89]|20)[0-9]{2})+|[0-9]{1,2}[.:][0-9]{2}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{1,2}[.:][0-9]{2}|[1-9][0-9]?(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d,-][ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{1,2}){2,})$')
+      from (select app.contact_fold(p) as t) as f
   $$;
 
 -- The gender a title says, and nothing else (src/import/speakerName.ts titleGender).
@@ -5171,16 +5183,26 @@ create or replace function public.import_commit(p_kind text, p_payload jsonb) re
         end;
       end loop;
 
-    else -- 'escorts': how a speaker is reached — fill-empty only
+    else -- 'escorts': how a speaker is reached — fill-empty only. The channel the admin CHOSE from the list and the
+         -- note the admin TYPED: a row has no key for the file's own text, and one with any other key is refused
       if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
       v_res := '{}';
       for v_item in select x from jsonb_array_elements(p_payload -> 'rows') as t(x) loop
         begin
           if jsonb_typeof(v_item) <> 'object' then perform app.refuse('bad_value'); end if;
+          if exists (select 1 from jsonb_object_keys(v_item) as k(x) where k.x not in ('row', 'speaker_id', 'channel', 'note')) then
+            perform app.refuse('bad_value');
+          end if;
           select * into v_s from public.speakers where id = app.jint(v_item -> 'speaker_id') for update;
           if v_s.id is null then perform app.refuse('stale'); end if;
-          v_pref := app.pick_contact_pref(v_item ->> 'contact_pref');
-          v_sec := app.clean_block(v_item ->> 'secretary_note', 300);
+          if jsonb_typeof(v_item -> 'channel') is distinct from 'string'
+             or (v_item ->> 'channel') not in ('phone', 'whatsapp', 'email', 'secretary', 'other') then
+            perform app.refuse('bad_value');
+          end if;
+          if coalesce(jsonb_typeof(v_item -> 'note'), 'null') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+          -- «other»: none of the pool's channels — contact_pref is left as it is, the note says how
+          v_pref := nullif(v_item ->> 'channel', 'other');
+          v_sec := app.clean_block(v_item ->> 'note', 300);
           if app.has_contact(v_sec) then perform app.refuse('contact_in_text'); end if;
           v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false, 'notes', false);
           if v_s.contact_pref is null and v_pref is not null then

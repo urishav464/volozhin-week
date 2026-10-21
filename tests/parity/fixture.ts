@@ -174,7 +174,8 @@ export type Step =
   // the import of 5786 (v12) — a merge names its pool speaker by label, a lesson its category by name
   | { as: ActorKey; importCandidates: ImportSpeakerStep[]; source?: string | null }
   | { as: ActorKey; importArchive: ImportArchiveStep }
-  | { as: ActorKey; importPrefs: { row: number; speaker: string; contact_pref?: string | null; secretary_note?: string | null }[] }
+  /** The escorts' file: a channel from the list and the admin's own note — `extra`: any other key, as an old page might send it. */
+  | { as: ActorKey; importPrefs: { row: number; speaker: string; channel?: unknown; note?: unknown; extra?: Record<string, unknown> }[] }
   | { as: ActorKey; importLookup: { speakers: string[]; phones: string[] } }
   /** import_commit with a payload as it is (a wrong kind, a wrong shape). */
   | { as: ActorKey; importRaw: { kind: string; payload: unknown } }
@@ -492,4 +493,9 @@ export interface Driver {
   run(step: Step): Promise<string>; // "ok" or the contract's code
   state(): Promise<Normal>;
   close(): Promise<void>;
+}
+
+/** An escorts' row as the payload carries it: only the keys the step gives (a missing channel is missing, not null). */
+export function prefsRow(r: { row: number; channel?: unknown; note?: unknown; extra?: Record<string, unknown> }, speakerId: number): Record<string, unknown> {
+  return { row: r.row, speaker_id: speakerId, ...(r.channel !== undefined ? { channel: r.channel } : {}), ...(r.note !== undefined ? { note: r.note } : {}), ...(r.extra ?? {}) };
 }

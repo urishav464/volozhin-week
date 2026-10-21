@@ -81,13 +81,23 @@ export interface ArchivePayload {
   lessons: ArchiveLessonRow[];
 }
 
-/** (c) The escorts' file → how a speaker is reached: only the contact-channel phrases the admin ticked. */
+/**
+ * The channels the escorts' import offers — a fixed list: the pool's contact_pref, and «other» (none of them: the
+ * admin's note says how; contact_pref is left as it is).
+ */
+export type ImportChannel = ContactPref | "other";
+
+/**
+ * (c) The escorts' file → how a speaker is reached: the channel the admin CHOSE from the list (the file's phrases only
+ * suggest one), and a note the admin TYPED — nothing of the file's own text travels (DECISIONS «סבב רביעי»): the
+ * commit refuses a row with any other key.
+ */
 export interface PrefsRow {
   row: number;
   speaker_id: number;
-  contact_pref: ContactPref | null;
-  /** speaker_contacts.secretary_note — the ticked phrases themselves. */
-  secretary_note: string | null;
+  channel: ImportChannel;
+  /** speaker_contacts.secretary_note — the admin's own words, never the file's; null: none. */
+  note: string | null;
 }
 
 export interface EscortsPayload {

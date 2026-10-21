@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
-import { ImportRowError, type SpeakerRow } from "./imports";
+import { ImportRowError, type PrefsRow, type SpeakerRow } from "./imports";
 import { SupabaseImports } from "./supabaseImports";
 
 const row = (n: number, name: string, extra: Partial<SpeakerRow> = {}): SpeakerRow => ({
@@ -99,11 +99,14 @@ describe("DemoImports — the engine's import, in the demo", () => {
   it("the escorts' file: the channel and the note only where empty", async () => {
     const d = new DemoPort();
     const seven = (await d.imports.pool()).find((s) => s.name === "מרצה 07")!;
-    expect(await d.imports.commit({ kind: "escorts", payload: { rows: [{ row: 2, speaker_id: seven.id, contact_pref: "secretary", secretary_note: "דרך המזכירה" }] } })).toMatchObject({ filled: 1 });
+    expect(await d.imports.commit({ kind: "escorts", payload: { rows: [{ row: 2, speaker_id: seven.id, channel: "secretary", note: "בבוקר" }] } })).toMatchObject({ filled: 1 });
     expect((await d.imports.pool()).find((s) => s.id === seven.id)!.contact_pref).toBe("secretary");
-    expect((await d.speakers.contacts(seven.id))!.secretary_note).toBe("דרך המזכירה");
-    expect(await d.imports.commit({ kind: "escorts", payload: { rows: [{ row: 2, speaker_id: seven.id, contact_pref: "phone", secretary_note: "אחר" }] } })).toMatchObject({ filled: 0, contacts: 0 });
-    expect((await d.speakers.contacts(seven.id))!.secretary_note).toBe("דרך המזכירה");
+    expect((await d.speakers.contacts(seven.id))!.secretary_note).toBe("בבוקר");
+    expect(await d.imports.commit({ kind: "escorts", payload: { rows: [{ row: 2, speaker_id: seven.id, channel: "phone", note: "אחר" }] } })).toMatchObject({ filled: 0, contacts: 0 });
+    expect((await d.speakers.contacts(seven.id))!.secretary_note).toBe("בבוקר");
+    // no field for the file's text: a row that brings one (an old page's secretary_note) is refused, naming the row
+    const old = { row: 4, speaker_id: seven.id, channel: "phone", secretary_note: "דרך המזכירה" } as unknown as PrefsRow;
+    expect(await failure(d.imports.commit({ kind: "escorts", payload: { rows: [old] } }))).toBe("import_bad_row 4:bad_value");
   });
 
   it("only a global admin", async () => {

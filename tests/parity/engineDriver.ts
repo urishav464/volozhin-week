@@ -15,7 +15,7 @@ import {
   answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
-  type Step, transportLine, transportRead,
+  prefsRow, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -258,7 +258,7 @@ export function engineDriver(): Driver {
         } else if ("importArchive" in step) {
           return importRead(e.importCommit("tracking", archivePayloadOf(step.importArchive, speakerId, categoryId), host), speakerName);
         } else if ("importPrefs" in step) {
-          const rows = step.importPrefs.map((r) => ({ row: r.row, speaker_id: speakerId(r.speaker), contact_pref: r.contact_pref ?? null, secretary_note: r.secretary_note ?? null }));
+          const rows = step.importPrefs.map((r) => prefsRow(r, speakerId(r.speaker)));
           return importRead(e.importCommit("escorts", { rows }, host), speakerName);
         } else if ("importLookup" in step) return lookupRead(e.importLookup(step.importLookup.speakers.map(speakerId), step.importLookup.phones), speakerName);
         else if ("importRaw" in step) return importRead(e.importCommit(step.importRaw.kind, step.importRaw.payload, host), speakerName);

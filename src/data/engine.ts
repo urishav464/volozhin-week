@@ -36,7 +36,7 @@ import type {
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
-import { hasContact, phoneKey } from "../import/phone";
+import { phoneKey } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
@@ -51,7 +51,9 @@ import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type Li
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import { type ArchiveLessonRow, type ImportKind, type ImportLookup, type ImportResult, ImportRowError, type SpeakerRow } from "./imports";
-import { ARCHIVE_LAST_DAY_UNTIL, ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName } from "./importRules";
+import {
+  ARCHIVE_LAST_DAY_UNTIL, ARCHIVE_ROOM, checkPayloadSize, cleanArchiveDate, cleanLabel, cleanLessonRow, cleanPrefsRow, cleanSource, cleanSpeakerRow, IMPORT_KINDS, parallelRoomName, prefsKeys,
+} from "./importRules";
 import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
 import type { PurgeReport } from "./settings";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
@@ -1862,12 +1864,10 @@ export class Engine {
         if (!Array.isArray(p.rows)) fail("bad_value");
         for (const item of p.rows as unknown[]) {
           try {
-            if (item == null || typeof item !== "object" || Array.isArray(item)) fail("bad_value");
-            const it = item as Record<string, unknown>;
+            // the channel chosen from the list and the admin's own note — no key for the file's text (DECISIONS «סבב רביעי»)
+            const it = prefsKeys(item);
             const s = this.week.speakers.find((x) => x.id === jint(it.speaker_id)) ?? fail("stale");
-            const pref = pickContactPref(text(it.contact_pref));
-            const sec = cleanBlock(text(it.secretary_note), LIMITS.secretary_note);
-            if (hasContact(sec)) fail("contact_in_text"); // app.has_contact: the note says how, never a number or an address
+            const { contact_pref: pref, note: sec } = cleanPrefsRow(it); // app.has_contact: the note says how, never a number or an address
             const r: SpeakerResult = { speaker_id: s.id, created: false, filled: false, contacts: false, notes: false };
             if (s.contact_pref == null && pref != null) {
               Object.assign(s, { contact_pref: pref, version: s.version + 1 });
