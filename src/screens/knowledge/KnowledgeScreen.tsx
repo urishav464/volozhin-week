@@ -10,7 +10,7 @@ import type { Me } from "../../data/types";
 import { errorMessage } from "../../errors";
 import { byDue, fmtDate, fmtMoment, isLate, israelToday, milestoneDate, milestoneLabel } from "../../domain/milestones";
 import type { Edition } from "../../domain/types";
-import { Badge, Button, Confirm, Field, INPUT, Panel, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { Markdown } from "../Markdown";
 import { actorIn, useWeekStore } from "../weekStore";
@@ -104,6 +104,7 @@ function Milestones({ edition, list, admin, k, act, busy }: { edition: Edition; 
 function MilestoneItem({ m, edition, admin, k, act, busy, late }: { m: Milestone; edition: Edition; admin: boolean; k: KnowledgePort; act: Act; busy: string | null; late: boolean }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const focusBack = useFocusBack(); // «ביטול» takes the confirm (and its focus) away: «מחיקה» takes it back
   const date = milestoneDate(edition.start_date, m.days_before);
   const done = m.done_at != null;
   if (editing) {
@@ -144,14 +145,23 @@ function MilestoneItem({ m, edition, admin, k, act, busy, late }: { m: Milestone
           <Button kind="quiet" onClick={() => setEditing(true)} aria-label={`עריכת ${m.title}`}>
             עריכה
           </Button>
-          <Button kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקת ${m.title}`}>
+          <Button ref={focusBack.ref()} kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקת ${m.title}`}>
             מחיקה
           </Button>
         </span>
       )}
       {deleting && (
         <div className="basis-full">
-          <Confirm text={<>למחוק את אבן הדרך «{m.title}»?</>} confirm="מחיקה" busy={busy === `del-${m.id}`} onCancel={() => setDeleting(false)} onConfirm={() => void act(`del-${m.id}`, () => k.deleteMilestone(m.id), "אבן הדרך נמחקה")} />
+          <Confirm
+            text={<>למחוק את אבן הדרך «{m.title}»?</>}
+            confirm="מחיקה"
+            busy={busy === `del-${m.id}`}
+            onCancel={() => {
+              setDeleting(false);
+              focusBack.back();
+            }}
+            onConfirm={() => void act(`del-${m.id}`, () => k.deleteMilestone(m.id), "אבן הדרך נמחקה")}
+          />
         </div>
       )}
     </li>
@@ -251,6 +261,7 @@ function Notes({ edition, list, admin, global, k, act, busy, names }: { edition:
 function NoteItem({ n, edition, mayEdit, global, k, act, busy, names }: { n: Note; edition: Edition; mayEdit: boolean; global: boolean; k: KnowledgePort; act: Act; busy: string | null; names: Map<number, string> }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const focusBack = useFocusBack(); // «ביטול» takes the confirm (and its focus) away: «מחיקה» takes it back
   if (editing) {
     return (
       <li>
@@ -282,7 +293,7 @@ function NoteItem({ n, edition, mayEdit, global, k, act, busy, names }: { n: Not
             <Button kind="quiet" onClick={() => setEditing(true)} aria-label={`עריכת ${n.title}`}>
               עריכה
             </Button>
-            <Button kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקת ${n.title}`}>
+            <Button ref={focusBack.ref()} kind="danger" onClick={() => setDeleting(true)} aria-label={`מחיקת ${n.title}`}>
               מחיקה
             </Button>
           </span>
@@ -295,7 +306,16 @@ function NoteItem({ n, edition, mayEdit, global, k, act, busy, names }: { n: Not
       </p>
       {deleting && (
         <div className="mt-2">
-          <Confirm text={<>למחוק את ההערה «{n.title}»?</>} confirm="מחיקה" busy={busy === `del-note-${n.id}`} onCancel={() => setDeleting(false)} onConfirm={() => void act(`del-note-${n.id}`, () => k.deleteNote(n.id), "ההערה נמחקה")} />
+          <Confirm
+            text={<>למחוק את ההערה «{n.title}»?</>}
+            confirm="מחיקה"
+            busy={busy === `del-note-${n.id}`}
+            onCancel={() => {
+              setDeleting(false);
+              focusBack.back();
+            }}
+            onConfirm={() => void act(`del-note-${n.id}`, () => k.deleteNote(n.id), "ההערה נמחקה")}
+          />
         </div>
       )}
     </li>

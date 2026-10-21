@@ -7,8 +7,8 @@
 // הקודם» after a title changes in the week, the field highlighted; the
 // formula guard in the file), the archive (personal data in its own file
 // only), «ידע» (a note in markdown-lite, never HTML; a milestone and its
-// toggle) and «עזרה». Mock build: every new call goes out by its contract —
-// get_contacts_for, the snapshot's insert, the notes' and milestones' writes,
+// toggle; a delete cancelled gives the focus back to «מחיקה») and «עזרה».
+// Mock build: every new call goes out by its contract — get_contacts_for, the snapshot's insert, the notes' and milestones' writes,
 // the archive's reads — with the member's token; a logistics member is offered
 // no phones and no designer export; «כולל טלפונים» is off again in another
 // edition (none in a practice week, no call); a snapshot that is not kept says
@@ -259,7 +259,7 @@ test.describe("demo build", () => {
     await expect(toast(page, "הארכיון ירד")).toBeVisible();
   });
 
-  test("«ידע»: a note in markdown-lite — bold and a list, never HTML; a milestone, W−n, done", async ({ page }) => {
+  test("«ידע»: a note in markdown-lite — bold and a list, never HTML; a milestone, W−n, done; a delete cancelled", async ({ page }) => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: "ידע" }).click();
     await expect(page.getByRole("heading", { name: "ידע ואבני דרך" })).toBeVisible();
@@ -284,6 +284,10 @@ test.describe("demo build", () => {
     await expect(note).toContainText("<b>תגית</b> <script>alert(1)</script>"); // shown as typed, never markup
     await expect(note.locator("b, script")).toHaveCount(0);
     await expect(note.getByRole("list").getByRole("listitem")).toHaveText(["פריט לדוגמה א", "פריט לדוגמה ב"]);
+    // the confirm cancelled: the focus back at the note's «מחיקה»
+    await note.getByRole("button", { name: "מחיקת אתגר לדוגמה" }).click();
+    await note.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול" }).press("Enter");
+    await expect(note.getByRole("button", { name: "מחיקת אתגר לדוגמה" })).toBeFocused();
 
     const add = page.getByRole("form", { name: "אבן דרך חדשה" });
     await add.getByLabel("אבן הדרך").fill("אבן דרך חדשה לדוגמה");
@@ -296,6 +300,10 @@ test.describe("demo build", () => {
     await expect(toast(page, "סומן כבוצע")).toBeVisible();
     await expect(m.getByRole("checkbox")).toBeChecked();
     await expect(m).toContainText("בוצע");
+    // the confirm cancelled: the focus back at the milestone's «מחיקה»
+    await m.getByRole("button", { name: "מחיקת אבן דרך חדשה לדוגמה" }).click();
+    await m.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול" }).press("Enter");
+    await expect(m.getByRole("button", { name: "מחיקת אבן דרך חדשה לדוגמה" })).toBeFocused();
     await add.getByLabel("אבן הדרך").fill("לא תקין");
     await add.getByLabel("כמה ימים לפני השבוע").fill("400");
     await add.getByRole("button", { name: "הוספת אבן דרך" }).click();
