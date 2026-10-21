@@ -16,7 +16,7 @@ import { STAGE_LIMITS } from "../../data/stageRules";
 import { byGender, displayName } from "../../domain/names";
 import type { Edition, Lesson, Speaker, Week } from "../../domain/types";
 import { useMedia } from "../../lib/useMedia";
-import { Badge, Button, Confirm, Field, GENDER_LABEL, INPUT, Panel, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, GENDER_LABEL, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
 import { useToast } from "./parts";
 import { SpeakerSheet } from "./SpeakerSheet";
@@ -157,6 +157,7 @@ function TaughtBatch({
 }) {
   const [archive, setArchive] = useState<Week | null>(null);
   const [asking, setAsking] = useState(false);
+  const focusBack = useFocusBack();
   useEffect(() => {
     let live = true;
     port.loadWeek(edition.id).then(
@@ -196,10 +197,13 @@ function TaughtBatch({
           onConfirm={async () => {
             if (await onApprove(who.map((s) => s.id))) setAsking(false);
           }}
-          onCancel={() => setAsking(false)}
+          onCancel={() => {
+            setAsking(false);
+            focusBack.back();
+          }}
         />
       ) : (
-        <Button kind="primary" onClick={() => setAsking(true)}>
+        <Button ref={focusBack.ref()} kind="primary" onClick={() => setAsking(true)}>
           אישור {count} ש{taught} ב-{edition.label}
         </Button>
       )}
