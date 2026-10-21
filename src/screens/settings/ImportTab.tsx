@@ -31,7 +31,7 @@ import {
 import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
 import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, LinesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
-import { Badge, Button, Confirm, Field, INPUT, Panel, useSettings } from "./kit";
+import { Badge, Button, Confirm, Field, INPUT, Panel, useFocusBack, useSettings } from "./kit";
 
 const DEFAULT_SOURCE: Record<ImportKind, string> = { candidates: "brainstorm-5786", tracking: "tracking-5786", escorts: "" };
 const SOURCE_SAID: Record<GridSource, string> = { html: "מהדבקה", text: "מהדבקה", xlsx: "מקובץ Excel", docx: "מקובץ Word", sample: "מהנתונים לדוגמה" };
@@ -82,15 +82,8 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   /** The pool speakers import_lookup was asked about — an edit (or a line made a speaker) that matches another is asked about too. */
   const lookedUp = useRef(new Set<number>());
   const [confirming, setConfirming] = useState(false);
-  // a busy button is disabled and loses the focus, and «ביטול» takes the confirm (and its focus) away: each gives it back —
-  // to «בדיקה מול המאגר» when the check ends, to «ייבוא» when the confirm is cancelled
-  const checkRef = useRef<HTMLButtonElement>(null);
-  const importRef = useRef<HTMLButtonElement>(null);
-  const [refocus, setRefocus] = useState<{ to: "check" | "import"; n: number } | null>(null);
-  useEffect(() => {
-    if (refocus) (refocus.to === "check" ? checkRef : importRef).current?.focus();
-  }, [refocus]);
-  const giveBack = (to: "check" | "import") => setRefocus((r) => ({ to, n: (r?.n ?? 0) + 1 }));
+  // «ביטול» takes the confirm (and its focus) away: «ייבוא» takes it back
+  const focusBack = useFocusBack();
   const [committing, setCommitting] = useState(false);
   const [commitProblem, setCommitProblem] = useState<string | null>(null);
   const [result, setResult] = useState<{ kind: ImportKind; res: ImportResult; label: string | null } | null>(null);
@@ -237,7 +230,6 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const escortUnanswered = askEscort && escortAsked == null;
 
   const check = async () => {
-    const hadFocus = document.activeElement === checkRef.current;
     setChecking(true);
     setCommitProblem(null);
     try {
@@ -277,7 +269,6 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       notify("error", said(err));
     } finally {
       setChecking(false);
-      if (hadFocus) giveBack("check");
     }
   };
 
@@ -643,7 +634,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button ref={checkRef} kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing || escortUnanswered} onClick={() => void check()}>
+            <Button kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing || escortUnanswered} onClick={() => void check()}>
               בדיקה מול המאגר
             </Button>
             {escortUnanswered && <span className="text-sm text-ink-soft">צריך לומר באיזו עמודה שמות המלווים (או שאין).</span>}
@@ -769,11 +760,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               onConfirm={() => void doCommit()}
               onCancel={() => {
                 setConfirming(false);
-                giveBack("import");
+                focusBack.back();
               }}
             />
           ) : (
-            <Button ref={importRef} kind="primary" disabled={!commit || blockers.length > 0 || rowsInCommit === 0} onClick={() => setConfirming(true)}>
+            <Button ref={focusBack.ref()} kind="primary" disabled={!commit || blockers.length > 0 || rowsInCommit === 0} onClick={() => setConfirming(true)}>
               ייבוא
             </Button>
           )}

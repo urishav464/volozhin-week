@@ -1,7 +1,7 @@
 // Small shared pieces of the settings screens: the context every tab reads,
 // one way to run an action (progress → toast in Hebrew), and the form parts.
 // Phone first: one column, every control at least 44px tall.
-import { type ButtonHTMLAttributes, createContext, type ReactNode, type Ref, useCallback, useContext, useState } from "react";
+import { type ButtonHTMLAttributes, createContext, type ReactNode, type Ref, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { SettingsPort } from "../../data/settings";
 import type { Me } from "../../data/types";
@@ -77,6 +77,7 @@ export function Button({
   className = "",
   children,
   ref,
+  onClick,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   kind?: keyof typeof BUTTON;
@@ -89,9 +90,12 @@ export function Button({
       ref={ref}
       type="button"
       {...rest}
-      disabled={rest.disabled || busy}
+      // busy, it keeps the focus (a disabled button loses it, and the keyboard its place): aria-disabled, and a click — or a
+      // form's Enter — does nothing until the work ends
+      aria-disabled={busy || undefined}
+      onClick={busy ? (e) => e.preventDefault() : onClick}
       aria-busy={busy || undefined}
-      className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2.5 font-semibold sm:px-3 disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON[kind]} ${className}`}
+      className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2.5 font-semibold sm:px-3 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${BUTTON[kind]} ${className}`}
     >
       {busy ? busyLabel : children}
     </button>
@@ -336,6 +340,30 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
 }
 
 /** An inline «are you sure?» inside a row — no dialog to lose on a phone. */
+/**
+ * The way back from a Confirm that stands in for the button which asked for it (the button is gone while the Confirm
+ * shows, so the focus would fall to the page): mark the button with `ref(key)` and call `back(key)` when the Confirm is
+ * cancelled — the button, drawn again, takes the focus. `key` tells one row's button from another's when one state says
+ * which row asks.
+ */
+export function useFocusBack() {
+  const els = useRef(new Map<string, HTMLElement>());
+  const [to, setTo] = useState<{ key: string; n: number } | null>(null);
+  useEffect(() => {
+    if (to) els.current.get(to.key)?.focus();
+  }, [to]);
+  return useMemo(
+    () => ({
+      ref: (key = "") => (el: HTMLElement | null) => {
+        if (el) els.current.set(key, el);
+        else els.current.delete(key);
+      },
+      back: (key = "") => setTo((t) => ({ key, n: (t?.n ?? 0) + 1 })),
+    }),
+    [],
+  );
+}
+
 export function Confirm({
   text,
   confirm,
