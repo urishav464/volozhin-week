@@ -25,6 +25,8 @@ describe("a closed lesson's five stages", () => {
     expect(pay({ pay_amount: 200, approval: "approved" })).toMatchObject({ state: "done", note: "אושר, טרם שולם" });
     expect(pay({ pay_amount: 200, approval: "approved", paid_at: "2026-11-01T10:00:00Z" })).toMatchObject({ state: "done", note: "אושר ושולם" });
     expect(pay({ pay_amount: 200, approval: "rejected" })).toMatchObject({ state: "problem" });
+    // an imported archive lesson: an amount from last year's sheet, no request behind it — a record, not «ממתין»
+    expect(pay({ pay_amount: 300, transport: "none", approval: "none" })).toMatchObject({ state: "na", note: "מגיליון המעקב של אשתקד" });
   });
 
   it("the message: waits for the request, sent, and «לעדכן את המרצה» above all", () => {

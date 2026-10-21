@@ -41,6 +41,9 @@ export async function freshDatabase(name: string, regime: Regime): Promise<pg.Cl
   await admin.connect();
   await admin.query(`drop database if exists ${name} with (force)`);
   await admin.query(`create database ${name}`);
+  // the tests' refusals are expected ERRORs: unlogged, so the server's log (CI prints it after the tests) stays short
+  // enough to leave vitest's own output readable
+  await admin.query(`alter database ${name} set log_min_messages = fatal`);
   await admin.end();
   const client = new pg.Client({ connectionString: urlFor(name) });
   await client.connect();

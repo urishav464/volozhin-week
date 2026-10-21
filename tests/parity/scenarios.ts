@@ -2,7 +2,7 @@
 // engine and on the SQL; every step's result and the whole state after it
 // must be identical.
 import { addDays, israelDate } from "../../src/domain/israelTime";
-import { FOREIGN_ROOM, FOREIGN_TRAINEE, type Step } from "./fixture";
+import { EDITION, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, type ImportLessonStep, type ImportSpeakerStep, type Step } from "./fixture";
 
 // Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
 const NOW = Date.now();
@@ -945,5 +945,313 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", readTransports: true },
     { as: "L", readTransports: true },
     { as: "admin", readTransports: true },
+  ],
+
+  "the import: candidates into the pool — new, by name key, by phone, chosen; only what is empty; a re-run adds no one; all or nothing": [
+    { as: "A", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת לדוגמה" }] }, // a content member may not
+    { as: "E", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת לדוגמה" }] }, // nor the edition's admin
+    {
+      as: "admin",
+      importCandidates: [
+        { row: 2, action: "new", name: "מועמד/ת לדוגמה", title: "הרב", gender: "m", affiliation: "מוסד לדוגמה", topics: ["תנ\"ך"], phone: "000-000-0005", notes: "טווח ימים: א-ב" },
+        // the same name key as a pool speaker: completes «בטא» — never a second one
+        { row: 3, action: "new", name: "בטא", affiliation: "מוסד לבטא", phone: "0000000006", email: "beta@example.org" },
+        // chosen by the admin («עמום»): fills «גמא»'s empty title and topics
+        { row: 4, action: "merge", speaker: "גמא", name: "גאמא", title: "ד״ר", topics: ["פילוסופיה"] },
+        // «אלפא» has a phone and a secretary note: only the e-mail is empty
+        { row: 5, action: "merge", speaker: "אלפא", name: "אלפא", phone: "0000000007", email: "alpha@example.org", notes: "הערה לדוגמה" },
+      ],
+    },
+    // another name, a phone the pool has now: a 'new' row is a new speaker — a phone alone never merges (the preview
+    // shows «אותו טלפון כמו …» and sends such a row as a merge, the next step)
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "שם אחר לגמרי", affiliation: "מוסד שני" }, { row: 3, action: "new", name: "עוד שם", phone: "+972 (0)00 000 0005" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "מועמד/ת לדוגמה", name: "שם שלישי", phone: "+972 (0)00 000 0005", email: "candidate@example.org" }] },
+    // two names on one line, both new, in one import: two people, each with their own contacts
+    {
+      as: "admin",
+      importCandidates: [
+        { row: 2, action: "new", name: "בודק אלף", title: "הרב", gender: "m", phone: "000-000-0077" },
+        { row: 3, action: "new", name: "בודקת בית", title: "הרבנית", gender: "f", phone: "0000000077", email: "beit@example.org", topics: ["נושא ב"] },
+      ],
+    },
+    // a phone an earlier row's merge just gave a pool speaker: a 'new' row of another name is still someone new
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "זין", name: "זין", phone: "0000000088" }, { row: 3, action: "new", name: "אדם אחר לגמרי", phone: "0000000088", email: "other.person@example.org" }] },
+    // a note alone is counted as a note, not as a contact detail
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "רק הערה", notes: "טווח ימים: נסגר" }] },
+    { as: "admin", importLookup: { speakers: ["בטא", "גמא"], phones: ["0000000005", "0000000006", "9999999999"] } },
+    // the first rows again: nothing new, nothing more to fill
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת לדוגמה", title: "הרב", gender: "m" }, { row: 3, action: "new", name: "בטא" }] },
+    // «בטא» again, with another affiliation: its empty title and topics filled, its affiliation kept
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "בטא", title: "ד״ר", affiliation: "מוסד שלישי", topics: ["נושא לדוגמה"] }] },
+    // «גמא» (ד״ר, f) with another title and gender while its empty affiliation is filled: both kept
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "גמא", title: "הרב", gender: "m", affiliation: "מוסד לגמא" }] },
+    // «דלתא» given the title הרבנית and no gender; then a row «הרב דלתא»: the gender its own title contradicts is never filled
+    { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "דלתא", name: "דלתא", title: "הרבנית" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "דלתא", title: "הרב", gender: "m" }] },
+    // the mirror: «אלפא» (f, no title) and a row «הרב אלפא» by its name key; «זין» (m, no title) chosen with «הרבנית»:
+    // a title that says the other gender is never filled
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "אלפא", title: "הרב", gender: "m" }, { row: 3, action: "merge", speaker: "זין", name: "זין", title: "הרבנית", gender: "f" }] },
+    // all or nothing, the row and the reason named
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 3, action: "new", name: "טלפון שגוי", phone: "12-34" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "תקין/ה לדוגמה" }, { row: 7, action: "new", name: "מגדר מנוחש", title: "ד״ר", gender: "f" }] },
+    { as: "admin", importCandidates: [{ row: 8, action: "new", name: "מגדר מנוחש", gender: "m" }] }, // no title: no gender either
+    { as: "admin", importCandidates: [{ row: 9, action: "merge", speaker: "אין כזה", name: "אין כזה" }] },
+    { as: "admin", importCandidates: [{ row: 10, action: "new", name: "   " }] },
+    { as: "admin", importCandidates: [{ row: 11, action: "new", name: "תואר זר", title: "מר" }] },
+    { as: "admin", importCandidates: [{ row: 12, action: "new", name: "מייל שגוי", email: "לא מייל" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "בלי מקור" }], source: "  " },
+    { as: "admin", importRaw: { kind: "other", payload: { rows: [] } } },
+    { as: "admin", importRaw: { kind: "candidates", payload: [] } },
+    { as: "admin", importRaw: { kind: "candidates", payload: { source: "x", rows: "not rows" } } },
+    { as: "admin", importRaw: { kind: "candidates", payload: { source: "x", rows: Array.from({ length: 1001 }, (_, i) => ({ row: i, action: "new", name: `x${i}` })) } } },
+  ],
+
+  "the import: the tracking sheet becomes an archive edition, the same label replaces it, a lesson that cannot be refuses all": [
+    { as: "E", importArchive: { label: "תשפ\"ו", speakers: [], lessons: [] } }, // not the edition's admin's
+    {
+      as: "admin",
+      importArchive: {
+        label: "תשפ\"ו",
+        speakers: [
+          { row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f", phone: "000-000-0008" },
+          { row: 3, action: "merge", speaker: "אלפא", name: "אלפא" },
+          { row: 4, action: "new", name: "בטא" }, // the pool's «בטא»
+          { row: 5, action: "new", name: "בטא" }, // twice in the sheet: one speaker in the lesson
+        ],
+        lessons: [
+          { row: 2, day: 0, start: 510, end: 600, speakers: [0], category: "תנ\"ך", sources_kind: "sheet", pay_amount: 300, import_note: "קיבל הודעת סיכום מ: חניך/ה לדוגמה" },
+          { row: 3, day: 0, start: 510, end: 600, room: 1, speakers: [1], sources_kind: "sheet_video" },
+          { row: 4, day: 1, start: 600, end: 780, speakers: [2, 1, 3], audience: "שיעור להורים", sources_kind: "sheet", print_when: "before" },
+          { row: 5, day: 3, start: 1470, end: 1560, room: 2, speakers: [0], sources_kind: "other", sources_note: "נשלח במייל" },
+        ],
+      },
+    },
+    // the same label, fewer lessons: replaced — no second edition, no second speaker
+    { as: "admin", importArchive: { label: "תשפ\"ו", start_date: "2026-02-15", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
+    // the same label with gershayim and with spaces around: the same archive, replaced — never a second one
+    { as: "admin", importArchive: { label: " תשפ״ו ", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 3, start: 870, end: 960, speakers: [0] }] } },
+    { as: "admin", importArchive: { label: "תשפ”ו", speakers: [{ row: 2, action: "new", name: "מרצה מן הארכיון", title: "הרבנית", gender: "f" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
+    { as: "admin", importArchive: { label: EDITION.label, speakers: [], lessons: [] } }, // a live edition's label
+    { as: "admin", importArchive: { label: ` ${EDITION.label.replace(" ", "  ")} `, speakers: [], lessons: [] } }, // …spaced otherwise
+    // two speakers with one phone keep their own lessons
+    {
+      as: "admin",
+      importArchive: {
+        label: "בדיקת טלפון משותף",
+        speakers: [{ row: 2, action: "new", name: "בודק גימל", phone: "000-000-0066" }, { row: 3, action: "new", name: "בודקת דלת", phone: "0000000066" }],
+        lessons: [{ row: 2, day: 0, start: 510, end: 600, speakers: [0] }, { row: 3, day: 1, start: 510, end: 600, speakers: [1] }],
+      },
+    },
+    { as: "admin", importArchive: { label: FOREIGN_EDITION, speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "  ", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "בדיקה", start_date: "2026-02-16", speakers: [], lessons: [] } }, // a Monday
+    { as: "admin", importArchive: { label: "בדיקה", start_date: "2026-02-30", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "בדיקה", source: null, speakers: [], lessons: [] } },
+    ...(
+      [
+        { row: 7, day: 0, start: 540, end: 600, speakers: [0] }, // the same room, overlapping
+        { row: 8, day: 0, start: 540, end: 630, room: 1, speakers: [1] }, // the same speaker, twice at once
+        { row: 9, day: 0, start: 512, end: 600, room: 2, speakers: [0] },
+        { row: 10, day: 5, start: 510, end: 600, speakers: [0] },
+        { row: 11, day: 2, start: 510, end: 600, speakers: [] },
+        { row: 12, day: 2, start: 510, end: 600, speakers: [9] },
+        { row: 13, day: 2, start: 510, end: 600, speakers: [0, 0] },
+        { row: 14, day: 2, start: 510, end: 600, speakers: [0], room: 10 },
+        { row: 15, day: 2, start: 510, end: 600, speakers: [0], pay_amount: 0 },
+        { row: 16, day: 2, start: 510, end: 600, speakers: [0], category: "אין כזו" },
+        { row: 17, day: 2, start: 510, end: 600, speakers: [0], sources_kind: "maybe" },
+        { row: 18, day: 4, start: 1080, end: 1170, speakers: [0] }, // past the archive's Thursday (19:00)
+        { row: 19, day: 4, start: 1470, end: 1560, speakers: [0] }, // a Thursday night the week did not have
+      ] as ImportLessonStep[]
+    ).map(
+      (bad): Step => ({
+        as: "admin",
+        importArchive: {
+          label: "בדיקה",
+          speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }, { row: 3, action: "new", name: "מרצה שני/ה בבדיקה" }],
+          lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0, 1] }, bad],
+        },
+      }),
+    ),
+    // Thursday until 19:00 is the archive's week
+    { as: "admin", importArchive: { label: "בדיקת חמישי", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 2, day: 4, start: 1050, end: 1140, speakers: [0] }] } },
+  ],
+
+  // סבב רביעי: a channel chosen from the list and the admin's own note — no key for the file's text
+  "the import: the escorts' file — the channel and the note, only where empty": [
+    { as: "B", importPrefs: [{ row: 2, speaker: "אלפא", channel: "secretary", note: "בבוקר" }] },
+    {
+      as: "admin",
+      importPrefs: [
+        { row: 2, speaker: "אלפא", channel: "secretary", note: "בבוקר" }, // its note is there: only the channel
+        { row: 3, speaker: "בטא", channel: "whatsapp", note: "רק בערב" },
+        { row: 4, speaker: "גמא", channel: "other", note: "רק בבוקר" }, // «אחר»: the note only, contact_pref left
+      ],
+    },
+    { as: "admin", importPrefs: [{ row: 2, speaker: "בטא", channel: "phone", note: "אחר" }] }, // nothing empty is left
+    { as: "admin", importPrefs: [{ row: 2, speaker: "דלתא", channel: "email" }, { row: 4, speaker: "אין כזה", channel: "email" }] },
+    { as: "admin", importPrefs: [{ row: 5, speaker: "דלתא", channel: "sms" }] },
+    { as: "admin", importPrefs: [{ row: 6, speaker: "דלתא", channel: "phone", note: "א".repeat(301) }] },
+    // the file's words have no field: a row that brings any other key is refused — before the speaker is looked up
+    { as: "admin", importPrefs: [{ row: 7, speaker: "דלתא", channel: "phone", extra: { secretary_note: "דרך המזכירה" } }] },
+    { as: "admin", importPrefs: [{ row: 8, speaker: "אין כזה", channel: "phone", extra: { phrases: ["דרך המזכירה"] } }] },
+    { as: "admin", importPrefs: [{ row: 9, speaker: "דלתא", extra: { contact_pref: "phone" } }] },
+    { as: "admin", importPrefs: [{ row: 10, speaker: "דלתא" }] }, // no channel
+    { as: "admin", importPrefs: [{ row: 11, speaker: "דלתא", channel: 5 }] },
+    { as: "admin", importPrefs: [{ row: 12, speaker: "דלתא", channel: "phone", note: 5 }] },
+    { as: "admin", importPrefs: [{ row: 13, speaker: "דלתא", channel: "other", note: null }] }, // «אחר» with no note: nothing to fill
+    { as: "admin", importPrefs: [{ row: 14, speaker: "דלתא", channel: "email", note: "  \r\n " }] }, // a blank note is none
+  ],
+
+  // סבב שלישי: the backstop of the wizard's stripContacts — a phone or an e-mail only in phone / email (app.has_contact)
+  "the import: a phone or an e-mail in any other field refuses the whole import («contact_in_text»), naming the row": [
+    ...(
+      [
+        { name: "מרצה עם מספר 000-000-0071" },
+        { name: "מרצה עם שורה", affiliation: "מוסד\n000-000-0072" },
+        { name: "מרצה עם מייל", affiliation: "someone@example.org" },
+        { name: "מרצה עם נושא", topics: ["תנ״ך", "טל' +972-00-000-0073"] },
+        { name: "מרצה עם הערה", notes: "להתקשר: 000\u200f-\u200f000\u200f-0074" },
+      ] as Omit<ImportSpeakerStep, "row" | "action">[]
+    ).map((bad): Step => ({ as: "admin", importCandidates: [{ row: 2, action: "new", name: "מרצה תקין/ה" }, { row: 5, action: "new", ...bad }] })),
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מרצה תקין/ה" }], source: "source@example.org" },
+    // what is no phone stays: a date, a range of years, of times — and the contacts themselves in phone and e-mail
+    {
+      as: "admin",
+      importCandidates: [{ row: 2, action: "new", name: "מרצה עם תאריכים", affiliation: "מוסד 1948-1967", notes: "נקבע 12.3.2026 20:00, 8.30-10.00", phone: "000-000-0075", email: "dates@example.org" }],
+    },
+    ...(
+      [
+        { title: "שיעור 000-000-0076" },
+        { audience: "שיעור להורים someone@example.org" },
+        { sources_kind: "other", sources_note: "נשלח ל-000-000-0077" },
+        { import_note: "הסעה: נהג (000) 000-0078" },
+      ] as Partial<ImportLessonStep>[]
+    ).map(
+      (bad): Step => ({
+        as: "admin",
+        importArchive: {
+          label: "בדיקת טלפון בטקסט",
+          speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }],
+          lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0] }, { row: 7, day: 1, start: 510, end: 600, speakers: [0], ...bad }],
+        },
+      }),
+    ),
+    { as: "admin", importArchive: { label: "ארכיון 000-000-0079", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "ארכיון תקין", source: "tracking 000-000-0080", speakers: [], lessons: [] } },
+    { as: "admin", importArchive: { label: "בדיקת טלפון בטקסט", speakers: [{ row: 2, action: "new", name: "מרצה בבדיקה" }], lessons: [{ row: 6, day: 0, start: 510, end: 600, speakers: [0], title: "תש״ח 1948-1967" }] } },
+    { as: "admin", importPrefs: [{ row: 2, speaker: "אלפא", channel: "secretary" }, { row: 3, speaker: "בטא", channel: "phone", note: "בבוקר 000-000-0081" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "email", note: "רק במייל: someone@example.org" }] },
+    // סבב רביעי: the reviewers' forms — other digits, a separator, a spaced e-mail, what shows nothing
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "בערב ٠٠٠-٠٠٠-٠٠٨٢" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "בערב 000/000/0083" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "email", note: "someone @example.org" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "phone", note: "000\u0085000\u00850084" }] },
+    { as: "admin", importPrefs: [{ row: 3, speaker: "בטא", channel: "secretary", note: "בבוקר, 1948-1967-1973" }] },
+  ],
+
+  // after the week (milestone 6)
+  "«איך עבר»: who writes, when (Israel time), and who reads": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", propose: "בטא", cell: [1, 600, 690] },
+    { as: "B", close: "בטא", at: [1, 600] },
+    { as: "A", propose: "גמא", cell: [3, 870, 960] }, // a draft
+    { as: "A", review: [1, 510], fields: { went_well: "טוב" } }, // the week's date TBD: closed to the handler
+    { as: "E", review: [1, 510], fields: { went_well: "  טוב  ", invite_again: "yes", rating: 4 } }, // an admin, at any time
+    { startDate: dateIn(0) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור" } }, // Monday is tomorrow
+    { startDate: dateIn(-1) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור" } }, // Monday is today: not passed yet
+    { startDate: dateIn(-2) },
+    { as: "A", review: [1, 510], fields: { issues: "איחור קטן" }, staleBy: 1 }, // the version on screen was before E's
+    { as: "A", review: [1, 510], fields: { went_well: "טוב", issues: "איחור קטן", invite_again: "maybe", overran: true, rating: 3 } },
+    { as: "A", review: [1, 510], fields: { went_well: "טוב", issues: "איחור קטן", invite_again: "maybe", overran: true, rating: 3 } }, // the same again
+    { as: "B", review: [1, 510], fields: { went_well: "x" } }, // not B's speaker
+    { as: "L", review: [1, 510], fields: { went_well: "x" } },
+    { as: "B", review: [1, 600], fields: {} },
+    { as: "B", review: [1, 600], fields: { invite_again: "always" } },
+    { as: "B", review: [1, 600], fields: { rating: 6 } },
+    { as: "B", review: [1, 600], fields: { overran: true } }, // an overrun alone is a review
+    { as: "A", review: [3, 870], fields: { went_well: "x" } }, // a draft
+    { as: "A", review: [4, 510], fields: { went_well: "x" } }, // no lesson there
+    { as: "A", readReviews: true },
+    { as: "L", readReviews: true },
+    { as: "A", speakerReviews: "אלפא" },
+    { as: "L", speakerReviews: "אלפא" },
+    { as: "A", returning: true },
+    { as: "L", returning: true },
+    { archive: true },
+    { as: "A", review: [1, 510], fields: { went_well: "שוב" } },
+    { as: "E", review: [1, 510], fields: { went_well: "שוב" } },
+    { as: "A", speakerReviews: "אלפא" }, // last year's team reads no one's across the years
+    { as: "admin", speakerReviews: "אלפא" },
+  ],
+
+  "the purge after the week": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
+    { as: "admin", decide: [[1, 510]], decision: "approved" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", driver: "נהג/ת לדוגמה", arranged: true },
+    { as: "E", issue: "schedule", name: "s" },
+    { as: "E", issue: "kk_signup", name: "k" },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" },
+    { as: "admin", purge: "בדיקת התאמה" }, // the week's date TBD
+    { startDate: dateIn(-4) },
+    { as: "admin", purge: "בדיקת התאמה" }, // Thursday: not over yet
+    { startDate: dateIn(-6) },
+    { as: "E", purge: "בדיקת התאמה" }, // a global admin's only
+    { as: "admin", purge: "בדיקת" },
+    { as: "admin", purge: null },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" }, // the sign-up link still opens (its 30 days)
+    { as: "admin", purge: " בדיקת התאמה " },
+    { anon: "kkForm", token: "k", from: "198.51.100.1" },
+    { anon: "scheduleView", token: "s" },
+    { as: "A", readTransport: [1, 510] },
+    { as: "admin", purge: "בדיקת התאמה" }, // again: nothing more
+  ],
+
+  // the two parts of v12 together: the archive the import makes is a past year for the summary and the speaker sheet;
+  // a re-run never deletes «איך עבר» with the lessons it replaces; the purge clears what last year's sheet said
+  "the import meets after the week: the imported year across the years, a review kept from a re-run, the archive purged": [
+    {
+      as: "admin",
+      importArchive: {
+        label: "תשפ\"ו",
+        speakers: [{ row: 2, action: "merge", speaker: "אלפא", name: "אלפא" }, { row: 3, action: "merge", speaker: "גמא", name: "גמא" }],
+        lessons: [
+          { row: 2, day: 0, start: 510, end: 600, speakers: [0], import_note: "הסעה/תשלום: איסוף מתחנה לדוגמה\nקיבל הודעת סיכום מ: חניך/ה לדוגמה" },
+          { row: 3, day: 1, start: 600, end: 690, speakers: [1], pay_amount: 250 },
+        ],
+      },
+    },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", returning: true }, // «אלפא» taught in the imported year — its date unknown: a past year
+    { as: "L", returning: true },
+    { as: "admin", review: [0, 510], edition: "תשפ\"ו", fields: { went_well: "עבר טוב באשתקד", invite_again: "yes", rating: 5 } },
+    { as: "A", speakerReviews: "אלפא" }, // a past year's review, read by this year's content team
+    { as: "L", speakerReviews: "אלפא" },
+    { as: "A", speakerReviews: "גמא" }, // the year's other speaker: nothing written
+    // the sheet's note: its own table, under the transport details' rule — for an archive, a global admin only
+    { as: "admin", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "admin", importNote: [1, 600], edition: "תשפ\"ו" },
+    { as: "A", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "E", importNote: [0, 510], edition: "תשפ\"ו" },
+    { as: "L", importNote: [0, 510], edition: "תשפ\"ו" },
+    // the same label again would replace its lessons, the review with them: refused, nothing changed
+    { as: "admin", importArchive: { label: "תשפ\"ו", speakers: [{ row: 2, action: "merge", speaker: "אלפא", name: "אלפא" }], lessons: [{ row: 2, day: 2, start: 870, end: 960, speakers: [0] }] } },
+    // the purge of an imported archive: a global admin's, the label typed, no date needed — the sheet's notes go
+    { as: "E", purge: "תשפ\"ו", edition: "תשפ\"ו" },
+    { as: "admin", purge: "בדיקת התאמה", edition: "תשפ\"ו" },
+    { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" },
+    { as: "admin", purge: "תשפ\"ו", edition: "תשפ\"ו" }, // again: nothing more
+    { as: "admin", importNote: [0, 510], edition: "תשפ\"ו" }, // gone with the purge
+    { as: "A", speakerReviews: "אלפא" }, // the review stays
+    { as: "A", returning: true }, // and so does the year
+    // a new import under another label: no review there, so it may be replaced at will
+    { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 3, start: 870, end: 960, speakers: [0] }] } },
+    { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 4, start: 510, end: 600, speakers: [0], import_note: "הערה לדוגמה" }] } },
   ],
 };

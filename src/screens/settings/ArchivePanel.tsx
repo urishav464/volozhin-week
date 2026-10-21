@@ -16,7 +16,7 @@ import type { SourcesProgress } from "../../exports/archiveGather";
 import { EXPECTED_SCHEMA_VERSION } from "../../lib/schema";
 import { Button, INPUT, KIND_LABEL, Panel, useAction } from "./kit";
 
-export function ArchivePanel({ data, editions }: { data: DataPort; editions: Edition[] }) {
+export function ArchivePanel({ data, editions, onDownloaded }: { data: DataPort; editions: Edition[]; onDownloaded?: (editionId: number) => void }) {
   const { busy, run } = useAction();
   const [id, setId] = useState<number | null>(() => (editions.find((e) => e.status !== "archived") ?? editions[0])?.id ?? null);
   const chosen = editions.find((e) => e.id === id) ?? null;
@@ -70,6 +70,7 @@ export function ArchivePanel({ data, editions }: { data: DataPort; editions: Edi
         }
         const zip = archiveZip({ week, extras, more, schemaVersion: EXPECTED_SCHEMA_VERSION, exportedAt: new Date().toISOString() });
         download(fileName("archive", chosen, israelDay(), "zip"), zip, ZIP_MIME);
+        onDownloaded?.(chosen.id);
         if (more.sources) setSkipped(more.sources.skipped.map((x) => x.name));
       },
       "הארכיון ירד. יש בו מידע אישי: לשמור במקום מוגן.",
@@ -80,8 +81,8 @@ export function ArchivePanel({ data, editions }: { data: DataPort; editions: Edi
       <div className="space-y-2 text-sm">
         <p>
           זה הגיבוי של המערכת: כל מה שנשמר על המחזור — השיעורים, הפניות וההצעות, הזמינות, שמות החניכים, החדרים, הקטגוריות, ההגדרות והנוסחים, יומן הפעולות, הידע ואבני
-          הדרך, מכריכה לכריכה (הקבוצות, ההרשמות והזמנות הספרים), הסימונים של המלווים, תוכניות זמני הזיכרון ורשימת החללים, ורשימת קבצי המקורות — בקובץ zip אחד, ובתוכו גם
-          טבלת המעקב. כדאי לייצא אחרי הייבוא, באמצע העונה ובסוף השנה.
+          הדרך, מכריכה לכריכה (הקבוצות, ההרשמות והזמנות הספרים), הסימונים של המלווים, תוכניות זמני הזיכרון ורשימת החללים, רשימת קבצי המקורות ו«איך עבר» — בקובץ zip אחד, ובתוכו גם
+          טבלת המעקב. כדאי לייצא אחרי הייבוא, באמצע העונה ובסוף השנה — ובכל מקרה לפני מחיקת המידע האישי אחרי השבוע.
         </p>
         <p className="rounded-lg bg-accent-soft px-3 py-2">
           <b>הארכיון כולל מידע אישי:</b> פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף ונהגים) ואנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות), בקובץ נפרד בשם

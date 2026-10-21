@@ -80,6 +80,8 @@ describe("only the Week is kept", () => {
       ["phone", (w) => w.speakers.push({ ...demoWeek().speakers[0], phone: "x" } as never)],
       ["email", (w) => w.team.push({ id: 1, display_name: "א", gender: null, role: "admin", email: "x" } as never)],
       ["pickup_address", (w) => w.lessons.push({ ...demoWeek().lessons[0], pickup_address: "x" } as never)],
+      // v12: last year's sheet's words about a lesson (its transport among them) — never a Week's, never on the device
+      ["import_note", (w) => w.lessons.push({ ...demoWeek().lessons[0], import_note: "הסעה/תשלום: איסוף לדוגמה" } as never)],
       ["driver_phone", (w) => ((w.edition.settings as Record<string, unknown>).transport = [{ driver_phone: "x" }])],
       ["secretary_note", (w) => w.roster.push({ id: 1, full_name: "א", gender: null, secretary_note: "x" } as never)],
     ];

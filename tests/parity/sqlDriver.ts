@@ -2,12 +2,14 @@
 // scenario, every command called as the role a browser gets, with that
 // member's Google claims — and committed, like PostgREST would.
 import type pg from "pg";
+import { ARCHIVE_ROOM } from "../../src/data/importRules";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
-  FOREIGN_TRAINEE, type KkStepFields, planLine,
+  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
+  FOREIGN_TRAINEE, type KkStepFields, planLine, purgeRead, reviewLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
-  type Step, transportLine, transportRead,
+  prefsRow, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -17,7 +19,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   const ed = Number((await db.query("insert into public.editions (label, first_day_from, last_day_until) values ($1, $2, $3) returning id", [EDITION.label, EDITION.first_day_from, EDITION.last_day_until])).rows[0].id);
   await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template", [ed]);
   for (const r of ROOMS) await db.query("insert into public.rooms (edition_id, name, sort, is_default) values ($1, $2, $3, $4)", [ed, r.name, r.sort, r.is_default]);
-  const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ('מחזור אחר', 'practice') returning id")).rows[0].id);
+  const elsewhere = Number((await db.query("insert into public.editions (label, kind) values ($1, 'practice') returning id", [FOREIGN_EDITION])).rows[0].id);
   const foreignRoom = Number((await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, $2, true) returning id", [elsewhere, FOREIGN_ROOM])).rows[0].id);
   for (const r of ROSTER) await db.query("insert into public.roster (edition_id, full_name, gender) values ($1, $2, $3)", [ed, r.name, r.gender]);
   const foreignTrainee = Number((await db.query("insert into public.roster (edition_id, full_name) values ($1, $2) returning id", [elsewhere, FOREIGN_TRAINEE])).rows[0].id);
@@ -63,6 +65,14 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
     one("select p.id, p.version from public.memorial_plans p join public.fallen f on f.id = p.fallen_id where p.edition_id = $1 and f.name = $2", [ed, name]);
   /** Every lesson's place, read before a call that answers lesson ids (the read runs as the member, in the call). */
   let lessonKeys: [number, string][] = [];
+  const lessonKeyMap = async () =>
+    new Map(
+      (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
+        (r) => [Number(r.id), lessonKey(r)] as [number, string],
+      ),
+    );
+  const speakerLabels = async () => new Map((await db.query("select id, name, disambiguator from public.speakers")).rows.map((r) => [Number(r.id), speakerLabel(r)] as [number, string]));
+  const memberKey = (id: unknown) => (id == null ? "-" : (MEMBERS.find((_m, i) => i + 1 === Number(id))?.key ?? `#${id}`));
   const traineeId = async (name: string | null) =>
     name == null ? null : name === FOREIGN_TRAINEE ? foreignTrainee : Number((await one("select id from public.roster where edition_id = $1 and full_name = $2", [ed, name]))?.id ?? -1);
   /** A lesson by place, and its version less `staleBy`. */
@@ -89,10 +99,40 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       return read ? read(Object.values(r.rows[0])[0]) : "ok";
     } catch (e) {
       await db.query("rollback");
-      const err = e as { code?: string; message: string };
+      const err = e as { code?: string; message: string; detail?: string };
+      if (err.code === "P0001" && err.message === "import_bad_row") return `import_bad_row:${err.detail}`;
       return err.code === "P0001" ? err.message : `raw:${err.code}:${err.message}`;
     }
   }
+
+  /** A speaker's label by id, read now (an import may have just made it). */
+  const speakerNames = async () => {
+    const rows = (await db.query("select id, name, disambiguator from public.speakers")).rows;
+    return (id: number) => {
+      const s = rows.find((r) => Number(r.id) === Number(id));
+      return s ? speakerLabel(s) : `#${id}`;
+    };
+  };
+  /** import_commit as a member, its answer as one string (the labels read after the commit). */
+  async function importCall(actor: string, kind: string, payload: unknown): Promise<string> {
+    let answer: unknown;
+    const r = await call(actor, "select public.import_commit($1, $2::jsonb)", [kind, JSON.stringify(payload)], (v) => {
+      answer = v;
+      return "ok";
+    });
+    if (r !== "ok") return r;
+    return importRead(answer as Parameters<typeof importRead>[0], await speakerNames());
+  }
+  const idsOf = async (labels: string[]) => {
+    const out: Record<string, number> = {};
+    for (const l of labels) out[l] = await speakerId(l);
+    return (label: string) => out[label] ?? -1;
+  };
+  const categoryIds = async (names: string[]) => {
+    const out: Record<string, number> = {};
+    for (const n of names) out[n] = Number((await one("select id from public.categories where name = $1", [n]))?.id ?? -1);
+    return (name: string) => out[name] ?? -1;
+  };
 
   // ---- the sources' files: each label's stored path, and the target it was stored for
   const files: Record<string, { path: string; target: At | "cover" }> = {};
@@ -427,6 +467,40 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         const p = step.policy;
         return call(step.as, "select public.set_memorial_policy($1, $2, $3, $4)", [ed, p.placement ?? null, p.max_minutes ?? null, p.warn_adjacent_meal ?? null]);
       }
+      // ---- the import of 5786
+      if ("importCandidates" in step) {
+        const idOf = await idsOf(step.importCandidates.map((r) => r.speaker ?? ""));
+        return importCall(step.as, "candidates", { source: step.source === undefined ? "brainstorm-5786" : step.source, titles_from: null, rows: speakerRows(step.importCandidates, idOf) });
+      }
+      if ("importArchive" in step) {
+        const idOf = await idsOf(step.importArchive.speakers.map((r) => r.speaker ?? ""));
+        const catOf = await categoryIds(step.importArchive.lessons.flatMap((l) => (l.category == null ? [] : [l.category])));
+        return importCall(step.as, "tracking", archivePayloadOf(step.importArchive, idOf, catOf));
+      }
+      if ("importPrefs" in step) {
+        const idOf = await idsOf(step.importPrefs.map((r) => r.speaker));
+        const rows = step.importPrefs.map((r) => prefsRow(r, idOf(r.speaker)));
+        return importCall(step.as, "escorts", { rows });
+      }
+      if ("importLookup" in step) {
+        const idOf = await idsOf(step.importLookup.speakers);
+        let answer: unknown;
+        const r = await call(step.as, "select public.import_lookup($1, $2)", [step.importLookup.speakers.map(idOf), step.importLookup.phones], (v) => {
+          answer = v;
+          return "ok";
+        });
+        return r === "ok" ? lookupRead(answer as Parameters<typeof lookupRead>[0], await speakerNames()) : r;
+      }
+      if ("importRaw" in step) return importCall(step.as, step.importRaw.kind, step.importRaw.payload);
+      if ("importNote" in step) {
+        const [day, start] = step.importNote;
+        const l = await one(
+          `select l.id from public.lessons l join public.rooms r on r.id = l.room_id join public.editions e on e.id = l.edition_id
+            where e.label = $1 and e.kind = 'archive' and l.day = $2 and l.start_min = $3 and r.name = $4`,
+          [step.edition, day, start, ARCHIVE_ROOM],
+        );
+        return call(step.as, "select public.get_import_note($1)", [l?.id ?? -1], (v) => `note=${v ?? "-"}`);
+      }
       if ("readTransports" in step) {
         lessonKeys = (await db.query("select l.id, l.day, l.start_min, l.end_min, r.name as room from public.lessons l join public.rooms r on r.id = l.room_id where l.edition_id = $1", [ed])).rows.map(
           (r) => [Number(r.id), lessonKey(r)] as [number, string],
@@ -436,10 +510,79 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           return (v as (Parameters<typeof transportLine>[1] & { lesson_id: number })[]).map((t) => transportLine(keys.get(Number(t.lesson_id)) ?? `#${t.lesson_id}`, t)).sort().join(" ; ") || "none";
         });
       }
+      // ---- after the week
+      if ("review" in step) {
+        const [day, start, room] = step.review;
+        const l = step.edition == null
+          ? await lessonAt(step.review)
+          : await one(
+              `select l.id, l.version from public.lessons l join public.rooms r on r.id = l.room_id join public.editions e on e.id = l.edition_id
+                where e.label = $1 and e.kind = 'archive' and l.day = $2 and l.start_min = $3 and r.name = $4`,
+              [step.edition, day, start, room ?? ARCHIVE_ROOM],
+            );
+        const old = l ? await one("select version from public.lesson_reviews where lesson_id = $1", [l.id]) : undefined;
+        const f = step.fields;
+        return call(step.as, "select public.save_lesson_review($1, $2, $3, $4, $5, $6, $7)", [
+          l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), f.went_well ?? null, f.issues ?? null, f.invite_again ?? null, f.overran ?? null, f.rating ?? null,
+        ], (v) => `v=${v}`);
+      }
+      if ("readReviews" in step) {
+        const keys = await lessonKeyMap();
+        const spk = await speakerLabels();
+        return call(step.as, "select public.load_reviews($1)", [ed], (v) =>
+          (v as { lesson_id: number; speaker_id: number | null; went_well: string | null; issues: string | null; invite_again: string | null; overran: boolean; rating: number | null; written_by: number | null; version: number }[])
+            .map((r) => reviewLine(keys.get(Number(r.lesson_id)) ?? `#${r.lesson_id}`, { ...r, speaker: r.speaker_id == null ? "-" : (spk.get(Number(r.speaker_id)) ?? "?"), by: memberKey(r.written_by) }))
+            .sort()
+            .join(" ; ") || "none",
+        );
+      }
+      if ("speakerReviews" in step) {
+        return call(step.as, "select public.speaker_reviews($1)", [await speakerId(step.speakerReviews)], (v) =>
+          (v as { edition_label: string; day: number; start_min: number; end_min: number; invite_again: string | null; rating: number | null; went_well: string | null }[])
+            .map((r) => `${r.edition_label}|${r.day}|${r.start_min}-${r.end_min}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`)
+            .join(" ; ") || "none",
+        );
+      }
+      if ("returning" in step) {
+        const spk = await speakerLabels();
+        return call(step.as, "select public.edition_returning($1)", [ed], (v) =>
+          (v as { speaker_id: number; editions: string[] }[]).map((r) => `${spk.get(Number(r.speaker_id))}:${r.editions.join(",")}`).join(" ; ") || "none",
+        );
+      }
+      if ("purge" in step) {
+        const target = step.edition == null ? ed : Number((await one("select id from public.editions where label = $1 and kind = 'archive'", [step.edition]))?.id ?? -1);
+        return call(step.as, "select public.purge_edition_private($1, $2)", [target, step.purge], (v) => purgeRead(v as Parameters<typeof purgeRead>[0]));
+      }
       throw new Error(`a step no driver knows: ${JSON.stringify(step)}`);
     },
 
     async state(): Promise<Normal> {
+      /** The archive editions: each, its rooms, its lessons with their speakers. */
+      const archiveLines = async () => {
+        const eds = (await db.query(`
+          select e.*, to_char(e.start_date, 'YYYY-MM-DD') as start, (select count(*)::int from public.grid_rows g where g.edition_id = e.id) as rows
+            from public.editions e where e.kind = 'archive'`)).rows;
+        const rooms = (await db.query("select r.*, e.label from public.rooms r join public.editions e on e.id = r.edition_id where e.kind = 'archive'")).rows;
+        const ls = (await db.query(`
+          select l.*, e.label, r.name as room, c.name as cat, (select n.note from public.lesson_import_notes n where n.lesson_id = l.id) as import_note,
+                 (select string_agg(s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role, ',' order by s.name || coalesce('#' || s.disambiguator, '') || ':' || x.role collate "C")
+                    from public.lesson_speakers x join public.speakers s on s.id = x.speaker_id where x.lesson_id = l.id) as who
+            from public.lessons l join public.editions e on e.id = l.edition_id join public.rooms r on r.id = l.room_id
+            left join public.categories c on c.id = l.category_id
+           where e.kind = 'archive'`)).rows;
+        // «איך עבר» on an archive's lessons (a global admin's), by the lesson's place
+        const reviewed = (await db.query(`
+          select r.*, e.label, l.day, l.start_min, l.end_min, ro.name as room, s.name, s.disambiguator
+            from public.lesson_reviews r join public.editions e on e.id = r.edition_id join public.lessons l on l.id = r.lesson_id
+            join public.rooms ro on ro.id = l.room_id left join public.speakers s on s.id = r.speaker_id
+           where e.kind = 'archive'`)).rows;
+        return [
+          ...eds.map((e) => `edition|${e.label}|${e.kind}|${e.status}|${e.start ?? "-"}|rows=${e.rows}|purged=${e.purged_at == null ? "-" : "y"}`),
+          ...rooms.map((r) => `room|${r.label}|${r.name}|${r.sort}|${r.is_default}`),
+          ...ls.map((l) => archiveLessonLine(l.label, l, l.room, l.cat ?? "-", l.who ?? "")),
+          ...reviewed.map((r) => reviewLine(`${r.label}|${r.day}|${r.start_min}-${r.end_min}|${r.room}`, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) })),
+        ].sort();
+      };
       const lessons = (await db.query(`
         select l.*, r.name as room, c.name as cat, ro.full_name as trainee from public.lessons l
           join public.rooms r on r.id = l.room_id left join public.categories c on c.id = l.category_id
@@ -479,6 +622,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const fallenName = (id: unknown) => (id == null ? "-" : (fallen.find((f) => Number(f.id) === Number(id))?.name ?? `#${id}`));
       const fallenContacts = (await db.query("select * from public.fallen_contacts")).rows;
       const plans = (await db.query("select * from public.memorial_plans where edition_id = $1", [ed])).rows;
+      const reviews = (await db.query("select r.*, s.name, s.disambiguator from public.lesson_reviews r left join public.speakers s on s.id = r.speaker_id where r.edition_id = $1", [ed])).rows;
+      const purged = (await one("select purged_at from public.editions where id = $1", [ed])).purged_at != null;
       const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
       const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
       const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
@@ -493,7 +638,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
         availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
-        edition: editionLines(settings, cover),
+        edition: editionLines(settings, cover, purged),
         links: links
           .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -515,6 +660,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           ...fallenContacts.map((c) => fallenContactsLine(`contacts|${fallenName(c.fallen_id)}`, c)),
           ...plans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : byId.get(Number(p.lesson_id))!, p)),
         ].sort(),
+        archive: await archiveLines(),
+        reviews: reviews
+          .map((r) => reviewLine(byId.get(Number(r.lesson_id))!, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) }))
+          .sort(),
       };
     },
 

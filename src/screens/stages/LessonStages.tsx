@@ -28,6 +28,7 @@ import { MessageComposer } from "./MessageComposer";
 import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 import { SourceFiles } from "./SourceFiles";
+import { ReviewSection } from "./ReviewStage";
 import { MEMORIAL_SAID, readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
 
 export interface LessonStagesProps {
@@ -47,6 +48,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
   const { busy, run } = useRunner(notify, clear);
   const [open, setOpen] = useState<Set<StageKey>>(() => new Set(focus ? [focus] : []));
+  const [reviewOpen, setReviewOpen] = useState(false);
   // From «המרצים שלי»: the section it was opened for comes into view.
   useEffect(() => {
     if (focus) requestAnimationFrame(() => document.getElementById(`stage-${focus}`)?.scrollIntoView({ block: "start" }));
@@ -110,11 +112,45 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
           {!open.has("msg") && <Button onClick={() => show("msg")}>להודעה</Button>}
         </div>
       )}
+      {week.edition.kind === "archive" && <ImportNote cmds={cmds} lessonId={l.id} />}
       {stages.map((s) => (
         <StageSection key={s.key} stage={s} open={open.has(s.key)} onToggle={() => toggle(s.key)}>
           {body(s.key)}
         </StageSection>
       ))}
+      {/* after the week (milestone 6): opinions about the speaker — the edition's content members and admins only */}
+      {actor.role !== "logistics" && l.kind === "lesson" && (
+        <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
+      )}
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ last year's sheet
+
+/**
+ * What last year's tracking sheet said about an imported lesson that has no field of its own (v12, the import of
+ * 5786): read one lesson at a time, under the transport details' rule — for an archive, a global admin's only. Its
+ * transport words are personal data: never in the Week, Realtime or the offline copy; the purge deletes them.
+ */
+function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: number }) {
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    cmds.importNote(lessonId).then(
+      (n) => live && setNote(n),
+      () => live && setNote(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [cmds, lessonId]);
+  if (!note) return null;
+  return (
+    <section aria-label="מגיליון המעקב של אשתקד" className="rounded-lg border border-line bg-paper p-2.5">
+      <h4 className="mb-1 text-sm font-semibold">מגיליון המעקב של אשתקד</h4>
+      <p className="text-sm whitespace-pre-line break-words">{note}</p>
+      <p className="mt-1 text-xs text-ink-soft">כמו פרטי ההסעה: רק אדמין כללי/ת רואה, ונמחק במחיקת המידע האישי של המחזור.</p>
     </section>
   );
 }

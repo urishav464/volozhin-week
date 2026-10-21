@@ -54,10 +54,12 @@ void everyKeyListed;
 
 /**
  * Keys that are personal data wherever they turn up: a speaker's contacts, a transport's details, a bereaved family's
- * contact person, an address. A family contact's `note` is the one key left out: availability's own `note` (a chip's
- * «לא בבקרים») shares its name — the family's note never travels without its `contact_name` and `relation`.
+ * contact person, an address — and an imported lesson's note (v12: last year's transport and payment words, read one
+ * lesson at a time like the transport details). A family contact's `note` is the one key left out: availability's own
+ * `note` (a chip's «לא בבקרים») shares its name — the family's note never travels without its `contact_name` and
+ * `relation`.
  */
-export type PersonalKey = keyof SpeakerContacts | keyof TransportDetails | Exclude<keyof FallenContacts, "note"> | "address";
+export type PersonalKey = keyof SpeakerContacts | keyof TransportDetails | Exclude<keyof FallenContacts, "note"> | "address" | "import_note";
 export const PERSONAL_KEYS = [
   "phone",
   "email",
@@ -71,6 +73,7 @@ export const PERSONAL_KEYS = [
   "contact_name",
   "relation",
   "address",
+  "import_note",
 ] as const satisfies readonly PersonalKey[];
 type MissedPersonal = Exclude<PersonalKey, (typeof PERSONAL_KEYS)[number]>;
 const everyPersonalKeyListed: [MissedPersonal] extends [never] ? true : MissedPersonal = true;

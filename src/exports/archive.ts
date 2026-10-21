@@ -12,6 +12,8 @@
 //   memorial.json    the edition's memorial plans and the fallen the caller reads
 //                    (an admin: the whole cross-year list) — never a contact (5ב-2)
 //   sources.json     the sources' files: what each is, whose, where in the zip
+//   reviews.json     «איך עבר» of the edition's lessons (milestone 6) — opinions
+//                    about the speakers, as its admins and content read them
 //   sources/<day>/   the files themselves — only when «כולל קבצי המקורות» was
 //                    asked for; a file that could not be read is listed in
 //                    sources.json and README.txt, not silently left out
@@ -25,6 +27,7 @@
 import { strToU8, zipSync } from "fflate";
 import type { KkData } from "../data/kk";
 import type { Fallen, FallenContacts } from "../data/memorial";
+import type { LessonReview } from "../data/reviews";
 import type { ArchiveExtras } from "../data/outputs";
 import { fallenName } from "../domain/memorial";
 import { displayName } from "../domain/names";
@@ -48,9 +51,11 @@ export interface ArchiveMore {
   fallenContacts: (FallenContacts & { fallen_id: number })[];
   /** «כולל קבצי המקורות»: the files' bytes by id, and those that could not be read. null: not asked for. */
   sources: { bytes: ReadonlyMap<number, Uint8Array>; skipped: { id: number; name: string }[] } | null;
+  /** «איך עבר» (milestone 6) as the caller reads them (load_reviews); null: not read. */
+  reviews?: LessonReview[] | null;
 }
 
-export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null };
+export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null, reviews: null };
 
 /**
  * The fallen this edition has a plan for (placed or in the tray), in id order: the only families whose contact person
@@ -97,6 +102,10 @@ export function sourcePath(week: Pick<Week, "lessons" | "memorialPlans">, f: Sou
   return `sources/${l.day + 1}-${DAY_NAMES[l.day]}/${fmt(l.start_min).replace(":", "")}_${name}`;
 }
 
+function lessonTitleOf(week: Pick<Week, "lessons">, id: number): string | null {
+  return week.lessons.find((l) => l.id === id)?.title ?? null;
+}
+
 /** The speakers an edition touched: approached, pitched or teaching. */
 export function touchedSpeakers(week: Week): number[] {
   const ids = new Set<number>();
@@ -120,6 +129,7 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     more.kk ? "- kk.json: מכריכה לכריכה — המשבצות, הקבוצות והספרים, המובילים, ההרשמות (עם שמות החניכים) והזמנות הספרים." : "- מכריכה לכריכה לא נקרא בייצוא הזה.",
     "- memorial.json: תוכניות זמני הזיכרון של המחזור ורשימת החללים של כל השנים (בלי פרטי קשר).",
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
+    more.reviews ? "- reviews.json: «איך עבר» לכל שיעור שנכתב לו — דעות על המרצים. לשמור במקום מוגן, כמו כל הארכיון." : "- «איך עבר» לא נקרא בייצוא הזה.",
     more.sources
       ? `- sources/: קבצי המקורות עצמם, בתיקייה לכל יום.${skipped.length ? ` ${skipped.length} קבצים לא נקראו ולא נכללו: ${skipped.map((x) => x.name).join(", ")}.` : ""}`
       : "- קבצי המקורות עצמם לא נכללו (אפשר לבחור «כולל קבצי המקורות»).",
@@ -190,6 +200,14 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
     plans: (week.memorialPlans ?? []).map((p) => ({ ...p, fallen: fallenName({ fallen: more.fallen.length ? more.fallen : week.fallen }, p.fallen_id) })),
     fallen: (more.fallen.length ? more.fallen : (week.fallen ?? []).map((f) => ({ ...f, note: null, active: true }))).map(({ id, name, gender, note, active }) => ({ id, name, gender, note, active })),
   });
+  if (more.reviews) {
+    const speakerName = new Map(week.speakers.map((s) => [s.id, displayName(s)]));
+    files["reviews.json"] = json({
+      format: ARCHIVE_FORMAT,
+      exported_at: input.exportedAt,
+      reviews: more.reviews.map((r) => ({ ...r, speaker: r.speaker_id != null ? (speakerName.get(r.speaker_id) ?? null) : null, lesson_title: lessonTitleOf(week, r.lesson_id) })),
+    });
+  }
   const included = more.sources?.bytes;
   const skipped = new Set((more.sources?.skipped ?? []).map((x) => x.id));
   const lessonTitle = new Map(week.lessons.map((l) => [l.id, l.title]));

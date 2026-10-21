@@ -56,6 +56,12 @@ describe("the tracking table", () => {
     expect([rn.dayLabel, rn.time, rn.confirmed, rn.escort, rn.payment]).toEqual(["ליל שני–שלישי", "00:30–01:45", "לעדכן", "חסר/ה", "לא התבקשו"]);
   });
 
+  it("an imported archive lesson's amount is last year's record — never «לא התבקשו» beside an amount", () => {
+    const { w, night } = week();
+    night.pay_amount = 300; // the import writes an amount and leaves the approval 'none'
+    expect(trackingRows(w).find((r) => r.lesson.id === night.id)!.payment).toBe("300 ₪ · בלי הסעה · מגיליון המעקב של אשתקד");
+  });
+
   it("tints rows with last year's colours: sources received, a presentation, a memorial slot, not closed", () => {
     const { w } = week();
     expect(trackingRows(w).map((r) => r.tone)).toEqual(["received", "memorial", "draft", "presentation", "pending"]);

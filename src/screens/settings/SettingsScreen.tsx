@@ -1,7 +1,8 @@
 // «הגדרות» — admins run the year from here instead of the SQL Editor: the
 // edition, the team, the trainees' roster, the rooms, the templates (the
 // summary message and the escorts' phrases), the links without an account
-// (an escort's, the sign-up's, the schedule's), the categories. One tab
+// (an escort's, the sign-up's, the schedule's), the categories, and the import
+// of 5786 (a global admin's: src/screens/settings/ImportTab.tsx). One tab
 // per path (/settings/<tab>); tabs on the side on a wide screen, a scrolling
 // row on a phone. Everything goes through port.settings (src/data/settings.ts).
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import type { Edition } from "../../domain/types";
 import { useMedia } from "../../lib/useMedia";
 import { CategoriesTab } from "./CategoriesTab";
 import { EditionsTab } from "./EditionsTab";
+import { ImportTab } from "./ImportTab";
 import { Ctx, type SettingsContext } from "./kit";
 import { LinksTab } from "./LinksTab";
 import { RoomsTab } from "./RoomsTab";
@@ -28,6 +30,8 @@ const TABS = [
   { slug: "templates", label: "תבניות", globalOnly: false },
   { slug: "links", label: "קישורים", globalOnly: false },
   { slug: "categories", label: "קטגוריות", globalOnly: true },
+  // the import of 5786 writes the cross-year pool and makes an archive edition: a global admin's
+  { slug: "import", label: "ייבוא", globalOnly: true },
 ] as const;
 type Slug = (typeof TABS)[number]["slug"];
 
@@ -142,6 +146,8 @@ export function SettingsScreen({
         return <LinksTab data={port} {...picked} />;
       case "categories":
         return <CategoriesTab />;
+      case "import":
+        return <ImportTab data={port} editions={editions} reload={loadEditions} />;
     }
   })();
 

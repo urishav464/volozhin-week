@@ -98,13 +98,19 @@ type StageFields = Pick<
   "pay_amount" | "transport" | "approval" | "paid_at" | "confirm_sent_at" | "needs_reconfirm" | "escort_roster_id" | "self_intro" | "sources_kind" | "in_reader"
 >;
 
+/** An imported archive lesson's amount: what last year's tracking sheet said — a record, never a request waiting. */
+export const IMPORTED_PAY = "מגיליון המעקב של אשתקד";
+
 /** The five stages of a closed lesson, in the card's order; `files`: readerFilesOf(week, l.id). */
 export function stagesOf(l: StageFields, files: ReaderFiles): Stage[] {
   const stage = (key: StageKey, state: StageState, note: string): Stage => ({ key, label: STAGE_LABEL[key], state, note });
   const asked = l.pay_amount != null || l.transport !== "none";
+  // an amount with no request behind it: only the import of last year's sheet writes one (the record, not a request)
   const pay = !asked
     ? stage("pay", "na", "לא התבקשו")
-    : l.approval === "approved"
+    : l.approval === "none"
+      ? stage("pay", "na", IMPORTED_PAY)
+      : l.approval === "approved"
       ? stage("pay", "done", l.pay_amount == null ? "אושר" : l.paid_at ? "אושר ושולם" : "אושר, טרם שולם")
       : l.approval === "rejected"
         ? stage("pay", "problem", "לא אושר: לעדכן את הבקשה")

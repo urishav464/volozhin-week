@@ -8,7 +8,7 @@ import { memorialCard } from "../domain/memorial";
 import { teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
 import { lessonTone, PROGRESS_FILL, type ProgressTone } from "../domain/progress";
-import { APPROVAL_LABEL, type LessonStep, nextLessonStep, PRINT_WHEN_LABEL, readerFilesOf, requestText, SOURCES_LABEL } from "../domain/stages";
+import { APPROVAL_LABEL, IMPORTED_PAY, type LessonStep, nextLessonStep, PRINT_WHEN_LABEL, readerFilesOf, requestText, SOURCES_LABEL } from "../domain/stages";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import { type Lesson, LIVE_PITCH, type Week } from "../domain/types";
 import { LRM, type Table } from "./table";
@@ -112,7 +112,10 @@ export function trackingRows(week: Week): TrackingRow[] {
       const lead = leads[0] ? speakers.get(leads[0].speaker_id) : undefined;
       const owner = lead ? approachBySpeaker.get(lead.id)?.owner_member_id : null;
       const req = requestText(l);
-      const payment = req == null ? "לא התבקשו" : `${req} · ${l.approval === "approved" && l.pay_amount != null ? (l.paid_at ? "אושר · שולם" : "אושר · טרם שולם") : APPROVAL_LABEL[l.approval]}`;
+      const payment =
+        req == null
+          ? "לא התבקשו"
+          : `${req} · ${l.approval === "approved" && l.pay_amount != null ? (l.paid_at ? "אושר · שולם" : "אושר · טרם שולם") : l.approval === "none" ? IMPORTED_PAY : APPROVAL_LABEL[l.approval]}`;
       const escortName = l.escort_roster_id != null ? roster.get(l.escort_roster_id) ?? "מלווה" : null;
       const escort = escortName ? (l.self_intro ? `${escortName} · הצגה עצמית` : escortName) : l.self_intro ? "הצגה עצמית" : "חסר/ה";
       const confirmed = l.needs_reconfirm

@@ -1,6 +1,9 @@
 // The parity driver for src/data/engine.ts.
 import { CommandError } from "../../src/data/commands";
-import { emptyShared, Engine, type PoolShared } from "../../src/data/engine";
+import { emptyShared, Engine, type ImportHost, type PoolShared } from "../../src/data/engine";
+import { ImportRowError } from "../../src/data/imports";
+import { ARCHIVE_ROOM, labelKey } from "../../src/data/importRules";
+import { titlesOf } from "../../src/data/speakerRules";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
 import type { DayPart } from "../../src/domain/dayParts";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
@@ -10,9 +13,9 @@ import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
   answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
-  FOREIGN_ROOM, FOREIGN_TRAINEE, planLine,
+  archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
-  type Step, transportLine, transportRead,
+  prefsRow, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -57,6 +60,8 @@ export function engineDriver(): Driver {
     return l && a ? week.pitches.find((p) => p.lesson_id === l.id && p.approach_id === a.id) : undefined;
   };
   const approachOf = (label: string) => week.approaches.find((a) => a.speaker_id === speakerId(label));
+  const spLabel = (id: number) => speakerLabel(week.speakers.find((s) => s.id === id)!);
+  const memberKey = (id: number | null) => (id == null ? "-" : MEMBERS[id - 1].key);
   const fallenId = (name: string) => shared.fallen.find((f) => f.name === name)?.id ?? -1;
   const planOf = (name: string) => week.memorialPlans.find((p) => p.fallen_id === fallenId(name));
   const traineeId = (name: string | null) => (name == null ? null : name === FOREIGN_TRAINEE ? 999 : (week.roster.find((r) => r.full_name === name)?.id ?? -1));
@@ -70,6 +75,30 @@ export function engineDriver(): Driver {
   const files: Record<string, { path: string; target: At | "cover" }> = {};
   const targetId = (t: At | "cover") => (t === "cover" ? null : (lessonAt(t)?.id ?? -1));
   const pathOf = (label: string, target?: At | "cover") => files[label]?.path ?? filePath(week.edition.id, targetId(target ?? "cover"), label, "application/pdf");
+
+  // ---- the import of 5786: the archive editions it makes, and what the engine needs from outside it
+  const archives: Week[] = [];
+  const host: ImportHost = {
+    titles: (id) => titlesOf(id === week.edition.id ? week.edition.settings : null),
+    byLabel: (key) => {
+      if (key === labelKey(week.edition.label)) return [{ kind: week.edition.kind, week: null }];
+      if (key === labelKey(FOREIGN_EDITION)) return [{ kind: "practice", week: null }];
+      return archives.filter((x) => labelKey(x.edition.label) === key).map((a) => ({ kind: "archive" as const, week: a }));
+    },
+    categoryIds: () => new Set(week.categories.map((c) => c.id)),
+    nextEditionId: () => 100 + archives.length,
+    nextRoomId: () => 1000 + archives.reduce((n, a) => n + a.rooms.length, 0),
+    install: (w) => {
+      const i = archives.findIndex((x) => x.edition.id === w.edition.id);
+      if (i >= 0) archives[i] = w;
+      else archives.push(w);
+    },
+  };
+  const speakerName = (id: number) => {
+    const s = week.speakers.find((x) => x.id === id);
+    return s ? speakerLabel(s) : `#${id}`;
+  };
+  const categoryId = (name: string) => week.categories.find((c) => c.name === name)?.id ?? -1;
 
   // ---- links and מכריכה לכריכה
   const tokens: Record<string, string> = {};
@@ -173,7 +202,15 @@ export function engineDriver(): Driver {
         }
       }
       const m = MEMBERS.find((x) => x.key === step.as)!;
-      const e = new Engine(week, { memberId: memberId(m.key), role: m.role, global: !!m.global }, undefined, shared);
+      const actor = { memberId: memberId(m.key), role: m.role, global: !!m.global };
+      // the other editions are the import's archives: across the years (returning speakers, reviews) as the database sees them
+      const e = new Engine(week, actor, undefined, shared, () => archives);
+      /** An engine on the archive edition of that label (the steps that name one are a global admin's). */
+      const onArchive = (label: string) => {
+        const w = archives.find((x) => x.edition.label === label);
+        if (!w) throw new Error(`no archive edition «${label}»`);
+        return new Engine(w, actor, undefined, shared, () => [week, ...archives.filter((x) => x !== w)]);
+      };
       try {
         if ("propose" in step) {
           const target = "cell" in step
@@ -214,6 +251,23 @@ export function engineDriver(): Driver {
         } else if ("handOver" in step) e.handOver(approachOf(step.handOver)?.id ?? -1, step.to == null ? null : memberId(step.to), step.note ?? null);
         else if ("answerHandOver" in step) e.answerHandOver(approachOf(step.answerHandOver)?.id ?? -1, step.accept, step.note ?? null);
         else if ("avail" in step) e.setAvailability(speakerId(step.avail), step.day, step.part as DayPart, step.kind as "can" | "cannot" | null, step.note ?? null);
+        // ---- the import of 5786
+        else if ("importCandidates" in step) {
+          const payload = { source: step.source === undefined ? "brainstorm-5786" : step.source, titles_from: null, rows: speakerRows(step.importCandidates, speakerId) };
+          return importRead(e.importCommit("candidates", payload, host), speakerName);
+        } else if ("importArchive" in step) {
+          return importRead(e.importCommit("tracking", archivePayloadOf(step.importArchive, speakerId, categoryId), host), speakerName);
+        } else if ("importPrefs" in step) {
+          const rows = step.importPrefs.map((r) => prefsRow(r, speakerId(r.speaker)));
+          return importRead(e.importCommit("escorts", { rows }, host), speakerName);
+        } else if ("importLookup" in step) return lookupRead(e.importLookup(step.importLookup.speakers.map(speakerId), step.importLookup.phones), speakerName);
+        else if ("importRaw" in step) return importRead(e.importCommit(step.importRaw.kind, step.importRaw.payload, host), speakerName);
+        else if ("importNote" in step) {
+          const on = onArchive(step.edition);
+          const [day, start] = step.importNote;
+          const l = on.week.lessons.find((x) => x.day === day && x.start_min === start && on.week.rooms.find((r) => r.id === x.room_id)?.name === ARCHIVE_ROOM);
+          return `note=${on.importNoteOf(l?.id ?? -1) ?? "-"}`;
+        }
         // ---- from placement to arrival
         else if ("pay" in step) {
           const l = at(step.pay, step.staleBy);
@@ -292,8 +346,28 @@ export function engineDriver(): Driver {
           const p = step.policy;
           e.setMemorialPolicy({ placement: p.placement ?? undefined, max_minutes: p.max_minutes ?? undefined, warn_adjacent_meal: p.warn_adjacent_meal ?? undefined });
         } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
+        // ---- after the week
+        else if ("review" in step) {
+          const on = step.edition == null ? e : onArchive(step.edition);
+          const [day, start, room] = step.review;
+          const l = step.edition == null ? lessonAt(step.review) : on.week.lessons.find((x) => x.day === day && x.start_min === start && on.week.rooms.find((r) => r.id === x.room_id)?.name === (room ?? ARCHIVE_ROOM));
+          const old = shared.reviews.find((r) => r.edition_id === on.week.edition.id && r.lesson_id === l?.id);
+          const f = step.fields;
+          const v = on.saveReview(l?.id ?? -1, (old?.version ?? 0) - (step.staleBy ?? 0), {
+            went_well: f.went_well ?? null, issues: f.issues ?? null, invite_again: (f.invite_again ?? null) as never, overran: f.overran as boolean, rating: f.rating ?? null,
+          });
+          return `v=${v}`;
+        } else if ("readReviews" in step) {
+          return e.reviewsOf().map((r) => reviewLine(names.lesson(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : spLabel(r.speaker_id), by: memberKey(r.written_by) })).sort().join(" ; ") || "none";
+        } else if ("speakerReviews" in step) {
+          // by the lesson's day and times as the answer gives them: a lesson id of another year means nothing here
+          return e.speakerReviews(speakerId(step.speakerReviews)).map((r) => `${r.edition_label}|${r.day}|${r.start_min}-${r.end_min}|ia=${r.invite_again ?? "-"}|r=${r.rating ?? "-"}|ww=${r.went_well ?? "-"}`).join(" ; ") || "none";
+        } else if ("returning" in step) {
+          return e.returning().map((r) => `${spLabel(r.speaker_id)}:${r.editions.join(",")}`).join(" ; ") || "none";
+        } else if ("purge" in step) return purgeRead((step.edition == null ? e : onArchive(step.edition)).purgePrivate(step.purge));
         return "ok";
       } catch (err) {
+        if (err instanceof ImportRowError) return `${err.code}:${err.row}:${err.reason}`;
         if (err instanceof CommandError) return err.code;
         throw err;
       } finally {
@@ -328,7 +402,7 @@ export function engineDriver(): Driver {
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
         availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
-        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover)),
+        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover), week.edition.purged_at != null),
         links: shared.links
           .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -358,6 +432,29 @@ export function engineDriver(): Driver {
           ...Object.entries(shared.fallenContacts).map(([id, c]) => fallenContactsLine(`contacts|${fallenName(Number(id))}`, c)),
           ...week.memorialPlans.map((p) => planLine(fallenName(p.fallen_id), p.lesson_id == null ? "-" : key(p.lesson_id), p)),
         ].sort(),
+        archive: archives
+          .flatMap((a) => [
+            `edition|${a.edition.label}|${a.edition.kind}|${a.edition.status}|${a.edition.start_date ?? "-"}|rows=${a.rows.length}|purged=${a.edition.purged_at == null ? "-" : "y"}`,
+            ...a.rooms.map((r) => `room|${a.edition.label}|${r.name}|${r.sort}|${r.is_default}`),
+            ...a.lessons.map((l) => {
+              const who = a.lessonSpeakers.filter((x) => x.lesson_id === l.id).map((x) => `${speakerName(x.speaker_id)}:${x.role}`).sort().join(",");
+              const note = shared.importNotes[`${a.edition.id}:${l.id}`] ?? null;
+              return archiveLessonLine(a.edition.label, { ...l, import_note: note }, a.rooms.find((r) => r.id === l.room_id)!.name, cat(l.category_id), who);
+            }),
+            // «איך עבר» on an archive's lessons (a global admin's), by the lesson's place
+            ...shared.reviews
+              .filter((r) => r.edition_id === a.edition.id)
+              .map((r) => {
+                const l = a.lessons.find((x) => x.id === r.lesson_id);
+                const where = l ? `${a.edition.label}|${l.day}|${l.start_min}-${l.end_min}|${a.rooms.find((x) => x.id === l.room_id)!.name}` : `${a.edition.label}|#${r.lesson_id}`;
+                return reviewLine(where, { ...r, speaker: r.speaker_id == null ? "-" : sp(r.speaker_id), by: member(r.written_by) });
+              }),
+          ])
+          .sort(),
+        reviews: shared.reviews
+          .filter((r) => r.edition_id === week.edition.id)
+          .map((r) => reviewLine(key(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : sp(r.speaker_id), by: member(r.written_by) }))
+          .sort(),
       };
     },
 

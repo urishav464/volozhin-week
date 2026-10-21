@@ -243,11 +243,12 @@ test.describe("demo build", () => {
     const zip = await downloaded(page, () => page.getByRole("button", { name: "הורדת הארכיון של הדגמה" }).click());
     expect(zip.d.suggestedFilename()).toMatch(/^volozhin-archive-edition-1-\d{4}-\d{2}-\d{2}\.zip$/);
     const files = unzipSync(new Uint8Array(zip.bytes));
-    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "kk.json", "memorial.json", "sources.json", "speakers.json", "tracking.xlsx"]);
+    expect(Object.keys(files).sort()).toEqual(["PERSONAL-DATA_contacts_and_transport.json", "README.txt", "edition.json", "kk.json", "memorial.json", "reviews.json", "sources.json", "speakers.json", "tracking.xlsx"]);
+    expect(JSON.parse(strFromU8(files["reviews.json"])).reviews.length).toBeGreaterThan(0); // «איך עבר» (v12), as the admin reads it
     const edition = JSON.parse(strFromU8(files["edition.json"]));
     expect(edition.lessons.length).toBe(demoWeek().lessons.length);
     expect(edition.milestones.length).toBeGreaterThan(0);
-    for (const f of ["edition.json", "speakers.json", "kk.json", "memorial.json", "sources.json"]) {
+    for (const f of ["edition.json", "speakers.json", "kk.json", "memorial.json", "sources.json", "reviews.json"]) {
       expect(strFromU8(files[f]), f).not.toContain("טלפון לדוגמה");
       expect(strFromU8(files[f]), f).not.toContain("כתובת לדוגמה");
     }
@@ -421,6 +422,7 @@ test.describe("mock build", () => {
     sb.tables.set("transport_details", []);
     sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
     sb.answers.set("get_fallen_contacts", null); // asked for the fallen this edition planned for (the demo's: 1, 2, 3) — none stored
+    sb.answers.set("load_reviews", []); // v12: «איך עבר», as the caller reads it
     await nav(page).getByRole("link", { name: "הגדרות" }).click();
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());
@@ -431,7 +433,10 @@ test.describe("mock build", () => {
     expect(contacts.query.get("speaker_id")).toMatch(/^in\.\(/);
 
     expect(sb.rpc.get("get_fallen_contacts")).toEqual([{ p_fallen: 1 }, { p_fallen: 2 }, { p_fallen: 3 }]);
-    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen", "/rest/v1/rpc/get_fallen_contacts"]) {
+    const reviewsAsked = sb.rpc.get("load_reviews") ?? []; // the archive's read, and the «מעבר לשנה הבאה» checklist's on the same tab
+    expect(reviewsAsked.length).toBeGreaterThan(0);
+    for (const a of reviewsAsked) expect(a).toEqual({ p_edition: 7 });
+    for (const p of ["/rest/v1/rpc/get_contacts_for", "/rest/v1/export_snapshots", "/rest/v1/notes", "/rest/v1/milestones", "/rest/v1/activity", "/rest/v1/speaker_contacts", "/rest/v1/transport_details", "/rest/v1/rpc/load_kk", "/rest/v1/fallen", "/rest/v1/rpc/get_fallen_contacts", "/rest/v1/rpc/load_reviews"]) {
       authed(sb, p, session.access_token);
     }
   });

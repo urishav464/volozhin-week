@@ -44,6 +44,33 @@ export interface NewEdition {
 
 export type EditionPatch = Partial<Pick<Edition, "start_date" | "first_day_from">>;
 
+/** What public.purge_edition_private deleted (counts — never a value), and when the edition was first purged. */
+export interface PurgeReport {
+  transport_details: number;
+  /** Lessons whose import note (last year's sheet, the import of 5786 — an archive's lessons only) was cleared. */
+  import_notes: number;
+  links_revoked: number;
+  link_hits: number;
+  purged_at: string;
+}
+
+/**
+ * The dry run of start_edition (public.start_edition_preview): the editions it would archive, where the wording and
+ * the milestones would come from and how many, the grid rows, the members it would deactivate (with the option) and
+ * the admins who stay — and what stays across the years as it is. Counts and labels only.
+ */
+export interface StartPreview {
+  archive: { id: number; label: string }[];
+  carry_from: { id: number; label: string } | null;
+  grid_rows: number;
+  milestones: number;
+  confirm_template: boolean;
+  duty_phrases: number;
+  deactivate: number;
+  admins_stay: number;
+  stays: { speakers: number; categories: number; fallen: number; notes: number };
+}
+
 /** A lesson a trainee escorts — what deleting them from the roster would leave without an escort. */
 export interface EscortedLesson {
   id: number;
@@ -55,7 +82,18 @@ export interface EscortedLesson {
 
 export interface SettingsPort {
   // מחזור
-  startEdition(e: NewEdition): Promise<number>;
+  /**
+   * A new real edition; the live real one goes to the archive. `deactivateTeam` (v12): the archived editions' members
+   * who are not admins are deactivated (never deleted) — the screen offers it on, «הצעה».
+   */
+  startEdition(e: NewEdition, opts?: { deactivateTeam?: boolean }): Promise<number>;
+  /** The dry run: what startEdition would archive, copy and deactivate — writes nothing (a global admin). */
+  previewStart(deactivateTeam: boolean): Promise<StartPreview>;
+  /**
+   * After the week (a global admin): the edition's transport details deleted, its links revoked, `confirm` its label
+   * exactly (`confirm_mismatch`); only once the week is over or the edition archived (`week_not_over`). Idempotent.
+   */
+  purgeEdition(editionId: number, confirm: string): Promise<PurgeReport>;
   updateEdition(id: number, patch: EditionPatch): Promise<void>;
   // צוות
   /** The members of one edition, or (null) the all-editions rows. */

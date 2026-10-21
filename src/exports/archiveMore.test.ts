@@ -151,6 +151,21 @@ describe("reading the archive through the port", () => {
     expect(JSON.parse(strFromU8(files[PERSONAL_FILE])).family_contacts.map((c: { fallen_id: number }) => c.fallen_id)).toEqual([1]);
   });
 
+  it("keeps «איך עבר» (milestone 6) in reviews.json alone, with the speaker's name — in no other file of the zip", async () => {
+    const port = new DemoPort();
+    const { week, extras, more } = await gatherArchive(port, 1, touchedSpeakers);
+    expect(more.reviews?.length).toBe(3);
+    const files = archiveFiles({ week, extras, more, schemaVersion: 12, exportedAt: AT });
+    const reviews = JSON.parse(strFromU8(files["reviews.json"])).reviews as { speaker: string; invite_again: string; went_well: string | null }[];
+    expect(reviews.map((r) => [r.speaker, r.invite_again])).toEqual([["ד״ר מרצה 01", "yes"], ["פרופ׳ מרצה 03", "maybe"], ["הרב מרצה 21", "no"]]);
+    const text = reviews[0].went_well!;
+    for (const [name, bytes] of Object.entries(files)) if (name !== "reviews.json" && !name.endsWith(".xlsx")) expect(strFromU8(bytes), name).not.toContain(text);
+    expect(strFromU8(files["README.txt"])).toContain("reviews.json");
+    // not read (an older caller): no file, and the README says so
+    const without = archiveFiles({ week, extras, more: { ...more, reviews: null }, schemaVersion: 12, exportedAt: AT });
+    expect(without["reviews.json"]).toBeUndefined();
+  });
+
   it("fetches each file through a signed URL, names one that could not be read, and stops when cancelled", async () => {
     const w = demoWeek();
     const ok = file(w, { lesson_id: 1, storage_path: "1/1/ok" });

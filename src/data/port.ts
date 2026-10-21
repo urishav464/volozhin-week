@@ -1,10 +1,12 @@
 import type { Edition, Week } from "../domain/types";
 import type { WeekCommands } from "./commands";
+import type { ImportPort } from "./imports";
 import type { KkPort } from "./kk";
 import type { KnowledgePort } from "./knowledge";
 import type { LinksPort } from "./links";
 import type { MemorialPort } from "./memorial";
 import type { OutputsPort } from "./outputs";
+import type { ReviewsPort } from "./reviews";
 import type { SettingsPort } from "./settings";
 import type { SourcesPort } from "./sources";
 import type { SpeakerPort } from "./speakers";
@@ -60,4 +62,8 @@ export interface DataPort {
   readonly sources: SourcesPort;
   /** The fallen and their families' contacts (admins only), cross-year (src/data/memorial.ts); the edition's plans are commands. */
   readonly memorial: MemorialPort;
+  /** The import of 5786 — a global admin's: the pool to match against, the lookup, the commit (src/data/imports.ts). */
+  readonly imports: ImportPort;
+  /** «איך עבר» after the week (src/data/reviews.ts): the edition's, a save, a speaker's across the years, the returning speakers. */
+  readonly reviews: ReviewsPort;
 }

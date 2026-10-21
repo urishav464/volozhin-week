@@ -445,6 +445,7 @@ test.describe("mock build", () => {
     // the cross-year list: fallen 3 (planned here) and fallen 9 (another year's — no plan in this edition)
     sb.tables.set("fallen", [{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }, { id: 9, name: "חלל/ה לדוגמה 9", gender: null, note: null, active: false }]);
     sb.answers.set("get_fallen_contacts", null);
+    sb.answers.set("load_reviews", []); // v12: «איך עבר» goes into the archive too
     await page.goto(`${mockUrl()}/settings/edition`);
     await page.getByRole("checkbox", { name: "כולל קבצי המקורות" }).check();
     await expect(page.getByText("2 קבצים, כ-")).toBeVisible();

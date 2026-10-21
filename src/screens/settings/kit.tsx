@@ -1,7 +1,7 @@
 // Small shared pieces of the settings screens: the context every tab reads,
 // one way to run an action (progress → toast in Hebrew), and the form parts.
 // Phone first: one column, every control at least 44px tall.
-import { type ButtonHTMLAttributes, createContext, type ReactNode, useCallback, useContext, useState } from "react";
+import { type ButtonHTMLAttributes, createContext, type ReactNode, type Ref, useCallback, useContext, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { SettingsPort } from "../../data/settings";
 import type { Me } from "../../data/types";
@@ -76,10 +76,17 @@ export function Button({
   busyLabel = "רגע…",
   className = "",
   children,
+  ref,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { kind?: keyof typeof BUTTON; busy?: boolean; busyLabel?: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  kind?: keyof typeof BUTTON;
+  busy?: boolean;
+  busyLabel?: string;
+  ref?: Ref<HTMLButtonElement>;
+}) {
   return (
     <button
+      ref={ref}
       type="button"
       {...rest}
       disabled={rest.disabled || busy}

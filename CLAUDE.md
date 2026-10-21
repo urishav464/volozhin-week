@@ -49,7 +49,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `supabase/schema.sql`: it REVOKEs everything from `anon`/`authenticated` and grants back an
   explicit list at the end of the file. `tests/sql/schema.test.ts` pins the exact set of
   functions each role may execute — a new browser-callable function means updating that list
-  on purpose. Helpers live in schema `app` (not exposed); browser RPCs in `public`.
+  on purpose — that every function in `public` and `app` pins its `search_path`, and that anon's
+  SECURITY DEFINER functions are exactly the six link functions (SETUP «Security Advisor» says which
+  advisor warnings remain, and why). Helpers live in schema `app` (not exposed); browser RPCs in `public`.
 - **Schema changes:** edit `supabase/schema.sql` (it must stay idempotent — the owner re-runs the
   whole file in the SQL Editor), bump `public.schema_version()` **and**
   `src/lib/schema.ts → EXPECTED_SCHEMA_VERSION` in the same commit, and tell the user to re-run it.
@@ -116,7 +118,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **Links without an account and מכריכה לכריכה (milestone 5a, schema v9):** `share_links` (a token's sha256
   only; issued, replaced, revoked by an edition's admins — `port.links`, `src/data/links.ts`), the escorts'
   ticks (`escortTicks` in the Week) and the kk tables (`port.kk`, `src/data/kk.ts`: all writes are functions).
-  **anon's whole reach is `ping` and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
+  **anon's whole reach is `ping` (invoker since v12) and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
   kk_form kk_signup schedule_view`), keyed by a token alone; every link problem is the one refusal
   `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its one accepted
   residual: «full» after a sign-up — CONTRACT). The rate limit: an escort's link one count; a class link one per
@@ -205,6 +207,68 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   only) — never a family's contact (`PERSONAL_KEYS` has `contact_name`/`relation`; `tests/sql/memorial.test.ts` runs
   `assertWeekOnly` on `load_week`); offline a memorial card opens its plan to read, and any other address (`/memorial`,
   `/logistics`, …) says it needs a connection over the day view (`view.ts` `sectionNeedingConnection`).
+- **The import of 5786 (schema v12):** `src/import/` — the readers (a paste: `clipboard.ts` → `html.ts`, DOMParser
+  into an inert document, text nodes only, or `table.ts` TSV; `xlsxRead.ts` and `docxRead.ts` of our own on
+  `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says, and every
+  reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
+  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
+  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
+  first five rows (`findHeaderRow`, the admin may choose another); the escorts' column is ASKED for, never guessed —
+  always in the escorts' file, in the tracking sheet and the candidates when a header or a first row looks like one
+  (`escortLike`) — and never mappable in any kind (`escortColumns` a guard besides)), matching (`match.ts`) and the
+  three kinds (`candidates.ts`, `tracking.ts`, `escorts.ts`; a speaker cell's other names are `lines.ts` ExtraLines in
+  both of the first two — a line under the name, a name beside it, a bracket at its end and what follows «, », a spaced
+  dash or «והרב…» on its own line (`nameTails` in `speakerName.ts`: the name is matched without them; the escorts'
+  file matches the bare name): «מרצה נוסף/ת» · «שיוך מוסדי» · «לא לייבא», proposed only for an institution's word,
+  a line that IS one escort's name (`allOfOneEscort`) or speaks of one, and in the tracking sheet a co-speaker beside
+  the first — a line that only shares a word with an escort's name is `held`, undecided, said in red). **«עריכה»**
+  (`edit.ts`, DECISIONS «סבב שישי»): the admin corrects a speaker card's name, title and affiliation; the readers apply
+  it (candidates by the row's ref, the tracking sheet by the key as read), so it is matched again and checked again.
+  **The escorts' file sends nothing of the file** (DECISIONS «סבב רביעי»): a channel chosen from a fixed list
+  (`IMPORT_CHANNELS`, the phrases only suggest it) and the admin's own note — `import_commit` refuses an escorts' row
+  with any other key. **A phone or an e-mail lands only in phone / email:** the wizard takes it out of every other
+  field (`stripContacts`; a note's are replaced, `scrubContacts`), attaching one only when unambiguous, and
+  `import_commit` refuses one anywhere else (`app.has_contact` ≡ `hasContact` on the text folded alike — every digit
+  ASCII, format characters out: `app.contact_fold` ≡ `foldContact` — `contact_in_text`). A phone in text is one by
+  Israel's numbering plan (+972 / 00972 of a fixed length, tried first), abroad («+»/«00» and 8–15 digits) or 7–15
+  digits beside «טל'»/«נייד»/☎ — never «any seven digits», never from a date's day, month or year (`PHONE`; verses,
+  dates, times, prices are text; a number's rest leaves with it, `REST`; its residuals in DECISIONS «סבב שישי»);
+  `src/import/privacy.property.test.ts` holds both privacy invariants on thousands of seeded random tables.
+  `port.imports` (`src/data/imports.ts`, `importRules.ts`) → `import_lookup` (booleans, never a contact's value) and
+  `import_commit` — a global admin's, SECURITY DEFINER, one transaction, every row or none (`import_bad_row`
+  «row:reason»), fill-empty only, re-runnable (schema.sql «Import 5786»; CONTRACT «The import of 5786»; the engine's
+  `importCommit` behind DemoPort). The wizard is «הגדרות ← ייבוא» (`src/screens/settings/ImportTab.tsx`,
+  `importParts.tsx`); **nothing raw is stored** — not in the database, not in the browser (the e2e checks the
+  storage). A `new` row is never resolved by a phone alone (two names on one line are two people): the preview's
+  `sheetMatches` makes rows of one table that share a phone or a name 0.6 alike «עמום» («כמו שורה N»,
+  `resolveChoice`; the tracking sheet's `speakerAliases`). An archive's label is compared by `app.label_key` ≡
+  `labelKey`. The sheet's notes are `lesson_import_notes` — the transport details' rule (`app.may_see_transport`),
+  one lesson at a time (`get_import_note`, `cmds.importNote`; `shared.importNotes` in the engine), never in a Week,
+  Realtime or the offline copy (`import_note` is a `PERSONAL_KEYS` key); «אישור באצווה: מי שלימד/ה ב-…» is
+  `pendingWhoTaught` (`src/domain/mine.ts`) in `/approvals` (DECISIONS «ייבוא תשפ"ו», «ביקורת: ייבוא ואבן דרך 6»).
+- **After the week (milestone 6, schema v12):** `lesson_reviews` — «איך עבר», one per closed lesson, written only
+  through `save_lesson_review` by the lesson's handler (once the day the lesson ENDS on has passed in Israel time:
+  `app.review_opens_on` ≡ `reviewOpensOn` in `src/domain/reviews.ts`; never while the date is TBD) or an edition admin
+  (always); read by the edition's admins and content (`load_reviews`, invoker) — never logistics, a link, the designer's
+  export, `load_week`, Realtime or the offline copy. Across years `speaker_reviews` (`app.may_read_reviews`: a global
+  admin, or admin/content of a live real edition; past years + the reader's own live one; never who wrote it).
+  `port.reviews` (`src/data/reviews.ts`, `supabaseReviews.ts`, `demoReviews.ts`; the engine's `saveReview` /
+  `speakerReviews` / `returning` / `purgePrivate`, parity-tested). Screens: the lesson panel's sixth section
+  (`src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged), the speaker sheet's
+  `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
+  `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
+  Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
+  every link, deletes the edition's `lesson_import_notes`, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
+  keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
+  checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
+  «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v11 (50ff373).
+- **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
+  (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
+  label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
+  `import_note` (the sheet's transport/payment words); `start_edition`'s previous edition is `kind = 'real'` only. The
+  parity engine sees the import's archives as `elsewhere`. Tests: `tests/sql/importAfter.test.ts`,
+  `src/data/importAfter.test.ts`, parity «the import meets after the week».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

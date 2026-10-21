@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
 import { addTrainee } from "../testing/week";
-import { MINE_GROUPS, mySpeakers, nextStep, pendingPayments, pendingSpeakers, waitingForApproval } from "./mine";
+import { MINE_GROUPS, mySpeakers, nextStep, pendingPayments, pendingSpeakers, pendingWhoTaught, waitingForApproval } from "./mine";
 
 describe("«המרצים שלי»", () => {
   it("groups my speakers by the next step, and puts an offer to me first", () => {
@@ -40,6 +40,18 @@ describe("«המרצים שלי»", () => {
     Object.assign(addSpeaker(w, null, "ג"), { vetted: "pending", retired: true });
     addSpeaker(w, "m", "ד");
     expect(pendingSpeakers(w).map((s) => s.name)).toEqual(["א", "ב"]);
+  });
+
+  it("the batch approve of an archive: the pending speakers who taught one of its closed lessons, lead or co — not a draft's, not an approved one", () => {
+    const pool = emptyWeek();
+    const [lead, co, draftOnly, , approved] = ["א", "ב", "ג", "ד", "ה"].map((n) => addSpeaker(pool, null, n));
+    [lead, co, draftOnly].concat(pool.speakers[3]).forEach((s) => (s.vetted = "pending"));
+    const archive = emptyWeek();
+    closeWith(archive, addLesson(archive, 1, 510, 600), lead, co, approved);
+    const draft = addLesson(archive, 2, 510, 600);
+    archive.lessonSpeakers.push({ lesson_id: draft.id, speaker_id: draftOnly.id, role: "lead" });
+    expect(pendingWhoTaught(pendingSpeakers(pool), archive).map((s) => s.name)).toEqual(["א", "ב"]);
+    expect(pendingWhoTaught(pendingSpeakers(pool), emptyWeek())).toEqual([]);
   });
 
   it("gives every group one next step, and none once they declined", () => {

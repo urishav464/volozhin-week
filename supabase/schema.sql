@@ -35,11 +35,13 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 -- Schema version. The app compares it with EXPECTED_SCHEMA_VERSION
 -- (src/lib/schema.ts) and shows «צריך להריץ שוב את schema.sql» on a mismatch.
--- Bump BOTH in the same commit as any structural change.
+-- Bump BOTH in the same commit as any structural change. v12: its search_path
+-- pinned too (Security Advisor, lint 0011) — every function here pins one
+-- (tests/sql/schema.test.ts).
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
-  language sql immutable
-  as $$ select 11 $$;
+  language sql immutable set search_path = ''
+  as $$ select 12 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -207,9 +209,11 @@ create policy members_admin_write on public.members
 -- -----------------------------------------------------------------------------
 
 -- The keep-alive ping (GitHub Actions, daily). With the public links' six
--- functions (v9, below), the whole of what anon may run.
+-- functions (v9, below), the whole of what anon may run. It reads nothing, so
+-- since v12 it runs as the caller (SECURITY INVOKER): anon's SECURITY DEFINER
+-- functions are exactly the six token-gated link functions.
 create or replace function public.ping() returns text
-  language sql stable security definer set search_path = ''
+  language sql stable security invoker set search_path = ''
   as $$ select 'ok'::text $$;
 
 -- Who am I? One round trip that decides which screen a signed-in browser
@@ -1199,7 +1203,15 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
 
 -- A new real edition, from the template: rows copied, the default room, the
 -- previous real edition archived (read-only for non-admins). Admin only.
-create or replace function public.start_edition(p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש')
+-- v12: p_deactivate_team — the editions archived here lose their non-admin
+-- members (content, logistics: active = false, never deleted — their history
+-- stays); their admins and every all-editions member stay. The screen offers it
+-- on by default («הצעה»: the instructor has not decided — DECISIONS «אבן דרך 6»);
+-- here it is off unless asked. public.start_edition_preview (Milestone 6, below)
+-- answers what this would do, writing nothing.
+drop function if exists public.start_edition(text, date, integer, text);   -- v11's signature
+create or replace function public.start_edition(
+  p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש', p_deactivate_team boolean default false)
   returns bigint
   language plpgsql security definer set search_path = ''
   as $$
@@ -1215,6 +1227,11 @@ create or replace function public.start_edition(p_label text, p_start_date date,
     -- edition starts without them. v8: so do its milestones (title and W−n,
     -- none of them done yet) — public.milestones is created further down.
     select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
+    if coalesce(p_deactivate_team, false) then
+      update public.members set active = false
+       where active and role <> 'admin'
+         and edition_id in (select id from public.editions where kind = 'real' and status <> 'archived');
+    end if;
     update public.editions set status = 'archived' where kind = 'real' and status <> 'archived';
     insert into public.editions (label, kind, start_date, first_day_from, settings)
     values (p_label, 'real', p_start_date, p_first_day_from,
@@ -1258,7 +1275,7 @@ create index if not exists activity_actor on public.activity (actor);
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
 -- read the tables created further down: notes, milestones, export_snapshots (v8),
--- share_links (v9), source_files (v10), memorial_plans (v11).)
+-- share_links (v9), source_files (v10), memorial_plans (v11), lesson_reviews (v12).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1274,7 +1291,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.export_snapshots where created_by = p_member)
         or exists (select 1 from public.share_links where created_by = p_member)
         or exists (select 1 from public.source_files where uploaded_by = p_member)
-        or exists (select 1 from public.memorial_plans where updated_by = p_member);
+        or exists (select 1 from public.memorial_plans where updated_by = p_member)
+        or exists (select 1 from public.lesson_reviews where written_by = p_member);   -- v12
   end
   $$;
 
@@ -4665,6 +4683,942 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
   $$;
 
 
+-- =============================================================================
+-- Import 5786 (v12) — last year's files (תשפ"ו) into the database, through the
+-- browser only. Semantics: docs/CONTRACT.md «The import of 5786»; the in-memory
+-- twin is src/data/engine.ts (importCommit), held to this by tests/parity.
+--
+-- The files themselves never reach the server: the wizard («הגדרות ← ייבוא»)
+-- reads a paste or an .xlsx/.docx in the page, the admin maps, reviews and
+-- decides, and only the reviewed rows arrive here, as one payload, in one
+-- transaction — every row or none. A GLOBAL ADMIN only: it writes the cross-year
+-- speaker pool and makes an archive edition.
+--   import_lookup   which pool speaker has a phone (by app.phone_key — the
+--                   browser's phoneKey, src/import/phone.ts), and which contact
+--                   fields of some speakers are filled: booleans, never a value
+--   import_commit   'candidates' → the pool (source as typed, vetted pending)
+--                   'tracking'   → an archive edition of closed lessons (kind
+--                                  'archive', status 'archived'); the same label
+--                                  again REPLACES that edition's lessons — unless
+--                                  someone wrote «איך עבר» on one of them
+--                                  (`archive_reviewed`: a review goes with its
+--                                  lesson, and is never lost to a re-run)
+--                   'escorts'    → contact_pref and speaker_contacts.secretary_note: the
+--                                  channel the admin chose from a fixed list, the
+--                                  note the admin typed — never the file's text
+-- Re-runnable: a 'new' speaker whose name key the pool already has completes
+-- that speaker instead of adding a second one. A phone is never a reason to
+-- merge on its own: the preview shows a phone the pool has («אותו טלפון כמו …»)
+-- and the browser sends that row as an explicit 'merge' — two people who share
+-- a line (a couple, an office) are two speakers. A match only FILLS what is
+-- empty, never overwrites — and never a gender the speaker's own title
+-- contradicts, nor a title that contradicts the speaker's gender. Gender only as the title says (הרב m, הרבנית f). Phones and
+-- e-mails only in speaker_contacts. The log keeps ids, counts and field names —
+-- never a name, a phone or a note. An archive's label is compared by
+-- app.label_key (quote marks and spaces aside) and stored in that form.
+-- lesson_import_notes: what last year's sheet said about a lesson that has no
+-- field of its own (transport/payment words, who sent the summary message),
+-- cleared of phones and e-mails in the browser (scrubContacts). Transport words
+-- are personal data: the table has the transport details' rule
+-- (app.may_see_transport — for an archive, a global admin only), is read one
+-- lesson at a time (get_import_note), never in load_week, Realtime or the
+-- device's offline copy, and purge_edition_private (Milestone 6) deletes it.
+-- =============================================================================
+
+create table if not exists public.lesson_import_notes (
+  lesson_id  bigint primary key references public.lessons (id) on delete cascade,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  note       text not null check (char_length(note) between 1 and 1000)
+);
+create index if not exists lesson_import_notes_edition on public.lesson_import_notes (edition_id);
+alter table public.lesson_import_notes enable row level security;
+drop policy if exists lesson_import_notes_read on public.lesson_import_notes;
+create policy lesson_import_notes_read on public.lesson_import_notes for select to authenticated
+  using (app.may_see_transport(lesson_import_notes.lesson_id));
+
+-- A lesson's import note, through the policy (invoker): NULL when there is none
+-- or it is not the caller's to see (get_transport_details' rule).
+create or replace function public.get_import_note(p_lesson bigint) returns text
+  language sql stable security invoker set search_path = ''
+  as $$ select n.note from public.lesson_import_notes n where n.lesson_id = p_lesson and app.may_see_transport(p_lesson) $$;
+
+-- An archive edition's label as the import compares (and stores) it: the
+-- Hebrew and typographic quote marks as ASCII (״ “ ” ″ → ", ׳ ‘ ’ → '), spaces
+-- single (src/data/importRules.ts labelKey holds the same).
+create or replace function app.label_key(p text) returns text
+  language sql immutable set search_path = ''
+  as $$
+    select btrim(regexp_replace(translate(coalesce(p, ''), '״“”″׳‘’', '""""'''''''), '[ \t\n\r\f\v]+', ' ', 'g'))
+  $$;
+
+-- A phone's comparison key (src/import/phone.ts phoneKey holds the same):
+-- digits; 972 / 00972 (and a 0 after it) as a leading 0; a leading 0 a number
+-- cell dropped (8–9 digits) given back; NULL under 6 digits.
+create or replace function app.phone_key(p text) returns text
+  language sql immutable set search_path = ''
+  as $$
+    select case when length(k) >= 6 then k end
+      from (select case
+                     when d ~ '^(00)?972' then '0' || regexp_replace(regexp_replace(d, '^(00)?972', ''), '^0', '')
+                     when length(d) in (8, 9) and d !~ '^0' then '0' || d
+                     else d
+                   end as k
+              from (select regexp_replace(coalesce(p, ''), '[^0-9]', '', 'g') as d) a) b
+  $$;
+
+-- A phone or an e-mail inside text (src/import/phone.ts foldContact and hasContact hold the same — the same
+-- expressions and lists, written out, held equal by tests/sql/import.test.ts). The text is folded first
+-- (app.contact_fold): what shows nothing out (Unicode's format characters — bidi controls, zero widths, the soft
+-- hyphen, tags — NEL and U+180E) and every decimal digit of every script as its ASCII digit (٠, ０ → 0). Then: an
+-- e-mail (no space, @, <, >, ( or ) around an @ — «@@» and «＠» too — and a dot after it; or, in the usual letters,
+-- spaces around the @ and the dots); or a phone by Israel's numbering plan, never «any seven digits» (DECISIONS «סבב
+-- חמישי»): an Israeli number (0 and 2/3/4/8/9 and seven digits, or 5/7 and eight; 972, +972 or 00972 before it, a 0
+-- after it or not — tried first, its length fixed; 1-700, 1-800, 1-599 and six digits), a number abroad («+» or «00»
+-- and 8–15 digits), or 7–15 digits — or a star number — beside a word that says a phone («טל'», «טלפון», «נייד», «פקס»,
+-- tel, phone, ☎…). Its digits apart by spaces, dashes, brackets, «·», «•», «‧», «_», «|», «;», «,» before a digit, «.»
+-- and «/» unless between two groups of one or two digits, «:» only between groups of three; never starting inside a
+-- number, after «20:» or «1,», at a time, at a date with a four-digit year, or at the day, month or year of a
+-- two-digit-year date written with dashes or spaces («04-05-26», DECISIONS «סבב שישי»), nor ending at a time's hour.
+-- Verses, dates, times, pages, prices and years are text. White space is written out: [[:space:]] would depend on the locale. The import's backstop: a contact is kept
+-- in speaker_contacts' phone and e-mail only («contact_in_text»).
+create or replace function app.contact_fold(p text) returns text
+  language sql immutable set search_path = ''
+  as $$ select translate(regexp_replace(coalesce(p, ''), '[\u0085\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]', '', 'g'), U&'\0660\0661\0662\0663\0664\0665\0666\0667\0668\0669\06f0\06f1\06f2\06f3\06f4\06f5\06f6\06f7\06f8\06f9\07c0\07c1\07c2\07c3\07c4\07c5\07c6\07c7\07c8\07c9\0966\0967\0968\0969\096a\096b\096c\096d\096e\096f\09e6\09e7\09e8\09e9\09ea\09eb\09ec\09ed\09ee\09ef\0a66\0a67\0a68\0a69\0a6a\0a6b\0a6c\0a6d\0a6e\0a6f\0ae6\0ae7\0ae8\0ae9\0aea\0aeb\0aec\0aed\0aee\0aef\0b66\0b67\0b68\0b69\0b6a\0b6b\0b6c\0b6d\0b6e\0b6f\0be6\0be7\0be8\0be9\0bea\0beb\0bec\0bed\0bee\0bef\0c66\0c67\0c68\0c69\0c6a\0c6b\0c6c\0c6d\0c6e\0c6f\0ce6\0ce7\0ce8\0ce9\0cea\0ceb\0cec\0ced\0cee\0cef\0d66\0d67\0d68\0d69\0d6a\0d6b\0d6c\0d6d\0d6e\0d6f\0de6\0de7\0de8\0de9\0dea\0deb\0dec\0ded\0dee\0def\0e50\0e51\0e52\0e53\0e54\0e55\0e56\0e57\0e58\0e59\0ed0\0ed1\0ed2\0ed3\0ed4\0ed5\0ed6\0ed7\0ed8\0ed9\0f20\0f21\0f22\0f23\0f24\0f25\0f26\0f27\0f28\0f29\1040\1041\1042\1043\1044\1045\1046\1047\1048\1049\1090\1091\1092\1093\1094\1095\1096\1097\1098\1099\17e0\17e1\17e2\17e3\17e4\17e5\17e6\17e7\17e8\17e9\1810\1811\1812\1813\1814\1815\1816\1817\1818\1819\1946\1947\1948\1949\194a\194b\194c\194d\194e\194f\19d0\19d1\19d2\19d3\19d4\19d5\19d6\19d7\19d8\19d9\1a80\1a81\1a82\1a83\1a84\1a85\1a86\1a87\1a88\1a89\1a90\1a91\1a92\1a93\1a94\1a95\1a96\1a97\1a98\1a99\1b50\1b51\1b52\1b53\1b54\1b55\1b56\1b57\1b58\1b59\1bb0\1bb1\1bb2\1bb3\1bb4\1bb5\1bb6\1bb7\1bb8\1bb9\1c40\1c41\1c42\1c43\1c44\1c45\1c46\1c47\1c48\1c49\1c50\1c51\1c52\1c53\1c54\1c55\1c56\1c57\1c58\1c59\a620\a621\a622\a623\a624\a625\a626\a627\a628\a629\a8d0\a8d1\a8d2\a8d3\a8d4\a8d5\a8d6\a8d7\a8d8\a8d9\a900\a901\a902\a903\a904\a905\a906\a907\a908\a909\a9d0\a9d1\a9d2\a9d3\a9d4\a9d5\a9d6\a9d7\a9d8\a9d9\a9f0\a9f1\a9f2\a9f3\a9f4\a9f5\a9f6\a9f7\a9f8\a9f9\aa50\aa51\aa52\aa53\aa54\aa55\aa56\aa57\aa58\aa59\abf0\abf1\abf2\abf3\abf4\abf5\abf6\abf7\abf8\abf9\ff10\ff11\ff12\ff13\ff14\ff15\ff16\ff17\ff18\ff19\+0104a0\+0104a1\+0104a2\+0104a3\+0104a4\+0104a5\+0104a6\+0104a7\+0104a8\+0104a9\+010d30\+010d31\+010d32\+010d33\+010d34\+010d35\+010d36\+010d37\+010d38\+010d39\+010d40\+010d41\+010d42\+010d43\+010d44\+010d45\+010d46\+010d47\+010d48\+010d49\+011066\+011067\+011068\+011069\+01106a\+01106b\+01106c\+01106d\+01106e\+01106f\+0110f0\+0110f1\+0110f2\+0110f3\+0110f4\+0110f5\+0110f6\+0110f7\+0110f8\+0110f9\+011136\+011137\+011138\+011139\+01113a\+01113b\+01113c\+01113d\+01113e\+01113f\+0111d0\+0111d1\+0111d2\+0111d3\+0111d4\+0111d5\+0111d6\+0111d7\+0111d8\+0111d9\+0112f0\+0112f1\+0112f2\+0112f3\+0112f4\+0112f5\+0112f6\+0112f7\+0112f8\+0112f9\+011450\+011451\+011452\+011453\+011454\+011455\+011456\+011457\+011458\+011459\+0114d0\+0114d1\+0114d2\+0114d3\+0114d4\+0114d5\+0114d6\+0114d7\+0114d8\+0114d9\+011650\+011651\+011652\+011653\+011654\+011655\+011656\+011657\+011658\+011659\+0116c0\+0116c1\+0116c2\+0116c3\+0116c4\+0116c5\+0116c6\+0116c7\+0116c8\+0116c9\+0116d0\+0116d1\+0116d2\+0116d3\+0116d4\+0116d5\+0116d6\+0116d7\+0116d8\+0116d9\+0116da\+0116db\+0116dc\+0116dd\+0116de\+0116df\+0116e0\+0116e1\+0116e2\+0116e3\+011730\+011731\+011732\+011733\+011734\+011735\+011736\+011737\+011738\+011739\+0118e0\+0118e1\+0118e2\+0118e3\+0118e4\+0118e5\+0118e6\+0118e7\+0118e8\+0118e9\+011950\+011951\+011952\+011953\+011954\+011955\+011956\+011957\+011958\+011959\+011bf0\+011bf1\+011bf2\+011bf3\+011bf4\+011bf5\+011bf6\+011bf7\+011bf8\+011bf9\+011c50\+011c51\+011c52\+011c53\+011c54\+011c55\+011c56\+011c57\+011c58\+011c59\+011d50\+011d51\+011d52\+011d53\+011d54\+011d55\+011d56\+011d57\+011d58\+011d59\+011da0\+011da1\+011da2\+011da3\+011da4\+011da5\+011da6\+011da7\+011da8\+011da9\+011de0\+011de1\+011de2\+011de3\+011de4\+011de5\+011de6\+011de7\+011de8\+011de9\+011f50\+011f51\+011f52\+011f53\+011f54\+011f55\+011f56\+011f57\+011f58\+011f59\+016130\+016131\+016132\+016133\+016134\+016135\+016136\+016137\+016138\+016139\+016a60\+016a61\+016a62\+016a63\+016a64\+016a65\+016a66\+016a67\+016a68\+016a69\+016ac0\+016ac1\+016ac2\+016ac3\+016ac4\+016ac5\+016ac6\+016ac7\+016ac8\+016ac9\+016b50\+016b51\+016b52\+016b53\+016b54\+016b55\+016b56\+016b57\+016b58\+016b59\+016d70\+016d71\+016d72\+016d73\+016d74\+016d75\+016d76\+016d77\+016d78\+016d79\+01ccf0\+01ccf1\+01ccf2\+01ccf3\+01ccf4\+01ccf5\+01ccf6\+01ccf7\+01ccf8\+01ccf9\+01d7ce\+01d7cf\+01d7d0\+01d7d1\+01d7d2\+01d7d3\+01d7d4\+01d7d5\+01d7d6\+01d7d7\+01d7d8\+01d7d9\+01d7da\+01d7db\+01d7dc\+01d7dd\+01d7de\+01d7df\+01d7e0\+01d7e1\+01d7e2\+01d7e3\+01d7e4\+01d7e5\+01d7e6\+01d7e7\+01d7e8\+01d7e9\+01d7ea\+01d7eb\+01d7ec\+01d7ed\+01d7ee\+01d7ef\+01d7f0\+01d7f1\+01d7f2\+01d7f3\+01d7f4\+01d7f5\+01d7f6\+01d7f7\+01d7f8\+01d7f9\+01d7fa\+01d7fb\+01d7fc\+01d7fd\+01d7fe\+01d7ff\+01e140\+01e141\+01e142\+01e143\+01e144\+01e145\+01e146\+01e147\+01e148\+01e149\+01e2f0\+01e2f1\+01e2f2\+01e2f3\+01e2f4\+01e2f5\+01e2f6\+01e2f7\+01e2f8\+01e2f9\+01e4f0\+01e4f1\+01e4f2\+01e4f3\+01e4f4\+01e4f5\+01e4f6\+01e4f7\+01e4f8\+01e4f9\+01e5f1\+01e5f2\+01e5f3\+01e5f4\+01e5f5\+01e5f6\+01e5f7\+01e5f8\+01e5f9\+01e5fa\+01e950\+01e951\+01e952\+01e953\+01e954\+01e955\+01e956\+01e957\+01e958\+01e959\+01fbf0\+01fbf1\+01fbf2\+01fbf3\+01fbf4\+01fbf5\+01fbf6\+01fbf7\+01fbf8\+01fbf9', '0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789') $$;
+
+create or replace function app.has_contact(p text) returns boolean
+  language sql immutable set search_path = ''
+  as $$
+    select f.t ~ '(?:[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+[@\uff20]+[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+\.[^ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff@\uff20<>()]+|[A-Za-z0-9._%+-]+[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[@\uff20](?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[@\uff20])*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z0-9-]+(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\.[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z0-9-]+)*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\.[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[A-Za-z]{2,})'
+        or f.t ~ '(?=[(+*0-9])(?:\([ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*)?(?:(?<![0-9])(?<![0-9][:.,])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-)|(?!(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-)|(?![0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) )|(?!(?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) )|(?![0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|(?:(?:\+|0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0)(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*2(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|1(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|8(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|5(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9)(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){6})|(?<![0-9])\+(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9](?:(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))+(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?!(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|(?:(?:\+|0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0)(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*2(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|1(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|8(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|5(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9)(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){6})(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))))?[0-9]){7,14}|(?<![0-9])(?<![0-9][:.,])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-)|(?!(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-)|(?![0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) )|(?!(?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) )|(?![0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))+(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?!(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|(?:(?:\+|0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0)(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*2(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|1(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|8(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|5(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9)(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){6})(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))))?[0-9]){6,13}|(?<=(?:(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc\u05e4\u05d5\u05df|\u05e0\u05d9\u05d9\u05d3|\u05e4\u05dc\u05d0\u05e4\u05d5\u05df|\u05e1\u05dc\u05d5\u05dc\u05e8\u05d9|\u05e4\u05e7\u05e1)(?![A-Za-z\u05d0-\u05ea])|(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc|\u05e4\u05dc)[\u0027\u05f3.:]|(?<![A-Za-z])(?:[Tt][Ee][Ll](?:[Ee][Pp][Hh][Oo][Nn][Ee])?|[Pp][Hh][Oo][Nn][Ee]|[Mm][Oo][Bb](?:[Ii][Ll][Ee])?|[Ff][Aa][Xx]|[Cc][Ee][Ll][Ll])(?![A-Za-z])|\u260e|\u260f|📞|📱)[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().:,;/|*#=>\u0027\u0022\u05f3\u05f4\ufe0f-]{0,4})(?:\+(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?<![0-9])(?<![0-9][:.,])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-)|(?!(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-)|(?![0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) )|(?!(?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) )|(?![0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))[0-9](?:(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))+(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?!(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|(?:(?:\+|0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0)(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*2(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|1(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|8(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|5(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9)(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){6})(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))))?[0-9]){6,14}|(?<![0-9])(?<![0-9][:.,])(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-)|(?!(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9-]|[^0-9]-)(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-)|(?![0-9]{2}(?![0-9])(?!-[0-9])))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) )|(?!(?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))(?:(?<!(?:^|[^0-9 ]|[^0-9] )(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) )|(?![0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9]))))[0-9](?:(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_-]|(?<=[0-9])[,;|](?=[0-9])|(?<=[0-9]{3})/(?=[0-9])|(?<=[0-9])(?<![0-9]{3})/(?=[0-9]{3})|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))+(?![0-9]{1,2}[:.][0-9]{2}(?![0-9]))(?![0-9]{1,2}[./-](?:[0-9]{1,2}[./-])?(?:1[89]|20)[0-9]{2}(?![0-9]))(?!(?:1[89]|20)[0-9]{2}[./-][0-9]{1,2}[./-][0-9]{1,2}(?![0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01])-(?:0?[1-9]|1[0-2])-[0-9]{2}(?![0-9])(?!-[0-9]))(?!(?:0?[1-9]|[12][0-9]|3[01]) (?:0?[1-9]|1[0-2]) [0-9]{2}(?![0-9])(?! [0-9]{2} [0-9]{1,2}(?![0-9])))(?!(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|(?:(?:\+|0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0)(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*2(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*)?(?:[23489](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){7}|[57](?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){8})|1(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*(?:7(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|8(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*0|5(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*9)(?:(?:[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d()\u00b7\u2022\u2027_|;-]|,(?=[0-9])|/(?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})/(?=[0-9]{1,2}(?![0-9]))|[.](?![0-9]{1,2}(?![0-9]))|(?<=[0-9]{3})[.](?=[0-9]{1,2}(?![0-9]))|(?<=[0-9]{3}):(?=[0-9]{3}))*[0-9]){6})(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))))?[0-9]){6,14}(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))(?=[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().:,;/|*#=>\u0027\u0022\u05f3\u05f4\ufe0f-]{0,4}(?:(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc\u05e4\u05d5\u05df|\u05e0\u05d9\u05d9\u05d3|\u05e4\u05dc\u05d0\u05e4\u05d5\u05df|\u05e1\u05dc\u05d5\u05dc\u05e8\u05d9|\u05e4\u05e7\u05e1)(?![A-Za-z\u05d0-\u05ea])|(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc|\u05e4\u05dc)[\u0027\u05f3.:]|(?<![A-Za-z])(?:[Tt][Ee][Ll](?:[Ee][Pp][Hh][Oo][Nn][Ee])?|[Pp][Hh][Oo][Nn][Ee]|[Mm][Oo][Bb](?:[Ii][Ll][Ee])?|[Ff][Aa][Xx]|[Cc][Ee][Ll][Ll])(?![A-Za-z])|\u260e|\u260f|📞|📱))|(?<=(?:(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc\u05e4\u05d5\u05df|\u05e0\u05d9\u05d9\u05d3|\u05e4\u05dc\u05d0\u05e4\u05d5\u05df|\u05e1\u05dc\u05d5\u05dc\u05e8\u05d9|\u05e4\u05e7\u05e1)(?![A-Za-z\u05d0-\u05ea])|(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc|\u05e4\u05dc)[\u0027\u05f3.:]|(?<![A-Za-z])(?:[Tt][Ee][Ll](?:[Ee][Pp][Hh][Oo][Nn][Ee])?|[Pp][Hh][Oo][Nn][Ee]|[Mm][Oo][Bb](?:[Ii][Ll][Ee])?|[Ff][Aa][Xx]|[Cc][Ee][Ll][Ll])(?![A-Za-z])|\u260e|\u260f|📞|📱)[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().:,;/|*#=>\u0027\u0022\u05f3\u05f4\ufe0f-]{0,4})(?:\*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{4}|(?<![0-9])[0-9]{4}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\*)|(?:\*[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[0-9]{4}|(?<![0-9])[0-9]{4}[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\*)(?![0-9])(?=[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u05be\u2010-\u2015\u2212\ufe58\ufe63\uff0d().:,;/|*#=>\u0027\u0022\u05f3\u05f4\ufe0f-]{0,4}(?:(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc\u05e4\u05d5\u05df|\u05e0\u05d9\u05d9\u05d3|\u05e4\u05dc\u05d0\u05e4\u05d5\u05df|\u05e1\u05dc\u05d5\u05dc\u05e8\u05d9|\u05e4\u05e7\u05e1)(?![A-Za-z\u05d0-\u05ea])|(?<![A-Za-z\u05d0-\u05ea])[\u05d5\u05d1\u05dc\u05d4\u05de\u05e9]{0,2}(?:\u05d8\u05dc|\u05e4\u05dc)[\u0027\u05f3.:]|(?<![A-Za-z])(?:[Tt][Ee][Ll](?:[Ee][Pp][Hh][Oo][Nn][Ee])?|[Pp][Hh][Oo][Nn][Ee]|[Mm][Oo][Bb](?:[Ii][Ll][Ee])?|[Ff][Aa][Xx]|[Cc][Ee][Ll][Ll])(?![A-Za-z])|\u260e|\u260f|📞|📱)))(?![0-9])(?![:.][0-9]{2}(?![0-9]))(?:(?<=[0-9]{3})|(?![./][0-9]))'
+      from (select app.contact_fold(p) as t) as f
+  $$;
+
+-- The gender a title says, and nothing else (src/import/speakerName.ts titleGender).
+create or replace function app.title_gender(p text) returns text
+  language sql immutable set search_path = ''
+  as $$ select case p when 'הרב' then 'm' when 'הרבנית' then 'f' end $$;
+
+-- A whole number from a JSON value, or NULL (anything else: a string, 1.5, an object).
+create or replace function app.jint(p jsonb) returns bigint
+  language sql immutable set search_path = ''
+  as $$ select case when jsonb_typeof(p) = 'number' and (p #>> '{}') ~ '^-?[0-9]{1,15}$' then (p #>> '{}')::bigint end $$;
+
+-- A JSON array's length; 0 for anything that is not an array.
+create or replace function app.jlen(p jsonb) returns integer
+  language sql immutable set search_path = ''
+  as $$ select case when jsonb_typeof(p) = 'array' then jsonb_array_length(p) else 0 end $$;
+
+-- The caller: a global admin (not_member, forbidden); their all-editions member id.
+create or replace function app.require_global_admin() returns bigint
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    return app.my_member_id(null);
+  end
+  $$;
+
+-- A row the import refuses: «import_bad_row», its row number and the reason in
+-- the detail («7:bad_phone») — the whole import is rolled back.
+create or replace function app.refuse_row(p_item jsonb, p_reason text) returns void
+  language plpgsql set search_path = ''
+  as $$
+  begin
+    raise exception using message = 'import_bad_row', errcode = 'P0001',
+      detail = coalesce(app.jint(case when jsonb_typeof(p_item) = 'object' then p_item -> 'row' end), -1)::text || ':' || p_reason;
+  end
+  $$;
+
+-- One speaker row: cleaned and checked (as src/data/importRules.ts cleanSpeakerRow,
+-- in its order), then resolved — 'merge' completes the speaker named; 'new'
+-- completes the one speaker with this name key (two: disambiguator_required),
+-- else adds a speaker (vetted pending, source as typed) — never by a phone
+-- alone (two names, one line, are two people; the preview turns a phone the
+-- pool has into an explicit 'merge'). Completing fills ONLY what is empty — the
+-- speaker's title (not one that says the other gender than the speaker's),
+-- gender (not one its own title contradicts), affiliation,
+-- topics, and the contacts' phone, e-mail, notes. 'contacts' says a phone or an
+-- e-mail was filled, 'notes' the private note.
+create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_action  text := case when jsonb_typeof(p) = 'object' then p ->> 'action' end;
+    v_name    text;
+    v_key     text;
+    v_title   text;
+    v_gender  text;
+    v_aff     text;
+    v_topics  text[];
+    v_phone   text;
+    v_email   text;
+    v_notes   text;
+    v_n       integer;
+    v_s       public.speakers;
+    v_c       public.speaker_contacts;
+    v_created boolean := false;
+    v_fields  text[] := '{}';
+    v_cfields text[] := '{}';
+  begin
+    if v_action is null or v_action not in ('new', 'merge') then perform app.refuse('bad_value'); end if;
+    v_name := app.clean_line(case when jsonb_typeof(p -> 'name') = 'string' then p ->> 'name' end, 120);
+    v_key := app.name_key(v_name);
+    if v_name is null or v_key = '' then perform app.refuse('name_required'); end if;
+    v_title  := app.pick_title(p ->> 'title', p_titles_from);
+    v_gender := app.pick_gender(p ->> 'gender');
+    if v_gender is not null and v_gender is distinct from app.title_gender(v_title) then perform app.refuse('bad_value'); end if;
+    v_aff    := app.clean_line(p ->> 'affiliation', 120);
+    v_topics := app.clean_topics(p -> 'topics');
+    v_phone  := app.clean_line(p ->> 'phone', 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    v_email  := app.clean_line(p ->> 'email', 120);
+    if v_email is not null and v_email !~ '^[^ @]+@[^ @]+\.[^ @]+$' then perform app.refuse('bad_contact_email'); end if;
+    v_notes  := app.clean_block(p ->> 'notes', 1000);
+    -- a phone or an e-mail only in the phone and e-mail: never in the name, title, affiliation, a tag or the note
+    -- (the browser takes them out — src/import/phone.ts stripContacts; this is the backstop)
+    if app.has_contact(v_name) or app.has_contact(v_title) or app.has_contact(v_aff) or app.has_contact(v_notes)
+       or exists (select 1 from unnest(v_topics) as t(x) where app.has_contact(t.x)) then
+      perform app.refuse('contact_in_text');
+    end if;
+
+    if v_action = 'merge' then
+      select * into v_s from public.speakers where id = app.jint(p -> 'speaker_id') for update;
+      if v_s.id is null then perform app.refuse('stale'); end if;
+    else
+      select count(*) into v_n from public.speakers where name_key = v_key;
+      if v_n > 1 then perform app.refuse('disambiguator_required'); end if;
+      if v_n = 1 then
+        select * into v_s from public.speakers where name_key = v_key for update;
+      end if;
+    end if;
+
+    -- the pool's own title says the other gender: that gender is never filled from the row's title
+    if v_s.id is not null and v_gender is not null and app.title_gender(v_s.title) is not null
+       and app.title_gender(v_s.title) <> v_gender then
+      v_gender := null;
+    end if;
+    -- …and the mirror: a title that says the other gender than the speaker's (its own, or the one filled now) is
+    -- never filled — «הרבנית» is not written onto a man the pool knows, nor «הרב» onto a woman
+    if v_s.id is not null and app.title_gender(v_title) is not null and coalesce(v_s.gender, v_gender) is not null
+       and app.title_gender(v_title) <> coalesce(v_s.gender, v_gender) then
+      v_title := null;
+    end if;
+
+    if v_s.id is null then
+      begin
+        insert into public.speakers (title, name, gender, affiliation, topics, vetted, created_by, source)
+        values (v_title, v_name, v_gender, v_aff, v_topics, 'pending', p_me, p_source)
+        returning * into v_s;
+      exception when unique_violation then
+        perform app.refuse('speaker_exists');   -- someone added the same name a moment ago
+      end;
+      v_created := true;
+      perform app.log_event(null, 'speakers', v_s.id, 'insert', jsonb_build_object('vetted', 'pending', 'source', p_source));
+    else
+      select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+        from unnest(array[
+          case when v_s.title is null and v_title is not null then 'title' end,
+          case when v_s.gender is null and v_gender is not null then 'gender' end,
+          case when v_s.affiliation is null and v_aff is not null then 'affiliation' end,
+          case when cardinality(v_s.topics) = 0 and cardinality(v_topics) > 0 then 'topics' end]) with ordinality as u(f, o)
+       where u.f is not null;
+      if cardinality(v_fields) > 0 then
+        update public.speakers
+           set title = coalesce(title, v_title), gender = coalesce(gender, v_gender), affiliation = coalesce(affiliation, v_aff),
+               topics = case when cardinality(topics) = 0 then v_topics else topics end, version = version + 1
+         where id = v_s.id;
+        perform app.log_event(null, 'speakers', v_s.id, 'update', jsonb_build_object('fields', to_jsonb(v_fields)));
+      end if;
+    end if;
+
+    select * into v_c from public.speaker_contacts where speaker_id = v_s.id for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_cfields
+      from unnest(array[
+        case when v_c.phone is null and v_phone is not null then 'phone' end,
+        case when v_c.email is null and v_email is not null then 'email' end,
+        case when v_c.notes is null and v_notes is not null then 'notes' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_cfields) > 0 then
+      insert into public.speaker_contacts (speaker_id, phone, email, notes) values (v_s.id, v_phone, v_email, v_notes)
+      on conflict (speaker_id) do update
+        set phone = coalesce(speaker_contacts.phone, excluded.phone),
+            email = coalesce(speaker_contacts.email, excluded.email),
+            notes = coalesce(speaker_contacts.notes, excluded.notes);
+      perform app.log_event(null, 'speakers', v_s.id, 'contacts', jsonb_build_object('fields', to_jsonb(v_cfields)));
+    end if;
+    return jsonb_build_object('speaker_id', v_s.id, 'created', v_created, 'filled', cardinality(v_fields) > 0,
+                              'contacts', 'phone' = any (v_cfields) or 'email' = any (v_cfields), 'notes', 'notes' = any (v_cfields));
+  end
+  $$;
+
+-- The speaker rows of a payload, each refused as its row: their results, in order.
+create or replace function app.import_speakers(p_rows jsonb, p_titles_from bigint, p_source text, p_me bigint) returns jsonb[]
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_item jsonb;
+    v_out  jsonb[] := '{}';
+  begin
+    for v_item in select x from jsonb_array_elements(p_rows) as t(x) loop
+      begin
+        v_out := v_out || app.import_speaker(v_item, p_titles_from, p_source, p_me);
+      exception when sqlstate 'P0001' then
+        if sqlerrm = 'import_bad_row' then raise; end if;
+        perform app.refuse_row(v_item, sqlerrm);
+      end;
+    end loop;
+    return v_out;
+  end
+  $$;
+
+-- A parallel room of an archive edition: 0 its default room, k «מקביל k+1» (made when first needed).
+create or replace function app.import_room(p_edition bigint, p_index integer) returns bigint
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v bigint;
+  begin
+    if p_index = 0 then return app.default_room(p_edition); end if;
+    select id into v from public.rooms where edition_id = p_edition and name = 'מקביל ' || (p_index + 1);
+    if v is null then
+      insert into public.rooms (edition_id, name, sort) values (p_edition, 'מקביל ' || (p_index + 1), p_index + 1) returning id into v;
+    end if;
+    return v;
+  end
+  $$;
+
+-- The import's commit: one transaction, every row or none (docs/CONTRACT.md «The import of 5786»).
+create or replace function public.import_commit(p_kind text, p_payload jsonb) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me       bigint := app.require_global_admin();
+    v_titles   bigint;
+    v_source   text;
+    v_label    text;
+    v_date     date;
+    v_ed       public.editions;
+    v_res      jsonb[];
+    v_r        jsonb;
+    v_ids      bigint[] := '{}';
+    v_item     jsonb;
+    v_lid      bigint;
+    v_sid      bigint;
+    v_seen     bigint[];
+    v_ref      jsonb;
+    v_refs     bigint[];
+    v_c        text;
+    v_day      bigint;
+    v_start    bigint;
+    v_end      bigint;
+    v_room     bigint;
+    v_title    text;
+    v_cat      bigint;
+    v_aud      text;
+    v_kind     text;
+    v_print    text;
+    v_snote    text;
+    v_pay      bigint;
+    v_inote    text;
+    v_s        public.speakers;
+    v_cn       public.speaker_contacts;
+    v_pref     text;
+    v_sec      text;
+    v_created  integer := 0;
+    v_merged   integer := 0;
+    v_filled   integer := 0;
+    v_contacts integer := 0;
+    v_notes    integer := 0;
+    v_lessons  integer := 0;
+    v_replaced integer := 0;
+    v_rows     jsonb := '[]';
+  begin
+    if p_kind is null or p_kind not in ('candidates', 'tracking', 'escorts') then perform app.refuse('bad_value'); end if;
+    if p_payload is null or jsonb_typeof(p_payload) <> 'object' then perform app.refuse('bad_value'); end if;
+    if (case when p_kind = 'tracking' then app.jlen(p_payload -> 'speakers') + app.jlen(p_payload -> 'lessons') else app.jlen(p_payload -> 'rows') end) > 1000
+       or octet_length(p_payload::text) > 1000000 then
+      perform app.refuse('import_too_big');
+    end if;
+    v_titles := app.jint(p_payload -> 'titles_from');
+
+    if p_kind = 'candidates' then
+      if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
+      v_source := app.clean_line(p_payload ->> 'source', 60);
+      if v_source is null then perform app.refuse('bad_value'); end if;
+      if app.has_contact(v_source) then perform app.refuse('contact_in_text'); end if;
+      v_res := app.import_speakers(p_payload -> 'rows', v_titles, v_source, v_me);
+
+    elsif p_kind = 'tracking' then
+      if jsonb_typeof(p_payload -> 'speakers') is distinct from 'array' or jsonb_typeof(p_payload -> 'lessons') is distinct from 'array' then
+        perform app.refuse('bad_value');
+      end if;
+      v_label := app.label_key(app.clean_line(case when jsonb_typeof(p_payload -> 'label') = 'string' then p_payload ->> 'label' end, 60));
+      if v_label = '' then perform app.refuse('label_required'); end if;
+      if app.has_contact(v_label) then perform app.refuse('contact_in_text'); end if;
+      if jsonb_typeof(p_payload -> 'start_date') = 'string' and p_payload ->> 'start_date' <> '' then
+        if p_payload ->> 'start_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then perform app.refuse('bad_value'); end if;
+        begin
+          v_date := (p_payload ->> 'start_date')::date;
+        exception when others then
+          perform app.refuse('bad_value');
+        end;
+        if to_char(v_date, 'YYYY-MM-DD') <> p_payload ->> 'start_date' then perform app.refuse('bad_value'); end if;
+        if extract(dow from v_date) <> 0 then perform app.refuse('not_sunday'); end if;
+      elsif jsonb_typeof(p_payload -> 'start_date') not in ('null', 'string') then
+        perform app.refuse('bad_value');
+      end if;
+      -- the label as the key compares it: «תשפ״ו», «תשפ"ו» and «תשפ”ו» are one archive; two editions already
+      -- answering to it (made before the key) are not guessed between
+      if (select count(*) from public.editions where app.label_key(label) = v_label) > 1 then perform app.refuse('label_ambiguous'); end if;
+      select * into v_ed from public.editions where app.label_key(label) = v_label for update;
+      if v_ed.id is not null and v_ed.kind <> 'archive' then perform app.refuse('edition_exists'); end if;
+      -- the replace deletes the lessons, and «איך עבר» (Milestone 6, below) with them: an archive with a review is kept
+      if v_ed.id is not null and exists (select 1 from public.lesson_reviews r where r.edition_id = v_ed.id) then
+        perform app.refuse('archive_reviewed');
+      end if;
+      v_source := app.clean_line(p_payload ->> 'source', 60);
+      if v_source is null then perform app.refuse('bad_value'); end if;
+      if app.has_contact(v_source) then perform app.refuse('contact_in_text'); end if;
+      v_res := app.import_speakers(p_payload -> 'speakers', v_titles, v_source, v_me);
+      foreach v_r in array v_res loop v_ids := v_ids || (v_r ->> 'speaker_id')::bigint; end loop;
+
+      -- the edition: made from the template (as start_edition makes one), or the same label again — its lessons replaced
+      if v_ed.id is null then
+        begin
+          insert into public.editions (label, kind, status, start_date) values (v_label, 'archive', 'archived', v_date) returning * into v_ed;
+        exception when unique_violation then
+          perform app.refuse('stale');   -- the same label, made by another import a moment ago
+        end;
+        insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
+        select v_ed.id, start_min, end_min, kind, label, days from public.grid_template;
+        insert into public.rooms (edition_id, name, sort, is_default) values (v_ed.id, 'בית מדרש', 1, true);
+      else
+        delete from public.lessons where edition_id = v_ed.id;
+        get diagnostics v_replaced = row_count;
+        update public.editions set start_date = v_date where id = v_ed.id and start_date is distinct from v_date;
+        if not exists (select 1 from public.rooms where edition_id = v_ed.id) then
+          insert into public.rooms (edition_id, name, sort, is_default) values (v_ed.id, 'בית מדרש', 1, true);
+        end if;
+      end if;
+
+      -- the lessons, closed, each checked as src/data/importRules.ts cleanLessonRow (in its order)
+      for v_item in select x from jsonb_array_elements(p_payload -> 'lessons') as t(x) loop
+        begin
+          if jsonb_typeof(v_item) <> 'object' then perform app.refuse('bad_value'); end if;
+          v_day := app.jint(v_item -> 'day');
+          v_start := app.jint(v_item -> 'start_min');
+          v_end := app.jint(v_item -> 'end_min');
+          if v_day is null or v_start is null or v_end is null or v_day not between 0 and 4 or v_start < 390 or v_end > 1830
+             or v_start >= v_end or v_start % 5 <> 0 or v_end % 5 <> 0 then
+            perform app.refuse('bad_shape');
+          end if;
+          -- the archive's own week (its grid's rule): nothing on Thursday after it ended (last_day_until — last year's
+          -- ended at 19:00), nothing on Sunday before it opened (first_day_from, when known)
+          if (v_day = 4 and v_end > v_ed.last_day_until) or (v_day = 0 and v_ed.first_day_from is not null and v_start < v_ed.first_day_from) then
+            perform app.refuse('bad_shape');
+          end if;
+          v_room := app.jint(v_item -> 'room');
+          if v_room is null or v_room < 0 or v_room >= 10 then perform app.refuse('bad_value'); end if;
+          v_title := app.clean_line(v_item ->> 'title', 200);
+          v_cat := app.jint(v_item -> 'category_id');
+          if jsonb_typeof(v_item -> 'category_id') not in ('null') and v_item ? 'category_id'
+             and (v_cat is null or not exists (select 1 from public.categories where id = v_cat)) then
+            perform app.refuse('bad_value');
+          end if;
+          v_aud := app.clean_line(v_item ->> 'audience', 120);
+          v_kind := v_item ->> 'sources_kind';
+          if v_kind is null or v_kind not in ('pending', 'sheet', 'presentation', 'sheet_presentation', 'sheet_video', 'none', 'other') then
+            perform app.refuse('bad_value');
+          end if;
+          v_print := v_item ->> 'print_when';
+          if v_print is null or v_print not in ('none', 'before', 'same_day') then perform app.refuse('bad_value'); end if;
+          v_snote := app.clean_block(v_item ->> 'sources_note', 500);
+          if v_item ? 'pay_amount' and jsonb_typeof(v_item -> 'pay_amount') <> 'null' then
+            v_pay := app.jint(v_item -> 'pay_amount');
+            if v_pay is null or v_pay < 1 or v_pay > 100000 then perform app.refuse('bad_amount'); end if;
+          else
+            v_pay := null;
+          end if;
+          v_inote := app.clean_block(v_item ->> 'import_note', 1000);
+          -- the team reads a lesson: no phone or e-mail in its title, audience or notes
+          if app.has_contact(v_title) or app.has_contact(v_aud) or app.has_contact(v_snote) or app.has_contact(v_inote) then
+            perform app.refuse('contact_in_text');
+          end if;
+          v_refs := '{}';
+          if jsonb_typeof(v_item -> 'speakers') = 'array' then
+            for v_ref in select x from jsonb_array_elements(v_item -> 'speakers') as t(x) loop
+              if app.jint(v_ref) is null or app.jint(v_ref) < 0 or app.jint(v_ref) >= cardinality(v_ids) or app.jint(v_ref) = any (v_refs) then
+                perform app.refuse('bad_value');
+              end if;
+              v_refs := v_refs || app.jint(v_ref);
+            end loop;
+          end if;
+          if cardinality(v_refs) = 0 then perform app.refuse('bad_value'); end if;
+
+          insert into public.lessons (edition_id, kind, state, day, start_min, end_min, room_id, title, category_id, audience,
+                                      sources_kind, print_when, sources_note, pay_amount, updated_by)
+          values (v_ed.id, 'lesson', 'closed', v_day, v_start, v_end, app.import_room(v_ed.id, v_room::integer), v_title, v_cat, v_aud,
+                  v_kind, v_print, v_snote, v_pay, v_me)
+          returning id into v_lid;
+          if v_inote is not null then
+            insert into public.lesson_import_notes (lesson_id, edition_id, note) values (v_lid, v_ed.id, v_inote);
+          end if;
+          -- its speakers: the first leads; two rows that became one pool speaker are one speaker here
+          v_seen := '{}';
+          foreach v_sid in array v_refs loop
+            v_sid := v_ids[v_sid + 1];
+            continue when v_sid = any (v_seen);
+            insert into public.lesson_speakers (lesson_id, speaker_id, role)
+            values (v_lid, v_sid, case when cardinality(v_seen) = 0 then 'lead' else 'co' end);
+            v_seen := v_seen || v_sid;
+          end loop;
+          v_lessons := v_lessons + 1;
+        exception
+          when sqlstate 'P0001' then
+            if sqlerrm = 'import_bad_row' then raise; end if;
+            perform app.refuse_row(v_item, sqlerrm);
+          when exclusion_violation then
+            get stacked diagnostics v_c = constraint_name;
+            perform app.refuse_row(v_item, app.exclusion_code(v_c));
+        end;
+      end loop;
+
+    else -- 'escorts': how a speaker is reached — fill-empty only. The channel the admin CHOSE from the list and the
+         -- note the admin TYPED: a row has no key for the file's own text, and one with any other key is refused
+      if jsonb_typeof(p_payload -> 'rows') is distinct from 'array' then perform app.refuse('bad_value'); end if;
+      v_res := '{}';
+      for v_item in select x from jsonb_array_elements(p_payload -> 'rows') as t(x) loop
+        begin
+          if jsonb_typeof(v_item) <> 'object' then perform app.refuse('bad_value'); end if;
+          if exists (select 1 from jsonb_object_keys(v_item) as k(x) where k.x not in ('row', 'speaker_id', 'channel', 'note')) then
+            perform app.refuse('bad_value');
+          end if;
+          select * into v_s from public.speakers where id = app.jint(v_item -> 'speaker_id') for update;
+          if v_s.id is null then perform app.refuse('stale'); end if;
+          if jsonb_typeof(v_item -> 'channel') is distinct from 'string'
+             or (v_item ->> 'channel') not in ('phone', 'whatsapp', 'email', 'secretary', 'other') then
+            perform app.refuse('bad_value');
+          end if;
+          if coalesce(jsonb_typeof(v_item -> 'note'), 'null') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+          -- «other»: none of the pool's channels — contact_pref is left as it is, the note says how
+          v_pref := nullif(v_item ->> 'channel', 'other');
+          v_sec := app.clean_block(v_item ->> 'note', 300);
+          if app.has_contact(v_sec) then perform app.refuse('contact_in_text'); end if;
+          v_r := jsonb_build_object('speaker_id', v_s.id, 'created', false, 'filled', false, 'contacts', false, 'notes', false);
+          if v_s.contact_pref is null and v_pref is not null then
+            update public.speakers set contact_pref = v_pref, version = version + 1 where id = v_s.id;
+            perform app.log_event(null, 'speakers', v_s.id, 'update', jsonb_build_object('fields', jsonb_build_array('contact_pref')));
+            v_r := v_r || jsonb_build_object('filled', true);
+          end if;
+          select * into v_cn from public.speaker_contacts where speaker_id = v_s.id for update;
+          if v_cn.secretary_note is null and v_sec is not null then
+            insert into public.speaker_contacts (speaker_id, secretary_note) values (v_s.id, v_sec)
+            on conflict (speaker_id) do update set secretary_note = coalesce(speaker_contacts.secretary_note, excluded.secretary_note);
+            perform app.log_event(null, 'speakers', v_s.id, 'contacts', jsonb_build_object('fields', jsonb_build_array('secretary_note')));
+            v_r := v_r || jsonb_build_object('contacts', true);
+          end if;
+          v_res := v_res || v_r;
+        exception when sqlstate 'P0001' then
+          if sqlerrm = 'import_bad_row' then raise; end if;
+          perform app.refuse_row(v_item, sqlerrm);
+        end;
+      end loop;
+    end if;
+
+    -- the result: counts, and each speaker row as resolved
+    for v_r, v_item in
+      select r, coalesce(case when p_kind = 'tracking' then p_payload -> 'speakers' else p_payload -> 'rows' end -> (o::integer - 1), '{}')
+        from unnest(v_res) with ordinality as u(r, o)
+    loop
+      if (v_r ->> 'created')::boolean then v_created := v_created + 1; else v_merged := v_merged + 1; end if;
+      if (v_r ->> 'filled')::boolean then v_filled := v_filled + 1; end if;
+      if (v_r ->> 'contacts')::boolean then v_contacts := v_contacts + 1; end if;
+      if (v_r ->> 'notes')::boolean then v_notes := v_notes + 1; end if;
+      v_rows := v_rows || jsonb_build_object('row', coalesce(app.jint(v_item -> 'row'), -1), 'speaker_id', (v_r ->> 'speaker_id')::bigint,
+                                             'created', (v_r ->> 'created')::boolean);
+    end loop;
+    -- the log: counts and the label — never a name, a phone or a note
+    perform app.log_event(v_ed.id, 'import', v_ed.id, p_kind, jsonb_build_object(
+      'rows', cardinality(v_res), 'created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts, 'notes', v_notes,
+      'lessons', v_lessons, 'replaced', v_replaced) || case when v_source is not null then jsonb_build_object('source', v_source) else '{}' end);
+    return jsonb_build_object('created', v_created, 'merged', v_merged, 'filled', v_filled, 'contacts', v_contacts, 'notes', v_notes,
+                              'lessons', v_lessons, 'replaced', v_replaced, 'edition_id', v_ed.id, 'speakers', v_rows);
+  end
+  $$;
+
+-- What the preview needs from the pool beyond the names: which speaker has one
+-- of these phones (by key), and which contact fields of these speakers (and of
+-- those the phones found) are filled — true/false, never a value. A global admin.
+create or replace function public.import_lookup(p_speakers bigint[], p_phone_keys text[]) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    perform app.require_global_admin();
+    if coalesce(cardinality(p_speakers), 0) > 5000 or coalesce(cardinality(p_phone_keys), 0) > 5000 then perform app.refuse('import_too_big'); end if;
+    return (
+      with phones as (
+        select distinct k.key, c.speaker_id
+          from unnest(coalesce(p_phone_keys, '{}'::text[])) as k(key)
+          join public.speaker_contacts c on app.phone_key(c.phone) = k.key
+      )
+      select jsonb_build_object(
+        'phones', coalesce((select jsonb_agg(jsonb_build_object('key', key, 'speaker_id', speaker_id) order by key, speaker_id) from phones), '[]'::jsonb),
+        'contacts', coalesce((
+          select jsonb_agg(jsonb_build_object('speaker_id', s.id, 'phone', c.phone is not null, 'email', c.email is not null,
+                                              'secretary_note', c.secretary_note is not null, 'notes', c.notes is not null) order by s.id)
+            from public.speakers s left join public.speaker_contacts c on c.speaker_id = s.id
+           where s.id = any (coalesce(p_speakers, '{}'::bigint[])) or s.id in (select speaker_id from phones)), '[]'::jsonb)));
+  end
+  $$;
+
+
+-- =============================================================================
+-- Milestone 6 (v12) — after the week. Semantics: docs/CONTRACT.md «After the
+-- week»; the in-memory twin is src/data/engine.ts (reviews, the purge) and
+-- src/data/demoSettings.ts (start_edition's option, the dry run), held to this
+-- by tests/parity and the unit tests.
+--
+--   lesson_reviews        «איך עבר» — one per closed lesson: what went well, what
+--                         did not, invite again (yes / no / maybe), overran, a
+--                         rating 1–5 (optional); the lead speaker it is about,
+--                         who wrote it and when, a version. Opinions about a
+--                         person: the edition's admins and content members read
+--                         them — never logistics, never a link, never the
+--                         designer's export, never load_week, never Realtime.
+--                         Written through save_lesson_review only.
+--   save_lesson_review    the lesson's handler or an admin of the edition; the
+--                         handler only once the lesson's day has passed in Israel
+--                         time (app.review_opens_on) — never while the week's
+--                         date is TBD; an admin always; an archive: admins only.
+--   load_reviews          the edition's reviews, as the policy shows them (invoker).
+--   speaker_reviews       a speaker's reviews across the years, for the speaker
+--                         sheet: a global admin, or an admin or content member of
+--                         a live real edition (app.may_read_reviews — the
+--                         people the contacts rule counts); past years, and a
+--                         live edition only to its own admins and content.
+--   edition_returning     which speakers of an edition taught in an earlier year
+--                         (the summary's «חדשים / חוזרים»), with those years.
+--   purge_edition_private a global admin, once the week is over (Israel time:
+--                         Friday 00:00, start_date + 5 — when the links expire)
+--                         or the edition is archived, with the edition's label
+--                         typed: deletes its transport details (pickup addresses,
+--                         drivers' names and phones) — and, in an edition the
+--                         import of 5786 made, the sheet's notes (lesson_import_notes:
+--                         its transport and payment words) —, revokes every link of it
+--                         and deletes the links' rate-limit counts (hashed
+--                         addresses); keeps everything else (DECISIONS «אבן דרך
+--                         6», table by table). editions.purged_at says when (the
+--                         first time); the log has the counts, never a value.
+--                         Idempotent: a second run deletes nothing more.
+--   start_edition         (above) gains p_deactivate_team.
+--   start_edition_preview the dry run: what start_edition would archive, copy,
+--                         deactivate and leave as it is — counts. STABLE (PL/pgSQL
+--                         runs it read-only): it cannot write.
+-- lesson_reviews is never published to Realtime (the list at the end): the
+-- lesson panel and the summary read it when they open, and after a save.
+-- =============================================================================
+
+-- ------------------------------------------------------------- «איך עבר»
+
+create table if not exists public.lesson_reviews (
+  lesson_id    bigint primary key references public.lessons (id) on delete cascade,
+  edition_id   bigint not null references public.editions (id) on delete cascade,
+  speaker_id   bigint references public.speakers (id) on delete set null,   -- the lead speaker when it was written
+  went_well    text check (char_length(went_well) <= 2000),
+  issues       text check (char_length(issues) <= 2000),
+  invite_again text check (invite_again in ('yes', 'no', 'maybe')),
+  overran      boolean not null default false,
+  rating       smallint check (rating between 1 and 5),
+  written_by   bigint,
+  written_at   timestamptz not null default now(),
+  version      integer not null default 1
+);
+create index if not exists lesson_reviews_edition on public.lesson_reviews (edition_id);
+create index if not exists lesson_reviews_speaker on public.lesson_reviews (speaker_id);
+alter table public.lesson_reviews enable row level security;
+
+-- Opinions about a person: the edition's admins and content members — never its
+-- logistics members (public/privacy.html says exactly this).
+drop policy if exists lesson_reviews_read on public.lesson_reviews;
+create policy lesson_reviews_read on public.lesson_reviews for select to authenticated
+  using (app.my_role(edition_id) in ('admin', 'content'));
+
+-- The first Israel date on which a lesson's «איך עבר» opens to its handler: the
+-- day after the calendar day the lesson ends on — a night lesson in a day's
+-- column (00:30, end_min 1560) ends on the next date. src/domain/reviews.ts
+-- (reviewOpensOn) is the same rule.
+create or replace function app.review_opens_on(p_start date, p_day integer, p_end integer) returns date
+  language sql immutable set search_path = ''
+  as $$ select p_start + p_day + ((p_end - 1) / 1440) + 1 $$;
+
+-- May the caller read «איך עבר» across the years? A global admin, or an admin
+-- or content member of a real edition that is not archived — a practice or demo
+-- week, last year's team and logistics give no access (the contacts' rule).
+create or replace function app.may_read_reviews() returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select app.is_global_admin() or exists (
+      select 1 from public.editions e
+       where e.kind = 'real' and e.status <> 'archived' and app.my_role(e.id) in ('admin', 'content'))
+  $$;
+
+-- Is `p_other` a year before `p_this`? By the weeks' dates when both are known;
+-- otherwise a past year (an archive, or an archived real edition) is before one
+-- that is not. src/domain/reviews.ts (earlierEdition) is the same rule.
+create or replace function app.earlier_edition(p_other public.editions, p_this public.editions) returns boolean
+  language sql immutable set search_path = ''
+  as $$
+    select case
+      when p_other.start_date is not null and p_this.start_date is not null then p_other.start_date < p_this.start_date
+      else (p_other.kind = 'archive' or p_other.status = 'archived') and not (p_this.kind = 'archive' or p_this.status = 'archived')
+    end
+  $$;
+
+-- Write (or rewrite) a closed lesson's «איך עבר», at the version on screen (0: none
+-- yet). Refusals, in this order: the lesson gone `stale`; not a member
+-- `not_member`; logistics `forbidden`; an archive `archived` (its admins may);
+-- not a closed lesson `not_closed`; neither its handler nor an admin
+-- `not_handler`; the handler before the lesson's day has passed in Israel, or
+-- while the week's date is TBD, `review_closed`; another version `stale`; a text
+-- longer than 2000, an answer outside yes/no/maybe or a rating outside 1–5
+-- `bad_value`; nothing at all `review_empty`. The same answers again change
+-- nothing. Returns the version saved.
+create or replace function public.save_lesson_review(
+  p_lesson bigint, p_version integer, p_went_well text, p_issues text, p_invite_again text, p_overran boolean, p_rating integer)
+  returns integer
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l    public.lessons;
+    v_ed   public.editions;
+    v_role text;
+    v_me   bigint;
+    v_old  public.lesson_reviews;
+    v_ww   text;
+    v_is   text;
+    v_ia   text;
+    v_ov   boolean := coalesce(p_overran, false);
+    v_lead bigint;
+    v_v    integer;
+  begin
+    select * into v_l from public.lessons where id = p_lesson for update;
+    if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('stale'); end if;
+    v_role := app.my_role(v_l.edition_id);
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if v_role = 'logistics' then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = v_l.edition_id;
+    if (v_ed.kind = 'archive' or v_ed.status = 'archived') and v_role <> 'admin' then perform app.refuse('archived'); end if;
+    if v_l.state <> 'closed' or v_l.kind <> 'lesson' then perform app.refuse('not_closed'); end if;
+    v_me := app.my_member_id(v_l.edition_id);
+    if v_role <> 'admin' then
+      if app.lesson_handler(v_l.id) is distinct from v_me then perform app.refuse('not_handler'); end if;
+      if v_ed.start_date is null
+         or (now() at time zone 'Asia/Jerusalem')::date < app.review_opens_on(v_ed.start_date, v_l.day, v_l.end_min) then
+        perform app.refuse('review_closed');
+      end if;
+    end if;
+    select * into v_old from public.lesson_reviews where lesson_id = v_l.id for update;
+    if coalesce(v_old.version, 0) is distinct from p_version then perform app.refuse('stale'); end if;
+    v_ww := app.clean_block(p_went_well, 2000);
+    v_is := app.clean_block(p_issues, 2000);
+    v_ia := nullif(btrim(coalesce(p_invite_again, '')), '');
+    if v_ia is not null and v_ia not in ('yes', 'no', 'maybe') then perform app.refuse('bad_value'); end if;
+    if p_rating is not null and p_rating not between 1 and 5 then perform app.refuse('bad_value'); end if;
+    if v_ww is null and v_is is null and v_ia is null and p_rating is null and not v_ov then perform app.refuse('review_empty'); end if;
+    select x.speaker_id into v_lead from public.lesson_speakers x where x.lesson_id = v_l.id and x.role = 'lead' limit 1;
+    if v_old.lesson_id is not null
+       and (v_old.went_well, v_old.issues, v_old.invite_again, v_old.overran, v_old.rating::integer, v_old.speaker_id)
+           is not distinct from (v_ww, v_is, v_ia, v_ov, p_rating, v_lead) then
+      return v_old.version;
+    end if;
+    insert into public.lesson_reviews as r (lesson_id, edition_id, speaker_id, went_well, issues, invite_again, overran, rating, written_by, written_at, version)
+    values (v_l.id, v_l.edition_id, v_lead, v_ww, v_is, v_ia, v_ov, p_rating, v_me, now(), 1)
+    on conflict (lesson_id) do update
+      set speaker_id = excluded.speaker_id, went_well = excluded.went_well, issues = excluded.issues, invite_again = excluded.invite_again,
+          overran = excluded.overran, rating = excluded.rating, written_by = excluded.written_by, written_at = now(), version = r.version + 1
+    returning r.version into v_v;
+    return v_v;
+  end
+  $$;
+
+-- The edition's reviews, through the policy (invoker): its admins and content
+-- members see them all; anyone else none.
+create or replace function public.load_reviews(p_edition bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'lesson_id', r.lesson_id, 'speaker_id', r.speaker_id, 'went_well', r.went_well, 'issues', r.issues,
+             'invite_again', r.invite_again, 'overran', r.overran, 'rating', r.rating, 'written_by', r.written_by,
+             'written_at', to_char(r.written_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'version', r.version)
+             order by r.lesson_id), '[]'::jsonb)
+      from public.lesson_reviews r where r.edition_id = p_edition
+  $$;
+
+-- A speaker's «איך עבר» across the years, for the speaker sheet: the reviews
+-- written about them (as the lesson's lead) in real and archive editions — a
+-- past year (an archive, an archived real edition) to whoever may read reviews
+-- at all (app.may_read_reviews), a live edition only to its own admins and
+-- content members. Never a practice or demo week; never who wrote it. The
+-- newest year first (a year whose date is TBD — this one, usually — at the top).
+create or replace function public.speaker_reviews(p_speaker bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  begin
+    if not app.is_member() then perform app.refuse('not_member'); end if;
+    if not app.may_read_reviews() then perform app.refuse('forbidden'); end if;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'edition_id', e.id, 'edition_label', e.label, 'edition_kind', e.kind, 'start_date', e.start_date,
+               'lesson_id', l.id, 'day', l.day, 'start_min', l.start_min, 'end_min', l.end_min, 'title', l.title,
+               'went_well', r.went_well, 'issues', r.issues, 'invite_again', r.invite_again, 'overran', r.overran,
+               'rating', r.rating, 'written_at', app.iso(r.written_at))
+             order by e.start_date desc nulls first, e.id desc, l.day, l.start_min, l.id)
+        from public.lesson_reviews r
+        join public.lessons l on l.id = r.lesson_id
+        join public.editions e on e.id = r.edition_id
+       where r.speaker_id = p_speaker and e.kind in ('real', 'archive')
+         and (e.kind = 'archive' or e.status = 'archived' or app.my_role(e.id) in ('admin', 'content'))), '[]'::jsonb);
+  end
+  $$;
+
+-- «סיכום המחזור»: the speakers of the edition's closed lessons who taught a
+-- closed lesson in an earlier real or archive year (app.earlier_edition), each
+-- with those years' labels. The edition's admins and content members.
+create or replace function public.edition_returning(p_edition bigint) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_role text := app.my_role(p_edition);
+    v_ed   public.editions;
+  begin
+    if v_role is null then perform app.refuse('not_member'); end if;
+    if v_role = 'logistics' then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = p_edition;
+    return coalesce((
+      select jsonb_agg(jsonb_build_object('speaker_id', t.speaker_id, 'editions', t.labels) order by t.speaker_id)
+        from (select s.speaker_id,
+                     (select jsonb_agg(o.label order by o.start_date nulls first, o.id)
+                        from public.editions o
+                       where o.id <> p_edition and o.kind in ('real', 'archive') and app.earlier_edition(o, v_ed)
+                         and exists (select 1 from public.lesson_speakers y join public.lessons m on m.id = y.lesson_id
+                                      where y.speaker_id = s.speaker_id and m.edition_id = o.id and m.state = 'closed' and m.kind = 'lesson')) as labels
+                from (select distinct x.speaker_id from public.lesson_speakers x join public.lessons l on l.id = x.lesson_id
+                       where l.edition_id = p_edition and l.state = 'closed' and l.kind = 'lesson') s) t
+       where t.labels is not null), '[]'::jsonb);
+  end
+  $$;
+
+-- ------------------------------------------------------------- the purge
+
+-- When an edition's private data was deleted (the first purge) — written only by
+-- purge_edition_private: any other write keeps it as it was (a global admin
+-- writes editions directly, and must not mark one purged that is not).
+alter table public.editions add column if not exists purged_at timestamptz;
+
+create or replace function app.editions_purged_guard() returns trigger
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if coalesce(current_setting('app.purging', true), '') <> 'on' then
+      if tg_op = 'INSERT' then new.purged_at := null; else new.purged_at := old.purged_at; end if;
+    end if;
+    return new;
+  end
+  $$;
+drop trigger if exists editions_purged_guard on public.editions;
+create trigger editions_purged_guard before insert or update on public.editions
+  for each row execute function app.editions_purged_guard();
+
+-- After the week (DESIGN «שלבים», שלב 4): a global admin's irreversible action.
+-- Refusals, in this order: not a global admin `forbidden`; no such edition
+-- `stale`; the label not typed exactly `confirm_mismatch`; the week not over yet
+-- (Israel time, before Friday 00:00 = start_date + 5; the date TBD) and the
+-- edition not archived `week_not_over`. Then: the transport details of its
+-- lessons deleted, its lessons' import notes deleted (lesson_import_notes: the
+-- import of 5786 keeps last year's transport and payment words there — an
+-- archive it made is purged of them as a live edition is of its transport
+-- details), its links revoked
+-- (the anon functions answer `link_invalid` from now on) and their rate-limit
+-- counts deleted. Returns the counts; logs
+-- them (and nothing else) in the edition's activity.
+create or replace function public.purge_edition_private(p_edition bigint, p_confirm text) returns jsonb
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_ed  public.editions;
+    v_t   integer;
+    v_l   integer;
+    v_h   integer;
+    v_n   integer;
+    v_at  timestamptz;
+  begin
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    select * into v_ed from public.editions where id = p_edition for update;
+    if v_ed.id is null then perform app.refuse('stale'); end if;
+    if p_confirm is null or btrim(p_confirm) <> v_ed.label then perform app.refuse('confirm_mismatch'); end if;
+    if not (v_ed.kind = 'archive' or v_ed.status = 'archived'
+            or (v_ed.start_date is not null and (now() at time zone 'Asia/Jerusalem')::date >= v_ed.start_date + 5)) then
+      perform app.refuse('week_not_over');
+    end if;
+    delete from public.transport_details t using public.lessons l where l.id = t.lesson_id and l.edition_id = p_edition;
+    get diagnostics v_t = row_count;
+    delete from public.lesson_import_notes where edition_id = p_edition;
+    get diagnostics v_n = row_count;
+    delete from public.share_link_hits h using public.share_links s where s.token_hash = h.token_hash and s.edition_id = p_edition;
+    get diagnostics v_h = row_count;
+    update public.share_links set revoked_at = now() where edition_id = p_edition and revoked_at is null;
+    get diagnostics v_l = row_count;
+    v_at := coalesce(v_ed.purged_at, now());
+    perform set_config('app.purging', 'on', true);
+    update public.editions set purged_at = v_at where id = p_edition and purged_at is null;
+    perform set_config('app.purging', '', true);
+    perform app.log_event(p_edition, 'editions', p_edition, 'purge',
+                          jsonb_build_object('transport_details', v_t, 'import_notes', v_n, 'links_revoked', v_l, 'link_hits', v_h));
+    return jsonb_build_object('transport_details', v_t, 'import_notes', v_n, 'links_revoked', v_l, 'link_hits', v_h, 'purged_at', app.iso(v_at));
+  end
+  $$;
+
+-- ------------------------------------------------------------- moving to next year
+
+-- The dry run of public.start_edition (a global admin): which editions it would
+-- archive, where the wording and milestones would come from and how many, how
+-- many grid rows, how many of the archived editions' members it would
+-- deactivate (with p_deactivate_team) and how many of their admins stay — and
+-- what stays across the years as it is. Counts and labels; never an address.
+-- STABLE: PL/pgSQL runs it read-only, so it cannot write.
+create or replace function public.start_edition_preview(p_deactivate_team boolean default true) returns jsonb
+  language plpgsql stable security definer set search_path = ''
+  as $$
+  declare
+    v_from public.editions;
+  begin
+    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    select * into v_from from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
+    return jsonb_build_object(
+      'archive', coalesce((select jsonb_agg(jsonb_build_object('id', e.id, 'label', e.label) order by e.id)
+                             from public.editions e where e.kind = 'real' and e.status <> 'archived'), '[]'::jsonb),
+      'carry_from', case when v_from.id is null then null else jsonb_build_object('id', v_from.id, 'label', v_from.label) end,
+      'grid_rows', (select count(*) from public.grid_template)::integer,
+      'milestones', (select count(*) from public.milestones m where m.edition_id = v_from.id)::integer,
+      'confirm_template', coalesce(v_from.settings ? 'confirm_template', false),
+      'duty_phrases', coalesce(case when jsonb_typeof(v_from.settings -> 'duty_phrases') = 'array' then jsonb_array_length(v_from.settings -> 'duty_phrases') end, 0),
+      'deactivate', case when coalesce(p_deactivate_team, false) then
+                      (select count(*) from public.members m
+                        where m.active and m.role <> 'admin'
+                          and m.edition_id in (select id from public.editions where kind = 'real' and status <> 'archived'))::integer
+                    else 0 end,
+      'admins_stay', (select count(*) from public.members m
+                       where m.active and m.role = 'admin'
+                         and m.edition_id in (select id from public.editions where kind = 'real' and status <> 'archived'))::integer,
+      'stays', jsonb_build_object(
+        'speakers', (select count(*) from public.speakers s where not s.retired)::integer,
+        'categories', (select count(*) from public.categories c where c.active)::integer,
+        'fallen', (select count(*) from public.fallen f where f.active)::integer,
+        'notes', (select count(*) from public.notes n where n.edition_id is null)::integer));
+  end
+  $$;
+
+
 -- -----------------------------------------------------------------------------
 -- Privileges — LAST, so they cover everything above on every run.
 -- A new Supabase project may hand the public roles everything (older projects)
@@ -4716,7 +5670,7 @@ grant execute on function public.reopen_lesson(bigint) to authenticated;
 grant execute on function public.move_lesson(bigint, integer, integer, integer, bigint) to authenticated;
 grant execute on function public.reshape(bigint, integer, integer, text, integer, text, integer[]) to authenticated;
 grant execute on function public.update_lesson(bigint, integer, jsonb) to authenticated;
-grant execute on function public.start_edition(text, date, integer, text) to authenticated;
+grant execute on function public.start_edition(text, date, integer, text, boolean) to authenticated;   -- v12: the deactivation option
 
 -- Settings (v5). Column lists are the whole point for rooms and categories:
 -- `is_default` moves only through set_default_room(), and no id or edition is
@@ -4832,6 +5786,30 @@ grant execute on function public.place_memorial_plan(bigint, integer, bigint) to
 grant execute on function public.delete_memorial_plan(bigint) to authenticated;
 grant execute on function public.set_memorial_policy(bigint, text, integer, boolean) to authenticated;
 
+-- Import 5786 (v12): a global admin's two functions (each checks it) — the lookup (which pool speaker has a
+-- phone, which contact fields are filled: booleans) and the commit. Every helper (app.phone_key,
+-- app.import_speaker, app.label_key, …) stays in app, out of the browser's reach. lesson_import_notes is read
+-- through its policy (may_see_transport, granted above) one lesson at a time by get_import_note (invoker), and is
+-- never in Realtime; only the commit writes it, only the purge deletes it.
+grant execute on function public.import_lookup(bigint[], text[]) to authenticated;
+grant execute on function public.import_commit(text, jsonb) to authenticated;
+grant select on public.lesson_import_notes to authenticated;
+grant execute on function public.get_import_note(bigint) to authenticated;
+
+-- After the week (v12). lesson_reviews is read under RLS (an edition's admins and
+-- content members; load_reviews is invoker) and written only by save_lesson_review;
+-- speaker_reviews, edition_returning, purge_edition_private and the dry run are
+-- definer functions that check the caller. app.review_opens_on,
+-- app.may_read_reviews, app.earlier_edition and app.editions_purged_guard run
+-- inside them (or the policy's own app.my_role) — no browser role executes them.
+grant select on public.lesson_reviews to authenticated;
+grant execute on function public.save_lesson_review(bigint, integer, text, text, text, boolean, integer) to authenticated;
+grant execute on function public.load_reviews(bigint) to authenticated;
+grant execute on function public.speaker_reviews(bigint) to authenticated;
+grant execute on function public.edition_returning(bigint) to authenticated;
+grant execute on function public.purge_edition_private(bigint, text) to authenticated;
+grant execute on function public.start_edition_preview(boolean) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -4847,7 +5825,10 @@ grant execute on function public.set_memorial_policy(bigint, text, integer, bool
 -- (who signed up for what; the «מכריכה לכריכה» screen reloads on return instead);
 -- v10 the sources' files (file names; the week reloads after an upload); v11 the
 -- fallen, their families' contacts, and the memorial plans (the memorial screen
--- reloads after each action; the grid on return to the tab).
+-- reloads after each action; the grid on return to the tab); v12 the lessons'
+-- «איך עבר» (opinions about a person; read when the panel or the summary opens),
+-- and the imported lessons' notes (last year's transport words; read one lesson
+-- at a time).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -4865,7 +5846,7 @@ begin
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
-                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans'] loop
+                           'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

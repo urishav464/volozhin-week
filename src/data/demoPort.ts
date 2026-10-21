@@ -6,8 +6,11 @@ import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilesto
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
-import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import { DemoReviews } from "./demoReviews";
+import type { SpeakerReview } from "./reviews";
 import { DemoMemorial } from "./demoMemorial";
+import { DemoImports, type DemoImportStore } from "./demoImports";
 import type { Sample } from "./demoFiles";
 import { DemoSources, type DemoSourceStore } from "./demoSources";
 import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
@@ -27,7 +30,7 @@ const DEMO_EMAIL = "demo@example.org";
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
 // the database. The demo user is the global admin (member 1).
-export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore {
+export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore, DemoImportStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
   readonly engines = new Map<number, Engine>();
@@ -45,12 +48,17 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly sources: DemoSources;
   /** The fallen and their families' contacts (v11), cross-year, on the engine. */
   readonly memorial: DemoMemorial;
+  /** The import of 5786 (v12), on the engine: an archive becomes one more edition here. */
+  readonly imports: DemoImports;
+  /** «איך עבר» (v12), on the engine; across the years with the synthetic past edition. */
+  readonly reviews: DemoReviews;
   readonly blobs = new Map<string, Blob>();
   readonly samples = new Map<string, Sample>();
   readonly shared: PoolShared;
   /** While the constructor seeds the demo's links, their tokens are the fixed ones (demoToken(…, true)). */
   private seeding = false;
   readonly history: Record<number, HistoryLesson[]> = demoHistory();
+  readonly pastReviews: Record<number, SpeakerReview[]> = demoPastReviews();
   members: MemberRow[];
   roster: (RosterEntry & { edition_id: number })[] = [];
   categories: Category[];
@@ -66,7 +74,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
     this.shared = {
       contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
-      fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(),
+      fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
+      importNotes: {},
     };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
@@ -88,6 +97,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.public = new DemoPublic(this);
     this.sources = new DemoSources(this);
     this.memorial = new DemoMemorial(this);
+    this.imports = new DemoImports(this);
+    this.reviews = new DemoReviews(this);
     // seeded as the demo's instructor (member 1), whoever the demo user is
     this.seeding = true;
     seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
@@ -126,6 +137,14 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       fallen: [],
     };
     this.engines.set(edition.id, this.newEngine(week));
+    this.syncTeams();
+  }
+
+  /** The import's archive edition: one more engine (the shared pool), or the one of that label with its week replaced. */
+  installWeek(week: Week): void {
+    const e = this.engines.get(week.edition.id);
+    if (e) Object.assign(e.week, week);
+    else this.engines.set(week.edition.id, this.newEngine(week));
     this.syncTeams();
   }
 
@@ -191,12 +210,13 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     return (mine.find((m) => m.edition_id != null) ?? mine[0])?.id ?? null;
   }
 
-  /** The knowledge base and the snapshots in app.member_has_history. */
+  /** The knowledge base, the snapshots and «איך עבר» (v12) in app.member_has_history. */
   authored(memberId: number): boolean {
     return (
       this.notes.some((n) => n.created_by === memberId || n.updated_by === memberId) ||
       this.milestones.some((m) => m.created_by === memberId || m.done_by === memberId) ||
-      this.snapshots.some((x) => x.created_by === memberId)
+      this.snapshots.some((x) => x.created_by === memberId) ||
+      this.shared.reviews.some((r) => r.written_by === memberId)
     );
   }
 
@@ -270,6 +290,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       setSources: (lessonId, version, x: SourcesPatch) => run(() => e.setSources(lessonId, version, x)),
       setPaid: (lessonId, paid) => run(() => e.setPaid(lessonId, paid)),
       transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
+      importNote: async (lessonId) => e.importNoteOf(lessonId),
       setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
       // milestone 5ב-2
       transports: async () => structuredClone(e.transportsOf()),

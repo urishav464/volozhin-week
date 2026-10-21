@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), and memorial times and logistics (milestone 5ב-2)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, and after the week (milestone 6)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -539,7 +539,9 @@ Links without an account (DESIGN «גישה בלי חשבון»): an escort's li
 `supabase/schema.sql` «Milestone 5a» and `src/data/engine.ts` (behind `DemoPort`, through
 `src/data/demoLinks.ts`); `tests/parity` runs the same scenarios on both — the public pages' answers
 included. This is the first surface for `anon`: it may execute `ping` and the six functions of «The
-anon functions» below, and nothing else — no table, no other function.
+anon functions» below, and nothing else — no table, no other function. Since v12 `ping` runs as the caller
+(`SECURITY INVOKER`: it reads nothing), so anon's `SECURITY DEFINER` functions are exactly the six, and every
+function in `public` and `app` pins its `search_path` (`tests/sql/schema.test.ts`; SETUP «Security Advisor»).
 
 ## Links
 
@@ -1149,3 +1151,330 @@ archive's `archive_cancelled` is the browser's.
 
 `authenticated` may also execute `app.may_see_fallen` and `app.may_see_fallen_contacts` — the
 policies run as the browser's role (`tests/sql/schema.test.ts` pins them).
+
+# The import of 5786 (schema v12)
+
+Last year's files (תשפ"ו) into the database (DESIGN «ייבוא תשפ"ו»; DECISIONS «ייבוא תשפ"ו»). The same two
+implementations: `supabase/schema.sql` «Import 5786» and `src/data/engine.ts` (`importCommit`, `importLookup`,
+behind `DemoPort`'s `imports`); `tests/parity` runs candidates, an archive (made, then replaced) and the escorts on
+both and compares results, refusals and state — and, with after the week, an imported archive as a past year, a
+review that keeps a re-run from replacing it, and its purge («the import meets after the week»). Both functions are `SECURITY DEFINER` in `public`, and both are a
+**global admin's** (`app.require_global_admin`: not a member → `not_member`; a member who is not a global admin —
+an edition's admin included → `forbidden`).
+
+**What travels.** The files never reach the server. The wizard («הגדרות ← ייבוא», `src/screens/settings/ImportTab.tsx`)
+reads a paste or an .xlsx/.docx in the page (`src/import/`), the admin maps, reviews and decides, and only the
+reviewed rows arrive, as one payload. Nothing raw is stored — not in the database, not in the browser's storage. The
+pool is read as `load_week` gives a speaker (`port.imports.pool()`: `speakers` without any contact column). The admin
+may correct a speaker card's name, title and affiliation in the preview («עריכה», DECISIONS «סבב שישי»): what travels
+is then the corrected values, in the same fields — the payload's shape is unchanged, and they are checked as any row is
+(below; the wizard refuses an edit with a phone or an e-mail before it is saved). A pool speaker a correction now
+matches is asked about with one more `import_lookup` (its booleans only).
+
+## `lookup(speakers[], phoneKeys[])` — `import_lookup(p_speakers bigint[], p_phone_keys text[])` → `jsonb`
+`stable`. At most 5000 of each (`import_too_big`). Returns `{phones: [{key, speaker_id}], contacts: [{speaker_id,
+phone, email, secretary_note, notes}]}`: the pool speakers whose stored phone has one of the keys (by
+`app.phone_key`), and, for the speakers asked about and those the phones found, **which** contact fields are filled
+— booleans, never a value. Ordered by key then speaker; contacts by speaker.
+
+## The phone key — `app.phone_key(text)` ≡ `phoneKey` (`src/import/phone.ts`)
+The digits; a leading `972` or `00972` becomes a `0`, and **one** `0` written after it is dropped («+972 (0)…»); 8–9
+digits with no leading `0` get it back (a number cell ate it — «הצעה»); fewer than 6 digits → null. The two are held
+equal value for value (`tests/sql/import.test.ts`).
+
+## A contact inside text — `app.has_contact(text)` ≡ `hasContact` (`src/import/phone.ts`) — `contact_in_text`
+A phone or an e-mail is kept in `speaker_contacts`' `phone` and `email` only — **never** in any other text of the
+payload. One definition, written the same on both sides (the function's expressions are the browser's `PHONE` and
+`EMAIL_RUN`, and `app.contact_fold`'s lists are `FORMAT_RANGES` and `DIGIT_ZEROS`, character for character) and held
+equal string for string (`tests/sql/import.test.ts`: fixed cases, 10,000 seeded ones — 4,000 of them built of the
+numbering plan's pieces — and the fold character by character). The text is **folded** first (`app.contact_fold` ≡
+`foldContact`): what shows nothing taken out — Unicode's format characters (Cf, as of 17.0: bidi controls, zero widths,
+the soft hyphen, tags), NEL (U+0085) and U+180E — and every decimal digit of every script (Nd, as of 17.0) written as its ASCII digit
+(٠, ۰, ０, 𝟎 → 0). Then: an **e-mail** — no space, `@`, `<`, `>`, `(` or `)` around an `@` (or «@@», or a fullwidth
+«＠»), a dot after it; or, in the usual letters, with spaces around the `@` and the dots («someone @ example .org»), its
+last part letters; or a **phone by Israel's numbering plan** — never «any seven digits» (since «סבב חמישי»):
+- an **Israeli number**, of a fixed length and tried first: `0` and a landline (2, 3, 4, 8, 9 and seven digits) or a
+  mobile / 07X (5 or 7 and eight digits); `972`, `+972` or `00972` before it, a `0` (or «(0)») after it or not — so a
+  sum after «+972 52-…» stays text (since «סבב שישי»); `1-700`, `1-800`, `1-599` and six digits. Its
+  digits apart by white space, dashes of every kind, brackets, «·», «•», «‧», «_», «|», «;», «,» right before a digit,
+  «.» and «/» unless between two groups of one or two digits (a date's «12.3», «05/10»), «:» only between two groups
+  of three or more («000:000:0000» — never a time's «20:00», a verse's «119:1»);
+- a **number abroad**: `+` or `00` and 8–15 digits;
+- **7–15 digits beside a word that says a phone** — «טל'» / «טל.» / «טל:», «טלפון», «נייד», «פלאפון», «סלולרי»,
+  «פקס», «פל'» (after up to two prefix letters: «בטלפון», «והנייד»), tel, telephone, phone, mobile, mob, fax, cell, ☎,
+  ☏, 📞, 📱 — before it or after it, up to four spaces, dashes, brackets or punctuation apart; and a **star number**
+  («*2345», «2345*») only beside such a word.
+A number never begins inside a number, right after a time's «20:» or «8.» or a list's «1,», at a time («20:00»,
+«8.30»), at a date whose year has four digits («05-10-2026», «05.2026», «2026-02-10»), or at the day, the month or the
+year of a date with a two-digit year written with dashes or with spaces («05-10-26», «03 11 25»: a day to 31, a month to
+12 — pairs that the same separator goes on with, «03-12-34-56-7», are a number; since «סבב שישי»); it never ends at a time's
+hour or at a group of one or two digits that a date's «.» or «/» goes on from. A number of no fixed length (abroad,
+«00…», beside a word) takes «/», «,», «;», «|» only right between two digits, and a group after a separator never
+begins a time, a date or an Israeli number: it never runs into the next number. Everything else is **text**: verses
+(«תהלים 119:1-176», «ישעיהו 40:1-41:10»), dates and times in every form (the xlsx reader's own «2026-02-10 08:30»),
+page lists, prices («1,500,000 ₪»), years and their chains. Not recognised (DECISIONS «סבב חמישי»): six digits, «at» for
+the `@`, a phone typed with no `0` and no such word in free text, an e-mail with no TLD or a comma for its dot. White
+space is written out (JavaScript's `\s`), never
+`[[:space:]]`. The commit checks every text field **after** cleaning it (cleaning only collapses white
+space, which the definition reads alike): a row's → `import_bad_row` «row:contact_in_text»; the payload's `label` or
+`source` → `contact_in_text` (no row). The wizard never sends one: it takes every contact out of every non-contact
+field first (`stripContacts`; a note's are replaced — `scrubContacts`; four digits or more right after one, a group of
+three or more first, leave with it — never a time, a date, a year or «1,500»), attaching one to the row's phone or e-mail
+only when that is unambiguous, else dropping it with a warning beside the row; `src/import/privacy.property.test.ts`
+holds it on thousands of random tables, and that the backstop never refuses what the wizard sends.
+
+## `commit(kind, payload)` — `import_commit(p_kind text, p_payload jsonb)` → `jsonb`
+One transaction: **every row or none.** In this order: `p_kind` one of `candidates tracking escorts` and `p_payload`
+an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons) or more than 1,000,000 bytes →
+`import_too_big`. A row the function refuses aborts the whole call with `import_bad_row`, its detail `«row:reason»`
+(the row's `row`, or −1; the reason one of this file's codes); the browser's `ImportRowError(row, reason)`.
+
+### A speaker row (`candidates` rows, `tracking` speakers) — `app.import_speaker`
+Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): `action` `new`/`merge` → else
+`bad_value`; `name` one line ≤ 120 with a non-empty name key → else `name_required`; `title` one of the titles of
+`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and exactly what the
+title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null) → else `bad_value`;
+`affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
+`email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000; **no phone or e-mail
+in the name, the title, the affiliation, a tag or the notes** (`app.has_contact`, above) → else `contact_in_text`.
+
+Resolved:
+- `merge`: the speaker `speaker_id` (locked) — gone → `stale`.
+- `new`: the one pool speaker with this name key (two → `disambiguator_required`) — including one an earlier row of
+  the same payload just added; else a **new** speaker: `vetted='pending'`, `source` the payload's, `created_by` the
+  caller, the title and gender as given (a name taken a moment ago by another connection → `speaker_exists`).
+  So a re-run **completes** — never a second copy. **A phone alone never resolves a `new` row** (review of v12): two
+  names on one line (a couple, an office) are two people. A phone the pool has is the preview's «אותו טלפון כמו …»,
+  and the browser sends that row as an explicit `merge`; two rows of one table that share a phone, or whose names
+  are 0.6 alike, are «עמום» in the preview, and «אותו/ה מרצה כמו שורה N» travels as a `new` row under row N's name.
+- Completing **fills only what is empty**: the speaker's `title`, `gender`, `affiliation`, `topics` (an empty array is
+  empty), and `speaker_contacts`' `phone`, `email`, `notes`. A field with a value is never overwritten. **A gender
+  the speaker's own title contradicts is never filled** (the pool's «הרבנית» with no gender and a row «הרב»: no
+  gender; a title that says none — «ד״ר» — takes the row's), **and the mirror: a title that says the other gender
+  than the speaker's is never filled** (`app.title_gender(title)` against the speaker's gender — its own, or the one
+  filled by this row: the pool's man with no title and a row «הרבנית» keeps no title; a title that says no gender —
+  «ד״ר» — is filled). The preview names the title it would fill, or «תואר: לא ימולא — במאגר המגדר …». A speaker
+  whose own record got a field: `version + 1`.
+
+### `candidates` — `{source, titles_from, rows: SpeakerRow[]}`
+`rows` an array, else `bad_value`; `source` one line ≤ 60, else `bad_value`, with no phone or e-mail → else
+`contact_in_text`. Each row as above.
+
+### `tracking` — `{label, start_date, source, titles_from, speakers: SpeakerRow[], lessons: ArchiveLessonRow[]}`
+In this order: `speakers` and `lessons` arrays → else `bad_value`; `label` one line ≤ 60 → else `label_required`,
+taken in its key's form (`app.label_key` ≡ `labelKey`: ״ “ ” ″ as `"`, ׳ ‘ ’ as `'`, spaces single — stored so),
+with no phone or e-mail → else `contact_in_text`;
+`start_date` null/`""` or `yyyy-mm-dd`, a real date → else `bad_value`, a Sunday → else `not_sunday`; the editions
+are found **by that key** — two that answer to it (made before it) → `label_ambiguous`; one that is not of kind
+`archive` → `edition_exists`; an archive edition with this label that has a
+`lesson_reviews` row (an admin wrote «איך עבר» on one of its lessons — after the week, below) → `archive_reviewed`: the
+replace would delete it with its lesson, so nothing is replaced; `source` as above (`contact_in_text` too). Then the
+speakers (as above), then:
+- **No edition with this label:** a new one — `kind='archive'`, `status='archived'`, `start_date` only as given; its
+  grid rows copied from `grid_template` (as `start_edition` makes them), one default room «בית מדרש» (the same label
+  made a moment ago by another import → `stale`).
+- **An archive edition with this label:** **all its lessons are deleted** (their speakers with them) and replaced
+  by these; its `start_date` set to the one given (null included); its speakers stay in the pool.
+- Each lesson, checked in this order (`cleanLessonRow`): an object; `day` 0–4, `390 ≤ start_min < end_min ≤ 1830`,
+  multiples of 5 → else `bad_shape`; **within the archive edition's own week** — on Thursday (`day` 4) `end_min ≤`
+  its `last_day_until` (1140: last year's week ended at 19:00), on Sunday (`day` 0) `start_min ≥` its
+  `first_day_from` when that is known → else `bad_shape` (the server holds the rule, not only the browser's preview);
+  `room` 0–9 → else `bad_value` (0 the default room; k «מקביל k+1», made when first
+  needed); `title` ≤ 200; `category_id` null or a category → else `bad_value`; `audience` ≤ 120; `sources_kind` one of
+  the kinds, `print_when` one of `none before same_day` → else `bad_value`; `sources_note` ≤ 500; `pay_amount` null or
+  a whole 1–100000 → else `bad_amount`; `import_note` a block ≤ 1000; **no phone or e-mail in the title, the
+  audience, the sources note or the import note** → else `contact_in_text`; `speakers` a non-empty array of distinct
+  indexes into the payload's `speakers` → else `bad_value`.
+- Inserted `kind='lesson'`, `state='closed'`, `updated_by` the caller; its speakers — the first `lead`, the rest `co`;
+  two rows that resolved to one pool speaker are one speaker here. The room invariant → `room_taken`, the speaker
+  invariant → `speaker_busy` (the row named). **The closing invariant is not applied**: an archive's lesson is a
+  record of what was, its speakers may be pending, their gender unknown.
+- `import_note` (v12) goes to **`lesson_import_notes`** (`lesson_id` → its own row, `edition_id`, `note`), never to
+  the lesson: what the sheet said that has no field of its own («הסעה/תשלום» words — pickup places, drivers — and
+  «קיבל הודעת סיכום מ», a note, never a member), cleared of phones and e-mails in the browser. Transport words are
+  personal data, so the table has **the transport details' rule**: read under `app.may_see_transport` (for an
+  archive, a global admin only), one lesson at a time — `get_import_note(p_lesson)` (invoker; null when there is
+  none or it is not the caller's); never in `load_week`, Realtime or the device's offline copy (`import_note` is a
+  `PERSONAL_KEYS` key). Written by this import only (a replace deletes the old ones with their lessons);
+  `purge_edition_private` deletes them (after the week, «The purge»). In the engine: `shared.importNotes`, by
+  `<edition>:<lesson>`, read by `importNoteOf`; the lesson panel shows it («מגיליון המעקב של אשתקד», a global
+  admin's). The browser also clears phones and e-mails from an «אחר» sources note (`sources_note`), with a warning.
+- The archive's lessons are in `speaker_history` like any edition's; after the week, the archive is a past year for
+  `edition_returning` and `speaker_reviews` (its kind is `archive`).
+
+### `escorts` — `{rows: PrefsRow[]}` (schema v12, «סבב רביעי»)
+A row is **the channel the admin chose from a fixed list and a note the admin typed — nothing of the file's text**:
+the wizard shows the file's phrases only as the reason for the list's pre-selection («הצעה»), and the payload has no
+field for them. `rows` an array → else `bad_value`. Each row, in this order: an object whose keys are only `row`,
+`speaker_id`, `channel` and `note` → else `bad_value` (a phrase, an old page's `secretary_note` or `contact_pref`,
+any other key — refused before the speaker is looked up); `speaker_id` a pool speaker → else `stale`; `channel` a
+string, one of **`phone` · `whatsapp` · `email` · `secretary` · `other`** (the list: the pool's `contact_pref`, and
+«אחר» — none of them) → else `bad_value`; `note` absent, null or a string → else `bad_value`, then a block ≤ 300
+with no phone or e-mail — the note says how, never a number → else `contact_in_text`. **Fill only what is empty:**
+`speakers.contact_pref` ← the channel (`version + 1`; `other` leaves it as it is), `speaker_contacts.secretary_note`
+← the note. No speaker is added.
+
+### The result and the log
+`{created, merged, filled, contacts, notes, lessons, replaced, edition_id, speakers: [{row, speaker_id, created}]}`
+— `merged` counts every speaker row that completed one (`escorts`: every row), `filled` those whose record got a
+field, `contacts` those that got a phone or an e-mail (`escorts`: the secretary note), `notes` those whose private
+note was filled — a note is never counted as a contact detail; `lessons` and `replaced` the archive's; `edition_id` null but for
+`tracking`; `speakers` each speaker row as resolved, in order.
+The activity log: per speaker `insert` (`{vetted, source}`), `update` and `contacts` (`{fields: […]}` — field names);
+per call one `import` entry (entity `import`, the archive's edition and id for `tracking`, kind = the call's kind)
+with the counts and the source. **Never a name, a phone, an e-mail or a note.**
+
+## Errors (the import)
+
+`not_member forbidden bad_value import_too_big import_bad_row` and, as a row's reason, `contact_in_text name_required bad_phone
+bad_contact_email disambiguator_required speaker_exists stale bad_shape bad_amount room_taken speaker_busy`; for
+`tracking`, `label_required not_sunday label_ambiguous edition_exists archive_reviewed stale`. The payload's size is
+the bytes of its jsonb text (`p_payload::text`; the engine writes the same text, `jsonbText`). The browser's own, before anything is sent:
+`import_too_big` (a file or a table past `IMPORT_LIMITS`), `import_bad_file`, `import_encrypted`.
+
+## RPC signatures (the import)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `import_lookup` | `p_speakers bigint[], p_phone_keys text[]` | `jsonb` | authenticated (a global admin's; definer) |
+| `import_commit` | `p_kind text, p_payload jsonb` | `jsonb` | authenticated (a global admin's; definer) |
+| `get_import_note` | `p_lesson bigint` | `text` | authenticated (invoker: `lesson_import_notes` under `app.may_see_transport`) |
+
+The helpers (`app.phone_key`, `app.title_gender`, `app.jint`, `app.jlen`, `app.require_global_admin`,
+`app.refuse_row`, `app.import_speaker`, `app.import_speakers`, `app.import_room`) are no API role's
+(`tests/sql/import.test.ts`).
+
+# After the week (milestone 6, schema v12)
+
+«איך עבר» per lesson, the year's summary, the purge of the edition's private data, and the move to next
+year (DESIGN «שלבים», שלב 4). Two implementations: `supabase/schema.sql` «Milestone 6» and
+`src/data/engine.ts` (reviews, the purge — behind `DemoPort`, `DemoReviews`), with
+`src/data/demoSettings.ts` for start_edition's option and its dry run (settings, like start_edition itself:
+their unit tests hold them to the SQL tests' answers). `tests/parity` runs reviews (who writes, when,
+who reads) and the purge on both and compares results, refusals and state.
+
+## «איך עבר» — `lesson_reviews`
+
+| Column | What |
+|---|---|
+| `lesson_id` | the closed lesson (primary key: one review per lesson; on delete cascade) |
+| `edition_id` | its edition (written by the function; the policy reads it) |
+| `speaker_id` | the lesson's lead speaker **when the review was written** — the review is about them (a lesson reopened and closed with someone else keeps the old review, said so in the panel) |
+| `went_well`, `issues` | blocks of at most 2000 characters (`app.clean_block` / `cleanBlock`), or null |
+| `invite_again` | `yes` / `no` / `maybe`, or null (not said) |
+| `overran` | boolean, default false |
+| `rating` | 1–5, or null — optional |
+| `written_by`, `written_at`, `version` | who saved last (members.id), when (the database's clock), a version |
+
+**Reads.** `lesson_reviews_read`: `app.my_role(edition_id) in ('admin', 'content')` — the edition's admins
+and content members; **never logistics**. Never in `load_week` (so never the offline copy), Realtime, a
+link (`escort_view`, `schedule_view`, `kk_form`), the designer's export or the tracking table. In the admin's
+archive, in `reviews.json`. `member_has_history` counts `written_by`.
+
+### `reviews.ofEdition(edition)` — `load_reviews(p_edition)` → `jsonb[]`
+Invoker, under the policy: `{lesson_id, speaker_id, went_well, issues, invite_again, overran, rating,
+written_by, written_at, version}` by lesson id; an edition the caller may not read → `[]`.
+
+### `reviews.save(edition, lesson, version, fields)` — `save_lesson_review(p_lesson, p_version, p_went_well, p_issues, p_invite_again, p_overran, p_rating)` → `integer` (the version saved)
+Refusals, in this order (engine and SQL alike):
+1. the lesson missing or cancelled → `stale`;
+2. not a member of its edition → `not_member`; logistics → `forbidden`;
+3. an archive (or an archived edition) and not its admin → `archived`;
+4. not a closed lesson of kind `lesson` (a draft, a memorial slot) → `not_closed`;
+5. not an admin of the edition: not the lesson's handler (`app.lesson_handler`) → `not_handler`; the
+   week's date TBD, or the Israel date before `app.review_opens_on(start_date, day, end_min)` → `review_closed`;
+6. `version` ≠ the stored one (0 when there is none) → `stale`;
+7. a text over 2000, an answer other than yes/no/maybe, a rating outside 1–5 → `bad_value`; nothing said
+   at all (both texts empty, no answer, no rating, no overrun) → `review_empty`.
+
+The same answers (and the same lead speaker) again change nothing and return the stored version.
+Otherwise the row is written with `speaker_id` = the current lead, `written_by` = the caller, `written_at`
+= now, `version` + 1.
+
+**When it opens** (`reviewOpensOn`, `src/domain/reviews.ts`; `app.review_opens_on`): the day after the
+calendar day the lesson ends on — `start_date + day + ⌊(end_min − 1) / 1440⌋ + 1`, compared with today's date in
+Israel (`now() at time zone 'Asia/Jerusalem'` / `israelDate`). A lesson ending at 24:00 opens the next
+day; a night lesson in a day's column (00:30–02:00) ends on the next date and opens the day after. An admin of
+the edition writes at any time.
+
+### `reviews.ofSpeaker(speaker)` — `speaker_reviews(p_speaker)` → `jsonb[]`
+Definer. `not_member` for a non-member; `forbidden` unless `app.may_read_reviews()`: a global admin, or an
+admin or content member of a real edition that is not archived (the people the contacts rule counts — a
+practice or demo week, last year's team and logistics never). Returns the reviews whose `speaker_id` is the
+speaker, in `real` and `archive` editions: a past year (`kind = 'archive'` or `status = 'archived'`) to
+anyone allowed, a live edition only to its own admins and content members. Each `{edition_id,
+edition_label, edition_kind, start_date, lesson_id, day, start_min, end_min, title, went_well, issues,
+invite_again, overran, rating, written_at}` — never who wrote it. Newest year first (`start_date desc nulls
+first`, then edition id desc), then day and time. The engine knows the actor's role in its own edition only
+and asks that one.
+
+### `reviews.returning(edition)` — `edition_returning(p_edition)` → `jsonb[]`
+Definer; the edition's admins and content (`forbidden` for logistics, `not_member` for others). The speakers
+of the edition's closed lessons (kind `lesson`, any role) who taught a closed lesson in an **earlier** `real` or
+`archive` edition, each `{speaker_id, editions: [labels]}` (by date, nulls first). Earlier
+(`app.earlier_edition` / `earlierEdition`): by the weeks' dates when both are known; otherwise a past year
+(archive or archived) is before one that is not.
+
+## The summary (browser only — `src/exports/summary.ts`)
+`editionSummary(week, reviews, returning)`: closed lessons held; memorial times with a plan placed; per day
+the closed lessons by their speakers' gender (`dayBalance(…).closed` — a co-taught lesson splits its one,
+memorial times never count); closed lessons per category (+ «בלי קטגוריה»); speakers new vs returning;
+reviews done of the closed lessons, and the missing ones; the `yes` / `no` / `maybe` lists. Counts only — no
+threshold. `summaryTables` writes the same as five sheets through `toXlsx` (`guardCell` on every cell).
+
+## The purge — `settings.purgeEdition(edition, confirm)` — `purge_edition_private(p_edition, p_confirm)` → `jsonb`
+Definer. Refusals, in this order: not a global admin → `forbidden`; no such edition → `stale`; `p_confirm`
+(trimmed of spaces) ≠ the edition's label → `confirm_mismatch`; the edition is not an archive, not archived,
+and its week is not over → `week_not_over` («over»: the Israel date ≥ `start_date + 5` — Friday 00:00, when
+the escort and schedule links expire; never while the date is TBD). Then:
+
+- deletes the edition's `transport_details` (pickup addresses and times, drivers' names and phones);
+- deletes its lessons' `lesson_import_notes` (the import of 5786: what last year's sheet said — its transport and
+  payment words among it — on an archive's lessons; none elsewhere), the lessons untouched;
+- deletes the `share_link_hits` of the edition's links (the hashed callers' addresses);
+- revokes every live `share_links` row of the edition (`revoked_at` = now) — the anon functions answer
+  `link_invalid` for them from then on, and nothing un-revokes a link;
+- sets `editions.purged_at` the first time (a trigger keeps it from any other write);
+- logs `activity (entity 'editions', kind 'purge', detail {transport_details, import_notes, links_revoked, link_hits})` —
+  counts only;
+
+and returns `{transport_details, import_notes, links_revoked, link_hits, purged_at}`. Idempotent: a second run deletes
+nothing more, returns zeros and the first `purged_at`, and is logged again. Everything else stays
+(DECISIONS «אבן דרך 6» has each table and why; «איחוד גרסה 12» the import note). In the engine: `shared.transport`
+keys `<edition>:…`, `shared.importNotes` keys `<edition>:…`, `shared.linkHits` of the edition's tokens, `shared.links`,
+`week.edition.purged_at`, the pool's log.
+
+## Moving to next year
+### `settings.startEdition(e, {deactivateTeam})` — `start_edition(p_label, p_start_date, p_first_day_from, p_room, p_deactivate_team default false)` → `bigint`
+As before, and with `p_deactivate_team`: before the live real editions are archived, their members who are
+not admins (content, logistics) become `active = false` — never deleted; admins of those editions and every
+all-editions member stay. The screen sends it on by default («הצעה»). «The previous edition» is always of kind
+`real`: an archive the import of 5786 made is never archived again, never carried from and never deactivated, however
+new its id (`tests/sql/importAfter.test.ts`).
+
+### `settings.previewStart(deactivateTeam)` — `start_edition_preview(p_deactivate_team default true)` → `jsonb`
+Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:
+[{id, label}] (the real editions not archived), carry_from: {id, label} | null (where the wording and
+milestones come from: the live real edition, else the newest real), grid_rows (the template's), milestones
+(carry_from's), confirm_template (boolean), duty_phrases (count), deactivate (with the option: the active
+non-admin members of the archived editions; without: 0), admins_stay, stays: {speakers (not retired),
+categories (active), fallen (active), notes (cross-year)}}`.
+
+## Errors (milestone 6)
+
+`review_closed review_empty confirm_mismatch week_not_over`, and `stale not_member forbidden archived
+not_closed not_handler bad_value`.
+
+## RPC signatures (milestone 6)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `save_lesson_review` | `p_lesson bigint, p_version integer, p_went_well text, p_issues text, p_invite_again text, p_overran boolean, p_rating integer` | `integer` | authenticated |
+| `load_reviews` | `p_edition bigint` | `jsonb` | authenticated (invoker) |
+| `speaker_reviews` | `p_speaker bigint` | `jsonb` | authenticated |
+| `edition_returning` | `p_edition bigint` | `jsonb` | authenticated |
+| `purge_edition_private` | `p_edition bigint, p_confirm text` | `jsonb` | authenticated |
+| `start_edition_preview` | `p_deactivate_team boolean default true` | `jsonb` | authenticated |
+| `start_edition` | `p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש', p_deactivate_team boolean default false` | `bigint` | authenticated |
+
+No new `app.*` function is a browser's to run; anon gets nothing new.
