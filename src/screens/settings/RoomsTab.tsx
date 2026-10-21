@@ -160,7 +160,14 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
               <Button kind="primary" autoFocus onClick={() => setMode("rename")}>
                 שינוי שם
               </Button>
-              <Button onClick={() => setMode("view")}>הבנתי</Button>
+              <Button
+                onClick={() => {
+                  setMode("view");
+                  focusBack.back();
+                }}
+              >
+                הבנתי
+              </Button>
             </div>
           </div>
         }

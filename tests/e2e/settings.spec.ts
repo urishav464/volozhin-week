@@ -132,6 +132,11 @@ test.describe("demo build — an admin", () => {
     await button("מחיקת כיתה ג׳").click();
     await cancel();
     await expect(button("מחיקת כיתה ג׳")).toBeFocused();
+    // a room in use cannot go: «הבנתי» gives the focus back too
+    await button("מחיקת כיתת בית מדרש").click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await page.getByRole("group", { name: "אי אפשר למחוק" }).getByRole("button", { name: "הבנתי" }).press("Enter");
+    await expect(button("מחיקת כיתת בית מדרש")).toBeFocused();
   });
 
   test("the categories and the templates: a confirm cancelled gives the focus back; a busy button keeps it", async ({ page }) => {

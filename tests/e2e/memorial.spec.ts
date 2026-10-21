@@ -263,9 +263,10 @@ test.describe("demo build", () => {
     await expect(plan.getByLabel("שיבוץ", { exact: true })).toBeFocused();
     await expect(plan.getByRole("form", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" })).toBeVisible(); // the form untouched
 
-    // a name in the cross-year list: that row's «מחיקה», not another's
+    // a name in the cross-year list: that row's «מחיקה», not another's — a middle row (one key for every row would hand the
+    // focus to the last row drawn)
     const fallen = page.getByRole("list", { name: "החללים" });
-    const deleteName = fallen.getByRole("button", { name: "מחיקה: חלל/ה לדוגמה 9" });
+    const deleteName = fallen.getByRole("button", { name: "מחיקה: חלל/ה לדוגמה 5" });
     await deleteName.click();
     await cancel(fallen).press("Enter");
     await expect(deleteName).toBeFocused();

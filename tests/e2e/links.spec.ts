@@ -264,6 +264,9 @@ test.describe("demo build", () => {
     await expect(b.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 4");
     await expect(a.getByRole("list", { name: "הנרשמים · ספר לדוגמה א׳" })).toContainText("מלווה לדוגמה ד׳ · שובץ/ה בידי הצוות");
     await a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" }).click();
+    await a.getByRole("button", { name: "ביטול", exact: true }).press("Enter"); // cancelled: the focus back at its «הסרה»
+    await expect(a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" })).toBeFocused();
+    await a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" }).click();
     await a.getByRole("button", { name: "הסרה", exact: true }).click();
     await expect(toast(page, "ההרשמה הוסרה")).toBeVisible();
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 6");

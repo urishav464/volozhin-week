@@ -473,6 +473,7 @@ function SignupItem({
 }) {
   const id = useId();
   const [removing, setRemoving] = useState(false);
+  const focusBack = useFocusBack();
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1">
       <span className="min-w-0 flex-1 basis-32 break-words">
@@ -485,7 +486,13 @@ function SignupItem({
             <Button kind="dangerSolid" busy={busy === removeKey} onClick={() => void onRemove().then(() => setRemoving(false))}>
               הסרה
             </Button>
-            <Button onClick={() => setRemoving(false)} autoFocus>
+            <Button
+              onClick={() => {
+                setRemoving(false);
+                focusBack.back();
+              }}
+              autoFocus
+            >
               ביטול
             </Button>
           </span>
@@ -511,7 +518,7 @@ function SignupItem({
                 </select>
               </>
             )}
-            <Button kind="danger" onClick={() => setRemoving(true)} aria-label={`הסרה: ${name}`}>
+            <Button ref={focusBack.ref()} kind="danger" onClick={() => setRemoving(true)} aria-label={`הסרה: ${name}`}>
               הסרה
             </Button>
           </span>

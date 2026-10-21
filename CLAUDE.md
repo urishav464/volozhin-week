@@ -80,6 +80,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   roster, rooms, categories, through `port.settings` (`src/data/settings.ts`; SupabaseSettings /
   DemoSettings refuse with the same codes). Settings are direct writes under RLS — column grants
   and guard triggers keep their rules (`schema.sql` «Settings»; `docs/DECISIONS.md`).
+  `kit.tsx` is every screen's kit: `Button` (busy = `aria-disabled`, so it keeps the focus), `Confirm`, and
+  `useFocusBack` — every `Confirm` stands in for a button, and its «ביטול» gives that button the focus back
+  (`ref(key)` on the button, `back(key)` on cancel; a new Confirm does the same — DECISIONS «המיקוד»).
 - `src/data/speakers.ts` — the speaker pool (`port.speakers`): search first and create, edit, vet,
   contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
   availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
