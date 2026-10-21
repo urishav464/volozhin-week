@@ -82,6 +82,15 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   /** The pool speakers import_lookup was asked about — an edit (or a line made a speaker) that matches another is asked about too. */
   const lookedUp = useRef(new Set<number>());
   const [confirming, setConfirming] = useState(false);
+  // a busy button is disabled and loses the focus, and «ביטול» takes the confirm (and its focus) away: each gives it back —
+  // to «בדיקה מול המאגר» when the check ends, to «ייבוא» when the confirm is cancelled
+  const checkRef = useRef<HTMLButtonElement>(null);
+  const importRef = useRef<HTMLButtonElement>(null);
+  const [refocus, setRefocus] = useState<{ to: "check" | "import"; n: number } | null>(null);
+  useEffect(() => {
+    if (refocus) (refocus.to === "check" ? checkRef : importRef).current?.focus();
+  }, [refocus]);
+  const giveBack = (to: "check" | "import") => setRefocus((r) => ({ to, n: (r?.n ?? 0) + 1 }));
   const [committing, setCommitting] = useState(false);
   const [commitProblem, setCommitProblem] = useState<string | null>(null);
   const [result, setResult] = useState<{ kind: ImportKind; res: ImportResult; label: string | null } | null>(null);
@@ -228,6 +237,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const escortUnanswered = askEscort && escortAsked == null;
 
   const check = async () => {
+    const hadFocus = document.activeElement === checkRef.current;
     setChecking(true);
     setCommitProblem(null);
     try {
@@ -267,6 +277,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
       notify("error", said(err));
     } finally {
       setChecking(false);
+      if (hadFocus) giveBack("check");
     }
   };
 
@@ -529,6 +540,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               </label>
               <select
                 id={`${id}-escort`}
+                data-decide
                 value={escortAsked ?? ""}
                 onChange={(e) => {
                   const v = e.target.value === "" ? null : e.target.value === "none" ? "none" : Number(e.target.value);
@@ -632,7 +644,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing || escortUnanswered} onClick={() => void check()}>
+            <Button ref={checkRef} kind="primary" busy={checking} busyLabel="בודק…" disabled={!mappedNeeded || whenMissing || phrasesMissing || escortUnanswered} onClick={() => void check()}>
               בדיקה מול המאגר
             </Button>
             {escortUnanswered && <span className="text-sm text-ink-soft">צריך לומר באיזו עמודה שמות המלווים (או שאין).</span>}
@@ -714,7 +726,14 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                     onClick={() => {
                       const el = document.querySelector<HTMLElement>("[data-undecided]");
                       el?.scrollIntoView({ block: "center" });
-                      el?.querySelector<HTMLElement>("input")?.focus();
+                      // the decision itself (data-decide) — a group's checked choice, else its first; not a field before it
+                      const decide = el?.querySelector<HTMLElement>("[data-decide]");
+                      const target = decide?.matches("input, select")
+                        ? decide
+                        : (decide?.querySelector<HTMLElement>("input:checked:not(:disabled)") ??
+                          decide?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled)") ??
+                          el?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled)"));
+                      target?.focus();
                     }}
                   >
                     לראשונה שמחכה להחלטה
@@ -748,10 +767,13 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               confirm={replacing ? "כן, להחליף" : "ייבוא"}
               busy={committing}
               onConfirm={() => void doCommit()}
-              onCancel={() => setConfirming(false)}
+              onCancel={() => {
+                setConfirming(false);
+                giveBack("import");
+              }}
             />
           ) : (
-            <Button kind="primary" disabled={!commit || blockers.length > 0 || rowsInCommit === 0} onClick={() => setConfirming(true)}>
+            <Button ref={importRef} kind="primary" disabled={!commit || blockers.length > 0 || rowsInCommit === 0} onClick={() => setConfirming(true)}>
               ייבוא
             </Button>
           )}

@@ -69,11 +69,12 @@ test.describe("demo build — the import of 5786", () => {
     // a header that speaks of trainees: the candidates ask which column is theirs too (סבב חמישי) — «בדיקה» waits for it
     await expect(page.getByRole("button", { name: "בדיקה מול המאגר" })).toBeDisabled();
     await page.getByLabel("באיזו עמודה שמות המלווים?").selectOption("4");
-    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).press("Enter");
 
     const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
     const row = (n: number) => preview.locator(`li[data-row="${n}"]`);
     await expect(row(2)).toContainText("חדש");
+    await expect(page.getByRole("button", { name: "בדיקה מול המאגר" })).toBeFocused(); // disabled while busy, the focus given back
     await expect(row(2)).toContainText("מגדר: זכר (הצעה, מהתואר)");
     await expect(row(3)).toContainText("מגדר: נקבה (הצעה, מהתואר)");
     await expect(row(4)).toContainText("תואם");
@@ -89,9 +90,11 @@ test.describe("demo build — the import of 5786", () => {
     await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeDisabled();
     await noSidewaysScroll(page);
 
-    // «לראשונה שמחכה להחלטה»: to the first undecided row, its first choice focused
+    // «לראשונה שמחכה להחלטה»: to the first undecided row, its first choice focused — past the row's open «עריכה» form
+    await row(5).getByRole("button", { name: /^עריכה — / }).click();
     await page.getByRole("button", { name: "לראשונה שמחכה להחלטה" }).click();
-    await expect(row(5).getByRole("radio").first()).toBeFocused();
+    await expect(row(5).getByRole("group", { name: /^מי זה\/זו\?/ }).getByRole("radio").first()).toBeFocused();
+    await row(5).getByRole("group", { name: "עריכה" }).getByRole("button", { name: "ביטול", exact: true }).click();
     await row(5).getByRole("radio", { name: /להשלים את .*מרצה 07/ }).check();
     await expect(row(5)).toContainText("אין מה להשלים");
     await row(7).getByRole("radio", { name: /אותו\/ה מרצה כמו שורה 2/ }).check();
@@ -246,6 +249,9 @@ test.describe("demo build — the import of 5786", () => {
     await expect(card("מרצה 07")).toContainText("בהערה יש טלפון או מייל");
     await expect(page.getByText("בהערה של מרצה אחד/ת יש מה לתקן")).toBeVisible();
     await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeDisabled();
+    // «לראשונה שמחכה להחלטה»: the note to fix, not the channel before it
+    await page.getByRole("button", { name: "לראשונה שמחכה להחלטה" }).click();
+    await expect(note07).toBeFocused();
     await note07.fill("בבוקר");
     await card("מרצה 12").getByLabel(/ערוץ הקשר/).selectOption("");
     await expect(page.getByText("מרצה אחד/ת יושלם/תושלם.")).toBeVisible();
@@ -601,6 +607,9 @@ test.describe("demo build — the import of 5786", () => {
     await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
     const card = page.getByRole("list", { name: "תצוגה מקדימה" }).locator(":scope > li").filter({ hasText: "מרצה 007" });
     await expect(card).toContainText("עמום");
+    // «לראשונה שמחכה להחלטה»: «מי זה/זו?», not the note field before it
+    await page.getByRole("button", { name: "לראשונה שמחכה להחלטה" }).click();
+    await expect(card.getByRole("group", { name: /^מי זה\/זו\?/ }).getByRole("radio").first()).toBeFocused();
     await card.getByRole("radio", { name: /להשלים את .*מרצה 07/ }).check();
     await expect(card).toContainText("יושלם (רק מה שחסר): ערוץ קשר");
     await expect(card).not.toContainText("אין מה להשלים");
@@ -676,8 +685,11 @@ test.describe("demo build — the import of 5786", () => {
     await gimel.getByLabel("תואר").selectOption("הרבנית");
     await gimel.getByRole("button", { name: "שמירת העריכה" }).press("Enter");
     await expect(card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" })).toBeFocused();
-    // by the mouse, a choice in the form leaves the keyboard (and the page) where they were
+    // by the mouse, a choice in the form leaves the keyboard (and the page) where they were — a key pressed there before
+    // the pointer does not make it the keyboard's
     await card("גימל בדיקתית").getByRole("button", { name: "עריכה — גימל בדיקתית" }).click();
+    await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "מרצה נוסף/ת" }).focus();
+    await page.keyboard.press("Shift");
     await card("גימל בדיקתית").getByRole("group", { name: "עריכה" }).getByRole("radio", { name: "שיוך מוסדי של מרצה 03" }).click();
     const line = lines.locator('li[data-line="4:2"]');
     await expect(line.getByRole("radio", { name: "שיוך מוסדי של מרצה 03" })).toBeChecked();
@@ -708,23 +720,38 @@ test.describe("demo build — the import of 5786", () => {
     await expect(card("מרצה 07").getByRole("button", { name: "עריכה — מרצה 07" })).toBeFocused(); // the same card, its key as read kept
     await expect(card("מרצה 07")).toContainText("כבר במאגר: מרצה 07");
     await expect(card("מרצה 07")).toContainText("שיוך מוסדי: מכון לדוגמה");
-    // a later card edited into an earlier one's name: the two are one. Saved by the mouse, the page stays where it was…
+    // a later card edited into an earlier one's name: the two are one, and the focus goes on at the card that stays —
+    // however it was saved (a screen reader's action is a click), but the page scrolls to it only from the keyboard
+    type Calls = { focusCalls: { label: string | null; still: boolean }[] };
+    await page.evaluate(() => {
+      const w = window as unknown as Calls;
+      w.focusCalls = [];
+      const focus = HTMLElement.prototype.focus;
+      HTMLElement.prototype.focus = function (this: HTMLElement, o?: FocusOptions) {
+        w.focusCalls.push({ label: this.getAttribute("aria-label"), still: !!o?.preventScroll });
+        return focus.call(this, o);
+      };
+    });
+    const handedTo03 = () => page.evaluate(() => (window as unknown as Calls).focusCalls.filter((c) => c.label === "עריכה — מרצה 03"));
     await speakers.getByRole("button", { name: "עריכה — מרצה 03ב", exact: true }).click();
     let late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
     await late.getByLabel("שם", { exact: true }).fill("מרצה 03");
     await late.getByRole("button", { name: "שמירת העריכה" }).click();
     await expect(card("מרצה 03ב")).toHaveCount(0);
     await expect(card("מרצה 03")).toContainText("שורות 4, 6");
-    await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).not.toBeFocused();
-    // …taken back, and saved by the keyboard: the keyboard goes on at the card that stays
+    await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).toBeFocused();
+    expect(await handedTo03()).toEqual([{ label: "עריכה — מרצה 03", still: true }]); // by the mouse: the page stays
+    // taken back, and saved by the keyboard: the page goes with the focus
     await card("מרצה 03").getByRole("button", { name: "ביטול העריכה" }).click();
     await expect(card("מרצה 03ב")).toHaveCount(1);
     await speakers.getByRole("button", { name: "עריכה — מרצה 03ב", exact: true }).click();
     late = card("מרצה 03ב").getByRole("group", { name: "עריכה" });
     await late.getByLabel("שם", { exact: true }).fill("מרצה 03");
+    await page.evaluate(() => ((window as unknown as Calls).focusCalls = []));
     await late.getByRole("button", { name: "שמירת העריכה" }).press("Enter");
     await expect(card("מרצה 03ב")).toHaveCount(0);
     await expect(speakers.getByRole("button", { name: "עריכה — מרצה 03", exact: true })).toBeFocused();
+    expect(await handedTo03()).toEqual([{ label: "עריכה — מרצה 03", still: false }]);
     // …at its form's name when its own «עריכה» is open (no «עריכה» button shown), and back to «עריכה» when that closes
     await speakers.getByRole("button", { name: "עריכה — מרצה 12", exact: true }).click();
     const open12 = speakers.getByRole("group", { name: "עריכה" });
@@ -739,6 +766,10 @@ test.describe("demo build — the import of 5786", () => {
     await expect(speakers.getByRole("button", { name: "עריכה — מרצה 12", exact: true })).toBeFocused();
     await expect(page.getByRole("list", { name: "השיעורים" }).locator("li").filter({ hasText: "כותרת אלף" })).toContainText("מרצה 07");
     await noSidewaysScroll(page);
+    // the confirm cancelled: the focus back at «ייבוא»
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(page.getByRole("button", { name: "ייבוא", exact: true })).toBeFocused();
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
     await expect(page.getByText(/5 שיעורים במחזור «ארכיון סבב שישי»/)).toBeVisible();

@@ -81,7 +81,7 @@ function SpeakerDecision({
         </p>
       )}
       {status === "ambiguous" && match && (
-        <fieldset className="min-w-0 rounded-lg border border-line bg-paper p-2">
+        <fieldset data-decide className="min-w-0 rounded-lg border border-line bg-paper p-2">
           <legend className="px-1 font-semibold">
             מי זה/זו?{" "}
             {inSheet
@@ -241,7 +241,7 @@ function Editable({
   lines,
   onLine,
   onEdit,
-  focusEdit = false,
+  focusEdit = null,
 }: {
   fields: SpeakerEdit;
   edited: boolean;
@@ -251,8 +251,11 @@ function Editable({
   onLine?: (id: string, as: LineAs, byKeyboard: boolean) => void;
   /** The admin's reading (null: back to the file's); byKeyboard: saved or taken back by the keyboard. */
   onEdit: (e: SpeakerEdit | null, byKeyboard: boolean) => void;
-  /** Set by a list whose cards an «עריכה» merges: true for the render after which this card takes the keyboard — also as it mounts. */
-  focusEdit?: boolean;
+  /**
+   * Set by a list whose cards an «עריכה» merges: for the render after which this card takes the focus (also as it mounts) —
+   * «scroll» from the keyboard; «still» from a click, a tap or a screen reader's action: the focus moves, the page does not.
+   */
+  focusEdit?: "scroll" | "still" | null;
 }) {
   const [open, setOpen] = useState(false);
   // opened by «עריכה»: the keyboard goes on into the form, to the name
@@ -268,7 +271,7 @@ function Editable({
   }, [refocus]);
   // the list's hand-off: to «עריכה», or — the card's own form open, so no «עריכה» shown — to the form's name
   useEffect(() => {
-    if (focusEdit) (editRef.current ?? nameRef.current)?.focus();
+    if (focusEdit) (editRef.current ?? nameRef.current)?.focus({ preventScroll: focusEdit === "still" });
   }, [focusEdit]);
   const close = () => {
     setOpen(false);
@@ -401,7 +404,7 @@ export function DoubleGroups({ groups, read, decisions, onDecide }: { groups: Do
                   </p>
                 ))}
               </div>
-              <fieldset className="min-w-0">
+              <fieldset data-decide className="min-w-0">
                 <legend className="sr-only">{rowsSaid(g.rows)}: מה הן?</legend>
                 <div className="flex flex-wrap gap-1.5">
                   {(["parallel", "merge"] as const).map((d) => (
@@ -532,17 +535,18 @@ export function SpeakersPreview({
   /** «עריכה» of a speaker (by its keys as read; null: back to what was read). */
   onEdit: (from: string[], e: SpeakerEdit | null) => void;
 }) {
-  // an «עריכה» saved into an earlier card's name merges the two, and the card that had the keyboard goes: it goes on at
-  // the «עריכה» of the card that now holds its first key as read. Only from the keyboard — a click or a tap leaves the
-  // page where it was (a focus scrolls to the card, perhaps far up)
-  const [focus, setFocus] = useState<string | null>(null);
+  // an «עריכה» saved into an earlier card's name merges the two, and the card that had the focus goes: it goes on at the
+  // «עריכה» of the card that now holds its first key as read — however it was saved (a screen reader's action is a click),
+  // but the page scrolls to it only from the keyboard: a click or a tap leaves the page where it was
+  const [focus, setFocus] = useState<{ key: string; scroll: boolean } | null>(null);
   // delivered once: the cards' effects run before this one, and a card that mounts again later takes nothing
   useEffect(() => {
     if (focus != null) setFocus(null);
   }, [focus]);
   // a card's form holds only the lines it is a speaker by, so any choice there takes the line (and the radio) out of the
   // card, often the card itself: the keyboard goes on at the same choice of the same line in «שם נוסף בתא של המרצה»,
-  // which stays (and the arrows go on from there). Only from the keyboard: that list is above, and a click stays put
+  // which stays (and the arrows go on from there). Only from the keyboard: that list is above, and a radio focused out of
+  // sight would turn a mouse user's arrow keys into choices made unseen
   const [lineFocus, setLineFocus] = useState<{ id: string; as: LineAs } | null>(null);
   useEffect(() => {
     if (lineFocus) document.querySelector<HTMLInputElement>(`li[data-line="${lineFocus.id}"] input[value="${lineFocus.as}"]`)?.focus();
@@ -592,9 +596,9 @@ export function SpeakersPreview({
                 }}
                 onEdit={(e, byKeyboard) => {
                   onEdit(s.from, e);
-                  if (byKeyboard) setFocus(s.from[0]);
+                  setFocus({ key: s.from[0], scroll: byKeyboard });
                 }}
-                focusEdit={focus != null && s.from.includes(focus)}
+                focusEdit={focus && s.from.includes(focus.key) ? (focus.scroll ? "scroll" : "still") : null}
               />
               <SpeakerDecision
                 name={name}
@@ -694,16 +698,39 @@ const LINE_AS_LABEL: Record<LineAs, (l: ExtraLine) => string> = {
   skip: (l) => SKIP_LABEL[l.kind],
 };
 
-/** A line's three choices (byKeyboard: chosen by the arrows or the space bar — the radio «:focus-visible» as it changes). */
-function LineChoice({ line: l, onChoose, legend, disabled = false }: { line: ExtraLine; onChoose: (as: LineAs, byKeyboard: boolean) => void; legend: string; disabled?: boolean }) {
+/**
+ * A line's three choices. byKeyboard: a key pressed in the group since the last pointer — the arrows' keydown comes before
+ * the change they make (every engine; «:focus-visible» is not set on an arrow-focused radio in Safari).
+ */
+function LineChoice({
+  line: l,
+  onChoose,
+  legend,
+  disabled = false,
+  decide = false,
+}: {
+  line: ExtraLine;
+  onChoose: (as: LineAs, byKeyboard: boolean) => void;
+  legend: string;
+  disabled?: boolean;
+  /** The decision its row waits for («לראשונה שמחכה להחלטה» goes to it). */
+  decide?: boolean;
+}) {
   const id = useId();
+  const keyed = useRef(false);
   return (
-    <fieldset className="mt-1 min-w-0" disabled={disabled}>
+    <fieldset
+      data-decide={decide || undefined}
+      className="mt-1 min-w-0"
+      disabled={disabled}
+      onKeyDown={() => (keyed.current = true)}
+      onPointerDown={() => (keyed.current = false)}
+    >
       <legend className="sr-only">{legend}</legend>
       <div className="flex flex-wrap gap-1.5">
         {(["speaker", "affiliation", "skip"] as const).map((as) => (
           <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={(e) => onChoose(as, e.currentTarget.matches(":focus-visible"))} className="accent-ink" />
+            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={() => onChoose(as, keyed.current)} className="accent-ink" />
             {LINE_AS_LABEL[as](l)}
           </label>
         ))}
@@ -746,7 +773,7 @@ export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: Ex
                 )}
                 {l.held && l.as != null && l.as !== "skip" && <span className="text-bad"> — {l.why}</span>}
               </p>
-              <LineChoice line={l} onChoose={(as) => onChoose(l.id, as)} legend={`«${l.text}» — מה זה?`} disabled={gone} />
+              <LineChoice line={l} onChoose={(as) => onChoose(l.id, as)} legend={`«${l.text}» — מה זה?`} disabled={gone} decide />
             </li>
           );
         })}
@@ -856,6 +883,7 @@ export function EscortsPreview({
                         disabled={channel == null}
                         placeholder={channel === "other" ? "איך פונים — במילים שלך" : ""}
                         onChange={(e) => set({ note: e.target.value })}
+                        data-decide={!!problem || undefined}
                         aria-describedby={problem || noteEscort ? `${id}-w-${i}` : undefined}
                         className={INPUT}
                       />
