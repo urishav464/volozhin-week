@@ -5,7 +5,7 @@ import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import type { Category } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { PALETTE, colorName } from "../../settings/palette";
-import { Badge, Button, Confirm, Field, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, Field, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 export function CategoriesTab() {
   const { port } = useSettings();
@@ -115,6 +115,12 @@ function CategoryItem({
   const { port } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete" | "used">("view");
+  // «ביטול» (or «הבנתי») takes the confirm (and its focus) away: «מחיקה», where the delete began, takes it back
+  const focusBack = useFocusBack();
+  const backToDelete = () => {
+    setMode("view");
+    focusBack.back();
+  };
   const [name, setName] = useState(c.name);
   const [color, setColor] = useState(c.color);
   const [problem, setProblem] = useState<string | null>(null);
@@ -208,7 +214,7 @@ function CategoryItem({
               confirm="מחיקה"
               busy={busy === "delete"}
               onConfirm={() => void remove()}
-              onCancel={() => setMode("view")}
+              onCancel={backToDelete}
             />
           ) : c.active ? (
             <Confirm
@@ -221,14 +227,14 @@ function CategoryItem({
               danger={false}
               busy={busy === "active"}
               onConfirm={() => void setActive(false)}
-              onCancel={() => setMode("view")}
+              onCancel={backToDelete}
             />
           ) : (
             <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
               <p className="mb-2">
                 <b>{c.name}</b>: יש שיעורים בקטגוריה הזו, והיא כבר מושבתת. היא נשארת בשיעורים הקיימים.
               </p>
-              <Button onClick={() => setMode("view")}>הבנתי</Button>
+              <Button onClick={backToDelete}>הבנתי</Button>
             </div>
           )
         }
@@ -248,7 +254,7 @@ function CategoryItem({
           <Button kind="quiet" busy={busy === "active"} onClick={() => void setActive(!c.active)} aria-label={`${c.active ? "השבתת" : "הפעלת"} ${c.name}`}>
             {c.active ? "השבתה" : "הפעלה"}
           </Button>
-          <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${c.name}`}>
+          <Button ref={focusBack.ref()} kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${c.name}`}>
             מחיקה
           </Button>
           <Button kind="quiet" disabled={first || moving} onClick={() => onMove(-1)} aria-label={`הזזת ${c.name} למעלה`} title="למעלה">
