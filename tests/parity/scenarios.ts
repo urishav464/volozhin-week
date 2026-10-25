@@ -87,6 +87,56 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "L", reshape: [3, 1050], op: { op: "reset" } },
   ],
 
+  // v13 review: a time split never deletes a lesson only partly in the cell — a parallel draft moved to straddle it
+  "a time split refuses a lesson that sticks out of the cell": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", reshape: [1, 510], op: { op: "merge_next" } }, // 08:30–11:30, בית מדרש
+    { as: "A", reshape: [1, 960], op: { op: "split_parallel", count: 2, reason: "שני מסלולים" } }, // a 16:00 draft in כיתה
+    { as: "A", propose: "גמא", at: [1, 960, "כיתה"] },
+    { as: "A", move: [1, 960, "כיתה"], to: [1, 600, 690, "כיתה"] }, // 10:00–11:30: inside the merged cell's range
+    { as: "A", move: [1, 600, "כיתה"], to: [1, 690, 780, "כיתה"] }, // 11:30–13:00: outside it
+    { as: "A", move: [1, 690, "כיתה"], to: [1, 600, 690, "כיתה"] },
+    { as: "A", reshape: [1, 510], op: { op: "split_time", parts: [90, 90] } }, // inside the cell: both drafts go, the pitches to the first part
+    { as: "A", propose: "בטא", cell: [3, 510, 600] },
+    { as: "A", reshape: [3, 510], op: { op: "merge_next" } }, // 08:30–11:30
+    { as: "A", reshape: [3, 960], op: { op: "split_parallel", count: 2, reason: "שני מסלולים" } },
+    { as: "A", reshape: [3, 960], op: { op: "merge_next" } }, // would swallow — refused or merged, alike on both
+    { as: "A", propose: "גמא", at: [3, 960, "כיתה"] },
+    { as: "A", move: [3, 960, "כיתה"], to: [3, 600, 780, "כיתה"] }, // 10:00–13:00 in כיתה: sticks out of 08:30–11:30
+    { as: "A", reshape: [3, 510], op: { op: "split_time", parts: [90, 90] } }, // refused — the draft is not deleted whole
+  ],
+
+  // v13: the grid's soft rules, the instructor's — never seeded; null brings back the «הצעה» default
+  "the grid's rules": [
+    { as: "A", gridRules: { gender_tolerance: 2, max_category_per_day: null } }, // content: not theirs
+    { as: "E", gridRules: { gender_tolerance: 6, max_category_per_day: null } },
+    { as: "E", gridRules: { gender_tolerance: null, max_category_per_day: 0 } },
+    { as: "E", gridRules: { gender_tolerance: 0, max_category_per_day: 2 } },
+    { as: "E", gridRules: { gender_tolerance: 2, max_category_per_day: null } }, // the maximum back to its default
+    { as: "admin", gridRules: { gender_tolerance: null, max_category_per_day: null } },
+  ],
+
+  // v13: a merged cell splits whole — never one-row drafts beside it (the instructor's report)
+  "splitting a merged cell": [
+    { as: "A", propose: "אלפא", cell: [2, 510, 600] },
+    { as: "A", reshape: [2, 510], op: { op: "merge_next" } }, // 08:30–11:30
+    { as: "A", reshape: [2, 510], op: { op: "split_parallel", count: 2, reason: "שני מסלולים" } }, // one more 08:30–11:30
+    { as: "A", reshape: [2, 600], op: { op: "split_parallel", count: 3, reason: "שלושה" } }, // from its second row: the same cell
+    { as: "A", reshape: [2, 510], op: { op: "split_parallel", count: 3, reason: "שוב" } }, // already 3
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [90, 90] } }, // all three go; אלפא's pitch to the first part
+    { as: "A", reshape: [2, 510], op: { op: "merge_next" } },
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [90, 60] } }, // not the cell's length
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [60, 120] } }, // the second part spans two rows, as a merged lesson does
+    { as: "A", reshape: [3, 1200], op: { op: "merge_next" } }, // 20:00–00:00, over מכריכה לכריכה
+    { as: "A", reshape: [3, 1350], op: { op: "split_time", parts: [90, 150] } }, // the second part would start in מכריכה לכריכה
+    { as: "A", reshape: [3, 1350], op: { op: "split_time", parts: [60, 180] } },
+    { as: "A", propose: "בטא", cell: [3, 510, 600] },
+    { as: "A", close: "בטא", at: [3, 510] },
+    { as: "A", reshape: [3, 510], op: { op: "merge_next" } }, // a closed lesson merged
+    { as: "A", reshape: [3, 600], op: { op: "split_time", parts: [90, 90] } }, // its cell is closed
+    { as: "A", reshape: [3, 600], op: { op: "split_parallel", count: 2, reason: "מקביל לסגור" } }, // a draft beside it, its whole length
+  ],
+
   "editing and versions": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
     { as: "A", close: "אלפא", at: [1, 510] },
@@ -966,6 +1016,9 @@ export const SCENARIOS: Record<string, Step[]> = {
     // shows «אותו טלפון כמו …» and sends such a row as a merge, the next step)
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "שם אחר לגמרי", affiliation: "מוסד שני" }, { row: 3, action: "new", name: "עוד שם", phone: "+972 (0)00 000 0005" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "מועמד/ת לדוגמה", name: "שם שלישי", phone: "+972 (0)00 000 0005", email: "candidate@example.org" }] },
+    // v13: the sheet's «מגדר» column — a gender where the title says none; the other gender than a title says, refused
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמדת מהעמודה", gender: "f" }, { row: 3, action: "new", name: "מועמד עם דוקטורט", title: "ד״ר", gender: "m" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת סותר/ת", title: "הרבנית", gender: "m" }] },
     // two names on one line, both new, in one import: two people, each with their own contacts
     {
       as: "admin",

@@ -96,6 +96,14 @@ export interface WeekCommands {
   deleteMemorialPlan(planId: number): Promise<void>;
   /** An admin of the edition: settings.memorial — the parts given (all empty removes it). */
   setMemorialPolicy(policy: MemorialPolicy): Promise<void>;
+  /** An admin of the edition (v13): the grid's soft rules; null removes one (its «הצעה» default returns). */
+  setGridRules(rules: GridRules): Promise<void>;
+}
+
+/** settings.gender_tolerance (0–5) and settings.max_category_per_day (1–10); null = the «הצעה» default. */
+export interface GridRules {
+  gender_tolerance: number | null;
+  max_category_per_day: number | null;
 }
 
 /** A lesson's transport details in the logistics list. */

@@ -132,13 +132,13 @@ export function demoWeek(): Week {
   drafted(0, 960, 1050, [9, 11]);
   closed(0, 1470, 1560, 2, { self_intro: true, sources_kind: "none" });
 
-  // Monday: a 60+30 split at 14:30, and the all-night merge 00:30–05:00.
+  // Monday: a 60+30 split at 14:30, and the all-night merge 00:30–05:00 — three women, three men (balanced).
   closed(1, 510, 600, 4, { pay_amount: 200, transport: "round_trip", approval: "pending" }); // waits for the instructor
-  closed(1, 600, 690, 6, { pay_amount: 300, approval: "rejected", approval_note: "נתון לדוגמה: לבדוק שוב את הסכום", approved_by: 1, approved_at: at(9) });
+  closed(1, 600, 690, 25, { pay_amount: 300, approval: "rejected", approval_note: "נתון לדוגמה: לבדוק שוב את הסכום", approved_by: 1, approved_at: at(9) });
   closed(1, 870, 930, 8, { teach_min: 60, ...sent(1), needs_reconfirm: true }); // moved after the message went out
-  closed(1, 930, 960, 10, { teach_min: 30, sources_kind: "sheet_video", print_when: "same_day" });
+  closed(1, 930, 960, 27, { teach_min: 30, sources_kind: "sheet_video", print_when: "same_day" });
   closed(1, 1200, 1290, 12, { pay_amount: 200, ...approved }); // approved, not yet paid; the message still to send
-  closed(1, 1470, 1740, 14, { title: "סדר לילה לדוגמה (כל הלילה)", teach_min: 270 });
+  closed(1, 1470, 1740, 29, { title: "סדר לילה לדוגמה (כל הלילה)", teach_min: 270 });
 
   // Tuesday: a parallel pair at 16:00 in two rooms; back-to-back same category in the morning.
   closed(2, 510, 600, 21, { category_id: 1, sources_kind: "other", sources_note: "ספר שהמרצה מביא/ה (נתון לדוגמה)" });
@@ -158,7 +158,9 @@ export function demoWeek(): Week {
   closed(4, 1050, 1140, 24, { audience: "שיעור להורים", ...sent(1) }); // no escort yet
 
   // Memorial slots: placeholders only — names of the fallen are entered by the instructor, never seeded.
+  // Both memorial rows hold one, before lunch and after it — the same slot (v13): ten in the week.
   for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 780, 795, { kind: "memorial", title: "זמן זיכרון" });
+  for (const day of [0, 1, 2, 3, 4] as Day[]) lesson(day, 855, 870, { kind: "memorial", title: "זמן זיכרון" });
   // Sunday's slot holds the first synthetic fallen's plan; its escort is the family's liaison (synthetic).
   const sundayMemorial = lessons.find((l) => l.kind === "memorial" && l.day === 0)!;
   sundayMemorial.escort_roster_id = 4;

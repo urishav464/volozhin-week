@@ -21,7 +21,7 @@ import { columnsOf, FIELDS, HEADER_SEARCH, headerKey, type Mapping } from "./fie
 import { foldContact, hasContact, stripContacts } from "./phone";
 import { actionOf, type Choice, fillPlan, matchSpeaker, type RowStatus, type SpeakerFill, type SpeakerMatch } from "./match";
 import { cellOf, dataRows, type HeaderAt } from "./rows";
-import { nameTails, splitSpeakers, splitTitle } from "./speakerName";
+import { MEMORIAL_LINE, nameTails, splitSpeakers, splitTitle } from "./speakerName";
 import type { Grid } from "./table";
 
 export { IMPORT_CHANNELS };
@@ -57,13 +57,28 @@ export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
   const out = new Set<number>();
   const width = grid[0]?.length ?? 0;
   const below = grid.slice(headerRow ?? 0, Math.max(HEADER_SEARCH, (headerRow ?? 0) + 1));
+  // no header row chosen: the table's probable header still marks its column — «חניך שפונה» is a header with a word
+  // after the trainee's (the dry run on last year's candidates: the whole-cell test missed it, and the column could be mapped)
+  const probable = headerRow == null ? probableHeader(grid) : null;
   for (let i = 0; i < width; i++) {
     const head = headerRow == null ? "" : (grid[headerRow]?.[i] ?? "");
     if (headerRow != null && ESCORT_COLUMN.test(head)) out.add(i);
     else if (headerRow != null && FIELD_HEADERS.has(headerKey(head))) continue;
+    else if (probable && speaksOfEscort(probable[i] ?? "")) out.add(i);
     else if (below.some((r) => looksLikeEscortHeader(r[i] ?? ""))) out.add(i);
   }
   return out;
+}
+
+/** With no header row: the first of the table's first rows with two cells or more filled (a title paragraph above it is one cell). */
+function probableHeader(grid: Grid): readonly string[] | null {
+  return grid.slice(0, HEADER_SEARCH).find((r) => r.filter((c) => c.trim() !== "").length >= 2) ?? null;
+}
+
+/** A header-like cell that speaks of escorts or trainees: a few words, no digits, an escort's or a trainee's word. */
+function speaksOfEscort(cell: string): boolean {
+  const t = cell.trim();
+  return t !== "" && !/[0-9]/.test(t) && t.split(/\s+/).length <= 4 && ESCORT_COLUMN.test(t);
 }
 
 /**
@@ -73,6 +88,7 @@ export function escortColumns(grid: Grid, headerRow: HeaderAt): Set<number> {
  */
 export function escortLike(grid: Grid, headerRow: HeaderAt): boolean {
   if (headerRow != null && (grid[headerRow] ?? []).some((c) => ESCORT_COLUMN.test(c))) return true;
+  if (headerRow == null && (probableHeader(grid) ?? []).some(speaksOfEscort)) return true;
   return grid.slice(0, HEADER_SEARCH).some((r) => r.some(looksLikeEscortHeader));
 }
 
@@ -222,21 +238,28 @@ export interface EscortsRow {
 }
 
 export function readEscorts(grid: Grid, m: Mapping, o: { headerRow: number | null; titles: readonly string[] }): EscortsRow[] {
-  return dataRows(grid, o.headerRow).map(({ row, cells }) => {
-    // the speaker as named — a phone or an e-mail beside the name is no part of it, nor its brackets or what follows
-    // «, », « - » or «והרב…» (nameTails): matched by the bare name alone; nothing of them is ever sent in this kind
-    const [first] = splitSpeakers(stripContacts(cellOf(cells, m, "speaker")).text);
-    const { name } = splitTitle(nameTails(first ?? "", o.titles).name, o.titles);
-    const key = nameKey(name);
+  return dataRows(grid, o.headerRow).flatMap(({ row, cells }) => {
     let contactsOut = false;
     const phrases = columnsOf(m, "phrases").flatMap((i) => {
       const st = stripContacts(cells[i] ?? "");
       if (st.phones.length || st.emails.length) contactsOut = true;
       return splitPhrases(st.text);
     });
-    if (!key) return { row, skip: "אין מרצה", key, name, phrases, contactsOut };
-    if (phrases.length === 0) return { row, skip: "אין ניסוחים", key, name, phrases, contactsOut };
-    return { row, skip: null, key, name, phrases, contactsOut };
+    // each speaker as named — a phone or an e-mail beside the name is no part of it, nor its brackets or what follows
+    // «, », « - » or «והרב…» (nameTails): matched by the bare name alone; nothing of them is ever sent in this kind.
+    // Two speakers on the first line («+», « / ») are two rows with the same phrases; a line under it only when it reads
+    // as a person — a title, four words at most, no dedication (MEMORIAL_LINE): the dry run on last year's file found
+    // nine cells with a second line, and eight of them dedicated the hour to someone (never a speaker)
+    const [firstLine = "", ...under] = stripContacts(cellOf(cells, m, "speaker")).text.split("\n");
+    const person = (line: string) => !MEMORIAL_LINE.test(line) && line.trim().split(/\s+/).length <= 4 && splitTitle(line, o.titles).title != null;
+    const named = [...splitSpeakers(firstLine), ...under.filter(person).flatMap(splitSpeakers)];
+    return (named.length ? named : [""]).map((one): EscortsRow => {
+      const { name } = splitTitle(nameTails(one, o.titles).name, o.titles);
+      const key = nameKey(name);
+      if (!key) return { row, skip: "אין מרצה", key, name, phrases, contactsOut };
+      if (phrases.length === 0) return { row, skip: "אין ניסוחים", key, name, phrases, contactsOut };
+      return { row, skip: null, key, name, phrases, contactsOut };
+    });
   });
 }
 

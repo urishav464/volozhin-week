@@ -148,6 +148,8 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
   // every cell counted as it is put: one shared string (or a merge) given to many cells is refused at the first too
   // long, and at the total — never copied into thousands of cells first
   const budget = readBudget();
+  // the rows with something besides checkboxes — a row of ticks alone is no one's (the dry run: 859 of them)
+  const worded = new Set<number>();
   const put = (r: number, c: number, text: string) => {
     if (text === "") return;
     if (r >= IMPORT_LIMITS.rows || c >= IMPORT_LIMITS.cols) tooBig();
@@ -202,12 +204,14 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
             text = raw;
             break;
           case "b":
-            text = raw === "1" ? "TRUE" : raw === "0" ? "FALSE" : raw;
+            // a checkbox (Google Sheets runs them down to row 999): ticked is «✓», unticked is nothing — never «TRUE»/«FALSE»
+            text = raw === "1" ? "✓" : "";
             break;
           default:
             text = raw === "" ? "" : dates[cell.style] ? serialText(raw) : numberText(raw);
         }
         put(cell.r, cell.c, text);
+        if (cell.type !== "b" && text !== "") worded.add(cell.r);
         cell = null;
       }
     } else if (cell) {
@@ -223,8 +227,13 @@ function readSheet(xml: string, shared: string[], dates: boolean[]): Grid {
     const last = Math.min(r1, IMPORT_LIMITS.rows - 1);
     work += Math.max(0, last - r0);
     if (work > IMPORT_LIMITS.cells) tooBig();
-    for (let r = r0 + 1; r <= last; r++) if (!cells.get(r)?.get(c0)) put(r, c0, v);
+    for (let r = r0 + 1; r <= last; r++) {
+      if (cells.get(r)?.get(c0)) continue;
+      put(r, c0, v);
+      if (worded.has(r0)) worded.add(r);
+    }
   }
+  for (const r of [...cells.keys()]) if (!worded.has(r)) cells.delete(r);
   const rows = Math.max(-1, ...cells.keys()) + 1;
   const cols = Math.max(-1, ...[...cells.values()].flatMap((m) => [...m.keys()])) + 1;
   const grid: string[][] = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => cells.get(r)?.get(c) ?? ""));

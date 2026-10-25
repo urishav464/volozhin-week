@@ -7,6 +7,7 @@
 // shaped like a real one (scripts/pii-scan.mjs).
 import { expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
+import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
@@ -172,6 +173,40 @@ test.describe("demo build", () => {
     await expect(toast(page, "4 מרצים אושרו")).toBeVisible();
     await expect(page.getByText("אין מרצים שממתינים לאישור.")).toBeVisible();
     await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 1 ממתין");
+    await noSidewaysScroll(page);
+  });
+
+  test("«אישור באצווה» of who taught in an archive: «ביטול» gives the focus back to the button that asked", async ({ page }) => {
+    // an archive edition, through the import (tests/e2e/import.spec.ts walks the rest of it): two who taught in it
+    const bytes = toXlsx([
+      {
+        name: "מעקב",
+        headers: ["מרצה", "שיעור ב", "כותרת"],
+        rows: [
+          ["הרבנית ארכיון אלף", "ראשון 8:30", "שיעור ארכיון א"],
+          ["ארכיון בית", "שני 10:00", "שיעור ארכיון ב"],
+        ],
+      },
+    ]);
+    await page.goto(`${demoUrl()}/settings/import`);
+    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
+    await page.locator('input[type="file"]').setInputFiles({ name: "מעקב לדוגמה.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(bytes) });
+    await page.getByLabel("שם המחזור בארכיון").fill("ארכיון לדוגמה");
+    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
+    await page.getByRole("group", { name: "אישור", exact: true }).getByRole("button", { name: "ייבוא" }).click();
+    await expect(toast(page, "הייבוא נשמר")).toBeVisible();
+
+    await nav(page).getByRole("link", { name: /אישורים/ }).click();
+    const batch = page.getByRole("group", { name: "אישור באצווה: מי שלימד/ה ב-ארכיון לדוגמה" });
+    const ask = batch.getByRole("button", { name: "אישור 2 מרצים שלימדו ב-ארכיון לדוגמה" });
+    await ask.click();
+    const confirm = batch.getByRole("group", { name: "אישור", exact: true });
+    await expect(confirm).toContainText("לאשר 2 מרצים שלימדו ב-ארכיון לדוגמה?");
+    await confirm.getByRole("button", { name: "ביטול" }).press("Enter");
+    await expect(confirm).toHaveCount(0);
+    await expect(ask).toBeFocused(); // not the page: the keyboard is where it was
+    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 8 ממתינים"); // nothing approved
     await noSidewaysScroll(page);
   });
 

@@ -248,8 +248,9 @@ test.describe("demo build", () => {
     await panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" }).click();
     const ask = panel.getByRole("group", { name: "אישור" });
     await expect(ask).toContainText("בקשת ההסעה ופרטיה · המלווה · המקורות");
-    await ask.getByRole("button", { name: "ביטול" }).click();
+    await ask.getByRole("button", { name: "ביטול" }).press("Enter");
     await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toBeFocused(); // the confirm cancelled: the focus back at the button
 
     // «הגדרות ← חניכים»: deleting that escort lists the lessons they would leave
     await nav(page).getByRole("link", { name: "הגדרות" }).click();

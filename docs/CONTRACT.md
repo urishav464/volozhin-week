@@ -115,14 +115,22 @@ the day — a merged lesson moved whole). Room and speaker invariants apply (`ro
 ### `reshape(edition, day, row_start, op, …)`
 
 Content or admin. Acts on the lesson row of `day` that starts at `row_start`.
-- `split_parallel(count ∈ {2,3}, reason)`: make the row hold `count` lessons covering the full
-  row, each in a different room. Existing non-cancelled lessons covering exactly the row count;
-  new drafts go to the free rooms in `rooms.sort` order with `parallel_reason = reason`. Not
-  enough free rooms → `room_taken`. `reason` must be non-empty → `bad_shape`.
-- `split_time(parts[])`: `parts` are minutes, each ≥ 15 and a multiple of 5, summing to the row's
-  length → else `bad_shape`. A closed lesson anywhere in the row → `cell_closed`. Result: one
-  draft per part in the default room, back to back. Live pitches of drafts that were in the row
-  move to the FIRST part (deduplicated per approach); the old drafts are deleted.
+The two splits act on the row's **cell** (v13): the row widened to every non-cancelled lesson
+that overlaps it (`cellSpan`, `src/domain/shape.ts`) — a merged lesson is split whole, from
+either of its rows, never with one-row drafts beside it.
+- `split_parallel(count ∈ {2,3}, reason)`: make the cell hold `count` lessons covering the whole
+  cell, each in a different room. Existing non-cancelled lessons covering exactly the cell count;
+  new drafts of the cell's length go to the rooms free of every lesson overlapping the cell, in
+  `rooms.sort` order, with `parallel_reason = reason`. Not enough free rooms → `room_taken`.
+  `reason` must be non-empty → `bad_shape`.
+- `split_time(parts[])`: `parts` are minutes, at least two, each ≥ 15 and a multiple of 5,
+  summing to the cell's length, and each part starting inside a lesson row and ending inside one
+  (as `move_lesson` asks of a range; `timeSplitOk`) → else `bad_shape`. A lesson in the cell's range
+  that sticks out of it (a parallel draft moved to start or end outside it) → `bad_shape` — it is
+  never deleted whole (`sticksOut`). A closed lesson or a memorial slot anywhere in the cell →
+  `cell_closed`. Result: one draft per part in the default
+  room, back to back from the cell's start. Live pitches of the drafts that were in the cell move
+  to the FIRST part (deduplicated per approach); the old drafts are deleted.
 - `merge_next()`: the row's single lesson (a draft or closed; create a plain draft if the row is
   free) is extended to the end of the next lesson row of that day (the nearest lesson row
   starting at or after its end). Any closed lesson in the swallowed range → `merge_blocked`.
@@ -1083,6 +1091,14 @@ card in «זמני זיכרון» and on «מקראה» — never for removal. O
 the edition (the plan deleted) are a slot's leftovers (`memorialLeftovers`: «מתוכנית שנמחקה
 מהמחזור»), never in the reader.
 
+## The grid's rules — `setGridRules(rules)` — `set_grid_rules(p_edition, p_gender_tolerance, p_max_category_per_day)` → `void` (v13)
+An admin of the edition. `settings.gender_tolerance` (0–5) and `settings.max_category_per_day` (1–10),
+else `bad_value`; a null removes that rule — its «הצעה» default returns (`DEFAULT_GENDER_TOLERANCE` = 1,
+`DEFAULT_MAX_CATEGORY_PER_DAY` = 3). Never seeded. A day whose closed lessons' women and men are
+further apart than the tolerance is «לא מאוזן» (`unbalanced`, `src/rules/balance.ts`): the warning
+`gender_day`, keyed by the day (`gender_day:<d>`), on no lesson. Drafts never count for it — their
+leading candidates only tint the open cells (`need`).
+
 ## The policy — `setMemorialPolicy(policy)` — `set_memorial_policy(p_edition, p_placement, p_max_minutes, p_warn_adjacent_meal)` → `void`
 An admin. `settings.memorial = {placement?, max_minutes?, warn_adjacent_meal?}` — never seeded; the
 staff meeting decides it. `max_minutes` 1–180 or null (`bad_value`), `placement` a block ≤ 500; only
@@ -1148,6 +1164,7 @@ archive's `archive_cancelled` is the browser's.
 | `place_memorial_plan` | `p_plan bigint, p_version integer, p_lesson bigint` | `void` | authenticated |
 | `delete_memorial_plan` | `p_plan bigint` | `void` | authenticated |
 | `set_memorial_policy` | `p_edition bigint, p_placement text, p_max_minutes integer, p_warn_adjacent_meal boolean` | `void` | authenticated |
+| `set_grid_rules` (v13) | `p_edition bigint, p_gender_tolerance integer, p_max_category_per_day integer` | `void` | authenticated |
 
 `authenticated` may also execute `app.may_see_fallen` and `app.may_see_fallen_contacts` — the
 policies run as the browser's role (`tests/sql/schema.test.ts` pins them).
@@ -1232,8 +1249,9 @@ an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons
 ### A speaker row (`candidates` rows, `tracking` speakers) — `app.import_speaker`
 Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): `action` `new`/`merge` → else
 `bad_value`; `name` one line ≤ 120 with a non-empty name key → else `name_required`; `title` one of the titles of
-`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and exactly what the
-title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null) → else `bad_value`;
+`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and never the other
+gender than the title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null; v13: where the
+title says none, a gender the sheet's «מגדר» column gave is kept) → else `bad_value`;
 `affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
 `email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000; **no phone or e-mail
 in the name, the title, the affiliation, a tag or the notes** (`app.has_contact`, above) → else `contact_in_text`.

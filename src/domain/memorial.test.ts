@@ -32,9 +32,9 @@ describe("memorial times on screen", () => {
 
   it("list a day's memorial rows inside the edition's window", () => {
     const w = demoWeek();
-    expect(memorialRowsOf(w, 0).map((r) => r.label)).toEqual(["זמן זיכרון א", "זמן זיכרון ב"]);
+    expect(memorialRowsOf(w, 0).map((r) => [r.label, r.start_min])).toEqual([["זמן זיכרון", 780], ["זמן זיכרון", 855]]);
     w.edition.last_day_until = 800; // Thursday ends at 13:20: the 14:15 row is gone
-    expect(memorialRowsOf(w, 4).map((r) => r.label)).toEqual(["זמן זיכרון א"]);
+    expect(memorialRowsOf(w, 4).map((r) => r.start_min)).toEqual([780]);
   });
 
   it("name the fallen and the liaison in the tracking table's memorial row — never a contact", () => {

@@ -6,7 +6,7 @@ import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, dayRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
-import { categoryLoad } from "./balance";
+import { DEFAULT_GENDER_TOLERANCE, categoryLoad, dayBalance, unbalanced } from "./balance";
 
 export type WarningKind =
   | "parallel"
@@ -21,7 +21,8 @@ export type WarningKind =
   | "escort_gap"
   | "memorial_over_slot"
   | "memorial_too_long"
-  | "memorial_near_meal";
+  | "memorial_near_meal"
+  | "gender_day";
 
 export interface Warning {
   key: string;
@@ -75,9 +76,19 @@ export function warningsFor(week: Week): Warning[] {
     week.lessonSpeakers.filter((x) => x.lesson_id === lessonId).map((x) => speakerById.get(x.speaker_id)).filter((s) => s != null);
   const push = (w: Omit<Warning, "key">) => out.push({ ...w, key: `${w.kind}:${[...w.lessonIds].sort((a, b) => a - b).join(",")}` });
   const max = week.edition.settings.max_category_per_day ?? DEFAULT_MAX_CATEGORY_PER_DAY;
+  const tolerance = week.edition.settings.gender_tolerance ?? DEFAULT_GENDER_TOLERANCE;
 
   for (const day of [0, 1, 2, 3, 4] as Day[]) {
     const dayLessons = live.filter((l) => l.day === day && l.kind === "lesson");
+
+    // v13: the day's closed lessons, women and men, further apart than the tolerance («הצעה» until set) — a day's
+    // warning, on no card (the day header and its panel show it; its key is the day's)
+    const { closed: g } = dayBalance(day, week, 0);
+    if (unbalanced(g, tolerance)) {
+      const k = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+      const rule = week.edition.settings.gender_tolerance == null ? `הצעה: הפרש של עד ${tolerance}` : `הפרש של עד ${tolerance}`;
+      out.push({ key: `gender_day:${day}`, kind: "gender_day", severity: "warn", day, lessonIds: [], message: `${DAY_NAMES[day]} לא מאוזן: נסגרו ${k(g.f)} מרצות ו-${k(g.m)} מרצים (${rule})` });
+    }
 
     // Parallel lessons split the group — allowed, but always visible.
     const seen = new Set<number>();
@@ -117,7 +128,8 @@ export function warningsFor(week: Week): Warning[] {
     for (const [catId, n] of categoryLoad(day, week.lessons)) {
       if (n > max) {
         const ids = closed.filter((l) => l.day === day && l.category_id === catId).map((l) => l.id);
-        push({ kind: "category_load", severity: "warn", day, lessonIds: ids, message: `${n} שיעורי «${categoryById.get(catId)?.name ?? "?"}» ביום ${DAY_NAMES[day]} (הצעה: עד ${max})` });
+        const rule = week.edition.settings.max_category_per_day == null ? `הצעה: עד ${max}` : `עד ${max}`;
+        push({ kind: "category_load", severity: "warn", day, lessonIds: ids, message: `${n} שיעורי «${categoryById.get(catId)?.name ?? "?"}» ביום ${DAY_NAMES[day]} (${rule})` });
       }
     }
 

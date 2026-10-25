@@ -23,6 +23,23 @@ describe("warningsFor", () => {
     expect(msgs).toContain(`2 שיעורים במקביל בשני ${LRM}08:30–10:00`);
   });
 
+  it("says a day is not balanced once its closed women and men are more than the tolerance apart — «הצעה» 1 until set (v13)", () => {
+    const w = emptyWeek();
+    const gender = () => warningsFor(w).filter((x) => x.kind === "gender_day");
+    closeWith(w, addLesson(w, 1, 510, 600, { title: "א", category_id: 1 }), addSpeaker(w, "m"));
+    expect(gender()).toEqual([]); // 1 to 0: within 1
+    // a pitch in a draft only tints the open cells — never this warning
+    pitch(w, addLesson(w, 1, 960, 1050), addApproach(w, addSpeaker(w, "m")), "approached");
+    expect(gender()).toEqual([]);
+    closeWith(w, addLesson(w, 1, 600, 690, { title: "ב", category_id: 2 }), addSpeaker(w, "m"));
+    expect(gender()).toEqual([{ key: "gender_day:1", kind: "gender_day", severity: "warn", day: 1, lessonIds: [], message: "שני לא מאוזן: נסגרו 0 מרצות ו-2 מרצים (הצעה: הפרש של עד 1)" }]);
+    w.edition.settings.gender_tolerance = 2;
+    expect(gender()).toEqual([]);
+    w.edition.settings.gender_tolerance = 0;
+    closeWith(w, addLesson(w, 2, 510, 600, { category_id: 1 }), addSpeaker(w, "f"));
+    expect(warningsFor(w).find((x) => x.key === "gender_day:2")?.message).toBe("שלישי לא מאוזן: נסגרו 1 מרצות ו-0 מרצים (הפרש של עד 0)");
+  });
+
   it("reports parallel lessons as information", () => {
     const w = emptyWeek();
     addLesson(w, 2, 960, 1050, { room_id: 1 });
@@ -60,6 +77,10 @@ describe("warningsFor", () => {
       closeWith(w, addLesson(w, 3, s, s + 90, { title: "x", category_id: 1 }), addSpeaker(w, g));
     }
     expect(kinds(w)).toEqual(["category_load"]);
+    expect(warningsFor(w)[0].message).toMatch(/\(עד 2\)$/); // the instructor's number: no «הצעה»
+    delete w.edition.settings.max_category_per_day;
+    closeWith(w, addLesson(w, 3, 1050, 1140, { title: "x", category_id: 1 }), addSpeaker(w, "f")); // a fourth: past the «הצעה» of 3
+    expect(warningsFor(w).find((x) => x.kind === "category_load")?.message).toMatch(/\(הצעה: עד 3\)$/);
   });
 
   it("warns on a speaker closed twice, by name and gender", () => {

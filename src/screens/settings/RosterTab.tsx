@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { type PasteStatus, parseRosterPaste, pasteColumns, previewPaste } from "../../settings/roster";
-import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -207,6 +207,9 @@ function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: nu
   const { port, wide } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete">("view");
+  // «ביטול» takes the confirm (and its focus) away: the row's «מחיקה» takes it back — on a phone, where «מחיקה» is in the
+  // edit form the cancel closes, «עריכה», which holds it
+  const focusBack = useFocusBack();
   /** The lessons this trainee escorts — read when the delete is asked for, shown before it is confirmed. */
   const [escorted, setEscorted] = useState<EscortedLesson[] | null>(null);
   useEffect(() => {
@@ -313,7 +316,10 @@ function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: nu
             confirm="מחיקה"
             busy={busy === "delete" || escorted == null}
             onConfirm={() => void remove()}
-            onCancel={() => setMode("view")}
+            onCancel={() => {
+              setMode("view");
+              focusBack.back(wide ? "delete" : "edit");
+            }}
           />
         }
       />
@@ -324,12 +330,12 @@ function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: nu
       cells={cells}
       actions={
         <>
-          <Button kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${r.full_name}`}>
+          <Button ref={focusBack.ref("edit")} kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${r.full_name}`}>
             עריכה
           </Button>
           {/* on a phone «מחיקה» is inside «עריכה», so a row of ~61 stays one line */}
           {wide && (
-            <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.full_name}`}>
+            <Button ref={focusBack.ref("delete")} kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.full_name}`}>
               מחיקה
             </Button>
           )}

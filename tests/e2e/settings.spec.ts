@@ -84,6 +84,101 @@ test.describe("demo build — an admin", () => {
     await expect(page.getByRole("combobox", { name: "מחזור" }).locator("option:checked")).toHaveText("מחזור לדוגמה");
     await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();
   });
+
+  test("a confirm cancelled from the keyboard gives the focus back to the button that asked: the team, the trainees, the rooms", async ({ page }, info) => {
+    const wide = info.project.name === "desktop";
+    const button = (name: string) => page.getByRole("button", { name, exact: true });
+    const cancel = () => page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    // a delete is asked for from the row on a wide screen; on a phone «מחיקה» is inside «עריכה», which takes the focus back
+    const askDelete = async (name: string) => {
+      if (!wide) await button(`עריכת ${name}`).click();
+      await button(`מחיקת ${name}`).click();
+    };
+    const asker = (name: string) => button(`${wide ? "מחיקת" : "עריכת"} ${name}`);
+
+    await page.goto(`${demoUrl()}/settings/team`);
+    await askDelete("לוגיסטיקה (הדגמה)");
+    await cancel();
+    await expect(asker("לוגיסטיקה (הדגמה)")).toBeFocused();
+    if (wide) {
+      // asked from the edit form, which the cancel closes: the row's «מחיקה»
+      await button("עריכת לוגיסטיקה (הדגמה)").click();
+      await button("מחיקת לוגיסטיקה (הדגמה)").click(); // the form's: the row is the form now
+      await cancel();
+      await expect(button("מחיקת לוגיסטיקה (הדגמה)")).toBeFocused();
+    }
+    // someone with history: the delete refused, deactivation offered instead — and cancelled
+    await askDelete("חניך/ה א׳");
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await expect(page.getByRole("group", { name: "אישור" })).toContainText("חניך/ה א׳: לחבר/ת הצוות כבר יש פעולות במערכת");
+    await cancel();
+    await expect(asker("חניך/ה א׳")).toBeFocused();
+    // deactivated from the keyboard, the busy button keeps the focus (now «החזרה»); then only «הבנתי», which gives it back too
+    await button("השבתת חניך/ה א׳").press("Enter");
+    await expect(toast(page, "חניך/ה א׳ הושבת/ה")).toBeVisible();
+    await expect(button("החזרת חניך/ה א׳")).toBeFocused();
+    await askDelete("חניך/ה א׳");
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "הבנתי" }).press("Enter");
+    await expect(asker("חניך/ה א׳")).toBeFocused();
+
+    await page.getByRole("tab", { name: "חניכים" }).click();
+    await askDelete("מלווה לדוגמה ב׳");
+    await expect(page.getByRole("group", { name: "אישור" })).toContainText("למחוק את מלווה לדוגמה ב׳");
+    await cancel();
+    await expect(asker("מלווה לדוגמה ב׳")).toBeFocused();
+
+    await page.getByRole("tab", { name: "חדרים" }).click();
+    await button("מחיקת כיתה ג׳").click();
+    await cancel();
+    await expect(button("מחיקת כיתה ג׳")).toBeFocused();
+    // a room in use cannot go: «הבנתי» gives the focus back too
+    await button("מחיקת כיתת בית מדרש").click();
+    await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await page.getByRole("group", { name: "אי אפשר למחוק" }).getByRole("button", { name: "הבנתי" }).press("Enter");
+    await expect(button("מחיקת כיתת בית מדרש")).toBeFocused();
+  });
+
+  test("the categories and the templates: a confirm cancelled gives the focus back; a busy button keeps it", async ({ page }) => {
+    const button = (name: string) => page.getByRole("button", { name, exact: true });
+    const confirm = () => page.getByRole("group", { name: "אישור" });
+    const cancel = () => confirm().getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+
+    await page.goto(`${demoUrl()}/settings/categories`);
+    await button("מחיקת פילוסופיה").click();
+    await cancel();
+    await expect(button("מחיקת פילוסופיה")).toBeFocused();
+    // a category in use: the delete refused, deactivation offered instead — and cancelled
+    await button("מחיקת מחשבת ישראל").click();
+    await confirm().getByRole("button", { name: "מחיקה", exact: true }).click();
+    await expect(confirm().getByRole("button", { name: "השבתה", exact: true })).toBeVisible();
+    await cancel();
+    await expect(button("מחיקת מחשבת ישראל")).toBeFocused();
+    // a busy button keeps the focus: deactivated from the keyboard, the same button (now «הפעלה») still has it
+    await button("השבתת מחשבת ישראל").press("Enter");
+    await expect(toast(page, "«מחשבת ישראל» הושבתה")).toBeVisible();
+    await expect(button("הפעלת מחשבת ישראל")).toBeFocused();
+    // already deactivated: only «הבנתי», and it gives the focus back too
+    await button("מחיקת מחשבת ישראל").click();
+    await confirm().getByRole("button", { name: "מחיקה", exact: true }).click();
+    await confirm().getByRole("button", { name: "הבנתי" }).press("Enter");
+    await expect(button("מחיקת מחשבת ישראל")).toBeFocused();
+
+    await page.getByRole("tab", { name: "תבניות" }).click();
+    await page.getByLabel("הנוסח", { exact: true }).fill("נוסח לדוגמה ל{{פנייה}}");
+    await button("שמירת הנוסח").click();
+    await expect(toast(page, "הנוסח נשמר")).toBeVisible();
+    await button("מחיקת הנוסח").click();
+    await cancel();
+    await expect(button("מחיקת הנוסח")).toBeFocused();
+    // two phrases: the one whose «מחיקה» asked takes the focus back, not its neighbour
+    await page.getByLabel("ניסוח (אפשר כמה, ניסוח בכל שורה)").fill("ניסוח לדוגמה א\nניסוח לדוגמה ב");
+    await button("הוספה").click();
+    await expect(toast(page, "נוספו 2 ניסוחים")).toBeVisible();
+    await button("מחיקת הניסוח: ניסוח לדוגמה ב").click();
+    await cancel();
+    await expect(button("מחיקת הניסוח: ניסוח לדוגמה ב")).toBeFocused();
+  });
 });
 
 const content = {

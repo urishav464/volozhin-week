@@ -1,30 +1,32 @@
 // The full week on a wide screen: the hours down the right edge, the five days
 // flowing right-to-left, every row a band, every lesson a box (layout.ts).
-import { useMemo } from "react";
 import { byGender } from "../domain/names";
-import { DAYS, type Day, fmt } from "../domain/time";
+import { DAYS, type Day, dayRange, fmt, overlaps } from "../domain/time";
 import type { GridRow, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
-import { type Lens, LessonCard } from "./LessonCard";
-import { buildLayout, freeCells, placeDay, rowActive } from "./layout";
-import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay } from "./model";
+import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
+import { freeCells, placeDay, rowActive } from "./layout";
+import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
   lens: Lens;
-  showNight: boolean;
   placing: Speaker | null;
   overKey: string | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (lessonId: number) => void;
+  /** An edition admin's: a memorial row with no slot yet makes one (v13 — both rows alike). */
+  onMemorial?: (day: Day, row: GridRow) => void;
+  /** The «אחריות» lens's colours and filter (LessonCard). */
+  owners?: CardOwners;
+  /** v13: the day header opens the day's panel. */
+  onDayPanel?: (day: Day) => void;
 }
 
 const COLS = "3.25rem repeat(5, minmax(0, 1fr))";
-const NIGHT = 1440;
 
-export function GridDesktop({ model, lens, showNight, placing, overKey, onCell, onLesson }: Props) {
-  const rows = useMemo(() => (showNight ? model.week.rows : model.week.rows.filter((r) => r.start_min < NIGHT)), [model, showNight]);
-  const layout = useMemo(() => (showNight ? model.layout : buildLayout(rows)), [model, rows, showNight]);
+export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, onMemorial, owners, onDayPanel }: Props) {
+  const { layout } = model;
   const { edition } = model.week;
 
   return (
@@ -32,7 +34,7 @@ export function GridDesktop({ model, lens, showNight, placing, overKey, onCell, 
       <div className="sticky top-0 z-20 grid gap-1 bg-paper pb-1" style={{ gridTemplateColumns: COLS }}>
         <div />
         {model.days.map((dm) => (
-          <DayHeader key={dm.day} model={model} dm={dm} glow={!!placing?.gender && dm.balance.need === placing.gender} />
+          <DayHeader key={dm.day} model={model} dm={dm} glow={!!placing?.gender && dm.balance.need === placing.gender} onOpen={onDayPanel ? () => onDayPanel(dm.day) : undefined} />
         ))}
       </div>
 
@@ -47,7 +49,7 @@ export function GridDesktop({ model, lens, showNight, placing, overKey, onCell, 
         </div>
 
         {DAYS.map((day) => {
-          const lessons = lessonsOfDay(model, day).filter((l) => showNight || l.start_min < NIGHT);
+          const lessons = lessonsOfDay(model, day);
           const placed = placeDay(layout, lessons);
           const free = freeCells(layout, day, model.week.lessons, edition);
           const need = model.days[day].balance.need;
@@ -62,6 +64,20 @@ export function GridDesktop({ model, lens, showNight, placing, overKey, onCell, 
                 }
                 if (b.row.kind === "lesson") return <div key={b.row.id} className={base} style={{ top: b.top, height: b.height }} />;
                 const tone = b.row.kind === "kk" ? "bg-accent-soft text-accent" : b.row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft";
+                if (b.row.kind === "memorial" && onMemorial && !lessons.some((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, b.row.start_min, b.row.end_min)) && memorialRowFree(model, day, b.row)) {
+                  return (
+                    <button
+                      key={b.row.id}
+                      type="button"
+                      onClick={() => onMemorial(day, b.row)}
+                      className={`${base} ${tone} grid place-items-center px-1 text-center text-[10px] leading-tight hover:bg-amber-100`}
+                      style={{ top: b.top, height: b.height }}
+                      aria-label={`הוספת זמן זיכרון: ${dayRange(day, b.row.start_min, b.row.end_min)}`}
+                    >
+                      <span className="truncate max-w-full">+ {b.row.label || "זמן זיכרון"}</span>
+                    </button>
+                  );
+                }
                 return (
                   <div key={b.row.id} className={`${base} ${tone} grid place-items-center px-1 text-center text-[10px] leading-tight`} style={{ top: b.top, height: b.height }}>
                     <span className="truncate max-w-full">{b.row.label}</span>
@@ -113,7 +129,7 @@ export function GridDesktop({ model, lens, showNight, placing, overKey, onCell, 
                     className="absolute"
                     style={{ top: p.top, height: p.height, insetInlineStart: `${(p.lane / p.lanes) * 100}%`, width: `${100 / p.lanes}%` }}
                   >
-                    <LessonCard model={model} lesson={p.lesson} lens={lens} height={p.height} active={overKey === key} placeable={placeable} onOpen={() => onLesson(p.lesson.id)} />
+                    <LessonCard model={model} lesson={p.lesson} lens={lens} owners={owners} height={p.height} active={overKey === key} placeable={placeable} onOpen={() => onLesson(p.lesson.id)} />
                   </div>
                 );
               })}

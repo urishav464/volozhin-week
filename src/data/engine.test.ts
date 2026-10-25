@@ -244,6 +244,36 @@ describe("reshape", () => {
     expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [80, 10] }))).toBe("bad_shape");
   });
 
+  it("split_parallel on a merged cell adds lanes of its whole length, from either of its rows (v13)", () => {
+    const e = new Engine(w, ME);
+    e.reshape(2, 510, { op: "merge_next" });
+    e.reshape(2, 510, { op: "split_parallel", count: 2, reason: "x" });
+    expect(e.week.lessons.map((l) => [l.start_min, l.end_min, l.room_id])).toEqual([[510, 690, 1], [510, 690, 2]]);
+    e.reshape(2, 600, { op: "split_parallel", count: 2, reason: "x" }); // already two lanes of the cell
+    expect(e.week.lessons).toHaveLength(2);
+  });
+
+  it("split_time on a merged cell divides its whole length; each part starts and ends in a lesson row (v13)", () => {
+    const e = new Engine(w, ME);
+    const r = e.propose(addSpeaker(w, "f").id, cell(1, 510, 600));
+    e.reshape(1, 510, { op: "merge_next" });
+    expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [90, 60] }))).toBe("bad_shape");
+    e.reshape(1, 600, { op: "split_time", parts: [60, 120] });
+    const ls = e.week.lessons.sort((a, b) => a.start_min - b.start_min);
+    expect(ls.map((l) => [l.start_min, l.end_min])).toEqual([[510, 570], [570, 690]]);
+    expect(e.week.pitches).toMatchObject([{ id: r.pitch_id, lesson_id: ls[0].id }]);
+    e.reshape(3, 1200, { op: "merge_next" }); // 20:00–00:00, over מכריכה לכריכה
+    expect(code(() => e.reshape(3, 1200, { op: "split_time", parts: [90, 150] }))).toBe("bad_shape");
+  });
+
+  it("split_time refuses a cell with a lesson that sticks out of it — never deletes it whole (v13 review)", () => {
+    const e = new Engine(w, ME);
+    e.reshape(1, 510, { op: "merge_next" }); // 08:30–11:30 in room 1
+    addLesson(e.week, 1, 600, 780, { room_id: 2, title: "מקביל שזז" }); // 10:00–13:00 in room 2
+    expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [90, 90] }))).toBe("bad_shape");
+    expect(e.week.lessons.map((l) => [l.start_min, l.end_min, l.room_id])).toEqual([[510, 690, 1], [600, 780, 2]]);
+  });
+
   it("split_time refuses a row with a closed lesson", () => {
     closeWith(w, addLesson(w, 1, 870, 960), addSpeaker(w, "m"));
     expect(code(() => new Engine(w, ME).reshape(1, 870, { op: "split_time", parts: [45, 45] }))).toBe("cell_closed");

@@ -24,12 +24,12 @@ import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { telHref } from "../../domain/contactLinks";
 import { fallenName, freeSlots, memorialRowsOf, memorialSlots, minutesText, planOf, slotLabel } from "../../domain/memorial";
-import { DAY_NAMES, DAYS, type Day, LRM, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
+import { DAY_NAMES, DAYS, type Day, LRM, dayRange, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
 import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { memorialWaiting } from "../../reader/model";
 import { warningsFor } from "../../rules/warnings";
-import { Badge, Button, Confirm, Field, GenderField, INPUT, Panel, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, GenderField, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { FileRow, SourceFiles } from "../stages/SourceFiles";
 import { Problem } from "../stages/parts";
@@ -263,6 +263,7 @@ function SlotCard(props: Ctx & { slot: Lesson }) {
   const { week, slot: l, admin, cmds, busy, act } = props;
   const plan = planOf(week, l.id);
   const [asking, setAsking] = useState(false);
+  const focusBack = useFocusBack();
   const tray = (week.memorialPlans ?? []).filter((p) => p.lesson_id == null);
   return (
     <div data-memorial-slot={l.id} className={`rounded-lg border p-3 ${plan ? "border-amber-300 bg-amber-50" : "border-dashed border-amber-300 bg-paper"}`}>
@@ -281,9 +282,18 @@ function SlotCard(props: Ctx & { slot: Lesson }) {
           )}
           {admin &&
             (asking ? (
-              <Confirm text="להסיר את זמן הזיכרון הזה מהרשת?" confirm="כן, להסיר" busy={busy === `remove-${l.id}`} onConfirm={() => void act(`remove-${l.id}`, () => cmds.removeMemorialSlot(l.id), "זמן הזיכרון הוסר")} onCancel={() => setAsking(false)} />
+              <Confirm
+                text="להסיר את זמן הזיכרון הזה מהרשת?"
+                confirm="כן, להסיר"
+                busy={busy === `remove-${l.id}`}
+                onConfirm={() => void act(`remove-${l.id}`, () => cmds.removeMemorialSlot(l.id), "זמן הזיכרון הוסר")}
+                onCancel={() => {
+                  setAsking(false);
+                  focusBack.back();
+                }}
+              />
             ) : (
-              <Button kind="danger" className="mt-2" onClick={() => setAsking(true)}>
+              <Button ref={focusBack.ref()} kind="danger" className="mt-2" onClick={() => setAsking(true)}>
                 הסרת המשבצת
               </Button>
             ))}
@@ -334,7 +344,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
   const key = `slot-${day}-${row.id}`;
   if (!open) {
     return (
-      <Button onClick={() => setOpen(true)} aria-label={`הוספת זמן זיכרון: ${DAY_NAMES[day]}, ${row.label}`}>
+      <Button onClick={() => setOpen(true)} aria-label={`הוספת זמן זיכרון: ${dayRange(day, row.start_min, row.end_min)}`}>
         + זמן זיכרון
       </Button>
     );
@@ -355,7 +365,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
     if (done) setOpen(false);
   };
   return (
-    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${DAY_NAMES[day]}, ${row.label}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${dayRange(day, row.start_min, row.end_min)}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
       <div className="flex flex-wrap gap-2">
         <Field id={`${id}-s`} label="מ-">
           <input id={`${id}-s`} dir="ltr" value={start} onChange={(e) => setStart(e.target.value)} className={`${INPUT} w-24`} autoComplete="off" />
@@ -392,6 +402,7 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
   const id = useId();
   const [editing, setEditing] = useState(false);
   const [asking, setAsking] = useState(false);
+  const focusBack = useFocusBack();
   const name = fallenName(week, p.fallen_id);
   const choices = freeSlots(week, p);
   const liaison = slot?.escort_roster_id != null ? (week.roster.find((r) => r.id === slot.escort_roster_id)?.full_name ?? "חניך/ה שנמחק/ה") : null;
@@ -436,6 +447,7 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <select
+              ref={focusBack.ref("place")}
               id={`${id}-place`}
               value={chosen}
               disabled={busy === `place-${p.id}`}
@@ -479,14 +491,24 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
               עריכה
             </Button>
             {p.lesson_id == null && !asking && (
-              <Button kind="danger" onClick={() => setAsking(true)}>
+              <Button ref={focusBack.ref()} kind="danger" onClick={() => setAsking(true)}>
                 מחיקת התוכנית
               </Button>
             )}
           </div>
         ))}
       {asking && (
-        <Confirm text={<>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.{waiting.length > 0 && " החומרים שהועלו לה לא נמחקים איתה: הם נשארים, להסרה."}</>} confirm="כן, למחוק" busy={busy === `delete-${p.id}`} onConfirm={() => void act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה")} onCancel={() => setAsking(false)} />
+        <Confirm
+          text={<>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.{waiting.length > 0 && " החומרים שהועלו לה לא נמחקים איתה: הם נשארים, להסרה."}</>}
+          confirm="כן, למחוק"
+          busy={busy === `delete-${p.id}`}
+          onConfirm={() => void act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה")}
+          onCancel={() => {
+            setAsking(false);
+            // its form opened meanwhile, «מחיקת התוכנית» is not drawn again: the plan's «שיבוץ», the card's control above the form
+            focusBack.back(editing ? "place" : "");
+          }}
+        />
       )}
 
       {admin && <FamilyContacts {...props} fallenId={p.fallen_id} name={name} />}
@@ -863,6 +885,7 @@ function FallenList(props: Ctx) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [asking, setAsking] = useState<number | null>(null);
+  const focusBack = useFocusBack();
   const run: Act = async (key, fn, ok, onRefused) => {
     const done = await act(key, fn, ok, onRefused);
     await load();
@@ -894,7 +917,7 @@ function FallenList(props: Ctx) {
                     עריכה
                   </Button>
                   {asking !== f.id && (
-                    <Button kind="danger" onClick={() => setAsking(f.id)} aria-label={`מחיקה: ${f.name}`}>
+                    <Button ref={focusBack.ref(String(f.id))} kind="danger" onClick={() => setAsking(f.id)} aria-label={`מחיקה: ${f.name}`}>
                       מחיקה
                     </Button>
                   )}
@@ -906,7 +929,10 @@ function FallenList(props: Ctx) {
                         confirm="כן, למחוק"
                         busy={busy === `fallen-del-${f.id}`}
                         onConfirm={() => void run(`fallen-del-${f.id}`, () => port.memorial.deleteFallen(f.id), "נמחק מהרשימה").then(() => setAsking(null))}
-                        onCancel={() => setAsking(null)}
+                        onCancel={() => {
+                          setAsking(null);
+                          focusBack.back(String(f.id));
+                        }}
                       />
                     </div>
                   )}

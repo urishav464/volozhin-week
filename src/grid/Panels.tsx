@@ -7,9 +7,11 @@ import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
+import { type Span, cellSpan, sticksOut, timeSplitOk } from "../domain/shape";
 import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
-import { Button, Confirm, INPUT } from "../screens/settings/kit";
+import { Button, Confirm, INPUT, useFocusBack } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
+import { rowActive } from "./layout";
 import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
 
 export interface PanelActions {
@@ -103,7 +105,7 @@ export function Sheet({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section aria-label={title}>
       <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{title}</h3>
@@ -191,7 +193,7 @@ export function LessonPanel(props: LessonPanelProps) {
 
       {canEdit && row && l.kind === "lesson" && (
         <Section title="מבנה המשבצת">
-          <ShapeMenu day={l.day} row={row} closed={l.state === "closed"} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />
+          <ShapeMenu model={model} day={l.day} row={row} closed={l.state === "closed"} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />
         </Section>
       )}
     </Sheet>
@@ -391,6 +393,8 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
  */
 function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «פתיחה מחדש» takes it back
+  const focusBack = useFocusBack();
   const loses = reopenLoses(l);
   if (l.paid_at) {
     return <p className="text-sm text-ink-soft">התשלום סומן כשולם, ולכן אי אפשר לפתוח את השיעור מחדש. קודם מבטלים את הסימון «שולם», בשלב התשלום.</p>;
@@ -413,12 +417,15 @@ function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson
           setAsking(false);
           onReopen();
         }}
-        onCancel={() => setAsking(false)}
+        onCancel={() => {
+          setAsking(false);
+          focusBack.back();
+        }}
       />
     );
   }
   return (
-    <Button onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
+    <Button ref={focusBack.ref()} onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
       פתיחה מחדש (חזרה לטיוטה)
     </Button>
   );
@@ -446,7 +453,7 @@ export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide
             <SpeakerChooser model={model} me={me} day={day} start={row.start_min} end={row.end_min} need={need} onPick={(id, mode) => actions.propose(id, { day, start_min: row.start_min, end_min: row.end_min, room_id: null }, mode)} />
           </Section>
           <Section title="מבנה המשבצת">
-            <ShapeMenu day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
+            <ShapeMenu model={model} day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
           </Section>
         </>
       ) : (
@@ -516,47 +523,108 @@ function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: 
 
 // ------------------------------------------------------------------ reshaping
 
-export function ShapeMenu({ day: _day, row, closed, onReshape }: { day: Day; row: GridRow; closed: boolean; onReshape: (op: ReshapeOp) => void }) {
+/** The cell a reshape acts on, and the day's lesson rows (CONTRACT `reshape`, v13). */
+function cellOf(model: GridModel, day: Day, row: GridRow) {
+  const rows = model.week.rows.filter((r) => r.kind === "lesson" && rowActive(r, day, model.week.edition));
+  const lessons = model.week.lessons.filter((l) => l.day === day && l.state !== "cancelled");
+  const span = cellSpan(row, lessons);
+  return { rows, span, stuck: sticksOut(span, lessons) };
+}
+
+export function ShapeMenu({ model, day, row, closed, onReshape }: { model: GridModel; day: Day; row: GridRow; closed: boolean; onReshape: (op: ReshapeOp) => void }) {
   const [reason, setReason] = useState("");
-  const len = row.end_min - row.start_min;
-  const splits = len === 90 ? [[60, 30], [30, 60], [45, 45]] : [[len / 2, len / 2]];
+  const { rows, span, stuck } = cellOf(model, day, row);
+  const merged = span.start !== row.start_min || span.end !== row.end_min;
   return (
     <div className="space-y-3 text-sm">
+      {merged && (
+        <p className="text-xs text-ink-soft">
+          משבצת מאוחדת: <bdi>{fmtRange(span.start, span.end)}</bdi>. הפיצול חל על כולה.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        <Button onClick={() => onReshape({ op: "merge_next" })}>איחוד עם המשבצת הבאה</Button>
+        {!closed && <Button onClick={() => onReshape({ op: "reset" })}>החזרה למבנה הבסיס</Button>}
+      </div>
       <div>
         <p className="mb-1 font-semibold">פיצול למקבילים</p>
         <p className="mb-1 text-xs text-ink-soft">שיעורים מקבילים מפצלים את הקבוצה — כדאי רק כשיש סיבה.</p>
         <div className="flex flex-wrap gap-1.5">
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="הסיבה" aria-label="סיבה לפיצול" className={`${INPUT} min-w-0 flex-1 basis-32`} />
           <Button disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 2, reason })}>
-            ל-2
+            2 מקבילים
           </Button>
           <Button disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 3, reason })}>
-            ל-3
+            3 מקבילים
           </Button>
         </div>
       </div>
-      {!closed && (
-        <div>
-          <p className="mb-1 font-semibold">פיצול בזמן</p>
-          <div className="flex flex-wrap gap-1.5">
-            {splits.map((parts) => (
-              <Button key={parts.join("+")} onClick={() => onReshape({ op: "split_time", parts })}>
-                <bdi>{parts.join("+")}</bdi> דק׳
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="flex flex-wrap gap-1.5">
-        <Button onClick={() => onReshape({ op: "merge_next" })}>
-          איחוד עם המשבצת הבאה
+      {!closed &&
+        (stuck ? (
+          <p className="text-xs text-ink-soft">
+            <span className="font-semibold">פיצול בזמן:</span> שיעור במקביל מתחיל או נגמר מחוץ למשבצת הזו — מזיזים אותו או מחזירים למבנה הבסיס קודם.
+          </p>
+        ) : (
+          <TimeSplit key={`${span.start}:${span.end}`} rows={rows} span={span} onReshape={onReshape} />
+        ))}
+    </div>
+  );
+}
+
+/** split_time with any minutes: every part but the last is typed; the last is what is left of the cell. */
+function TimeSplit({ rows, span, onReshape }: { rows: GridRow[]; span: Span; onReshape: (op: ReshapeOp) => void }) {
+  const len = span.end - span.start;
+  const [typed, setTyped] = useState<string[]>([String(Math.max(15, Math.round(len / 2 / 5) * 5))]);
+  const head = typed.map((x) => Number(x));
+  const parts = [...head, len - head.reduce((x, y) => x + y, 0)];
+  const ok = timeSplitOk(rows, span, parts);
+  let t = span.start;
+  const ranges = parts.map((m) => [t, (t += m)] as const);
+  return (
+    <fieldset>
+      <legend className="mb-1 font-semibold">פיצול בזמן</legend>
+      <ol className="space-y-1">
+        {ranges.map(([a, b], i) => (
+          <li key={i} className="flex flex-wrap items-center gap-1.5">
+            <span className="w-14 text-xs text-ink-soft">חלק {i + 1}</span>
+            {i < typed.length ? (
+              <input
+                type="number"
+                inputMode="numeric"
+                min={15}
+                step={5}
+                value={typed[i]}
+                onChange={(e) => setTyped((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))}
+                aria-label={`דקות בחלק ${i + 1}`}
+                className={`${INPUT} w-20`}
+              />
+            ) : (
+              <span className="w-20 px-2" aria-label={`דקות בחלק ${i + 1}`}>
+                {parts[i]}
+              </span>
+            )}
+            <span className="text-xs text-ink-soft">
+              דק׳ · <bdi dir="ltr">{fmtRange(a, b)}</bdi>
+            </span>
+            {i === typed.length - 1 && typed.length > 1 && (
+              <button type="button" className="text-xs text-ink-soft underline" onClick={() => setTyped((xs) => xs.slice(0, -1))}>
+                הסרת חלק
+              </button>
+            )}
+          </li>
+        ))}
+      </ol>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <Button disabled={!ok} onClick={() => onReshape({ op: "split_time", parts })}>
+          פיצול ל-{parts.length} חלקים
         </Button>
-        {!closed && (
-          <Button onClick={() => onReshape({ op: "reset" })}>
-            החזרה למבנה הבסיס
-          </Button>
+        {parts[parts.length - 1] >= 30 && (
+          <button type="button" className="text-xs text-ink-soft underline" onClick={() => setTyped((xs) => [...xs, String(Math.max(15, Math.round(parts[parts.length - 1] / 2 / 5) * 5))])}>
+            + חלק נוסף
+          </button>
         )}
       </div>
-    </div>
+      {!ok && <p className="mt-1 text-xs text-bad">כל חלק לפחות 15 דקות, בכפולות של 5, ומתחיל ונגמר בתוך שעת שיעור.</p>}
+    </fieldset>
   );
 }

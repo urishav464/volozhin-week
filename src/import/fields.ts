@@ -1,7 +1,9 @@
 // What each kind of import reads, and which of last year's headers it recognizes by itself — only the headers
 // DESIGN's appendix names («מה נלמד מהחומרים»): the tracking sheet's מרצה · שיעור ב · כותרת · מקורות (נשלח?) ·
 // הסעה/תשלום · טלפון · «קיבל הודעת סיכום מ» · נושא, and the candidates' «טווח ימים» (a status, so a note). Every other
-// column starts unread («לא לייבא») and the admin maps it; every default can be changed.
+// column starts unread («לא לייבא») and the admin maps it; every default can be changed. The dry run on last year's own
+// files (DECISIONS «הרצה יבשה של הייבוא») added the speaker's column as they head it — «שם המרצה» — and the
+// candidates' «נושא השיעור», and reads «טווח ימים…» with words after it as the status still.
 
 import type { ImportKind } from "../data/imports";
 
@@ -12,23 +14,27 @@ export interface FieldDef {
   label: string;
   /** Headers read as this field by default (compared by headerKey). */
   headers: readonly string[];
+  /** Headers read as this field when they begin a header (compared by headerKey): «טווח ימים אפשריים». */
+  prefixes?: readonly string[];
   /** More than one column may be read as it (their texts are joined, each with its header). */
   multi?: boolean;
 }
 
 export const FIELDS: Record<ImportKind, readonly FieldDef[]> = {
   candidates: [
-    { key: "name", label: "שם המרצה (התואר מופרד ממנו)", headers: ["מרצה"] },
+    { key: "name", label: "שם המרצה (התואר מופרד ממנו)", headers: ["מרצה", "שם המרצה", "שם מרצה"] },
     { key: "title", label: "תואר", headers: [] },
+    // v13 (the instructor, after the dry run): the sheet's own «מגדר» column — the colours of last year's sheet are it
+    { key: "gender", label: "מגדר (גבר / אישה)", headers: ["מגדר"] },
     { key: "affiliation", label: "מוסד", headers: [] },
-    { key: "topics", label: "נושאים", headers: [] },
+    { key: "topics", label: "נושאים", headers: ["נושא השיעור"] },
     { key: "phone", label: "טלפון", headers: ["טלפון"] },
     { key: "email", label: "מייל", headers: [] },
-    { key: "status", label: "מצב (נכנס להערה)", headers: ["טווח ימים"], multi: true },
+    { key: "status", label: "מצב (נכנס להערה)", headers: ["טווח ימים"], prefixes: ["טווח ימים"], multi: true },
     { key: "note", label: "הערה", headers: [], multi: true },
   ],
   tracking: [
-    { key: "speaker", label: "מרצה", headers: ["מרצה"] },
+    { key: "speaker", label: "מרצה", headers: ["מרצה", "שם המרצה", "שם מרצה"] },
     { key: "when", label: "יום ושעה", headers: ["שיעור ב"] },
     { key: "title", label: "כותרת", headers: ["כותרת"] },
     { key: "sources", label: "מקורות", headers: ["מקורות (נשלח?)"] },
@@ -39,7 +45,7 @@ export const FIELDS: Record<ImportKind, readonly FieldDef[]> = {
     { key: "note", label: "הערה", headers: [], multi: true },
   ],
   escorts: [
-    { key: "speaker", label: "מרצה", headers: ["מרצה"] },
+    { key: "speaker", label: "מרצה", headers: ["מרצה", "שם המרצה", "שם מרצה"] },
     { key: "phrases", label: "ניסוחים (רק מציעים ערוץ — לא נשמרים)", headers: [], multi: true },
   ],
 };
@@ -58,10 +64,15 @@ export function headerKey(s: string): string {
 /** column → field key (null: not read). */
 export type Mapping = (string | null)[];
 
+/** Is a cell this field's header: one of its headers, or a header that begins with one of its prefixes. */
+const isHeaderOf = (f: FieldDef, cell: string) => {
+  const k = headerKey(cell);
+  return k !== "" && (f.headers.some((h) => headerKey(h) === k) || (f.prefixes ?? []).some((p) => k.startsWith(headerKey(p))));
+};
+
 /** Does a row look like the header row: at least one of its cells is a header this kind knows. */
 export function looksLikeHeader(kind: ImportKind, row: readonly string[]): boolean {
-  const known = new Set(FIELDS[kind].flatMap((f) => f.headers.map(headerKey)));
-  return row.some((c) => known.has(headerKey(c)));
+  return row.some((c) => FIELDS[kind].some((f) => isHeaderOf(f, c)));
 }
 
 /** How many of a table's first rows are looked at for its header row — a title above the table (a Word paragraph, a merged Excel row). */
@@ -79,7 +90,7 @@ export function defaultMapping(kind: ImportKind, header: readonly string[] | nul
   if (!header) return out;
   const taken = new Set<string>();
   header.forEach((h, i) => {
-    const f = FIELDS[kind].find((x) => x.headers.some((k) => headerKey(k) === headerKey(h)));
+    const f = FIELDS[kind].find((x) => isHeaderOf(x, h));
     if (!f || (!f.multi && taken.has(f.key))) return;
     taken.add(f.key);
     out[i] = f.key;

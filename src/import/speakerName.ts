@@ -1,7 +1,8 @@
 // A speaker's name as last year's files wrote it — «הרב פלוני אלמוני», «ד"ר …», «פרופ' …» — split into the title the
 // pool keeps apart (one of the edition's titles: settings.titles, else ד״ר · פרופ׳ · הרב · הרבנית) and the name.
-// Gender: ONLY from the titles הרב (m) and הרבנית (f), as a «הצעה» the admin sees and may turn off — never from a
-// name (supabase/schema.sql «Import 5786» refuses any other: app.title_gender).
+// Gender: from the titles הרב (m) and הרבנית (f), as a «הצעה» the admin sees and may turn off, or (v13) from the
+// sheet's own «מגדר» column the admin maps (genderCell) — never from a name; a title that says the other gender wins
+// over nothing: the row keeps no gender (supabase/schema.sql «Import 5786» refuses it: app.title_gender).
 import type { Gender } from "../domain/types";
 import { cleanCell } from "./table";
 
@@ -102,3 +103,17 @@ export function nameTails(raw: string, titles: readonly string[]): { name: strin
   if (!head || cuts.length === 0) return { ...trailingBrackets(text), tails: [] };
   return { ...trailingBrackets(head), tails: parts.slice(1).filter(Boolean) };
 }
+
+/** A gender as a sheet writes it — «גבר» / «אישה» (or «אשה»), «זכר» / «נקבה», «ז» / «נ», m / f; anything else is none. */
+export function genderCell(raw: string): Gender | null {
+  const t = raw.trim().replace(/[.׳'"״]/g, "").toLowerCase();
+  if (/^(?:גבר|זכר|ז|m|male)$/.test(t)) return "m";
+  if (/^(?:אישה|אשה|נקבה|נ|f|female)$/.test(t)) return "f";
+  return null;
+}
+
+/**
+ * A line that dedicates rather than names — «ז״ל», «הי״ד», «זצ״ל», «ע״ה», «לע״נ», «לעילוי נשמת», «לזכר»: in the escorts'
+ * file never a second speaker, and anywhere proposed «לא לייבא» (the dry run found eight under a speaker's name).
+ */
+export const MEMORIAL_LINE = /(?:^|[\s(])(?:ז["״׳']?ל|הי["״׳']?ד|זצ["״׳']?ל|זצוק["״׳']?ל|ע["״׳']ה|לע["״׳']?נ)(?=$|[\s),.;:!])|לעילוי נשמת|לזכרו?ן?|לזכרה/;

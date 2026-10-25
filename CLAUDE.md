@@ -80,6 +80,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   roster, rooms, categories, through `port.settings` (`src/data/settings.ts`; SupabaseSettings /
   DemoSettings refuse with the same codes). Settings are direct writes under RLS — column grants
   and guard triggers keep their rules (`schema.sql` «Settings»; `docs/DECISIONS.md`).
+  `kit.tsx` is every screen's kit: `Button` (busy = `aria-disabled`, so it keeps the focus), `Confirm`, and
+  `useFocusBack` — every `Confirm` stands in for a button, and its «ביטול» gives that button the focus back
+  (`ref(key)` on the button, `back(key)` on cancel; a new Confirm does the same — DECISIONS «המיקוד»).
 - `src/data/speakers.ts` — the speaker pool (`port.speakers`): search first and create, edit, vet,
   contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
   availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
@@ -211,7 +214,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   into an inert document, text nodes only, or `table.ts` TSV; `xlsxRead.ts` and `docxRead.ts` of our own on
   `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says, and every
   reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
-  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
+  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender from הרב/הרבנית or (v13) the candidates' «מגדר» column, never from a name nor against a title, `when.ts`,
   `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
   first five rows (`findHeaderRow`, the admin may choose another); the escorts' column is ASKED for, never guessed —
   always in the escorts' file, in the tracking sheet and the candidates when a header or a first row looks like one
@@ -262,13 +265,22 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v11 (50ff373).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v12 (b9311bc, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
   `import_note` (the sheet's transport/payment words); `start_edition`'s previous edition is `kind = 'real'` only. The
   parity engine sees the import's archives as `elsewhere`. Tests: `tests/sql/importAfter.test.ts`,
   `src/data/importAfter.test.ts`, parity «the import meets after the week».
+- **The grid rethought (schema v13):** a reshape's splits act on the row's CELL — the row widened to the
+  lessons on it (`cellSpan`, `src/domain/shape.ts` ≡ `public.reshape`), so a merged lesson splits whole;
+  split_time takes any minutes (`timeSplitOk`: each part starts and ends inside a lesson row). The two
+  memorial rows are one «זמן זיכרון»; an empty one is a «+ זמן זיכרון» button for an edition admin.
+  A day is «לא מאוזן» when its CLOSED women and men differ by more than `settings.gender_tolerance`
+  (absent = 1, «הצעה»; `unbalanced`, `src/rules/balance.ts`) — the `gender_day` warning, keyed by the day,
+  on no card. `set_grid_rules` (an edition admin) sets it and `max_category_per_day`. The day header opens
+  `src/grid/DayPanel.tsx`; the «אחריות» lens colours each handler (`src/grid/owners.ts`) with «רק של X».
+  The night is always shown (no toggle).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

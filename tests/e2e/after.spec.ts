@@ -212,9 +212,17 @@ test.describe("demo build", () => {
     await expect(confirm).toHaveCount(0);
     await expect(toast(page, "המחזור מחזור הבא לבדיקה נפתח")).toHaveCount(0);
     await expect(option.getByRole("button", { name: "פתיחת המחזור", exact: true })).toBeVisible(); // nothing opened
+    // the confirm cancelled: the focus back at «פתיחת המחזור», never on the page
+    await expect(option.getByRole("button", { name: "פתיחת המחזור", exact: true })).toBeFocused();
     // the option off: nobody — and the form says the team stays, able to view
     await page.getByRole("checkbox", { name: /להשבית את חברי הצוות/ }).first().uncheck();
     await expect(warning).toContainText("הצוות שלו יוכל רק לצפות בו");
+    // its confirm (no dry run): «ביטול» by the keyboard, and the focus back at «פתיחת המחזור»
+    await option.getByRole("button", { name: "פתיחת המחזור", exact: true }).click();
+    await expect(confirm.locator("[data-deactivate-count]")).toHaveText("הצוות שלו יישאר פעיל ויוכל לצפות בו.");
+    await confirm.getByRole("button", { name: "ביטול" }).press("Enter");
+    await expect(confirm).toHaveCount(0);
+    await expect(option.getByRole("button", { name: "פתיחת המחזור", exact: true })).toBeFocused();
     await page.getByRole("button", { name: "הרצה יבשה" }).click();
     await expect(page.locator("[data-dry=deactivate]")).toContainText("אף אחד (האפשרות כבויה)");
     await noSidewaysScroll(page);

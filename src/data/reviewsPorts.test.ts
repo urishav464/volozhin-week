@@ -95,11 +95,11 @@ describe("after the week in the demo", () => {
   });
 
   it("closes a review to a content handler until the lesson's day has passed; never logistics", async () => {
-    const content = new DemoPort({ memberId: 3, role: "content" });
+    const content = new DemoPort({ memberId: 2, role: "content" });
     const week = await content.loadWeek(1);
     const mine = week.lessons.find((l) => {
       const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
-      return l.state === "closed" && l.day === 1 && l.end_min <= 1440 && week.approaches.find((a) => a.speaker_id === lead?.speaker_id)?.owner_member_id === 3;
+      return l.state === "closed" && l.day === 1 && l.end_min <= 1440 && week.approaches.find((a) => a.speaker_id === lead?.speaker_id)?.owner_member_id === 2;
     })!;
     const fields = { ...EMPTY_REVIEW, went_well: "x" };
     expect(await code(content.reviews.save(1, mine.id, 0, fields))).toBe("review_closed"); // the week's date TBD

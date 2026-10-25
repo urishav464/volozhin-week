@@ -345,7 +345,7 @@ export function engineDriver(): Driver {
         else if ("policy" in step) {
           const p = step.policy;
           e.setMemorialPolicy({ placement: p.placement ?? undefined, max_minutes: p.max_minutes ?? undefined, warn_adjacent_meal: p.warn_adjacent_meal ?? undefined });
-        } else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
+        } else if ("gridRules" in step) e.setGridRules(step.gridRules); else if ("readTransports" in step) return e.transportsOf().map((t) => transportLine(names.lesson(t.lesson_id), t)).sort().join(" ; ") || "none";
         // ---- after the week
         else if ("review" in step) {
           const on = step.edition == null ? e : onArchive(step.edition);

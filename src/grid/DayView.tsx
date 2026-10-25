@@ -3,12 +3,12 @@
 // `readOnly` (the offline snapshot, src/screens/OfflineWeek.tsx): a free cell is
 // only a label, never a button; a card still opens, to read.
 import { byGender } from "../domain/names";
-import { DAYS, DAY_NAMES, type Day, fmt, fmtRange, overlaps } from "../domain/time";
+import { DAYS, DAY_NAMES, type Day, dayRange, fmt, fmtRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
-import { type Lens, LessonCard } from "./LessonCard";
+import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
 import { rowActive } from "./layout";
-import { GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay } from "./model";
+import { GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
@@ -18,12 +18,18 @@ interface Props {
   placing: Speaker | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (id: number) => void;
+  /** An edition admin's: a memorial row with no slot yet makes one (v13 — both rows alike). */
+  onMemorial?: (day: Day, row: GridRow) => void;
+  /** The «אחריות» lens's colours and filter (LessonCard). */
+  owners?: CardOwners;
+  /** v13: the day header opens the day's panel. */
+  onDayPanel?: (day: Day) => void;
   readOnly?: boolean;
 }
 
 const ROW_PX = 92;
 
-export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, readOnly = false }: Props) {
+export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false }: Props) {
   const { edition } = model.week;
   const lessons = lessonsOfDay(model, day);
   const need = model.days[day].balance.need;
@@ -50,9 +56,9 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
         })}
       </div>
 
-      <DayHeader model={model} dm={model.days[day]} compact glow={!!placing?.gender && need === placing.gender} />
+      <DayHeader model={model} dm={model.days[day]} compact glow={!!placing?.gender && need === placing.gender} onOpen={onDayPanel && !readOnly ? () => onDayPanel(day) : undefined} />
 
-      <ol className="space-y-1" aria-label={`יום ${DAY_NAMES[day]}`}>
+      <ol className="space-y-1" aria-label={`יום ${DAY_NAMES[day]}`} data-day={day}>
         {model.layout.bands.map(({ row }) => {
           if (!rowActive(row, day, edition)) return null;
           if (row.kind !== "lesson") {
@@ -82,6 +88,21 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
                 </li>
               );
             }
+            if (row.kind === "memorial" && onMemorial && !readOnly && memorialRowFree(model, day, row)) {
+              return (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    onClick={() => onMemorial(day, row)}
+                    aria-label={`הוספת זמן זיכרון: ${dayRange(day, row.start_min, row.end_min)}`}
+                    className="flex min-h-11 w-full items-center gap-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+                  >
+                    <bdi className="tabular-nums">{fmt(row.start_min)}</bdi>
+                    <span className="truncate">+ {row.label || "זמן זיכרון"}</span>
+                  </button>
+                </li>
+              );
+            }
             return (
               <li key={row.id} className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs ${row.kind === "kk" ? "bg-accent-soft text-accent" : row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft"}`}>
                 <bdi className="tabular-nums">{fmt(row.start_min)}</bdi>
@@ -89,14 +110,14 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, re
               </li>
             );
           }
-          return <LessonRow key={row.id} model={model} lens={lens} day={day} row={row} lessons={lessons} placing={placing} need={need} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
+          return <LessonRow key={row.id} model={model} lens={lens} owners={owners} day={day} row={row} lessons={lessons} placing={placing} need={need} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
         })}
       </ol>
     </div>
   );
 }
 
-function LessonRow({ model, lens, day, row, lessons, placing, need, onCell, onLesson, readOnly }: { model: GridModel; lens: Lens; day: Day; row: GridRow; lessons: Lesson[]; placing: Speaker | null; need: "m" | "f" | null; onCell: (d: Day, r: GridRow) => void; onLesson: (id: number) => void; readOnly: boolean }) {
+function LessonRow({ model, lens, owners, day, row, lessons, placing, need, onCell, onLesson, readOnly }: { model: GridModel; lens: Lens; owners?: CardOwners; day: Day; row: GridRow; lessons: Lesson[]; placing: Speaker | null; need: "m" | "f" | null; onCell: (d: Day, r: GridRow) => void; onLesson: (id: number) => void; readOnly: boolean }) {
   const here = lessons.filter((l) => l.kind === "lesson" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min));
   const starting = here.filter((l) => l.start_min >= row.start_min).sort((a, b) => a.start_min - b.start_min || a.room_id - b.room_id);
   const continuing = here.filter((l) => l.start_min < row.start_min);
@@ -164,7 +185,7 @@ function LessonRow({ model, lens, day, row, lessons, placing, need, onCell, onLe
             <div key={g[0].id} className="flex gap-1">
               {g.map((l) => (
                 <div key={l.id} className="relative min-w-0 flex-1" style={{ height: l.end_min > row.end_min ? ROW_PX : h }}>
-                  <LessonCard model={model} lesson={l} lens={lens} height={l.end_min > row.end_min ? ROW_PX : h} placeable={!!placing && l.state === "draft"} onOpen={() => onLesson(l.id)} />
+                  <LessonCard model={model} lesson={l} lens={lens} owners={owners} height={l.end_min > row.end_min ? ROW_PX : h} placeable={!!placing && l.state === "draft"} onOpen={() => onLesson(l.id)} />
                 </div>
               ))}
             </div>

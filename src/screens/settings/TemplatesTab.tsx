@@ -13,7 +13,7 @@ import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable } from "..
 import type { DutyPhrase, DutyWhen, Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Choice } from "../stages/parts";
-import { Badge, Button, Confirm, EditionPicker, Field, INPUT, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, INPUT, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -81,6 +81,8 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
   const saved = edition.settings.confirm_template ?? "";
   const [text, setText] = useState(saved);
   const [deleting, setDeleting] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «מחיקת הנוסח» takes it back
+  const focusBack = useFocusBack();
   const [problem, setProblem] = useState<string | null>(null);
   const [speakerGender, setSpeakerGender] = useState<Gender>("f");
   const [senderGender, setSenderGender] = useState<Gender>("f");
@@ -211,7 +213,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
           </Button>
           {dirty && <Button onClick={() => setText(saved)}>ביטול השינויים</Button>}
           {saved && !deleting && (
-            <Button kind="danger" className="ms-auto" onClick={() => setDeleting(true)}>
+            <Button ref={focusBack.ref()} kind="danger" className="ms-auto" onClick={() => setDeleting(true)}>
               מחיקת הנוסח
             </Button>
           )}
@@ -222,7 +224,10 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
             confirm="מחיקה"
             busy={busy === "template-delete"}
             onConfirm={() => void remove()}
-            onCancel={() => setDeleting(false)}
+            onCancel={() => {
+              setDeleting(false);
+              focusBack.back();
+            }}
           />
         )}
       </form>
@@ -276,6 +281,8 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
   const [problem, setProblem] = useState<string | null>(null);
   /** The phrase whose «מחיקה» waits for a yes (by its row key, so a shifted list never asks about another) — a pasted phrase is not typed again lightly. */
   const [deleting, setDeleting] = useState<string | null>(null);
+  // «ביטול» takes the confirm (and its focus) away: that row's «מחיקה» takes it back
+  const focusBack = useFocusBack();
   const rowKey = (i: number, p: DutyPhrase) => `${i}:${p.when}:${p.text}`;
   const full = list.length >= STAGE_LIMITS.duty_count;
 
@@ -329,7 +336,10 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
                       confirm="מחיקה"
                       busy={busy === `phrase-del:${i}`}
                       onConfirm={() => void save(`phrase-del:${i}`, list.filter((_, j) => j !== i), "הניסוח נמחק").then((done) => done && setDeleting(null))}
-                      onCancel={() => setDeleting(null)}
+                      onCancel={() => {
+                        setDeleting(null);
+                        focusBack.back(rowKey(i, p));
+                      }}
                     />
                   ) : undefined
                 }
@@ -341,7 +351,7 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
                     <Button kind="quiet" disabled={i === list.length - 1 || !!busy} onClick={() => move(i, 1)} aria-label={`העברה למטה: ${p.text}`}>
                       ↓
                     </Button>
-                    <Button kind="danger" disabled={!!busy} onClick={() => setDeleting(rowKey(i, p))} aria-label={`מחיקת הניסוח: ${p.text}`}>
+                    <Button ref={focusBack.ref(rowKey(i, p))} kind="danger" disabled={!!busy} onClick={() => setDeleting(rowKey(i, p))} aria-label={`מחיקת הניסוח: ${p.text}`}>
                       מחיקה
                     </Button>
                   </>

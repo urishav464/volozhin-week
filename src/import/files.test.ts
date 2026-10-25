@@ -151,7 +151,7 @@ describe("readXlsx — a workbook's cells as text", () => {
     const grid = readXlsx(workbook([["גיליון1", sheet]], { shared, styles })).read();
     expect(grid).toEqual([
       ["מרצה", "טלפון", "שעה", "תאריך", "?", ""],
-      ["מרצה לדוגמה 2", "111111111", "08:30", "2026-02-28", "TRUE", "2"],
+      ["מרצה לדוגמה 2", "111111111", "08:30", "2026-02-28", "✓", "2"],
     ]);
     expect(numberText("5.01E8")).toBe("501000000");
     expect(numberText("0.1000000000000000055")).toBe("0.1");
@@ -159,6 +159,22 @@ describe("readXlsx — a workbook's cells as text", () => {
     expect(serialText("46081.5")).toBe("2026-02-28 12:00");
     expect(serialText("45658")).toBe("2025-01-01");
     expect(cellRef("AB12")).toEqual([11, 27]);
+  });
+
+  it("reads a checkbox as «✓» or nothing — never TRUE/FALSE — and drops a row of checkboxes alone (Google Sheets runs them to row 999)", () => {
+    const box = (ref: string, v: 0 | 1) => `<c r="${ref}" t="b"><v>${v}</v></c>`;
+    const text = (ref: string, t: string) => `<c r="${ref}" t="inlineStr"><is><t>${t}</t></is></c>`;
+    const sheet =
+      `<sheetData><row r="1">${text("A1", "שם המרצה")}${text("B1", "תשלום ?")}</row>` +
+      `<row r="2">${text("A2", "מרצה לדוגמה")}${box("B2", 1)}</row>` +
+      `<row r="3">${text("A3", "מרצה אחר לדוגמה")}${box("B3", 0)}</row>` +
+      `<row r="4">${box("A4", 0)}${box("B4", 1)}</row>` +
+      `<row r="999">${box("A999", 0)}${box("B999", 0)}</row></sheetData>`;
+    expect(readXlsx(workbook([["מעקב", sheet]])).read()).toEqual([
+      ["שם המרצה", "תשלום ?"],
+      ["מרצה לדוגמה", "✓"],
+      ["מרצה אחר לדוגמה", ""],
+    ]);
   });
 
   it("lists every sheet and reads a chosen one; a merge gives its value to each row down its first column", () => {

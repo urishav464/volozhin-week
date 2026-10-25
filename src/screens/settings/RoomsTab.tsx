@@ -5,7 +5,7 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import type { Edition, Room } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Badge, Button, Confirm, EditionPicker, Field, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -81,6 +81,8 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
   const { port } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "rename" | "delete" | "used">("view");
+  // «ביטול» takes the confirm (and its focus) away: «מחיקה» takes it back
+  const focusBack = useFocusBack();
   const [name, setName] = useState(r.name);
   const [problem, setProblem] = useState<string | null>(null);
   const id = useId();
@@ -158,7 +160,14 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
               <Button kind="primary" autoFocus onClick={() => setMode("rename")}>
                 שינוי שם
               </Button>
-              <Button onClick={() => setMode("view")}>הבנתי</Button>
+              <Button
+                onClick={() => {
+                  setMode("view");
+                  focusBack.back();
+                }}
+              >
+                הבנתי
+              </Button>
             </div>
           </div>
         }
@@ -179,7 +188,10 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
             confirm="מחיקה"
             busy={busy === "delete"}
             onConfirm={() => void remove()}
-            onCancel={() => setMode("view")}
+            onCancel={() => {
+              setMode("view");
+              focusBack.back();
+            }}
           />
         }
       />
@@ -200,7 +212,7 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
             שינוי שם
           </Button>
           {!r.is_default && (
-            <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.name}`}>
+            <Button ref={focusBack.ref()} kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${r.name}`}>
               מחיקה
             </Button>
           )}

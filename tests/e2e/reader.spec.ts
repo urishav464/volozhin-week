@@ -163,7 +163,10 @@ test.describe("demo build", () => {
     // not a type the bucket takes: refused before anything is sent — the lesson's rule, never the poster's
     await panel.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
     await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toHaveText("אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG).");
-    // removal asks first
+    // removal asks first — and «ביטול» gives the focus back to «הסרה»
+    await list.getByRole("button", { name: "הסרה" }).click();
+    await panel.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(list.getByRole("button", { name: "הסרה" })).toBeFocused();
     await list.getByRole("button", { name: "הסרה" }).click();
     await panel.getByRole("button", { name: "כן, להסיר" }).click();
     await expect(toast(page, "הקובץ הוסר")).toBeVisible();
@@ -246,7 +249,7 @@ test.describe("demo build", () => {
     // a lesson in the reader, and (the third round's proof: named nowhere after a build) those of a lesson marked for
     // it whose files were all unread; in schedule order, each once
     const out = await downloaded(page, () => page.getByRole("button", { name: BUILD }).click());
-    expect((await PDFDocument.load(out.bytes)).getPageCount()).toBe(16); // the demo's 16: nothing of ours went in
+    expect((await PDFDocument.load(out.bytes)).getPageCount()).toBe(21); // the demo's 21: nothing of ours went in
     const left = page.locator("[data-reader-result]").getByRole("alert");
     await expect(left).toContainText("לא נכנסו (צריך להעלות קובץ אחר):");
     await expect(left.getByRole("listitem")).toHaveText(["תמונה חתוכה.png — הקובץ לא נקרא", "קובץ פגום.pdf — הקובץ לא נקרא", "צילום חתוך.png — הקובץ לא נקרא"]);
@@ -330,12 +333,12 @@ test.describe("demo build", () => {
     const out = await downloaded(page, () => page.getByRole("button", { name: BUILD }).click());
     expect(out.d.suggestedFilename()).toMatch(/^volozhin-reader-edition-1-\d{4}-\d{2}-\d{2}\.pdf$/);
     const doc = await PDFDocument.load(out.bytes);
-    // the schedule cover, the contents, Sunday: the opening's 3 pages, ours 2, the memorial slot, «סיכום יום»; …
-    expect(sources(doc).slice(0, 9)).toEqual(["-", "-", "420x595", "420x595", "612x792", "300x400", "300x400", "-", "-"]);
-    // 1 + 1 + (3 + 2 + 1 + 1) + (1 + 1) + (1 + 1 + 1) + (1 + 1) + (1 + 1) = 18
-    expect(doc.getPageCount()).toBe(18);
+    // the schedule cover, the contents, Sunday: the opening's 3 pages, ours 2, its two memorial slots, «סיכום יום»; …
+    expect(sources(doc).slice(0, 10)).toEqual(["-", "-", "420x595", "420x595", "612x792", "300x400", "300x400", "-", "-", "-"]);
+    // 1 + 1 + (3 + 2 + 2 + 1) + (2 + 1) + (1 + 2 + 1) + (2 + 1) + (2 + 1) = 23 (v13: two memorial slots a day)
+    expect(doc.getPageCount()).toBe(23);
     expect(doc.getPages().every((p) => Math.round(p.getWidth()) === 595 && Math.round(p.getHeight()) === 842)).toBe(true);
-    await expect(page.locator("[data-reader-result]")).toContainText("18 עמודים");
+    await expect(page.locator("[data-reader-result]")).toContainText("23 עמודים");
     await expect(page.getByRole("progressbar", { name: "בניית המקראה" })).toHaveCount(0);
   });
 

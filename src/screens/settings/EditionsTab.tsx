@@ -10,7 +10,7 @@ import { errorMessage } from "../../errors";
 import { hebrewYearLabel } from "../../settings/hebrewYear";
 import { ArchivePanel } from "./ArchivePanel";
 import { DeactivateOption, PurgePanel, RolloverChecklist } from "./AfterWeek";
-import { Badge, Button, Confirm, Field, INPUT, KIND_LABEL, Panel, Row, Rows, STATUS_LABEL, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, Field, INPUT, KIND_LABEL, Panel, Row, Rows, STATUS_LABEL, useAction, useFocusBack, useSettings } from "./kit";
 
 const FORM_REFUSALS = ["label_required", "edition_exists", "not_sunday", "bad_time", "bad_value"];
 
@@ -199,6 +199,7 @@ function StartEdition({
   const [time, setTime] = useState("");
   /** The confirm, open — with the dry run's count of who would be deactivated (start_edition_preview), when asked for. */
   const [confirming, setConfirming] = useState<{ deactivate: number | null } | null>(null);
+  const focusBack = useFocusBack();
   const [problem, setProblem] = useState<string | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const id = useId();
@@ -342,11 +343,14 @@ function StartEdition({
               danger
               busy={busy === "start"}
               onConfirm={() => void start()}
-              onCancel={() => setConfirming(null)}
+              onCancel={() => {
+                setConfirming(null);
+                focusBack.back();
+              }}
             />
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button kind="primary" type="submit" busy={busy === "start" || busy === "preview"} busyLabel={busy === "preview" ? "בודק…" : "פותח…"} disabled={!label.trim()}>
+              <Button ref={focusBack.ref()} kind="primary" type="submit" busy={busy === "start" || busy === "preview"} busyLabel={busy === "preview" ? "בודק…" : "פותח…"} disabled={!label.trim()}>
                 פתיחת המחזור
               </Button>
               {current && (

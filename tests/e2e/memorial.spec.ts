@@ -14,7 +14,7 @@
 // files through signed URLs, and names a file it could not read.
 // Synthetic data only.
 import { readFileSync } from "node:fs";
-import { expect, type Download, type Page, type TestInfo, test } from "@playwright/test";
+import { expect, type Download, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { LRM } from "../../src/domain/time";
@@ -105,8 +105,8 @@ test.describe("demo build", () => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
     // a second slot in Sunday's row א: 13:05–13:10, in «כיתה ג׳», beside the placed one (13:00–13:15, בית מדרש)
-    await page.getByRole("button", { name: "הוספת זמן זיכרון: ראשון, זמן זיכרון א" }).click();
-    const form = page.getByRole("form", { name: "זמן זיכרון חדש: ראשון, זמן זיכרון א" });
+    await page.getByRole("button", { name: `הוספת זמן זיכרון: ראשון ${LRM}13:00–13:15` }).click();
+    const form = page.getByRole("form", { name: `זמן זיכרון חדש: ראשון ${LRM}13:00–13:15` });
     await form.getByLabel("מ-").fill("13:05");
     await form.getByLabel("עד").fill("13:10");
     await form.getByLabel("חדר").selectOption({ label: "כיתה ג׳" });
@@ -235,6 +235,42 @@ test.describe("demo build", () => {
     await expect(toast(page, "המלווה נשמר/ה")).toBeVisible();
     await expect(liaison).toHaveValue(picked);
     await expect(sunday.getByRole("button", { name: "שמירת המלווה" })).toHaveCount(0);
+  });
+
+  test("a «are you sure?» cancelled by keyboard gives the focus back to the button that asked: a slot's removal, a plan's deletion, a name's", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "a keyboard on a computer");
+    await page.goto(`${demoUrl()}/memorial`);
+    const cancel = (scope: Locator) => scope.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true });
+
+    // Monday's free slot before lunch (v13: and one after it)
+    const monday = page.getByRole("region", { name: "יום שני" });
+    const removeSlot = monday.getByRole("button", { name: "הסרת המשבצת" }).first();
+    await removeSlot.click();
+    await cancel(monday).press("Enter");
+    await expect(removeSlot).toBeFocused();
+    await expect(monday.locator("[data-memorial-slot]")).toHaveCount(2); // still there
+
+    // a plan in the tray
+    const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });
+    const deletePlan = plan.getByRole("button", { name: "מחיקת התוכנית" });
+    await deletePlan.click();
+    await cancel(plan).press("Enter");
+    await expect(deletePlan).toBeFocused();
+    // its form opened meanwhile, «מחיקת התוכנית» is not drawn again: the plan's «שיבוץ» takes the focus, never the page
+    await deletePlan.click();
+    await plan.getByRole("button", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" }).click();
+    await cancel(plan).press("Enter");
+    await expect(plan.getByLabel("שיבוץ", { exact: true })).toBeFocused();
+    await expect(plan.getByRole("form", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" })).toBeVisible(); // the form untouched
+
+    // a name in the cross-year list: that row's «מחיקה», not another's — a middle row (one key for every row would hand the
+    // focus to the last row drawn)
+    const fallen = page.getByRole("list", { name: "החללים" });
+    const deleteName = fallen.getByRole("button", { name: "מחיקה: חלל/ה לדוגמה 5" });
+    await deleteName.click();
+    await cancel(fallen).press("Enter");
+    await expect(deleteName).toBeFocused();
+    await expect(fallen.locator("[data-fallen]")).toHaveCount(9);
   });
 
   test("a screen whose file is gone after a deploy (the old name answered with index.html): a notice with «רענון», never a blank page", async ({ page }) => {

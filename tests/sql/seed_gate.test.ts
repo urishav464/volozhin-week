@@ -30,7 +30,7 @@ describe("seed_gate.sql / unseed_gate.sql", () => {
     expect(await count("select count(*) as n from public.speakers where source = 'synthetic'")).toBe(60);
     expect(await count("select count(*) as n from public.lessons where state = 'closed'")).toBe(18);
     expect(await count("select count(*) as n from public.lesson_speakers where active")).toBe(18);
-    expect(await count("select count(*) as n from public.lessons where kind = 'memorial'")).toBe(5);
+    expect(await count("select count(*) as n from public.lessons where kind = 'memorial'")).toBe(10); // both memorial rows of each day (v13)
     expect(await count("select count(*) as n from public.lessons where end_min - start_min = 270")).toBe(1); // the all-night merge
   });
 

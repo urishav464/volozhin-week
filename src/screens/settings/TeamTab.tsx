@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ROLE_LABEL } from "../../lib/labels";
-import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -328,6 +328,13 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
   const { port, me, wide } = useSettings();
   const { busy, run } = useAction();
   const [mode, setMode] = useState<"view" | "edit" | "delete" | "history">("view");
+  // «ביטול» (or «הבנתי») takes the confirm (and its focus) away: the row's «מחיקה», where the delete began, takes it back —
+  // on a phone, where «מחיקה» is in the edit form the cancel closes, «עריכה», which holds it
+  const focusBack = useFocusBack();
+  const backToDelete = () => {
+    setMode("view");
+    focusBack.back(wide ? "delete" : "edit");
+  };
   const isMe = m.email === me.email;
   // members_admin_write: a global admin manages any row; an edition's admin only non-admin rows. Never my own admin row.
   const manageable = !isMe && (me.global_admin || m.role !== "admin");
@@ -382,7 +389,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
             confirm="מחיקה"
             busy={busy === "delete"}
             onConfirm={() => void remove()}
-            onCancel={() => setMode("view")}
+            onCancel={backToDelete}
           />
         }
       />
@@ -404,14 +411,14 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
               danger={false}
               busy={busy === "active"}
               onConfirm={() => void setActive(false)}
-              onCancel={() => setMode("view")}
+              onCancel={backToDelete}
             />
           ) : (
             <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
               <p className="mb-2">
                 <b>{shown}</b> כבר מושבת/ת, וההיסטוריה נשמרת. אי אפשר למחוק.
               </p>
-              <Button onClick={() => setMode("view")}>הבנתי</Button>
+              <Button onClick={backToDelete}>הבנתי</Button>
             </div>
           )
         }
@@ -425,7 +432,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
       actions={
         manageable && (
           <>
-            <Button kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${shown}`}>
+            <Button ref={focusBack.ref("edit")} kind="quiet" onClick={() => setMode("edit")} aria-label={`עריכת ${shown}`}>
               עריכה
             </Button>
             {m.active ? (
@@ -439,7 +446,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
             )}
             {/* on a phone «מחיקה» is inside «עריכה», so a row stays one line */}
             {wide && (
-              <Button kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${shown}`}>
+              <Button ref={focusBack.ref("delete")} kind="danger" onClick={() => setMode("delete")} aria-label={`מחיקת ${shown}`}>
                 מחיקה
               </Button>
             )}

@@ -53,7 +53,7 @@ const AUTH_PUBLIC_FUNCTIONS = [
   "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
   "set_availability", "set_book_order", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
-  "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
+  "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
   "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
@@ -220,7 +220,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(12);
+        expect(w.schema_version).toBe(13);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

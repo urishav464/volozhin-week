@@ -33,7 +33,7 @@ describe("the manifest", () => {
     const sorted = [...keys].sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
     expect(keys).toEqual(sorted);
     expect(m.rows.every((r) => r.lesson.state === "closed" || r.kind === "memorial")).toBe(true);
-    expect(m.rows.filter((r) => r.kind === "memorial")).toHaveLength(5);
+    expect(m.rows.filter((r) => r.kind === "memorial")).toHaveLength(10); // both memorial rows of each day (v13)
   });
 
   it("says for each lesson what the reader has of it", () => {
@@ -51,7 +51,7 @@ describe("the manifest", () => {
     expect(row(2, 960, 2).status).toBe("pending");
     expect(row(0, 870).status).toBe("pending");
     const t = manifestTotals(m);
-    expect(t).toMatchObject({ included: 2, memorial: 5, needsPdf: 1, presentationOnly: 1, noSources: 1, files: 4, filePages: 4 });
+    expect(t).toMatchObject({ included: 2, memorial: 10, needsPdf: 1, presentationOnly: 1, noSources: 1, files: 4, filePages: 4 });
     expect(t.missing).toBeGreaterThanOrEqual(1);
   });
 
@@ -68,7 +68,7 @@ describe("the manifest", () => {
     const rows = readerRows(readerManifest(w));
     expect(rows.map((r) => r.status)).not.toContain("presentation_only");
     expect(rows.map((r) => r.status)).not.toContain("needs_pdf");
-    expect(rows.map((r) => (r.kind === "memorial" ? `m${r.day}` : r.lesson.id))).toEqual([at(w, 0, 510).id, "m0", "m1", "m2", at(w, 2, 960).id, "m3", "m4"]); // memorial at 13:00, before Tuesday's 16:00
+    expect(rows.map((r) => (r.kind === "memorial" ? `m${r.day}` : r.lesson.id))).toEqual([at(w, 0, 510).id, "m0", "m0", "m1", "m1", "m2", "m2", at(w, 2, 960).id, "m3", "m3", "m4", "m4"]); // memorial at 13:00 and 14:15, before Tuesday's 16:00
   });
 
   it("keeps a previous speaker's files out of the reader, for removal", () => {
@@ -659,7 +659,7 @@ describe("the PDF assembly", () => {
     const r = await assembleReader(await job(null), stub);
     expect(r.skipped).toEqual([]);
     expect(readerEstimate(m, schedule)).toBe(r.pages);
-    expect(r.pages).toBe(2 + 1 + (3 + 1 + 1) + (1 + 1) + (1 + 1 + 1) + (1 + 1) + (1 + 1)); // the two schedule pages, the contents, then each day's files, memorial slot and «סיכום יום»
+    expect(r.pages).toBe(2 + 1 + (3 + 2 + 1) + (2 + 1) + (1 + 2 + 1) + (2 + 1) + (2 + 1)); // the two schedule pages, the contents, then each day's files, its two memorial slots and «סיכום יום»
     // a marked poster of two pages instead
     const poster: SourceFile = { ...w.sourceFiles[0], id: 70, lesson_id: null, cover: true, page_count: 2 };
     const withPoster = { ...m, covers: [poster], cover: poster };

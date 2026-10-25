@@ -37,6 +37,27 @@ export interface BalanceInput {
 
 const PITCH_RANK: Record<string, number> = { approached: 0, candidate: 1 };
 
+/**
+ * «הצעה» — until the instructor sets edition.settings.gender_tolerance (v13): a day whose CLOSED lessons
+ * differ by more than this many between women and men is «לא מאוזן» (a warning; the drafts only tint the cells).
+ */
+export const DEFAULT_GENDER_TOLERANCE = 1;
+
+/** The day's closed lessons differ by more than the tolerance. */
+export function unbalanced(closed: GenderTally, tolerance: number): boolean {
+  return Math.abs(closed.m - closed.f) > tolerance + 1e-9;
+}
+
+/** The week's totals: what is closed, what is in process, what is open. */
+export function weekBalance(days: Pick<DayBalance, "closed" | "pending" | "open">[]): { closed: GenderTally; pending: GenderTally; open: number } {
+  const sum = (k: "closed" | "pending"): GenderTally => ({
+    m: days.reduce((s, d) => s + d[k].m, 0),
+    f: days.reduce((s, d) => s + d[k].f, 0),
+    unknown: days.reduce((s, d) => s + d[k].unknown, 0),
+  });
+  return { closed: sum("closed"), pending: sum("pending"), open: days.reduce((s, d) => s + d.open, 0) };
+}
+
 /** The speaker a draft is "heading to": the most advanced live pitch, oldest first. */
 export function leadingPitch(lessonId: number, pitches: Pitch[]): Pitch | null {
   const live = pitches.filter((p) => p.lesson_id === lessonId && LIVE_PITCH.has(p.state));

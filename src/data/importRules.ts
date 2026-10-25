@@ -62,8 +62,8 @@ export function cleanSpeakerRow(r: SpeakerRow, titles: readonly string[]): Clean
   if (name == null || !key) fail("name_required");
   const title = pickTitle(r.title, titles);
   const gender = pickGender(r.gender);
-  // never guessed: only the gender its title says (הרב / הרבנית)
-  if (gender != null && gender !== titleGender(title)) fail("bad_value");
+  // never guessed: the sheet's column or the title's (הרב / הרבנית) — never the other gender than the title says (v13)
+  if (gender != null && titleGender(title) != null && gender !== titleGender(title)) fail("bad_value");
   const affiliation = cleanLine(r.affiliation, LIMITS.affiliation);
   const topics = cleanTopics(r.topics);
   const phone = cleanPhone(r.phone);

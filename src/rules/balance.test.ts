@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { categoryLoad, dayBalance, leadingPitch } from "./balance";
+import { categoryLoad, dayBalance, leadingPitch, unbalanced, weekBalance } from "./balance";
 
 describe("dayBalance", () => {
   it("an even day needs nobody in particular", () => {
@@ -76,5 +76,20 @@ describe("categoryLoad", () => {
     closeWith(w, addLesson(w, 1, 600, 690, { category_id: 1 }), addSpeaker(w, "f"));
     addLesson(w, 1, 690, 780, { category_id: 1 }); // a draft does not count
     expect(categoryLoad(1, w.lessons).get(1)).toBe(2);
+  });
+});
+
+describe("unbalanced and weekBalance (v13)", () => {
+  it("a day is unbalanced only past the tolerance; half a co-taught lesson counts as half", () => {
+    expect(unbalanced({ m: 2, f: 1, unknown: 0 }, 1)).toBe(false);
+    expect(unbalanced({ m: 3, f: 1, unknown: 0 }, 1)).toBe(true);
+    expect(unbalanced({ m: 1.5, f: 0, unknown: 0 }, 1)).toBe(true);
+    expect(unbalanced({ m: 1, f: 0, unknown: 4 }, 1)).toBe(false); // unknown is not a side
+    expect(unbalanced({ m: 1, f: 0, unknown: 0 }, 0)).toBe(true);
+  });
+
+  it("sums the week", () => {
+    const t = (m: number, f: number, unknown = 0) => ({ m, f, unknown });
+    expect(weekBalance([{ closed: t(2, 1), pending: t(0, 1), open: 3 }, { closed: t(0.5, 0.5, 1), pending: t(1, 0), open: 2 }])).toEqual({ closed: t(2.5, 1.5, 1), pending: t(1, 1), open: 5 });
   });
 });

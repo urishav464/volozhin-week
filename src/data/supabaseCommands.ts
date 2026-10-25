@@ -116,5 +116,7 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
         p_max_minutes: policy.max_minutes ?? null,
         p_warn_adjacent_meal: policy.warn_adjacent_meal ?? null,
       })),
+    setGridRules: async (rules) =>
+      void (await call("set_grid_rules", { p_edition: editionId, p_gender_tolerance: rules.gender_tolerance, p_max_category_per_day: rules.max_category_per_day })),
   };
 }
