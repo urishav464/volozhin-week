@@ -171,7 +171,7 @@ describe("the import of 5786", () => {
       const before = [await count("select count(*) as n from public.speakers"), await count("select count(*) as n from public.speaker_contacts")];
       const bad = (r: Record<string, unknown>) => commit("candidates", { source: "brainstorm-5786", titles_from: null, rows: [row(2, "מרצה תקין/ה 1"), row(3, "מרצה תקין/ה 2", { phone: "0000000003" }), r] });
       expect(await refusal(bad(row(4, "מרצה עם טלפון שגוי", { phone: "12-34" })))).toBe("import_bad_row 4:bad_phone");
-      expect(await refusal(bad(row(5, "מרצה", { title: "ד״ר", gender: "f" })))).toBe("import_bad_row 5:bad_value"); // gender only as the title says
+      expect(await refusal(bad(row(5, "מרצה", { title: "הרב", gender: "f" })))).toBe("import_bad_row 5:bad_value"); // never the other gender than the title says (v13: the sheet's «מגדר» column may give one where the title says none)
       expect(await refusal(bad(row(6, "מרצה", { title: "מר" })))).toBe("import_bad_row 6:bad_value");
       expect(await refusal(bad(row(7, "  ")))).toBe("import_bad_row 7:name_required");
       expect(await refusal(bad(row(8, "מרצה", { action: "merge", speaker_id: 999999 })))).toBe("import_bad_row 8:stale");

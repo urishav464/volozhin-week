@@ -1016,6 +1016,9 @@ export const SCENARIOS: Record<string, Step[]> = {
     // shows «אותו טלפון כמו …» and sends such a row as a merge, the next step)
     { as: "admin", importCandidates: [{ row: 2, action: "new", name: "שם אחר לגמרי", affiliation: "מוסד שני" }, { row: 3, action: "new", name: "עוד שם", phone: "+972 (0)00 000 0005" }] },
     { as: "admin", importCandidates: [{ row: 2, action: "merge", speaker: "מועמד/ת לדוגמה", name: "שם שלישי", phone: "+972 (0)00 000 0005", email: "candidate@example.org" }] },
+    // v13: the sheet's «מגדר» column — a gender where the title says none; the other gender than a title says, refused
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמדת מהעמודה", gender: "f" }, { row: 3, action: "new", name: "מועמד עם דוקטורט", title: "ד״ר", gender: "m" }] },
+    { as: "admin", importCandidates: [{ row: 2, action: "new", name: "מועמד/ת סותר/ת", title: "הרבנית", gender: "m" }] },
     // two names on one line, both new, in one import: two people, each with their own contacts
     {
       as: "admin",

@@ -214,7 +214,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   into an inert document, text nodes only, or `table.ts` TSV; `xlsxRead.ts` and `docxRead.ts` of our own on
   `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says, and every
   reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
-  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender ONLY from הרב/הרבנית, `when.ts`,
+  normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender from הרב/הרבנית or (v13) the candidates' «מגדר» column, never from a name nor against a title, `when.ts`,
   `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
   first five rows (`findHeaderRow`, the admin may choose another); the escorts' column is ASKED for, never guessed —
   always in the escorts' file, in the tracking sheet and the candidates when a header or a first row looks like one

@@ -1249,8 +1249,9 @@ an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons
 ### A speaker row (`candidates` rows, `tracking` speakers) — `app.import_speaker`
 Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): `action` `new`/`merge` → else
 `bad_value`; `name` one line ≤ 120 with a non-empty name key → else `name_required`; `title` one of the titles of
-`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and exactly what the
-title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null) → else `bad_value`;
+`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and never the other
+gender than the title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null; v13: where the
+title says none, a gender the sheet's «מגדר» column gave is kept) → else `bad_value`;
 `affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
 `email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000; **no phone or e-mail
 in the name, the title, the affiliation, a tag or the notes** (`app.has_contact`, above) → else `contact_in_text`.

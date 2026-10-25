@@ -4916,7 +4916,8 @@ create or replace function app.import_speaker(p jsonb, p_titles_from bigint, p_s
     if v_name is null or v_key = '' then perform app.refuse('name_required'); end if;
     v_title  := app.pick_title(p ->> 'title', p_titles_from);
     v_gender := app.pick_gender(p ->> 'gender');
-    if v_gender is not null and v_gender is distinct from app.title_gender(v_title) then perform app.refuse('bad_value'); end if;
+    -- v13: a gender from the sheet's «מגדר» column too — never the other gender than the row's title says
+    if v_gender is not null and app.title_gender(v_title) is not null and v_gender <> app.title_gender(v_title) then perform app.refuse('bad_value'); end if;
     v_aff    := app.clean_line(p ->> 'affiliation', 120);
     v_topics := app.clean_topics(p -> 'topics');
     v_phone  := app.clean_line(p ->> 'phone', 40);

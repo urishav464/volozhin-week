@@ -9,7 +9,7 @@
 // «(ישיבת נועם)» beside «נועם …»), and every other line, waits for the admin's choice, and «ייבוא» waits with it. A
 // name is matched to the pool without its brackets and tails («פלוני»).
 import { allOfOneEscort, type EscortIndex, escortIndex, escortWords, mentionsEscort, namedEscort } from "./escorts";
-import { nameTails, titleOf, trailingBrackets } from "./speakerName";
+import { MEMORIAL_LINE, nameTails, titleOf, trailingBrackets } from "./speakerName";
 
 export type LineAs = "affiliation" | "speaker" | "skip";
 
@@ -71,6 +71,8 @@ export interface LineProposal {
  * institution's word — an affiliation; else nothing.
  */
 export function lineProposal(raw: string, c: LineContext): LineProposal {
+  // a dedication («לע״נ …», «… ז״ל», «הי״ד») is no one's name nor an institution (the dry run of 5786's files)
+  if (MEMORIAL_LINE.test(raw)) return { as: "skip", why: "הקדשה לזכר מישהו — לא שם של מרצה", escort: null, held: false };
   const escort = namedEscort(raw, c.escorts.words);
   const mentions = mentionsEscort(raw);
   const institution = INSTITUTION.test(raw);

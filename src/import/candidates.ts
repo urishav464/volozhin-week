@@ -25,7 +25,7 @@ import { type SpeakerEdit, validEdit } from "./edit";
 import { mentionsEscort, namedEscort } from "./escorts";
 import { affiliationText, type ExtraLine, extraLine, type LineAs, lineContext, type LineKind, nameTails } from "./lines";
 import { cellOf, columnNames, dataRows, labelledCells, noteLines } from "./rows";
-import { pickTitleCell, splitSpeakers, splitTitle, titleGender } from "./speakerName";
+import { genderCell, pickTitleCell, splitSpeakers, splitTitle, titleGender } from "./speakerName";
 import type { Grid } from "./table";
 
 export interface CandidateData {
@@ -156,7 +156,14 @@ export function readCandidateSheet(grid: Grid, m: Mapping, o: ReadOptions): { ro
     // a name beside it on the first line («פלוני + פלמוני»), or a line under it
     const firstLine = inName.text.split("\n").map((line) => splitSpeakers(line).length)[0] ?? 1;
     parts.slice(1).forEach((part, k) => decide(`${row}:${k + 2}`, part, k + 1 < firstLine ? "beside" : "under"));
-    const gender = o.genderFromTitle ? titleGender(title) : null;
+    // gender: the sheet's «מגדר» column when mapped (v13), else the title's «הצעה»; a title of the other gender leaves none
+    const byTitle = titleGender(title);
+    const byColumn = genderCell(cellOf(cells, m, "gender"));
+    let gender = byColumn ?? (o.genderFromTitle ? byTitle : null);
+    if (byColumn && byTitle && byColumn !== byTitle) {
+      gender = null;
+      warnings.push(`התואר «${title}» ועמודת המגדר לא מסכימים — המגדר נשאר ריק (מתקנים אחר כך בכרטיס המרצה)`);
+    }
     let affiliation: string | null = edit ? edit.affiliation : [oneLine(clean(cellOf(cells, m, "affiliation"), "מוסד")), ...lineAff].filter(Boolean).join(", ") || null;
     if (edit) clean(cellOf(cells, m, "affiliation"), "מוסד"); // a contact in the column is still said
     if (affiliation && chars(affiliation) > LIMITS.affiliation) {
