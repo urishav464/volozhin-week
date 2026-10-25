@@ -35,7 +35,7 @@ import type {
   Transport, TransportDetails, Vetting, Week,
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
-import { cellSpan, spansRows, timeSplitOk } from "../domain/shape";
+import { cellSpan, spansRows, sticksOut, timeSplitOk } from "../domain/shape";
 import { scheduleEntries } from "../exports/designer";
 import { phoneKey } from "../import/phone";
 import { titleGender } from "../import/speakerName";
@@ -345,6 +345,7 @@ export class Engine {
         case "split_time": {
           if (!timeSplitOk(this.lessonRows(day), span, op.parts)) fail("bad_shape");
           const old = inSpan();
+          if (sticksOut(span, old)) fail("bad_shape"); // a lesson only partly in the cell: never deleted whole
           if (old.some((l) => l.state === "closed" || l.kind === "memorial")) fail("cell_closed");
           const carried = this.livePitchesOf(old.map((l) => l.id));
           old.forEach((l) => this.deleteLesson(l.id));

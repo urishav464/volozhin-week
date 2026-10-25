@@ -8,7 +8,7 @@ import type { GridRow, Lesson, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
 import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
 import { rowActive } from "./layout";
-import { GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay } from "./model";
+import { GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
@@ -88,7 +88,7 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, on
                 </li>
               );
             }
-            if (row.kind === "memorial" && onMemorial && !readOnly) {
+            if (row.kind === "memorial" && onMemorial && !readOnly && memorialRowFree(model, day, row)) {
               return (
                 <li key={row.id}>
                   <button

@@ -125,8 +125,10 @@ either of its rows, never with one-row drafts beside it.
   `reason` must be non-empty → `bad_shape`.
 - `split_time(parts[])`: `parts` are minutes, at least two, each ≥ 15 and a multiple of 5,
   summing to the cell's length, and each part starting inside a lesson row and ending inside one
-  (as `move_lesson` asks of a range; `timeSplitOk`) → else `bad_shape`. A closed lesson or a
-  memorial slot anywhere in the cell → `cell_closed`. Result: one draft per part in the default
+  (as `move_lesson` asks of a range; `timeSplitOk`) → else `bad_shape`. A lesson in the cell's range
+  that sticks out of it (a parallel draft moved to start or end outside it) → `bad_shape` — it is
+  never deleted whole (`sticksOut`). A closed lesson or a memorial slot anywhere in the cell →
+  `cell_closed`. Result: one draft per part in the default
   room, back to back from the cell's start. Live pitches of the drafts that were in the cell move
   to the FIRST part (deduplicated per approach); the old drafts are deleted.
 - `merge_next()`: the row's single lesson (a draft or closed; create a plain draft if the row is

@@ -2,7 +2,7 @@
 // (pure, so it is unit-testable and identical on every device).
 import { displayName } from "../domain/names";
 import { DAYS, type Day, overlaps } from "../domain/time";
-import type { Approach, Category, Gender, Lesson, Pitch, Speaker, Week } from "../domain/types";
+import type { Approach, Category, Gender, Lesson, Pitch, Speaker, Week, GridRow } from "../domain/types";
 import { LIVE_PITCH } from "../domain/types";
 import { type DayBalance, categoryLoad, dayBalance } from "../rules/balance";
 import { type Warning, warningsFor } from "../rules/warnings";
@@ -169,3 +169,13 @@ export function lessonsOfDay(m: GridModel, day: Day): Lesson[] {
 }
 
 export const GENDER_NEED_LABEL: Record<Gender, string> = { f: "דרושה מרצה", m: "דרוש מרצה" };
+
+/**
+ * A memorial row an edition admin can take a slot in from the grid (v13): nothing of that day in the default room
+ * over the row — the room add_memorial_slot puts it in (else `room_taken`: a merged lesson over the row, a slot there).
+ */
+export function memorialRowFree(m: GridModel, day: Day, row: Pick<GridRow, "start_min" | "end_min">): boolean {
+  const rooms = [...m.week.rooms].sort((a, b) => a.sort - b.sort);
+  const room = (rooms.find((r) => r.is_default) ?? rooms[0])?.id;
+  return room != null && !m.week.lessons.some((l) => l.day === day && l.state !== "cancelled" && l.room_id === room && overlaps(l.start_min, l.end_min, row.start_min, row.end_min));
+}

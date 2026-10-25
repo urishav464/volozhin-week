@@ -6,7 +6,7 @@ import type { GridRow, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
 import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
 import { freeCells, placeDay, rowActive } from "./layout";
-import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay } from "./model";
+import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
@@ -64,7 +64,7 @@ export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, o
                 }
                 if (b.row.kind === "lesson") return <div key={b.row.id} className={base} style={{ top: b.top, height: b.height }} />;
                 const tone = b.row.kind === "kk" ? "bg-accent-soft text-accent" : b.row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft";
-                if (b.row.kind === "memorial" && onMemorial && !lessons.some((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, b.row.start_min, b.row.end_min))) {
+                if (b.row.kind === "memorial" && onMemorial && !lessons.some((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, b.row.start_min, b.row.end_min)) && memorialRowFree(model, day, b.row)) {
                   return (
                     <button
                       key={b.row.id}

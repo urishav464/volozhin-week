@@ -128,7 +128,8 @@ export function warningsFor(week: Week): Warning[] {
     for (const [catId, n] of categoryLoad(day, week.lessons)) {
       if (n > max) {
         const ids = closed.filter((l) => l.day === day && l.category_id === catId).map((l) => l.id);
-        push({ kind: "category_load", severity: "warn", day, lessonIds: ids, message: `${n} שיעורי «${categoryById.get(catId)?.name ?? "?"}» ביום ${DAY_NAMES[day]} (הצעה: עד ${max})` });
+        const rule = week.edition.settings.max_category_per_day == null ? `הצעה: עד ${max}` : `עד ${max}`;
+        push({ kind: "category_load", severity: "warn", day, lessonIds: ids, message: `${n} שיעורי «${categoryById.get(catId)?.name ?? "?"}» ביום ${DAY_NAMES[day]} (${rule})` });
       }
     }
 

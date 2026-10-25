@@ -77,6 +77,10 @@ describe("warningsFor", () => {
       closeWith(w, addLesson(w, 3, s, s + 90, { title: "x", category_id: 1 }), addSpeaker(w, g));
     }
     expect(kinds(w)).toEqual(["category_load"]);
+    expect(warningsFor(w)[0].message).toMatch(/\(עד 2\)$/); // the instructor's number: no «הצעה»
+    delete w.edition.settings.max_category_per_day;
+    closeWith(w, addLesson(w, 3, 1050, 1140, { title: "x", category_id: 1 }), addSpeaker(w, "f")); // a fourth: past the «הצעה» of 3
+    expect(warningsFor(w).find((x) => x.kind === "category_load")?.message).toMatch(/\(הצעה: עד 3\)$/);
   });
 
   it("warns on a speaker closed twice, by name and gender", () => {

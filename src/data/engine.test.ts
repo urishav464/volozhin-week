@@ -266,6 +266,14 @@ describe("reshape", () => {
     expect(code(() => e.reshape(3, 1200, { op: "split_time", parts: [90, 150] }))).toBe("bad_shape");
   });
 
+  it("split_time refuses a cell with a lesson that sticks out of it — never deletes it whole (v13 review)", () => {
+    const e = new Engine(w, ME);
+    e.reshape(1, 510, { op: "merge_next" }); // 08:30–11:30 in room 1
+    addLesson(e.week, 1, 600, 780, { room_id: 2, title: "מקביל שזז" }); // 10:00–13:00 in room 2
+    expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [90, 90] }))).toBe("bad_shape");
+    expect(e.week.lessons.map((l) => [l.start_min, l.end_min, l.room_id])).toEqual([[510, 690, 1], [600, 780, 2]]);
+  });
+
   it("split_time refuses a row with a closed lesson", () => {
     closeWith(w, addLesson(w, 1, 870, 960), addSpeaker(w, "m"));
     expect(code(() => new Engine(w, ME).reshape(1, 870, { op: "split_time", parts: [45, 45] }))).toBe("cell_closed");

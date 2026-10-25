@@ -7,7 +7,7 @@ import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
 import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
-import { type Span, cellSpan, timeSplitOk } from "../domain/shape";
+import { type Span, cellSpan, sticksOut, timeSplitOk } from "../domain/shape";
 import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
 import { Button, Confirm, INPUT, useFocusBack } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
@@ -527,12 +527,13 @@ function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: 
 function cellOf(model: GridModel, day: Day, row: GridRow) {
   const rows = model.week.rows.filter((r) => r.kind === "lesson" && rowActive(r, day, model.week.edition));
   const lessons = model.week.lessons.filter((l) => l.day === day && l.state !== "cancelled");
-  return { rows, span: cellSpan(row, lessons) };
+  const span = cellSpan(row, lessons);
+  return { rows, span, stuck: sticksOut(span, lessons) };
 }
 
 export function ShapeMenu({ model, day, row, closed, onReshape }: { model: GridModel; day: Day; row: GridRow; closed: boolean; onReshape: (op: ReshapeOp) => void }) {
   const [reason, setReason] = useState("");
-  const { rows, span } = cellOf(model, day, row);
+  const { rows, span, stuck } = cellOf(model, day, row);
   const merged = span.start !== row.start_min || span.end !== row.end_min;
   return (
     <div className="space-y-3 text-sm">
@@ -558,7 +559,14 @@ export function ShapeMenu({ model, day, row, closed, onReshape }: { model: GridM
           </Button>
         </div>
       </div>
-      {!closed && <TimeSplit key={`${span.start}:${span.end}`} rows={rows} span={span} onReshape={onReshape} />}
+      {!closed &&
+        (stuck ? (
+          <p className="text-xs text-ink-soft">
+            <span className="font-semibold">פיצול בזמן:</span> שיעור במקביל מתחיל או נגמר מחוץ למשבצת הזו — מזיזים אותו או מחזירים למבנה הבסיס קודם.
+          </p>
+        ) : (
+          <TimeSplit key={`${span.start}:${span.end}`} rows={rows} span={span} onReshape={onReshape} />
+        ))}
     </div>
   );
 }

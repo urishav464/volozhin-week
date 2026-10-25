@@ -41,3 +41,11 @@ export function timeSplitOk(rows: readonly Range[], span: Span, parts: readonly 
   }
   return true;
 }
+
+/**
+ * A lesson in the cell's range that sticks out of it (a parallel draft moved to start or end elsewhere): a time
+ * split would delete it whole, its time outside the cell with it — so it refuses (`bad_shape`) instead.
+ */
+export function sticksOut(span: Span, lessons: readonly Range[]): boolean {
+  return lessons.some((l) => overlaps(l.start_min, l.end_min, span.start, span.end) && (l.start_min < span.start || l.end_min > span.end));
+}

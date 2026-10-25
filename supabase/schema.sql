@@ -1137,6 +1137,8 @@ create or replace function public.reshape(
         end if;
         v_t := v_t + v_part;
       end loop;
+      -- a lesson only partly in the cell (a parallel draft moved to start or end elsewhere) is never deleted whole (sticksOut)
+      if exists (select 1 from public.lessons where id = any (v_span) and (start_min < v_s_start or end_min > v_s_end)) then perform app.refuse('bad_shape'); end if;
       if exists (select 1 from public.lessons where id = any (v_span) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('cell_closed'); end if;
       select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_span) c;
       delete from public.lessons where id = any (v_span);

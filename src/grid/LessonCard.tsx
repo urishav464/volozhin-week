@@ -43,7 +43,9 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
   const parallel = lesson.parallel_reason ? <span title={lesson.parallel_reason}>∥</span> : null;
   const room = model.week.rooms.find((r) => r.id === lesson.room_id);
   // the «אחריות» lens: the handler's colour as the stripe, on drafts too; «רק של X» fades the rest
-  const ownerId = lens === "owner" ? lessonOwner(model, lesson) : null;
+  // a handler counts when the legend has them (a member who left has no colour: their lessons read «בלי אחראי/ת», alike everywhere)
+  const rawOwner = lens === "owner" ? lessonOwner(model, lesson) : null;
+  const ownerId = rawOwner != null && owners?.colorOf.has(rawOwner) ? rawOwner : null;
   const ownerColor = ownerId != null ? owners?.colorOf.get(ownerId) : undefined;
   const faded = lens === "owner" && owners?.only != null && lesson.kind === "lesson" && (owners.only === "none" ? ownerId != null : ownerId !== owners.only);
   const common = {
