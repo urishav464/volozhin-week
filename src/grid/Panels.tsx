@@ -77,11 +77,12 @@ export function Sheet({
       aria-label={title}
       className={
         wide
-          ? "fixed inset-y-0 end-0 z-40 flex w-[24rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
-          : "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
+          ? "fixed inset-y-0 end-0 z-40 flex w-[26rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
+          : "fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
       }
     >
-      <header className="flex items-start gap-2 border-b border-line px-4 py-3">
+      {!wide && <span aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line" />}
+      <header className="flex items-start gap-2 border-b border-line px-5 pb-3 pt-4">
         {onBack && (
           <button
             type="button"
@@ -93,24 +94,47 @@ export function Sheet({
           </button>
         )}
         <div className="min-w-0">
-          <h2 className="font-display text-lg font-semibold">{title}</h2>
-          {subtitle && <div className="text-sm text-ink-soft">{subtitle}</div>}
+          <h2 className="font-display text-xl font-bold leading-tight">{title}</h2>
+          {subtitle && <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-soft">{subtitle}</div>}
         </div>
         <button type="button" onClick={onClose} aria-label="סגירה" className="-me-2 -mt-1 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-md text-xl leading-none hover:bg-line/50">
           ×
         </button>
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">{children}</div>
+      <div className="min-h-0 flex-1 divide-y divide-line/70 overflow-y-auto px-5 [&>*]:py-4">{children}</div>
     </div>
   );
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+/** A part of a panel: its heading, and on its other end a small aside (a count, «עריכה»). Parts are ruled apart by the Sheet. */
+export function Section({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <section aria-label={title}>
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{title}</h3>
+      <div className="mb-2.5 flex min-h-8 items-center gap-2">
+        <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+        {aside && <div className="ms-auto flex items-center gap-1 text-sm text-ink-soft">{aside}</div>}
+      </div>
       {children}
     </section>
+  );
+}
+
+/** A small fact beside a panel's title: the day and hour, the room, a parallel lesson's reason. */
+export function Meta({ children, tone = "plain" }: { children: ReactNode; tone?: "plain" | "warn" }) {
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${tone === "warn" ? "bg-amber-100 text-amber-900" : "bg-line/50 text-ink-soft"}`}>{children}</span>;
+}
+
+/** The warnings of a lesson or a day, as one quiet list (amber: worth a look; blue: to know). */
+export function WarningList({ items }: { items: { key: string; severity: "info" | "warn"; message: string }[] }) {
+  return (
+    <ul className="space-y-1.5" aria-label="אזהרות">
+      {items.map((w) => (
+        <li key={w.key} className={`flex gap-2 rounded-lg border-s-4 px-3 py-2 text-sm leading-snug ${w.severity === "warn" ? "border-amber-400 bg-amber-50 text-amber-950" : "border-sky-400 bg-sky-50 text-sky-950"}`}>
+          <span aria-hidden>{w.severity === "warn" ? "⚠" : "ℹ"}</span>
+          <span>{w.message}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -152,35 +176,29 @@ export function LessonPanel(props: LessonPanelProps) {
       onClose={props.onClose}
       subtitle={
         <>
-          {DAY_NAMES[l.day]} · <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {room?.name}
-          {l.parallel_reason && <> · ∥ {l.parallel_reason}</>}
+          <Meta>
+            {DAY_NAMES[l.day]} · <bdi dir="ltr">{fmtRange(l.start_min, l.end_min)}</bdi>
+          </Meta>
+          {room && <Meta>{room.name}</Meta>}
+          {l.parallel_reason && <Meta>∥ {l.parallel_reason}</Meta>}
         </>
       }
     >
-      {warnings.length > 0 && (
-        <ul className="space-y-1">
-          {warnings.map((w) => (
-            <li key={w.key} className={`rounded-md px-2 py-1 text-sm ${w.severity === "warn" ? "bg-amber-50 text-amber-900" : "bg-sky-50 text-sky-900"}`}>
-              {w.severity === "warn" ? "⚠ " : "ℹ "}
-              {w.message}
-            </li>
-          ))}
-        </ul>
-      )}
+      {warnings.length > 0 && <WarningList items={warnings} />}
 
       {l.state === "draft" && l.kind === "lesson" && (
-        <Section title="מועמדים">
+        <Section title="מועמדים" aside={(model.pitchesByLesson.get(l.id) ?? []).length || undefined}>
           <Candidates {...props} />
           {canEdit &&
             (adding ? (
-              <div className="mt-2 rounded-lg border border-line bg-card p-2">
+              <div className="mt-3 rounded-xl border border-line bg-card p-3">
                 <SpeakerChooser model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={(id, mode) => actions.propose(id, { lesson_id: l.id }, mode)} />
-                <Button className="mt-2" onClick={() => setAdding(false)}>
+                <Button kind="quiet" className="mt-2" onClick={() => setAdding(false)}>
                   סגירת הרשימה
                 </Button>
               </div>
             ) : (
-              <Button className="mt-2" onClick={() => setAdding(true)}>
+              <Button className="mt-3" onClick={() => setAdding(true)}>
                 + הצעת מרצה
               </Button>
             ))}
@@ -191,20 +209,16 @@ export function LessonPanel(props: LessonPanelProps) {
 
       {l.state === "draft" && props.files?.(l)}
 
-      {canEdit && row && l.kind === "lesson" && (
-        <Section title="מבנה המשבצת">
-          <ShapeMenu model={model} day={l.day} row={row} closed={l.state === "closed"} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />
-        </Section>
-      )}
+      {canEdit && row && l.kind === "lesson" && <ShapeFold model={model} day={l.day} row={row} closed={l.state === "closed"} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />}
     </Sheet>
   );
 }
 
 function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model: GridModel; lesson: Lesson; me: number; isAdmin: boolean; canEdit: boolean; actions: PanelActions }) {
   const pitches = model.pitchesByLesson.get(l.id) ?? [];
-  if (pitches.length === 0) return <p className="text-sm text-ink-faint">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
+  if (pitches.length === 0) return <p className="text-sm text-ink-soft">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {pitches.map((p: Pitch) => {
         const s = pitchSpeaker(model, p);
         const a = model.approachById.get(p.approach_id);
@@ -213,31 +227,33 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
         const proposer = p.proposed_by != null && p.proposed_by !== a?.owner_member_id ? model.memberName.get(p.proposed_by) : undefined;
         const live = p.state === "approached" || p.state === "candidate";
         return (
-          <li key={p.id} className="rounded-lg border border-line bg-card p-2" data-pitch-id={p.id}>
-            <div className="flex items-center gap-1.5">
+          <li key={p.id} className="rounded-xl border border-line bg-card px-3 py-2.5" data-pitch-id={p.id}>
+            <div className="flex items-center gap-2">
               <GenderDot gender={s?.gender ?? null} />
               {s ? (
                 <button
                   type="button"
                   onClick={() => actions.openSpeaker(s.id)}
-                  className={`inline-flex min-h-11 items-center text-start font-semibold underline underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
+                  className={`inline-flex min-h-9 min-w-0 items-center truncate text-start text-[15px] font-semibold hover:underline hover:underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
                 >
                   {displayName(s)}
                 </button>
               ) : (
                 <span className="font-semibold">?</span>
               )}
-              <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
-                {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
-              </Chip>
+              <span className="ms-auto shrink-0">
+                <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
+                  {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
+                </Chip>
+              </span>
             </div>
-            <p className="text-xs text-ink-soft">
+            <p className="ms-4 text-[13px] text-ink-soft">
               {owner ? `בטיפול: ${owner}` : "ללא אחראי/ת"}
               {proposer && ` · הוצע ע״י ${proposer}`}
-              {s?.vetted !== "approved" && " · ממתין/ה לאישור מדריך/ה"}
+              {s?.vetted !== "approved" && <span className="text-amber-800"> · ממתין/ה לאישור מדריך/ה</span>}
             </p>
-            {canEdit && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {canEdit && (mine || (live && p.proposed_by === me)) && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {mine && live && (
                   <Button kind="primary" onClick={() => actions.close(p.id)}>
                     סגרנו
@@ -249,17 +265,17 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
                   </Button>
                 )}
                 {mine && live && (
-                  <Button onClick={() => actions.setPitch(p.id, "declined")}>
+                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "declined")}>
                     {byGender(s?.gender, "סירב", "סירבה")}
                   </Button>
                 )}
                 {mine && p.state === "declined" && (
-                  <Button onClick={() => actions.setPitch(p.id, "approached")}>
+                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "approached")}>
                     החזרה לתהליך
                   </Button>
                 )}
                 {live && (mine || p.proposed_by === me) && (
-                  <Button onClick={() => actions.unpropose(p.id)}>
+                  <Button kind="quiet" className="ms-auto" onClick={() => actions.unpropose(p.id)}>
                     הסרה מהמשבצת
                   </Button>
                 )}
@@ -278,11 +294,14 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
   const [category, setCategory] = useState(l.category_id ?? 0);
   const [audience, setAudience] = useState(l.audience ?? "");
   const [teach, setTeach] = useState(l.teach_min ?? 0);
+  // read first; «עריכה» opens the form, a saved version closes it
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     setTitle(l.title ?? "");
     setCategory(l.category_id ?? 0);
     setAudience(l.audience ?? "");
     setTeach(l.teach_min ?? 0);
+    setEditing(false);
   }, [l.id, l.version, l.title, l.category_id, l.audience, l.teach_min]);
   const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const mine = isAdmin || owner === me;
@@ -299,62 +318,109 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
   return (
     <>
       <Section title="מרצה">
-        <p className="flex items-center gap-1.5 font-semibold">
+        <p className="flex items-center gap-2">
           <GenderDot gender={lead?.gender ?? null} />
           {lead ? (
-            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="inline-flex min-h-11 items-center text-start underline underline-offset-4">
+            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="inline-flex min-h-9 items-center text-start text-[17px] font-semibold hover:underline hover:underline-offset-4">
               {displayName(lead)}
             </button>
           ) : (
-            "—"
+            <span className="font-semibold">—</span>
           )}
         </p>
-        {owner != null && <p className="text-xs text-ink-soft">בטיפול: {model.memberName.get(owner)}</p>}
+        {owner != null && <p className="ms-4 text-[13px] text-ink-soft">בטיפול: {model.memberName.get(owner)}</p>}
       </Section>
 
-      <Section title="פרטי השיעור">
-        <div className="space-y-2">
-          <label className="block text-sm">
-            כותרת
-            <input value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-0.5`} />
-          </label>
-          <label className="block text-sm">
-            קטגוריה
-            <select value={category} disabled={!canEdit} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-0.5`}>
-              <option value={0}>— לא נבחרה —</option>
-              {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex gap-2">
-            <label className="block min-w-0 flex-1 text-sm">
-              קהל מיוחד
-              <input value={audience} disabled={!canEdit} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-0.5`} />
-            </label>
-            <label className="block w-28 text-sm">
-              דקות הוראה
-              <input
-                type="number"
-                min={15}
-                step={5}
-                max={l.end_min - l.start_min}
-                value={teach || ""}
-                placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
-                disabled={!canEdit}
-                onChange={(e) => setTeach(Number(e.target.value))}
-                className={`${INPUT} mt-0.5 tabular-nums`}
-              />
-            </label>
-          </div>
-          {canEdit && (
-            <Button kind="primary" disabled={!dirty} onClick={save}>
-              שמירה
+      <Section
+        title="פרטי השיעור"
+        aside={
+          canEdit &&
+          !editing && (
+            <Button kind="quiet" onClick={() => setEditing(true)}>
+              עריכה
             </Button>
-          )}
-        </div>
+          )
+        }
+      >
+        {editing ? (
+          <div className="space-y-3">
+            <label className="block text-sm font-medium">
+              כותרת
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-1`} autoFocus />
+            </label>
+            <label className="block text-sm font-medium">
+              קטגוריה
+              <select value={category} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-1`}>
+                <option value={0}>— לא נבחרה —</option>
+                {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex gap-2">
+              <label className="block min-w-0 flex-1 text-sm font-medium">
+                קהל מיוחד
+                <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-1`} />
+              </label>
+              <label className="block w-28 text-sm font-medium">
+                דקות הוראה
+                <input
+                  type="number"
+                  min={15}
+                  step={5}
+                  max={l.end_min - l.start_min}
+                  value={teach || ""}
+                  placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
+                  onChange={(e) => setTeach(Number(e.target.value))}
+                  className={`${INPUT} mt-1 tabular-nums`}
+                />
+              </label>
+            </div>
+            <div className="flex gap-1.5">
+              <Button kind="primary" disabled={!dirty} onClick={save}>
+                שמירה
+              </Button>
+              <Button kind="quiet" onClick={() => setEditing(false)}>
+                ביטול
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt className="text-ink-soft">כותרת</dt>
+            <dd className="font-medium">{l.title ?? <span className="text-ink-faint">TBD</span>}</dd>
+            <dt className="text-ink-soft">קטגוריה</dt>
+            <dd>
+              {(() => {
+                const c = l.category_id != null ? model.categoryById.get(l.category_id) : undefined;
+                return c ? (
+                  <span className="inline-flex items-center gap-1.5 font-medium" style={{ color: c.color }}>
+                    <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} />
+                    {c.name}
+                  </span>
+                ) : (
+                  <span className="text-ink-faint">TBD</span>
+                );
+              })()}
+            </dd>
+            {l.audience && (
+              <>
+                <dt className="text-ink-soft">קהל מיוחד</dt>
+                <dd>{l.audience}</dd>
+              </>
+            )}
+            <dt className="text-ink-soft">דקות הוראה</dt>
+            <dd className="tabular-nums">
+              {l.teach_min ?? (
+                <>
+                  {Math.min(lessonMinutes, l.end_min - l.start_min)} <span className="text-ink-faint">(ברירת המחדל)</span>
+                </>
+              )}
+            </dd>
+          </dl>
+        )}
       </Section>
 
       {stages ? (
@@ -442,8 +508,10 @@ export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide
       onClose={onClose}
       subtitle={
         <>
-          {DAY_NAMES[day]} · <bdi>{fmtRange(row.start_min, row.end_min)}</bdi>
-          {need && <> · {need === "f" ? "היום חסרות מרצות" : "היום חסרים מרצים"}</>}
+          <Meta>
+            {DAY_NAMES[day]} · <bdi dir="ltr">{fmtRange(row.start_min, row.end_min)}</bdi>
+          </Meta>
+          {need && <Meta tone="warn">{need === "f" ? "היום חסרות מרצות" : "היום חסרים מרצים"}</Meta>}
         </>
       }
     >
@@ -452,9 +520,7 @@ export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide
           <Section title="הצעת מרצה">
             <SpeakerChooser model={model} me={me} day={day} start={row.start_min} end={row.end_min} need={need} onPick={(id, mode) => actions.propose(id, { day, start_min: row.start_min, end_min: row.end_min, room_id: null }, mode)} />
           </Section>
-          <Section title="מבנה המשבצת">
-            <ShapeMenu model={model} day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
-          </Section>
+          <ShapeFold model={model} day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
         </>
       ) : (
         <p className="text-sm text-ink-soft">צפייה בלבד.</p>
@@ -522,6 +588,22 @@ function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: 
 }
 
 // ------------------------------------------------------------------ reshaping
+
+/** The shape menu, folded: an occasional act (merge, split) that should not crowd the panel's everyday one. */
+function ShapeFold(props: Parameters<typeof ShapeMenu>[0]) {
+  return (
+    <details className="group">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-[15px] font-semibold text-ink [&::-webkit-details-marker]:hidden">
+        מבנה המשבצת
+        <span className="text-sm font-normal text-ink-soft">איחוד · פיצול</span>
+        <span aria-hidden className="ms-auto text-ink-soft transition-transform group-open:rotate-180">▾</span>
+      </summary>
+      <div className="pt-2">
+        <ShapeMenu {...props} />
+      </div>
+    </details>
+  );
+}
 
 /** The cell a reshape acts on, and the day's lesson rows (CONTRACT `reshape`, v13). */
 function cellOf(model: GridModel, day: Day, row: GridRow) {

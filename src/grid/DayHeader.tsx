@@ -30,17 +30,16 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
   return (
     <Tag
       {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)} — פרטי היום` } : {})}
-      className={`block w-full rounded-lg border bg-card px-2 py-1.5 text-start ${onOpen ? "hover:border-ink-faint" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : off ? "border-bad/60" : "border-line"}`}
+      className={`block w-full rounded-lg border bg-card px-2 py-1.5 text-start ${onOpen ? "cursor-pointer transition-shadow hover:border-ink-faint hover:shadow-sm" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : off ? "border-bad/60" : "border-line"}`}
       data-day-header={dm.day}
     >
       <span className="flex items-baseline gap-1.5">
-        <span className="font-display font-semibold">{DAY_NAMES[dm.day as Day]}</span>
-        <span className="text-[11px] text-ink-faint truncate">{date ? `${shortDate(date)} · ${hebrewDate(date)}` : "תאריך TBD"}</span>
-        {onOpen && <span aria-hidden className="ms-auto text-[11px] text-ink-faint">פרטים ›</span>}
+        <span className="font-display text-[15px] font-semibold">{DAY_NAMES[dm.day as Day]}</span>
+        <span className="min-w-0 truncate text-[11px] text-ink-faint">{date ? `${shortDate(date)} · ${hebrewDate(date)}` : "תאריך TBD"}</span>
       </span>
-      <span className="mt-0.5 block text-[11px] text-ink-soft tabular-nums" aria-label="איזון מגדרי">
+      <span className="mt-0.5 block truncate text-[11px] text-ink-soft tabular-nums" aria-label="איזון מגדרי">
         נ {n(b.closed.f)} · ג {n(b.closed.m)} · {b.open} פנויות
-        {(b.pending.f > 0 || b.pending.m > 0) && <span className="text-ink-faint"> · בתהליך נ {n(b.pending.f)} ג {n(b.pending.m)}</span>}
+        {b.pending.f + b.pending.m > 0 && <span className="text-ink-faint"> · {n(b.pending.f + b.pending.m)} בתהליך</span>}
       </span>
       <span className={`block text-[11px] font-semibold ${needTone}`} data-need={b.need ?? "even"}>
         {off && <span className="text-bad" data-unbalanced>⚠ לא מאוזן · </span>}

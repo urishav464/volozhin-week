@@ -64,6 +64,7 @@ test.describe("desktop", () => {
   test("splitting a row into two parallel lessons needs a reason", async ({ page }) => {
     await cell(page, 4, 870, 960).click();
     const dialog = page.getByRole("dialog", { name: "משבצת פנויה" });
+    await dialog.getByText("מבנה המשבצת").click();
     await expect(dialog.getByRole("button", { name: "2 מקבילים" })).toBeDisabled();
     await dialog.getByLabel("סיבה לפיצול").fill("שני מסלולים");
     await dialog.getByRole("button", { name: "2 מקבילים" }).click();
@@ -73,6 +74,7 @@ test.describe("desktop", () => {
   test("any minutes split a row in time; «איחוד» builds the night", async ({ page }) => {
     await cell(page, 4, 960, 1050).click();
     const dialog = page.getByRole("dialog");
+    await dialog.getByText("מבנה המשבצת").click();
     await dialog.getByLabel("דקות בחלק 1").fill("65");
     await expect(dialog.getByLabel("דקות בחלק 2")).toHaveText("25");
     await dialog.getByLabel("דקות בחלק 1").fill("80");
@@ -83,16 +85,19 @@ test.describe("desktop", () => {
     await expect(page.locator('[data-day="4"] [aria-label*="17:00–17:30"]')).toBeVisible();
 
     await cell(page, 3, 1470, 1560).click();
+    await page.getByRole("dialog").getByText("מבנה המשבצת").click();
     await page.getByRole("dialog").getByRole("button", { name: "איחוד עם המשבצת הבאה" }).click();
     await expect(page.locator('[data-day="3"] [aria-label*="00:30–03:30"]')).toBeVisible();
   });
 
   test("a merged cell split in two is two lessons of its whole length — not three (v13)", async ({ page }) => {
     await cell(page, 3, 1470, 1560).click();
+    await page.getByRole("dialog").getByText("מבנה המשבצת").click();
     await page.getByRole("dialog").getByRole("button", { name: "איחוד עם המשבצת הבאה" }).click();
     const merged = page.locator('[data-day="3"] [data-lesson-id][aria-label*="00:30–03:30"]');
     await merged.click();
     const dialog = page.getByRole("dialog");
+    await dialog.getByText("מבנה המשבצת").click();
     await expect(dialog.getByText("משבצת מאוחדת")).toBeVisible();
     await dialog.getByLabel("סיבה לפיצול").fill("שני מסלולים");
     await dialog.getByRole("button", { name: "2 מקבילים" }).click();
@@ -163,16 +168,16 @@ test.describe("reading the grid (v13)", () => {
     await expect(page.locator("[data-week-balance]")).toContainText("2 ימים לא מאוזנים");
     await page.locator('[data-day-header="0"]').first().click();
     const panel = page.getByRole("dialog", { name: "יום ראשון" });
-    await expect(panel.locator("[data-day-balance]")).toHaveText("לא מאוזן: הפרש של 3 בסגורים (הצעה: הפרש של עד 1)");
+    await expect(panel.locator("[data-day-balance]")).toContainText("לא מאוזן — הפרש של 3 בסגורים");
     await expect(panel.getByRole("list", { name: "הנושאים של היום" })).toContainText("מחשבת ישראל · 3");
-    await expect(panel.getByText("עוד אין ביום הזה:")).toBeVisible();
+    await expect(panel.getByRole("list", { name: "נושאים שעוד אין ביום הזה" })).toBeVisible();
     await expect(panel.getByRole("list", { name: "השעות של יום ראשון" })).toContainText("פתיחת השבוע (לדוגמה)");
     await expect(panel.getByRole("list", { name: "השעות של יום ראשון" })).toContainText("בתהליך:");
     // the instructor sets the tolerance there; Sunday's 1 to 4 is within 3
     await panel.getByLabel("הפרש מותר ביום בין מרצות למרצים").fill("3");
     await panel.getByRole("button", { name: "שמירה" }).click();
     await expect(page.getByRole("status").filter({ hasText: "כללי הרשת נשמרו" })).toBeVisible();
-    await expect(panel.locator("[data-day-balance]")).toHaveText("מאוזן בסגורים (הפרש של עד 3)");
+    await expect(panel.locator("[data-day-balance]")).toContainText("מאוזן בסגורים");
     await expect(page.locator("[data-week-balance]")).not.toContainText("לא מאוזן");
     await noSidewaysScroll(page);
   });

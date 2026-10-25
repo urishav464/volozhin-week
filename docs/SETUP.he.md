@@ -253,6 +253,7 @@
 - **«Public Can Execute SECURITY DEFINER Function»** — בדיוק שש פונקציות: אלה של הקישורים בלי חשבון (`escort_view`, `escort_tick`, `escort_pickup`, `kk_form`, `kk_signup`, `schedule_view`). כל אחת דורשת טוקן של קישור, עונה תשובה אחת לכל קישור שגוי (`link_invalid`), ויש עליה מגבלת קצב. `ping` כבר לא ברשימה הזו (מגרסה 12 היא רצה בהרשאות של מי שקורא/ת לה).
 - **«Leaked Password Protection Disabled»** לא רלוונטי: נכנסים רק עם Google. ספק ה-Email כבוי, ואין סיסמאות. (בדקת גם שה-bucket `sources` פרטי — זה נשאר כך.)
 - **«Function Search Path Mutable»** לא אמורה להופיע יותר: מגרסה 12 לכל פונקציה ב-`public` וב-`app` יש `search_path` קבוע, ובדיקה בודקת את זה.
+- **הערת Info אחת: «RLS Enabled No Policy» על `share_link_hits`** — גם זה בכוונה. בטבלה הזו רק פונקציות הקישורים כותבות (מגבלת הקצב), ואף תפקיד של דפדפן לא קורא אותה. RLS בלי מדיניות פירושו שאף אחד לא ניגש אליה ישירות. לא מוסיפים לה מדיניות.
 
 ---
 

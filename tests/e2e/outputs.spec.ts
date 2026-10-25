@@ -212,6 +212,7 @@ test.describe("demo build", () => {
     await nav(page).getByRole("link", { name: "השבוע" }).click();
     const panel = await openLesson(page, info, "ראשון", "מרצה 07");
     const details = panel.getByRole("region", { name: "פרטי השיעור" });
+    await details.getByRole("button", { name: "עריכה" }).click();
     await details.getByLabel("כותרת").fill("=כותרת חדשה לדוגמה");
     await details.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, /^נשמר$/)).toBeVisible();

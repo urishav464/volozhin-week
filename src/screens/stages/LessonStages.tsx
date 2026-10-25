@@ -100,7 +100,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
 
   return (
     <section aria-labelledby="stages-title" className="space-y-2">
-      <h3 id="stages-title" className="text-xs font-semibold tracking-wide text-ink-soft">
+      <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-semibold text-ink">
         שלבים
       </h3>
       {l.needs_reconfirm && (

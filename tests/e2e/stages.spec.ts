@@ -193,6 +193,7 @@ test.describe("demo build", () => {
       await panel.getByRole("button", { name: "להודעה" }).click();
     } else {
       const details = panel.getByRole("region", { name: "פרטי השיעור" });
+      await details.getByRole("button", { name: "עריכה" }).click();
       await details.getByLabel("כותרת").fill("שיעור לדוגמה, כותרת חדשה");
       await details.getByRole("button", { name: "שמירה" }).click();
       await expect(toast(page, /^נשמר$/)).toBeVisible(); // not the demo banner («…שום דבר לא נשמר»)
@@ -437,7 +438,8 @@ test.describe("mock build", () => {
     const sources = await stage(panel, "מקורות");
     await expect(sources.getByRole("form", { name: "מקורות" })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toHaveCount(0);
-    await expect(panel.getByLabel("כותרת")).toBeDisabled();
+    await expect(panel.getByRole("region", { name: "פרטי השיעור" }).getByRole("button", { name: "עריכה" })).toHaveCount(0);
+    await expect(panel.getByLabel("כותרת")).toHaveCount(0);
     await panel.getByRole("button", { name: "סגירה" }).click();
 
     // an approved transport: the pickup and the driver, through the policy
