@@ -28,8 +28,8 @@ describe("memorial times in the reader", () => {
     expect(sunday).toMatchObject({ status: "memorial_missing", header: "זמן זיכרון – חלל/ה לדוגמה 1", fallen: "חלל/ה לדוגמה 1", pages: 0, files: [] });
     expect(rowOf(w, memorialOn(w, 1))).toMatchObject({ status: "memorial", header: "זמן זיכרון", fallen: null });
     expect(IN_READER.memorial_missing && IN_READER.memorial && IN_READER.memorial_received).toBe(true);
-    expect(readerRows(readerManifest(w)).filter((r) => r.kind === "memorial")).toHaveLength(5);
-    expect(manifestTotals(readerManifest(w)).memorial).toBe(5);
+    expect(readerRows(readerManifest(w)).filter((r) => r.kind === "memorial")).toHaveLength(10); // two a day (v13)
+    expect(manifestTotals(readerManifest(w)).memorial).toBe(10);
   });
 
   it("take the plan's files once one is read: «התקבל», its pages in the reader, the estimate and the Word skeleton", () => {

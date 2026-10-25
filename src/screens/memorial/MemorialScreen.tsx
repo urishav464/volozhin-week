@@ -24,7 +24,7 @@ import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { telHref } from "../../domain/contactLinks";
 import { fallenName, freeSlots, memorialRowsOf, memorialSlots, minutesText, planOf, slotLabel } from "../../domain/memorial";
-import { DAY_NAMES, DAYS, type Day, LRM, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
+import { DAY_NAMES, DAYS, type Day, LRM, dayRange, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
 import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { memorialWaiting } from "../../reader/model";
@@ -344,7 +344,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
   const key = `slot-${day}-${row.id}`;
   if (!open) {
     return (
-      <Button onClick={() => setOpen(true)} aria-label={`הוספת זמן זיכרון: ${DAY_NAMES[day]}, ${row.label}`}>
+      <Button onClick={() => setOpen(true)} aria-label={`הוספת זמן זיכרון: ${dayRange(day, row.start_min, row.end_min)}`}>
         + זמן זיכרון
       </Button>
     );
@@ -365,7 +365,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
     if (done) setOpen(false);
   };
   return (
-    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${DAY_NAMES[day]}, ${row.label}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${dayRange(day, row.start_min, row.end_min)}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
       <div className="flex flex-wrap gap-2">
         <Field id={`${id}-s`} label="מ-">
           <input id={`${id}-s`} dir="ltr" value={start} onChange={(e) => setStart(e.target.value)} className={`${INPUT} w-24`} autoComplete="off" />

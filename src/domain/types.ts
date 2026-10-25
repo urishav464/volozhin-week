@@ -226,6 +226,8 @@ export interface EditionSettings {
   lesson_minutes?: number;
   row_minutes?: number;
   max_category_per_day?: number;
+  /** v13: how far apart a day's closed women and men may be before it is «לא מאוזן»; absent = 1, «הצעה» (src/rules/balance.ts). */
+  gender_tolerance?: number;
   /** The titles a speaker may carry this edition; absent = DEFAULT_TITLES (src/data/speakerRules.ts). */
   titles?: string[];
   /** The summary message's template (src/domain/message.ts) — the instructor's own wording; absent until pasted. */

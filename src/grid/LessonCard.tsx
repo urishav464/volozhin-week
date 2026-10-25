@@ -1,5 +1,5 @@
 // One lesson on the grid, drawn by its stage: a draft with candidates, a closed
-// lesson (category stripe + five stage dots, and a red dot «לעדכן את המרצה"
+// lesson (its topic's stripe and name + five stage dots, and a red dot «לעדכן את המרצה"
 // when it changed after the message went out), or a memorial slot. The
 // progress lens paints a closed card by its sources, last year's colours.
 import { memorialCard } from "../domain/memorial";
@@ -10,8 +10,11 @@ import { LRM, fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
 import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
 import { type GridModel, pitchSpeaker } from "./model";
+import { lessonOwner } from "./owners";
 
 export type Lens = "diversity" | "progress" | "owner";
+/** The «אחריות» lens's colour per handler, and «רק של X» (v13): the others' cards fade. */
+export type CardOwners = { colorOf: Map<number, string>; only: number | "none" | null };
 export { PROGRESS_TONE };
 
 interface Props {
@@ -25,12 +28,13 @@ interface Props {
   placeable?: boolean;
   /** A memorial slot's own time and room, as a line of its own (the day view, when the slot is not its row's alone). */
   where?: { range: string; room: string | null };
+  owners?: CardOwners;
   onOpen: () => void;
 }
 
 const PITCH_ICON: Record<string, string> = { approached: "✉", candidate: "?", declined: "✗" };
 
-export function LessonCard({ model, lesson, lens, height, active, placeable, where, onOpen }: Props) {
+export function LessonCard({ model, lesson, lens, height, active, placeable, where, owners, onOpen }: Props) {
   const compact = height < 64;
   const tiny = height < 40;
   const time = <bdi className="text-[10px] text-ink-faint tabular-nums">{fmtRange(lesson.start_min, lesson.end_min)}</bdi>;
@@ -38,10 +42,15 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
   const warnings = model.warningCount.get(lesson.id) ?? 0;
   const parallel = lesson.parallel_reason ? <span title={lesson.parallel_reason}>∥</span> : null;
   const room = model.week.rooms.find((r) => r.id === lesson.room_id);
+  // the «אחריות» lens: the handler's colour as the stripe, on drafts too; «רק של X» fades the rest
+  const ownerId = lens === "owner" ? lessonOwner(model, lesson) : null;
+  const ownerColor = ownerId != null ? owners?.colorOf.get(ownerId) : undefined;
+  const faded = lens === "owner" && owners?.only != null && lesson.kind === "lesson" && (owners.only === "none" ? ownerId != null : ownerId !== owners.only);
   const common = {
     "data-lesson-id": lesson.id,
+    "data-owner": lens === "owner" && lesson.kind === "lesson" ? (ownerId ?? "none") : undefined,
     onClick: onOpen,
-    className: `group absolute inset-0 m-0.5 overflow-hidden rounded-md text-start transition-shadow hover:shadow-md focus-visible:z-10 ${ring}`,
+    className: `group absolute inset-0 m-0.5 overflow-hidden rounded-md text-start transition-shadow hover:shadow-md focus-visible:z-10 ${ring} ${faded ? "opacity-30" : ""}`,
   } as const;
 
   if (lesson.kind === "memorial") {
@@ -83,6 +92,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
         {...common}
         data-drop={`lesson:${lesson.id}`}
         className={`${common.className} border-2 border-dashed border-ink-faint/60 ${lens === "progress" ? PROGRESS_TONE.draft : "bg-card/70"} px-1.5 py-1`}
+        style={ownerColor ? { borderInlineStartStyle: "solid", borderInlineStartWidth: 8, borderInlineStartColor: ownerColor } : undefined}
         aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${pitches.length ? `, ${pitches.length} מועמדים` : ", ללא מרצה"}`}
       >
         <span className="flex items-center gap-1">
@@ -120,8 +130,9 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
   const cat = lesson.category_id != null ? model.categoryById.get(lesson.category_id) : undefined;
   const stages = stagesOf(lesson, readerFilesOf(model.week, lesson.id));
   const progressBg = lens === "progress" ? PROGRESS_TONE[progressOf(lesson.sources_kind)] : "bg-card";
-  const ownerId = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const owner = ownerId != null ? model.memberName.get(ownerId) : undefined;
+  // the stripe: the topic's colour (v13: in every lens), the handler's in «אחריות»
+  const stripe = lens === "owner" ? (ownerColor ?? "#c9c2b3") : (cat?.color ?? "#c9c2b3");
   const reconfirm = lesson.needs_reconfirm;
   return (
     <button
@@ -130,7 +141,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
       data-drag={`lesson:${lesson.id}`}
       data-drag-label={lead ? displayName(lead) : ""}
       className={`${common.className} border ${reconfirm ? "border-bad" : "border-line"} ${progressBg} px-1.5 py-1 shadow-sm`}
-      style={{ borderInlineStartWidth: 5, borderInlineStartColor: lens === "diversity" ? (cat?.color ?? "#c9c2b3") : "#c9c2b3" }}
+      style={{ borderInlineStartWidth: 8, borderInlineStartColor: stripe }}
       aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}${reconfirm ? ", לעדכן את המרצה" : ""}`}
     >
       <span className="flex items-center gap-1">
@@ -141,6 +152,11 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
         {warnings > 0 && <span className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">{warnings}</span>}
       </span>
       {!tiny && <span className="block truncate text-[11px] text-ink-soft">{lesson.title ?? "כותרת: TBD"}</span>}
+      {!compact && lens !== "owner" && (
+        <span data-category className="block truncate text-[10px] font-semibold" style={{ color: cat?.color ?? "#6b6457" }}>
+          {cat ? cat.name : "נושא: TBD"}
+        </span>
+      )}
       {!compact && (
         <span className="mt-0.5 flex items-center gap-1">
           {lens === "owner" && owner ? (

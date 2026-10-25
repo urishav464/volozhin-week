@@ -282,7 +282,7 @@ test.describe("mock build", () => {
     await expect(card.locator("[data-memorial-name]")).toHaveText(name); // the name first; the title stays its accessible name
     await expect(card).toHaveAttribute("aria-label", new RegExp(`^זמן זיכרון – ${name}, `));
     // the day view shows every slot of the row, each its own yellow card — with its own time and room, told apart
-    await expect(page.locator("[data-memorial-card]").filter({ visible: true })).toHaveCount(2);
+    await expect(page.locator(`[data-memorial-card][aria-label*="${fmtRange(slot.start_min, slot.end_min)}"]`).filter({ visible: true })).toHaveCount(2);
     await expect(page.locator(`[data-lesson-id="${second.id}"]`)).toContainText("עוד לא שובץ/ה חלל/ה");
     const roomOf = (id: number) => week.rooms.find((r) => r.id === id)!.name;
     await expect(card.locator("[data-memorial-where]")).toHaveText(`${fmtRange(slot.start_min, slot.end_min)} · ${roomOf(slot.room_id)}`);

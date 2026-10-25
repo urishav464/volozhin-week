@@ -35,13 +35,14 @@ import type {
   Transport, TransportDetails, Vetting, Week,
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
+import { cellSpan, spansRows, timeSplitOk } from "../domain/shape";
 import { scheduleEntries } from "../exports/designer";
 import { phoneKey } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
-import { type CellTarget, CommandError, type EscortPatch, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
+import { type CellTarget, CommandError, type EscortPatch, type GridRules, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
 import { cleanFallen, cleanFallenContacts, cleanPlanPatch, cleanPolicy, EMPTY_FALLEN_CONTACTS, type Fallen, type FallenContacts, type FallenFields, type PlanPatch } from "./memorial";
 import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
@@ -325,27 +326,29 @@ export class Engine {
       this.requireEditor();
       const row = this.lessonRows(day).find((r) => r.start_min === rowStart) ?? fail("outside_grid");
       const inRow = () => this.live().filter((l) => l.day === day && overlaps(l.start_min, l.end_min, row.start_min, row.end_min));
+      // v13: the splits act on the cell — the row widened to a merged lesson on it (src/domain/shape.ts)
+      const span = cellSpan(row, inRow());
+      const inSpan = () => this.live().filter((l) => l.day === day && overlaps(l.start_min, l.end_min, span.start, span.end));
 
       switch (op.op) {
         case "split_parallel": {
           if (![2, 3].includes(op.count) || !op.reason.trim()) fail("bad_shape");
-          const exact = inRow().filter((l) => l.start_min === row.start_min && l.end_min === row.end_min);
+          const exact = inSpan().filter((l) => l.start_min === span.start && l.end_min === span.end);
           const need = op.count - exact.length;
           if (need <= 0) return;
-          const used = new Set(inRow().map((l) => l.room_id));
+          const used = new Set(inSpan().map((l) => l.room_id));
           const free = [...this.week.rooms].sort((a, b) => a.sort - b.sort).filter((r) => !used.has(r.id));
           if (free.length < need) fail("room_taken");
-          for (const room of free.slice(0, need)) this.newDraft(day, row.start_min, row.end_min, room.id, { parallel_reason: op.reason.trim() });
+          for (const room of free.slice(0, need)) this.newDraft(day, span.start, span.end, room.id, { parallel_reason: op.reason.trim() });
           return;
         }
         case "split_time": {
-          const len = row.end_min - row.start_min;
-          if (op.parts.length < 2 || op.parts.some((m) => m < 15 || m % 5 !== 0) || op.parts.reduce((s, m) => s + m, 0) !== len) fail("bad_shape");
-          const old = inRow();
+          if (!timeSplitOk(this.lessonRows(day), span, op.parts)) fail("bad_shape");
+          const old = inSpan();
           if (old.some((l) => l.state === "closed" || l.kind === "memorial")) fail("cell_closed");
           const carried = this.livePitchesOf(old.map((l) => l.id));
           old.forEach((l) => this.deleteLesson(l.id));
-          let t = row.start_min;
+          let t = span.start;
           const parts = op.parts.map((m) => {
             const d = this.newDraft(day, t, t + m, this.defaultRoom());
             t += m;
@@ -1156,6 +1159,22 @@ export class Engine {
       const settings = { ...this.week.edition.settings };
       if (Object.keys(v).length === 0) delete settings.memorial;
       else settings.memorial = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_grid_rules (v13): an admin of the edition; a rule given null is removed — its «הצעה» default returns. */
+  setGridRules(rules: GridRules): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const { gender_tolerance: t, max_category_per_day: m } = rules;
+      const within = (x: number | null, lo: number, hi: number) => x == null || (Number.isInteger(x) && x >= lo && x <= hi);
+      if (!within(t, 0, 5) || !within(m, 1, 10)) fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      delete settings.gender_tolerance;
+      delete settings.max_category_per_day;
+      if (t != null) settings.gender_tolerance = t;
+      if (m != null) settings.max_category_per_day = m;
       this.week.edition.settings = settings;
     });
   }
@@ -2182,8 +2201,7 @@ export class Engine {
 
   /** The range starts inside one lesson row and ends inside one (possibly later) lesson row. */
   private spansLessonRows(day: Day, start: number, end: number): boolean {
-    const rows = this.lessonRows(day);
-    return rows.some((r) => r.start_min <= start && start < r.end_min) && rows.some((r) => r.start_min < end && end <= r.end_min);
+    return spansRows(this.lessonRows(day), start, end);
   }
 
   private roomFree(day: Day, start: number, end: number, roomId: number, except: number[]): boolean {

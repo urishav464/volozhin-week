@@ -169,6 +169,7 @@ export type Step =
   | { as: ActorKey; placePlan: string; at: At | null; staleBy?: number }
   | { as: ActorKey; deletePlan: string }
   | { as: ActorKey; policy: { placement?: string | null; max_minutes?: number | null; warn_adjacent_meal?: boolean | null } }
+  | { as: ActorKey; gridRules: { gender_tolerance: number | null; max_category_per_day: number | null } }
   /** get_transports_for: the caller's approved transports, by lesson. */
   | { as: ActorKey; readTransports: true }
   // the import of 5786 (v12) — a merge names its pool speaker by label, a lesson its category by name
@@ -420,9 +421,12 @@ export function editionLines(settings: {
   confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
   reader_headers?: [string, string] | null;
   memorial?: object | null;
+  gender_tolerance?: number | null;
+  max_category_per_day?: number | null;
 }, cover = "-", purged = false): string[] {
   return [
     `purged=${purged ? "y" : "-"}`,
+    `rules=${settings.gender_tolerance ?? "-"}/${settings.max_category_per_day ?? "-"}`,
     `memorial=${settings.memorial ? stable(settings.memorial) : "-"}`,
     `template=${d(settings.confirm_template)}`,
     `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,

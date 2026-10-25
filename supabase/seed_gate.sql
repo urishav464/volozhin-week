@@ -55,7 +55,7 @@ begin
   -- Closed lessons (day, start, end, speaker #, room #).
   for r in select * from (values
       (0, 510, 600, 1, 1), (0, 600, 690, 3, 1), (0, 690, 780, 5, 1), (0, 870, 960, 7, 1), (0, 1470, 1560, 2, 1),
-      (1, 510, 600, 4, 1), (1, 600, 690, 6, 1), (1, 870, 930, 8, 1), (1, 930, 960, 10, 1), (1, 1200, 1290, 12, 1), (1, 1470, 1740, 14, 1),
+      (1, 510, 600, 4, 1), (1, 600, 690, 25, 1), (1, 870, 930, 8, 1), (1, 930, 960, 27, 1), (1, 1200, 1290, 12, 1), (1, 1470, 1740, 29, 1),  -- Monday: three women, three men
       (2, 510, 600, 21, 1), (2, 600, 690, 31, 1), (2, 960, 1050, 16, 1), (2, 960, 1050, 17, 2),
       (3, 600, 690, 19, 1), (3, 690, 780, 20, 1),
       (4, 1050, 1140, 24, 1)
@@ -78,9 +78,10 @@ begin
   insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a, 0, 390, 780, 'cannot', 'דוגמה: לא בבקרים');
 
   -- Memorial slots: placeholders only; the names of the fallen are entered by the instructor, never seeded.
+  -- Both memorial rows, before lunch and after it — the same slot (v13): ten in the week.
   for i in 0..4 loop
     insert into public.lessons (edition_id, kind, day, start_min, end_min, room_id, title)
-    values (v_ed, 'memorial', i, 780, 795, v_room[1], 'זמן זיכרון');
+    values (v_ed, 'memorial', i, 780, 795, v_room[1], 'זמן זיכרון'), (v_ed, 'memorial', i, 855, 870, v_room[1], 'זמן זיכרון');
   end loop;
 end $$;
 

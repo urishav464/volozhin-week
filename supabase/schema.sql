@@ -37,11 +37,12 @@ create schema if not exists app;
 -- (src/lib/schema.ts) and shows «צריך להריץ שוב את schema.sql» on a mismatch.
 -- Bump BOTH in the same commit as any structural change. v12: its search_path
 -- pinned too (Security Advisor, lint 0011) — every function here pins one
--- (tests/sql/schema.test.ts).
+-- (tests/sql/schema.test.ts). v13: the grid rethought — a merged cell splits
+-- whole (reshape), the two memorial rows are one «זמן זיכרון».
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 12 $$;
+  as $$ select 13 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -294,9 +295,9 @@ select v.* from (values
   (510, 600, 'lesson', ''),
   (600, 690, 'lesson', ''),
   (690, 780, 'lesson', ''),
-  (780, 795, 'memorial', 'זמן זיכרון א'),
+  (780, 795, 'memorial', 'זמן זיכרון'),
   (795, 855, 'fixed', 'ארוחת צהריים / חבורות'),
-  (855, 870, 'memorial', 'זמן זיכרון ב'),
+  (855, 870, 'memorial', 'זמן זיכרון'),
   (870, 960, 'lesson', ''),
   (960, 1050, 'lesson', ''),
   (1050, 1140, 'lesson', ''),
@@ -311,6 +312,9 @@ select v.* from (values
   (1740, 1830, 'kk', 'מכריכה לכריכה')
 ) as v(start_min, end_min, kind, label)
 where not exists (select 1 from public.grid_template);
+-- v13: the two memorial rows are one and the same «זמן זיכרון» — before and after
+-- lunch, the hour says which (the template seeded before v13 named them א and ב)
+update public.grid_template set label = 'זמן זיכרון' where kind = 'memorial' and label in ('זמן זיכרון א', 'זמן זיכרון ב');
 
 -- The ten study categories approved as the starting list (the instructor edits them).
 create table if not exists public.categories (
@@ -398,6 +402,8 @@ create table if not exists public.grid_rows (
   days       smallint[] not null default '{0,1,2,3,4}'
 );
 create index if not exists grid_rows_edition on public.grid_rows (edition_id);
+-- v13: an edition's memorial rows, copied from the template before v13, lose their א/ב too
+update public.grid_rows set label = 'זמן זיכרון' where kind = 'memorial' and label in ('זמן זיכרון א', 'זמן זיכרון ב');
 
 create table if not exists public.rooms (
   id         bigint generated always as identity primary key,
@@ -1079,6 +1085,9 @@ create or replace function public.reshape(
     v_part    integer;
     v_c       text;
     v_new_end integer;
+    v_s_start integer;
+    v_s_end   integer;
+    v_span    bigint[];
   begin
     -- One day at a time: two people reshaping the same day queue up.
     perform app.lock_day(p_edition, p_day);
@@ -1090,31 +1099,48 @@ create or replace function public.reshape(
      where edition_id = p_edition and day = p_day and state <> 'cancelled'
        and int4range(start_min, end_min) && int4range(v_row.start_min, v_row.end_min);
 
+    -- v13: the splits act on the cell — the row widened to the lessons on it, so a
+    -- merged lesson is split whole (src/domain/shape.ts cellSpan), and the lessons in it
+    select least(v_row.start_min, min(start_min)), greatest(v_row.end_min, max(end_min)) into v_s_start, v_s_end
+      from public.lessons where id = any (v_ids);
+    select coalesce(array_agg(id order by id), '{}') into v_span from public.lessons
+     where edition_id = p_edition and day = p_day and state <> 'cancelled'
+       and int4range(start_min, end_min) && int4range(v_s_start, v_s_end);
+
     if p_op = 'split_parallel' then
       if p_count not in (2, 3) or btrim(coalesce(p_reason, '')) = '' then perform app.refuse('bad_shape'); end if;
       select p_count - count(*) into v_need from public.lessons
-       where id = any (v_ids) and start_min = v_row.start_min and end_min = v_row.end_min;
+       where id = any (v_span) and start_min = v_s_start and end_min = v_s_end;
       if v_need <= 0 then return; end if;
       if (select count(*) from public.rooms r where r.edition_id = p_edition
-            and r.id not in (select room_id from public.lessons where id = any (v_ids))) < v_need then
+            and r.id not in (select room_id from public.lessons where id = any (v_span))) < v_need then
         perform app.refuse('room_taken');
       end if;
       for v_room in select r.id from public.rooms r where r.edition_id = p_edition
-                      and r.id not in (select room_id from public.lessons where id = any (v_ids))
+                      and r.id not in (select room_id from public.lessons where id = any (v_span))
                      order by r.sort, r.id limit v_need loop
-        perform app.new_draft(p_edition, p_day, v_row.start_min, v_row.end_min, v_room.id, v_me, btrim(p_reason));
+        perform app.new_draft(p_edition, p_day, v_s_start, v_s_end, v_room.id, v_me, btrim(p_reason));
       end loop;
 
     elsif p_op = 'split_time' then
       if p_parts is null or cardinality(p_parts) < 2
-         or exists (select 1 from unnest(p_parts) x where x < 15 or x % 5 <> 0)
-         or (select sum(x) from unnest(p_parts) x) <> v_row.end_min - v_row.start_min then
+         or exists (select 1 from unnest(p_parts) x where x is null or x < 15 or x % 5 <> 0)
+         or (select sum(x) from unnest(p_parts) x) <> v_s_end - v_s_start then
         perform app.refuse('bad_shape');
       end if;
-      if exists (select 1 from public.lessons where id = any (v_ids) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('cell_closed'); end if;
-      select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_ids) c;
-      delete from public.lessons where id = any (v_ids);
-      v_t := v_row.start_min;
+      -- each part on the grid: it starts inside a lesson row and ends inside one (timeSplitOk)
+      v_t := v_s_start;
+      foreach v_part in array p_parts loop
+        if not exists (select 1 from app.lesson_rows(p_edition, p_day) r where r.start_min <= v_t and v_t < r.end_min)
+           or not exists (select 1 from app.lesson_rows(p_edition, p_day) r where r.start_min < v_t + v_part and v_t + v_part <= r.end_min) then
+          perform app.refuse('bad_shape');
+        end if;
+        v_t := v_t + v_part;
+      end loop;
+      if exists (select 1 from public.lessons where id = any (v_span) and (state = 'closed' or kind = 'memorial')) then perform app.refuse('cell_closed'); end if;
+      select coalesce(jsonb_agg(to_jsonb(c)), '[]') into v_carried from app.carry(v_span) c;
+      delete from public.lessons where id = any (v_span);
+      v_t := v_s_start;
       foreach v_part in array p_parts loop
         if v_first is null then
           v_first := app.new_draft(p_edition, p_day, v_t, v_t + v_part, app.default_room(p_edition), v_me);
@@ -4629,6 +4655,27 @@ create or replace function public.set_memorial_policy(p_edition bigint, p_placem
   end
   $$;
 
+-- v13: the grid's two soft rules, as the instructor sets them — how far apart a
+-- day's closed women and men may be (0–5) before the day is «לא מאוזן», and how
+-- many lessons of one category a day holds (1–10). NULL removes a rule: its
+-- «הצעה» default comes back (src/rules). Never seeded. An admin of the edition.
+create or replace function public.set_grid_rules(p_edition bigint, p_gender_tolerance integer, p_max_category_per_day integer)
+  returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    perform app.require_edition_admin(p_edition);
+    if (p_gender_tolerance is not null and p_gender_tolerance not between 0 and 5)
+       or (p_max_category_per_day is not null and p_max_category_per_day not between 1 and 10) then
+      perform app.refuse('bad_value');
+    end if;
+    update public.editions
+       set settings = (settings - 'gender_tolerance' - 'max_category_per_day')
+                      || jsonb_strip_nulls(jsonb_build_object('gender_tolerance', p_gender_tolerance, 'max_category_per_day', p_max_category_per_day))
+     where id = p_edition;
+  end
+  $$;
+
 -- Everything the grid needs, in one round trip, as the caller's RLS allows —
 -- invoker, so it can never show more than the tables would. Never a contact
 -- detail and never a transport detail (their own tables). v7 adds the
@@ -5785,6 +5832,7 @@ grant execute on function public.update_memorial_plan(bigint, integer, jsonb) to
 grant execute on function public.place_memorial_plan(bigint, integer, bigint) to authenticated;
 grant execute on function public.delete_memorial_plan(bigint) to authenticated;
 grant execute on function public.set_memorial_policy(bigint, text, integer, boolean) to authenticated;
+grant execute on function public.set_grid_rules(bigint, integer, integer) to authenticated;
 
 -- Import 5786 (v12): a global admin's two functions (each checks it) — the lookup (which pool speaker has a
 -- phone, which contact fields are filled: booleans) and the commit. Every helper (app.phone_key,

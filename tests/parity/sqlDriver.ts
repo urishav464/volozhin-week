@@ -467,6 +467,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         const p = step.policy;
         return call(step.as, "select public.set_memorial_policy($1, $2, $3, $4)", [ed, p.placement ?? null, p.max_minutes ?? null, p.warn_adjacent_meal ?? null]);
       }
+      if ("gridRules" in step) return call(step.as, "select public.set_grid_rules($1, $2, $3)", [ed, step.gridRules.gender_tolerance, step.gridRules.max_category_per_day]);
       // ---- the import of 5786
       if ("importCandidates" in step) {
         const idOf = await idsOf(step.importCandidates.map((r) => r.speaker ?? ""));

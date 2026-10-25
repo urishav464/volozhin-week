@@ -5,7 +5,7 @@
 // screens send a speaker here to be placed, or a lesson to be opened.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { type CellTarget, CommandError, type LessonPatch, type ReshapeOp } from "../data/commands";
+import { type CellTarget, CommandError, type GridRules, type LessonPatch, type ReshapeOp } from "../data/commands";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { displayName } from "../domain/names";
@@ -15,6 +15,9 @@ import { errorMessage } from "../errors";
 import { DayView } from "../grid/DayView";
 import { GridDesktop } from "../grid/GridDesktop";
 import { type Lens, PROGRESS_LEGEND, PROGRESS_TONE } from "../grid/LessonCard";
+import { ownerColors } from "../grid/owners";
+import { DayPanel } from "../grid/DayPanel";
+import { weekBalance } from "../rules/balance";
 import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
 import { buildModel } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
@@ -35,12 +38,14 @@ type Panel =
   | { kind: "lesson"; id: number; stage?: StageKey }
   | { kind: "cell"; day: Day; row: GridRow }
   | { kind: "warnings" }
+  /** v13: a day at a glance — the day header opens it. */
+  | { kind: "day"; day: Day }
   /** `back`: the panel it was opened from (a lesson, a cell, «מרצה חדש/ה»), which «חזרה» returns to. */
   | { kind: "speaker"; id: number; back?: Panel }
   | { kind: "create"; name: string }
   | null;
 
-const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות" };
+const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות", day: "היום" };
 
 /** What «המרצים שלי» (and the approvals queue) hand the week: a speaker to place, or a lesson to open — at one of its stages. */
 export type WeekVisit = { place?: number; lesson?: number; stage?: StageKey } | null;
@@ -61,7 +66,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
   const { editions, editionId, week, problem, reload } = store;
   const [lens, setLens] = useState<Lens>("diversity");
-  const [showNight, setShowNight] = useState(true);
+  // the «אחריות» lens's «רק של X» (v13): a member's id, «בלי אחראי/ת», or everyone
+  const [onlyOwner, setOnlyOwner] = useState<number | "none" | null>(null);
   const [day, setDay] = useState<Day>(0);
   const [placingId, setPlacingId] = useState<number | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
@@ -221,6 +227,22 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       if (wide) requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
     }
   };
+  // v13: either memorial row, before lunch or after it, takes a slot from the grid — an edition admin's (add_memorial_slot)
+  const onMemorial = isAdmin && cmds
+    ? (d: Day, row: GridRow) => {
+        let id: number | null = null;
+        void run(async () => {
+          id = await cmds.addMemorialSlot(d, row.start_min, row.end_min, null);
+        }, "זמן הזיכרון נוסף").then(() => {
+          if (id != null) setPanel({ kind: "lesson", id });
+        });
+      }
+    : undefined;
+  const onDayPanel = (d: Day) => {
+    setPlacingId(null);
+    setPanel({ kind: "day", day: d });
+  };
+  const onRules = cmds ? (rules: GridRules) => run(() => cmds.setGridRules(rules), "כללי הרשת נשמרו").then(() => true) : undefined;
   const startPlacing = (speakerId: number) => {
     setPlacingId((cur) => (cur === speakerId ? null : speakerId));
     setPanel(null);
@@ -252,6 +274,9 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const placing = placingId != null ? (model.speakerById.get(placingId) ?? null) : null;
   const openLesson = panel?.kind === "lesson" ? model.week.lessons.find((l) => l.id === panel.id) : undefined;
   const warnCount = model.warnings.filter((w) => w.severity === "warn").length;
+  const weekTotal = weekBalance(model.days.map((d) => d.balance));
+  const unbalancedDays = model.warnings.filter((w) => w.kind === "gender_day").length;
+  const fmtCount = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
 
   const toolbar = (
     <div className="flex flex-wrap items-center gap-2">
@@ -288,19 +313,82 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           מאגר המרצים
         </button>
       )}
-      {wide && (
-        <button type="button" onClick={() => setShowNight((v) => !v)} aria-pressed={showNight} className="rounded-lg border border-line bg-card px-3 py-1 text-sm">
-          {showNight ? "הסתרת הלילה" : "הצגת הלילה"}
-        </button>
-      )}
       <button type="button" onClick={() => setPanel({ kind: "warnings" })} className="rounded-lg border border-line bg-card px-3 py-1 text-sm">
         אזהרות <span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
       </button>
+      {/* v13: the week's closed lessons, women and men — each day's own is in its header and panel */}
+      <span className="text-xs text-ink-soft tabular-nums" aria-label="השבוע כולו" data-week-balance>
+        השבוע: {fmtCount(weekTotal.closed.f)} מרצות · {fmtCount(weekTotal.closed.m)} מרצים
+        {unbalancedDays > 0 && <span className="font-semibold text-bad"> · {unbalancedDays === 1 ? "יום אחד לא מאוזן" : `${unbalancedDays} ימים לא מאוזנים`}</span>}
+      </span>
+    </div>
+  );
+
+  // The diversity lens (v13): what each topic's colour is, how many of the week's closed lessons have it, and the empty cells' tints.
+  const team = ownerColors(model.week.team);
+  const owners = { colorOf: new Map(team.map((m) => [m.id, m.color])), only: onlyOwner };
+  const perCategory = new Map<number, number>();
+  for (const l of model.week.lessons) if (l.kind === "lesson" && l.state === "closed" && l.category_id != null) perCategory.set(l.category_id, (perCategory.get(l.category_id) ?? 0) + 1);
+  const topics = (
+    <ul aria-label="מקרא הנושאים" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      {model.week.categories
+        .filter((c) => c.active || perCategory.has(c.id))
+        .map((c) => (
+          <li key={c.id} className="inline-flex items-center gap-1">
+            <span aria-hidden className="h-3 w-1.5 rounded-sm" style={{ backgroundColor: c.color }} />
+            <span style={{ color: c.color }} className="font-semibold">
+              {c.name}
+            </span>
+            <span className="tabular-nums">{perCategory.get(c.id) ?? 0}</span>
+          </li>
+        ))}
+      <li className="inline-flex items-center gap-1">
+        <span aria-hidden className="size-3 rounded border border-pink-200 bg-need-f" />
+        חסרות מרצות
+      </li>
+      <li className="inline-flex items-center gap-1">
+        <span aria-hidden className="size-3 rounded border border-sky-200 bg-need-m" />
+        חסרים מרצים
+      </li>
+    </ul>
+  );
+  // on a phone the legend folds away: the day comes first
+  const diversityLegend =
+    lens === "diversity" &&
+    (wide ? (
+      topics
+    ) : (
+      <details className="text-xs text-ink-soft">
+        <summary className="min-h-8 cursor-pointer py-1">מקרא הנושאים</summary>
+        {topics}
+      </details>
+    ));
+
+  // The owner lens (v13): a colour per handler, on drafts too; «רק של X» fades the others' cards.
+  const ownerLegend = lens === "owner" && (
+    <div role="group" aria-label="מקרא האחריות" className="flex flex-wrap items-center gap-1.5 text-xs">
+      {[...team.map((m) => ({ key: m.id as number | "none", name: m.name, color: m.color })), { key: "none" as const, name: "בלי אחראי/ת", color: "#c9c2b3" }].map((m) => (
+        <button
+          key={m.key}
+          type="button"
+          aria-pressed={onlyOwner === m.key}
+          onClick={() => setOnlyOwner((cur) => (cur === m.key ? null : m.key))}
+          className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2 ${onlyOwner === m.key ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
+        >
+          <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: m.color }} />
+          {onlyOwner === m.key ? `רק של ${m.name}` : m.name}
+        </button>
+      ))}
+      {onlyOwner != null && (
+        <button type="button" onClick={() => setOnlyOwner(null)} className="text-ink-soft underline">
+          כולם
+        </button>
+      )}
     </div>
   );
 
   // The progress lens: last year's colours on the cards, and what the five dots are.
-  const legend = lens === "progress" && (
+  const progressLegend = lens === "progress" && (
     <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
       {PROGRESS_LEGEND.map(([tone, label]) => (
         <li key={tone} className="inline-flex items-center gap-1">
@@ -322,6 +410,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     </ul>
   );
 
+  const legend = diversityLegend || ownerLegend || progressLegend;
+
   const placingBanner = placing && (
     <div role="status" className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-paper">
       <span>
@@ -340,9 +430,9 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       {placingBanner}
 
       {wide ? (
-        <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 11rem)" : "calc(100dvh - 9.5rem)" }}>
+        <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 12rem)" : "calc(100dvh - 9.5rem)" }}>
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
-            <GridDesktop model={model} lens={lens} showNight={showNight} placing={placing} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} />
+            <GridDesktop model={model} lens={lens} owners={owners} placing={placing} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
           </div>
           {/* an open panel takes the pool's column, so the grid keeps its width */}
           {(roomy || poolOpen) && !panel && (
@@ -355,7 +445,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         <>
           <div className="pb-16">
             {phoneTab === "day" ? (
-              <DayView model={model} lens={lens} day={day} onDay={setDay} placing={placing} onCell={onCell} onLesson={onLesson} />
+              <DayView model={model} lens={lens} owners={owners} day={day} onDay={setDay} placing={placing} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
             ) : (
               <div style={{ height: "calc(100dvh - 12rem)" }}>
                 <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} />
@@ -455,6 +545,19 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
             onLesson(id);
             requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "center", inline: "center" }));
           }}
+          onDay={onDayPanel}
+        />
+      )}
+      {panel?.kind === "day" && (
+        <DayPanel
+          model={model}
+          day={panel.day}
+          isAdmin={isAdmin}
+          wide={wide}
+          onClose={() => setPanel(null)}
+          onLesson={onLesson}
+          onCell={(d, row) => setPanel({ kind: "cell", day: d, row })}
+          onRules={onRules}
         />
       )}
 

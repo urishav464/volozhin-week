@@ -105,8 +105,8 @@ test.describe("demo build", () => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
     // a second slot in Sunday's row א: 13:05–13:10, in «כיתה ג׳», beside the placed one (13:00–13:15, בית מדרש)
-    await page.getByRole("button", { name: "הוספת זמן זיכרון: ראשון, זמן זיכרון א" }).click();
-    const form = page.getByRole("form", { name: "זמן זיכרון חדש: ראשון, זמן זיכרון א" });
+    await page.getByRole("button", { name: `הוספת זמן זיכרון: ראשון ${LRM}13:00–13:15` }).click();
+    const form = page.getByRole("form", { name: `זמן זיכרון חדש: ראשון ${LRM}13:00–13:15` });
     await form.getByLabel("מ-").fill("13:05");
     await form.getByLabel("עד").fill("13:10");
     await form.getByLabel("חדר").selectOption({ label: "כיתה ג׳" });
@@ -242,13 +242,13 @@ test.describe("demo build", () => {
     await page.goto(`${demoUrl()}/memorial`);
     const cancel = (scope: Locator) => scope.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true });
 
-    // Monday's free slot
+    // Monday's free slot before lunch (v13: and one after it)
     const monday = page.getByRole("region", { name: "יום שני" });
-    const removeSlot = monday.getByRole("button", { name: "הסרת המשבצת" });
+    const removeSlot = monday.getByRole("button", { name: "הסרת המשבצת" }).first();
     await removeSlot.click();
     await cancel(monday).press("Enter");
     await expect(removeSlot).toBeFocused();
-    await expect(monday.locator("[data-memorial-slot]")).toHaveCount(1); // still there
+    await expect(monday.locator("[data-memorial-slot]")).toHaveCount(2); // still there
 
     // a plan in the tray
     const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });

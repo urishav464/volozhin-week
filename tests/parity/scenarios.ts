@@ -87,6 +87,37 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "L", reshape: [3, 1050], op: { op: "reset" } },
   ],
 
+  // v13: the grid's soft rules, the instructor's — never seeded; null brings back the «הצעה» default
+  "the grid's rules": [
+    { as: "A", gridRules: { gender_tolerance: 2, max_category_per_day: null } }, // content: not theirs
+    { as: "E", gridRules: { gender_tolerance: 6, max_category_per_day: null } },
+    { as: "E", gridRules: { gender_tolerance: null, max_category_per_day: 0 } },
+    { as: "E", gridRules: { gender_tolerance: 0, max_category_per_day: 2 } },
+    { as: "E", gridRules: { gender_tolerance: 2, max_category_per_day: null } }, // the maximum back to its default
+    { as: "admin", gridRules: { gender_tolerance: null, max_category_per_day: null } },
+  ],
+
+  // v13: a merged cell splits whole — never one-row drafts beside it (the instructor's report)
+  "splitting a merged cell": [
+    { as: "A", propose: "אלפא", cell: [2, 510, 600] },
+    { as: "A", reshape: [2, 510], op: { op: "merge_next" } }, // 08:30–11:30
+    { as: "A", reshape: [2, 510], op: { op: "split_parallel", count: 2, reason: "שני מסלולים" } }, // one more 08:30–11:30
+    { as: "A", reshape: [2, 600], op: { op: "split_parallel", count: 3, reason: "שלושה" } }, // from its second row: the same cell
+    { as: "A", reshape: [2, 510], op: { op: "split_parallel", count: 3, reason: "שוב" } }, // already 3
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [90, 90] } }, // all three go; אלפא's pitch to the first part
+    { as: "A", reshape: [2, 510], op: { op: "merge_next" } },
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [90, 60] } }, // not the cell's length
+    { as: "A", reshape: [2, 510], op: { op: "split_time", parts: [60, 120] } }, // the second part spans two rows, as a merged lesson does
+    { as: "A", reshape: [3, 1200], op: { op: "merge_next" } }, // 20:00–00:00, over מכריכה לכריכה
+    { as: "A", reshape: [3, 1350], op: { op: "split_time", parts: [90, 150] } }, // the second part would start in מכריכה לכריכה
+    { as: "A", reshape: [3, 1350], op: { op: "split_time", parts: [60, 180] } },
+    { as: "A", propose: "בטא", cell: [3, 510, 600] },
+    { as: "A", close: "בטא", at: [3, 510] },
+    { as: "A", reshape: [3, 510], op: { op: "merge_next" } }, // a closed lesson merged
+    { as: "A", reshape: [3, 600], op: { op: "split_time", parts: [90, 90] } }, // its cell is closed
+    { as: "A", reshape: [3, 600], op: { op: "split_parallel", count: 2, reason: "מקביל לסגור" } }, // a draft beside it, its whole length
+  ],
+
   "editing and versions": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
     { as: "A", close: "אלפא", at: [1, 510] },

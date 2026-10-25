@@ -301,6 +301,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       placeMemorialPlan: (planId, version, lessonId) => run(() => e.placeMemorialPlan(planId, version, lessonId)),
       deleteMemorialPlan: (planId) => run(() => e.deleteMemorialPlan(planId)),
       setMemorialPolicy: (policy) => run(() => e.setMemorialPolicy(policy)),
+      setGridRules: (rules) => run(() => e.setGridRules(rules)),
     };
   }
 
