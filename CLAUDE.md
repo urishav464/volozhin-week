@@ -164,7 +164,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   page (`annotations.ts` `flattenAnnotations` — never pdf-lib's `form.flatten()`), its box normalised, every page
   decoded once. A PDF or picture registered with `page_count` NULL was not read (`model.ts` `readableFile`): never
   printable, manifest status `unreadable` «צריך קובץ אחר». CI: `npm run test:unit` has a step `timeout-minutes: 5`
-  (`.github/workflows/ci.yml`; jobs 15 and 10) — a decoder loop blocks vitest's own timeouts.
+  (`.github/workflows/ci.yml`; jobs 30 and 10; the e2e step 10, the browser install 15) — a decoder loop blocks
+  vitest's own timeouts.
   Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
   Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
   (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
