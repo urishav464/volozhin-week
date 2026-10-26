@@ -338,7 +338,7 @@ export function SlotGrid({
   const [shown, setShown] = useState<Map<string, Mark>>(() => new Map());
   const pending = useRef(new Map<string, number>());
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const [said, setSaid] = useState("");
+  const [said, setSaid] = useState({ text: "", n: 0 });
   const markOf = (key: string): Mark => {
     if (shown.has(key)) return shown.get(key) ?? null;
     const v = saved.get(key);
@@ -351,7 +351,7 @@ export function SlotGrid({
     // never rejects: a failed save must not stop the ones queued after it
     const next = queue.current.then(async () => {
       const ok = await onSet(day, r.id, kind, note).catch(() => false);
-      if (ok) setSaid(done);
+      if (ok) setSaid((x) => ({ text: done, n: x.n + 1 }));
       const left = (pending.current.get(key) ?? 1) - 1;
       if (left > 0) pending.current.set(key, left);
       else {
@@ -490,7 +490,7 @@ export function SlotGrid({
                         {face}
                       </button>
                     ) : (
-                      <span role="img" aria-label={label} title={label} data-slot={key} className={`flex min-h-9 w-full items-center justify-center rounded-lg border font-bold ${tone}`}>
+                      <span role="img" aria-label={label} title={`${dayRange(d, r.start_min, r.end_min)}: ${KIND_TEXT(m?.kind ?? null, gender)}${m?.note ? ` — ${m.note}` : ""}`} data-slot={key} className={`flex min-h-9 w-full items-center justify-center rounded-lg border font-bold ${tone}`}>
                         {face}
                       </span>
                     )}
@@ -503,7 +503,7 @@ export function SlotGrid({
       </table>
       {onSet && (
         <p aria-live="polite" data-slot-said className="min-h-4 text-xs text-ink-soft">
-          {said}
+          <span key={said.n}>{said.text}</span>
         </p>
       )}
       {notes.length > 0 && (
@@ -541,6 +541,7 @@ function SlotNote({
   const [key, setKey] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const slot = useRef<HTMLSelectElement>(null);
   const pick = marked.find((m) => m.key === key);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -551,12 +552,14 @@ function SlotNote({
     if (ok) {
       setKey("");
       setNote("");
+      slot.current?.focus(); // the «שמירה» in hand turns disabled
     }
   };
   return (
     <form onSubmit={(e) => void submit(e)} aria-label="הערה למשבצת" className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
       <Field id={`${id}-slot`} label="המשבצת">
         <select
+          ref={slot}
           id={`${id}-slot`}
           value={key}
           onChange={(e) => {

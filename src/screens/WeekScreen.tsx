@@ -164,7 +164,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       ).then(() => {
         // proposed from an empty cell's panel: the panel becomes the new draft's — the candidate, where the call begins
         // (as a shaped draft's chooser gives way to its candidates)
-        if (lessonId != null) setPanel((p) => (p?.kind === "cell" ? { kind: "lesson", id: lessonId! } : p));
+        if (lessonId != null)
+          setPanel((p) => (p?.kind === "cell" && "day" in target && p.day === target.day && p.row.start_min === target.start_min ? { kind: "lesson", id: lessonId! } : p));
       });
     },
     [model, cmds, memberId, run],

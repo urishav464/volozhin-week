@@ -94,6 +94,13 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
   }, [focus]);
   const actor = actorIn(me, edition);
   const a = week.approaches.find((x) => x.speaker_id === s.id) ?? null;
+  // a call's result takes the pressed button away (the current status is not offered again): the focus stays in «השיחה»
+  const seenStatus = useRef(a?.status);
+  useEffect(() => {
+    if (seenStatus.current === a?.status) return;
+    seenStatus.current = a?.status;
+    if (document.activeElement === document.body) callRef.current?.focus({ preventScroll: true });
+  }, [a?.status]);
   const names = useMemo(() => new Map(week.team.map((t) => [t.id, t.display_name])), [week.team]);
   const nameOf = (id: number | null | undefined) => (id == null ? "—" : (names.get(id) ?? "חבר/ת צוות"));
   const { busy, run } = useRunner(notify, clear);
@@ -199,7 +206,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
           <div className="space-y-2">
             <ApproachView s={s} a={a} actor={actor} handler={handler} nameOf={nameOf} />
             {lastNote && (
-              <p className="text-sm">
+              <p className="break-words text-sm">
                 <span className="text-ink-soft">
                   הערה אחרונה{lastNote.actor != null && ` (${nameOf(lastNote.actor)}, ${when(lastNote.at, DAY)})`}:
                 </span>{" "}

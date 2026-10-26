@@ -41,7 +41,7 @@ type Open = { kind: "speaker"; id: number; back?: Open; focus?: "call" } | { kin
 function focusRow(speakerId: number) {
   requestAnimationFrame(() => {
     const rows = document.querySelectorAll<HTMLElement>(`[data-speaker-id="${speakerId}"] button`);
-    const row = [...rows].find((el) => el.getClientRects().length > 0);
+    const row = [...rows].find((el) => el.getClientRects().length > 0 && !el.closest("details:not([open])"));
     (row ?? document.getElementById("mine-title"))?.focus();
   });
 }

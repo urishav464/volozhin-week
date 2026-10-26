@@ -266,7 +266,7 @@ describe("the speaker pool", () => {
       expect(contacts.detail).toEqual({ fields: ["phone", "email", "secretary_note", "notes"] });
       expect(update.detail).toEqual({ fields: ["bio_short"] });
       expect(status.detail).toMatchObject({ status: "no_answer", note: "שלחתי הודעה", owner: member[A] });
-      expect(avail.detail).toEqual({ speaker: s, day: 1, start: 1200, end: 1290, kind: "cannot", note: "בחו\"ל" });
+      expect(avail.detail).toEqual({ speaker: s, day: 1, start: 1200, end: 1290, kind: "cannot" }); // never the note
       expect(offered.detail).toMatchObject({ offered_to: member[B], note: "מכיר/ה אותו", owner: member[A] });
       expect(answered.detail).toMatchObject({ owner: member[B] });
       expect(answered.detail).not.toHaveProperty("note");
@@ -319,7 +319,7 @@ describe("the speaker pool", () => {
         ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 510, end: 600, kind: "cannot" }],
         ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 390, end: 435, kind: null }],
         ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 390, end: 435, kind: "cannot" }],
-        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 510, end: 600, kind: "can", note: "רק בבוקר" }],
+        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 510, end: 600, kind: "can" }],
       ]);
 
       // logistics may not mark — but reads it, as the whole team does: the table under RLS, and load_week

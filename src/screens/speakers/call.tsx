@@ -19,7 +19,7 @@ export function CallPoints({ week, speakerGender, memberId }: { week: Week; spea
   });
   return (
     <div className="space-y-1.5">
-      <p className="whitespace-pre-line rounded-lg bg-card px-3 py-2.5 text-[15px] leading-relaxed" data-call-points>
+      <p className="whitespace-pre-line break-words rounded-lg bg-card px-3 py-2.5 text-[15px] leading-relaxed" data-call-points>
         {c.text}
       </p>
       {c.problems.length > 0 && (

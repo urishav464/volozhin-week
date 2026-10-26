@@ -657,7 +657,7 @@ export class Engine {
       // logged under the approach when there is one, so the speaker's «מה קרה» finds it as before (detail.speaker)
       const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
       this.log(this.week.edition.id, "approaches", a?.id ?? null, "availability", {
-        speaker: speakerId, day, start: row.start_min, end: row.end_min, kind, ...(n != null ? { note: n } : {}),
+        speaker: speakerId, day, start: row.start_min, end: row.end_min, kind, // the fact, never the note (≡ SQL)
       });
     });
   }

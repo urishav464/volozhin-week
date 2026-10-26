@@ -72,7 +72,7 @@ export function TeamBoard({ week, global, onOpen }: { week: Week; global: boolea
         <div className="rounded-xl border border-line bg-card px-3 shadow-sm sm:px-4">
           <Fold title="בלי אחראי/ת" hint={board.unowned.length}>
             <p className="text-sm text-ink-soft">
-              מרצים בתהליך השנה שאין מי שמטפל/ת בהם: הוחזרו למאגר, או שמי שטיפל/ה בהם כבר לא בצוות. לוקחים אותם ב«אני מטפל/ת» בכרטיס.
+              מרצים בתהליך השנה שאין מי שמטפל/ת בהם. מי שהוחזרו למאגר — לוקחים ב«אני מטפל/ת» בכרטיס. מי שמי שטיפל/ה בהם כבר לא בצוות — המדריך/ה מעביר/ה ב«העברה לחבר/ת צוות» בכרטיס.
             </p>
             {rows(board.unowned)}
           </Fold>

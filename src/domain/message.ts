@@ -25,6 +25,8 @@
 //                                   the only way a volunteer's wording enters: the template's own
 // Brackets nest ([[תשלום:…[[זכר|נקבה]]…|…]]); a variable does not.
 import { LRM, dateOf, fmtRange } from "./time";
+
+const RLM = "\u200F";
 import { displayName } from "./names";
 import type { Approval, Gender, Lesson } from "./types";
 import { hebrewNumeral } from "../settings/hebrewYear";
@@ -327,7 +329,8 @@ export function composeConfirmation(input: MessageInput): Composed {
         return tbd("כותרת");
       case "שעה":
         // left to right inside the Hebrew text, as the app writes every range (dayRange): «20:00–21:15», not «21:15–20:00»
-        return LRM + fmtRange(l.start_min, l.start_min + teach);
+        // an RLM first: a line that starts with the time stays right to left (an LRM is itself a strong left-to-right mark)
+        return RLM + LRM + fmtRange(l.start_min, l.start_min + teach);
       case "משך":
         return durationWords(teach);
       case "תשלום":

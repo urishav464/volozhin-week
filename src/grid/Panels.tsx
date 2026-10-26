@@ -415,7 +415,7 @@ function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions 
   useEffect(() => {
     if (seen.current === shape) return;
     seen.current = shape;
-    if (document.activeElement === document.body) card.current?.querySelector<HTMLElement>("[data-card-actions] button")?.focus();
+    if (document.activeElement === document.body) card.current?.querySelector<HTMLElement>("[data-card-actions] button:not(:disabled)")?.focus();
   }, [shape]);
 
   return (

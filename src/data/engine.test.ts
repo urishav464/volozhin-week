@@ -417,7 +417,8 @@ describe("availability per slot (v14)", () => {
     e.setSlotAvailability(s.id, 1, 4, "can", "  רק עד   09:30  ");
     expect(e.week.slotAvailability).toEqual([{ id: 1, speaker_id: s.id, day: 1, row_id: 4, kind: "can", note: "רק עד 09:30", updated_by: OTHER.memberId }]);
     expect(e.week.approaches).toEqual([]);
-    expect(e.shared.log).toMatchObject([{ edition_id: 1, entity: "approaches", entity_id: null, kind: "availability", detail: { speaker: s.id, day: 1, start: 510, end: 600, kind: "can", note: "רק עד 09:30" } }]);
+    expect(e.shared.log).toMatchObject([{ edition_id: 1, entity: "approaches", entity_id: null, kind: "availability", detail: { speaker: s.id, day: 1, start: 510, end: 600, kind: "can" } }]);
+    expect(e.shared.log[0].detail).not.toHaveProperty("note"); // the fact, never the note
     e.setSlotAvailability(s.id, 1, 4, "can", "רק עד 09:30");
     expect(e.shared.log).toHaveLength(1); // nothing changed: nothing logged
     new Engine(e.week, ME, undefined, e.shared).setSlotAvailability(s.id, 1, 4, "cannot");

@@ -918,15 +918,20 @@ create or replace function public.set_pitch(p_pitch bigint, p_state text) return
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_p  public.pitches;
-    v_a  public.approaches;
-    v_me bigint;
+    v_p   public.pitches;
+    v_a   public.approaches;
+    v_aid bigint;
+    v_me  bigint;
   begin
+    -- the approach before the pitch, as propose and set_approach_status lock them (never the reverse: a deadlock);
+    -- a pitch's approach never changes, so it is read first without a lock
+    select approach_id into v_aid from public.pitches where id = p_pitch;
+    if v_aid is null then perform app.refuse('cell_closed'); end if;
+    select * into v_a from public.approaches where id = v_aid for update;
     select * into v_p from public.pitches where id = p_pitch for update;
     if v_p.id is null then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_p.edition_id);
     if p_state not in ('candidate', 'approached', 'declined') then perform app.refuse('bad_shape'); end if;
-    select * into v_a from public.approaches where id = v_p.approach_id for update;
     if not (app.my_role(v_p.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('forbidden'); end if;
     if (select state from public.lessons where id = v_p.lesson_id) <> 'draft' then perform app.refuse('cell_closed'); end if;
     if v_p.state not in ('candidate', 'approached', 'declined') then return; end if;
@@ -2167,8 +2172,8 @@ create or replace function public.set_slot_availability(
     end if;
     perform app.log_event(p_edition, 'approaches',
                           (select a.id from public.approaches a where a.edition_id = p_edition and a.speaker_id = p_speaker), 'availability',
-                          jsonb_build_object('speaker', p_speaker, 'day', p_day, 'start', v_row.start_min, 'end', v_row.end_min, 'kind', p_kind)
-                          || jsonb_strip_nulls(jsonb_build_object('note', v_note)));
+                          -- the fact, never the note: a note emptied in the sheet must not live on in the log
+                          jsonb_build_object('speaker', p_speaker, 'day', p_day, 'start', v_row.start_min, 'end', v_row.end_min, 'kind', p_kind));
   end
   $$;
 

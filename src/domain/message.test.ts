@@ -77,7 +77,7 @@ describe("composeConfirmation", () => {
     const c = composeConfirmation(input());
     expect(c.problems).toEqual([]);
     expect(c.ok).toBe(true);
-    expect(c.text).toBe("נוסח לדוגמה לד״ר מרצה לדוגמה: מוזמנת ל«שיעור לדוגמה», יום ראשון 14.2.2027 (ז׳ באדר א׳ תשפ״ז), \u200E20:00–21:15 (שעה ורבע), בית מדרש. סכום 1,500 ש״ח. כתב");
+    expect(c.text).toBe("נוסח לדוגמה לד״ר מרצה לדוגמה: מוזמנת ל«שיעור לדוגמה», יום ראשון 14.2.2027 (ז׳ באדר א׳ תשפ״ז), \u200F\u200E20:00–21:15 (שעה ורבע), בית מדרש. סכום 1,500 ש״ח. כתב");
     const plain = "נוסח לדוגמה בלי משתנים, כמו שהוא.\nשורה שנייה";
     expect(composeConfirmation(input({ template: plain }))).toEqual({ ok: true, text: plain, problems: [] });
   });

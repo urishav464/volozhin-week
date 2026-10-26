@@ -366,7 +366,7 @@ test.describe("mock build", () => {
     await (await stage(panel, "תשלום/הסעה")).getByRole("button", { name: "סימון ששולם" }).click();
     await expect.poll(() => sb.rpc.get("set_paid")).toEqual([{ p_lesson: lessonOf(1, 1200), p_paid: true }]);
     const msg = await stage(panel, "הודעת סיכום");
-    await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toHaveText(/נוסח לדוגמה לפרופ׳ מרצה 12, \u200E20:00–21:15\./) // v14: the range left to right (an LRM);
+    await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toHaveText(/נוסח לדוגמה לפרופ׳ מרצה 12, \u200F\u200E20:00–21:15\./); // v14: the range left to right (RLM, LRM)
     expect(sb.rpc.get("get_speaker_contacts")).toContainEqual({ p_speaker: 12 });
     await msg.getByRole("button", { name: "סומן כנשלח" }).click();
     await expect.poll(() => sb.rpc.get("mark_confirm_sent")).toEqual([{ p_lesson: lessonOf(1, 1200), p_version: 1 }]);

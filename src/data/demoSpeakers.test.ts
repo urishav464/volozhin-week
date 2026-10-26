@@ -100,7 +100,7 @@ describe("the demo's speaker pool", () => {
     expect((await port.loadWeek(1)).slotAvailability.filter((v) => v.speaker_id === 9).map((v) => [v.day, v.row_id, v.kind])).toEqual([[0, 4, "cannot"], [0, 5, "cannot"], [0, 6, "cannot"]]);
     await port.speakers.setSlotAvailability(1, 32, 3, 14, "cannot", "דוגמה");
     expect((await port.loadWeek(1)).slotAvailability.filter((v) => v.day === 3)).toMatchObject([{ speaker_id: 32, row_id: 14, kind: "cannot", note: "דוגמה", updated_by: 1 }]);
-    expect((await port.speakers.activity(32))[0]).toMatchObject({ kind: "availability", detail: { speaker: 32, day: 3, start: 1200, end: 1290, kind: "cannot", note: "דוגמה" } });
+    expect((await port.speakers.activity(32))[0]).toMatchObject({ kind: "availability", detail: { speaker: 32, day: 3, start: 1200, end: 1290, kind: "cannot" } }); // never the note
     // not the speaker's handler (32 is the demo user's): a content member marks it all the same
     const other = new DemoPort({ memberId: 2, role: "content" });
     await other.speakers.setSlotAvailability(1, 32, 3, 14, "can");

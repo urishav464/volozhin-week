@@ -336,7 +336,8 @@ row). Any editor of the edition marks it: no approach is needed, and it is not o
 
 Then `kind` null deletes the row (none: no-op); the same kind and note → no-op; else the row is written,
 `updated_by` = actor. Only a change is logged: `approaches · availability`, under the speaker's approach in the
-edition (or none), detail `{speaker, day, start, end, kind}` and the note when there is one — so `activity`
+edition (or none), detail `{speaker, day, start, end, kind}` — never the note (one emptied in the sheet must not
+live on in the log) — so `activity`
 finds it by `detail.speaker` as before.
 
 `slot_availability` (`id, edition_id, speaker_id, day, row_id → grid_rows on delete cascade, kind, note,
