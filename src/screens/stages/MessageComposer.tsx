@@ -141,7 +141,7 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
           {contacts === undefined ? (
             <p className="text-xs text-ink-soft">טוען את פרטי הקשר…</p>
           ) : (
-            !waHref(contacts?.phone) && <p className="text-xs text-ink-soft">אין מספר: בוחרים את המרצה ב-WhatsApp.</p>
+            !waHref(contacts?.phone) && <p className="text-xs text-ink-soft">WhatsApp ייפתח בלי נמען: בוחרים את המרצה ברשימת השיחות.</p>
           )}
           <div className="border-t border-line pt-3">
             <Button kind="primary" busy={busy} onClick={onSent}>

@@ -265,7 +265,8 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               </select>
             </label>
           )}
-          <Fold title="מה נמחק ומה נשאר" size="sm">
+          {/* what an irreversible act deletes stays in view; only what it keeps folds */}
+          <div>
             <p className="font-semibold">מה נמחק:</p>
             <ul className="list-disc ps-5">
               <li>פרטי ההסעה של כל השיעורים: כתובות איסוף, שעות איסוף, שמות הנהגים והטלפונים שלהם.</li>
@@ -278,7 +279,8 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               <li>כל הקישורים של המחזור מבוטלים: קישורי המלווים, ההרשמה למכריכה לכריכה והלו"ז. הם לא ייפתחו יותר.</li>
               <li>מוני מגבלת הקצב של הקישורים (טביעות חד-כיווניות של כתובות ה-IP של מי שפתח/ה אותם).</li>
             </ul>
-            <p className="mt-2 font-semibold">מה נשאר:</p>
+          </div>
+          <Fold title="מה נשאר" size="sm">
             <ul className="list-disc ps-5">
               <li>השיעורים, הלו"ז, «איך עבר», ידע ואבני דרך, קבצי המקורות ותוכניות זמני הזיכרון.</li>
               <li>שמות החניכים וההרשמות למכריכה לכריכה (שמות בלבד), והסימונים של המלווים.</li>

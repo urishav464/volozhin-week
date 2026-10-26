@@ -66,34 +66,37 @@ export function TaughtHere({
   failed: boolean;
 }) {
   const reviews = useSpeakerReviews(port, s.id, mayReadReviews(actor, edition));
-  const title = byGender(s.gender, "לימד אצלנו", "לימדה אצלנו");
-  if (history == null) {
+  const title = byGender(s.gender, "לימד אצלנו", "לימדה אצלנו", "לימד/ה אצלנו");
+  const loaded = Array.isArray(reviews) && reviews.length > 0;
+  // the lessons and the reviews are two reads: reviews that came stand alone when the lessons did not
+  if (history == null && !(failed && loaded)) {
     return (
       <Section title={title} label="שיעורים במחזורים">
         <p className="text-sm text-ink-soft">{failed ? "לא נטען." : "טוען…"}</p>
       </Section>
     );
   }
+  const lessons = history ?? [];
   const read = Array.isArray(reviews) ? reviews : [];
   const reviewOf = new Map(read.map((r) => [slotKey(r), r]));
-  const taught = new Set(history.map(slotKey));
+  const taught = new Set(lessons.map(slotKey));
   const alone = read.filter((r) => !taught.has(slotKey(r)));
   const topic = (name: string) => categories.find((c) => c.active && c.name === name);
   const overran = byGender(s.gender, "חרג מהזמן", "חרגה מהזמן", "חרג/ה מהזמן");
   const status =
     reviews === null ? <p className="text-sm text-ink-soft">«איך עבר» נטען…</p> : reviews === "failed" ? <p className="text-sm text-ink-soft">«איך עבר» לא נטען.</p> : null;
 
-  if (history.length + alone.length === 0) {
+  if (lessons.length + alone.length === 0) {
     return (
       <section aria-label="שיעורים במחזורים" className="space-y-1">
-        <p className="text-sm text-ink-soft">עוד לא {title}.</p>
+        <p className="text-sm text-ink-soft">אין שיעורים סגורים במחזורים הקודמים במערכת.</p>
         {reviews === "failed" && status}
       </section>
     );
   }
   const list = (
     <ul className="space-y-1.5 text-sm">
-      {history.map((h, i) => {
+      {lessons.map((h, i) => {
         const r = reviewOf.get(slotKey(h));
         return (
           <li key={`${h.edition_id}:${i}`} className="rounded-md bg-card px-2 py-1.5">
@@ -119,7 +122,8 @@ export function TaughtHere({
     </ul>
   );
   return (
-    <Section title={title} count={lessonsCount(history.length + alone.length)} label="שיעורים במחזורים">
+    <Section title={title} count={lessonsCount(lessons.length + alone.length)} label="שיעורים במחזורים">
+      {history == null && <p className="mb-1.5 text-sm text-ink-soft">השיעורים לא נטענו.</p>}
       {reviews === undefined ? (
         list
       ) : (

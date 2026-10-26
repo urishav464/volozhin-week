@@ -438,7 +438,8 @@ test.describe("mock build", () => {
     await expect(escort).toContainText("אין");
     const sources = await stage(panel, "מקורות");
     await expect(sources.getByRole("form", { name: "מקורות" })).toHaveCount(0);
-    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toHaveCount(0);
+    await expect(panel.getByText("פעולות נוספות")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)", includeHidden: true })).toHaveCount(0);
     await expect(panel.getByRole("region", { name: "פרטי השיעור" }).getByRole("button", { name: "עריכה" })).toHaveCount(0);
     await expect(panel.getByLabel("כותרת")).toHaveCount(0);
     await panel.getByRole("button", { name: "סגירה" }).click();

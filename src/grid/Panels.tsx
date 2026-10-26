@@ -193,7 +193,17 @@ export function LessonPanel(props: LessonPanelProps) {
   const merged = l.kind === "lesson" && row != null && cellOf(model, l.day, row).merged;
   const { need, deficit } = model.days[l.day].balance;
   const warnings = model.warnings.filter((w) => w.lessonIds.includes(l.id));
-  const propose = (id: number, mode: "self" | "offer") => actions.propose(id, { lesson_id: l.id }, mode);
+  // a free draft's first proposal swaps the chooser for the candidates: the focus follows to the new candidate
+  const proposed = useRef(false);
+  const propose = (id: number, mode: "self" | "offer") => {
+    if (free) proposed.current = true;
+    actions.propose(id, { lesson_id: l.id }, mode);
+  };
+  useEffect(() => {
+    if (free || !proposed.current) return;
+    proposed.current = false;
+    document.querySelector<HTMLElement>('[role="dialog"] [data-pitch-id] button')?.focus();
+  }, [free]);
 
   return (
     <Sheet
@@ -661,13 +671,26 @@ export function SpeakerChooser({ model, me, day, start, end, need, onPick }: { m
       );
   }, [model, me, day, start, end, need, query]);
   const shown = searching ? ranked.slice(0, SEARCH_CAP) : ranked;
+  // a proposal moves its speaker to another group (a new row): the focus follows them, or stays in the chooser
+  const root = useRef<HTMLDivElement>(null);
+  const picked = useRef<number | null>(null);
+  const pick = (id: number, mode: "self" | "offer") => {
+    picked.current = id;
+    onPick(id, mode);
+  };
+  useEffect(() => {
+    const id = picked.current;
+    if (id == null) return;
+    picked.current = null;
+    (root.current?.querySelector<HTMLElement>(`[data-chooser-speaker="${id}"] button`) ?? root.current?.querySelector<HTMLElement>("input"))?.focus();
+  }, [ranked]);
 
   return (
-    <div className="space-y-2">
+    <div ref={root} className="space-y-2">
       <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש מרצה, נושא או מוסד" aria-label="חיפוש מרצה למשבצת" className={INPUT} />
       {CHOOSER_GROUPS.map((g) => {
         const items = shown.filter((x) => x.section === g);
-        return items.length > 0 && <ChooserGroup key={g} model={model} day={day} section={g} items={items} flat={searching} onPick={onPick} />;
+        return items.length > 0 && <ChooserGroup key={g} model={model} day={day} section={g} items={items} flat={searching} onPick={pick} />;
       })}
       {shown.length === 0 && <p className="p-2 text-center text-sm text-ink-faint">אין התאמות. מרצה שלא במאגר מוסיפים ב«+ מרצה חדש/ה».</p>}
       {shown.length < ranked.length && <p className="text-center text-xs text-ink-faint">מוצגים {SEARCH_CAP} — מדייקים את החיפוש כדי לצמצם.</p>}
@@ -742,26 +765,29 @@ function ChooserRow({
   const shown = topic?.active ? topic : undefined;
   const already = shown ? (load.get(shown.id) ?? 0) : 0;
   const full = already >= limit.max;
+  // what decides first (can they, are they approved), then the topic and how much of it the day holds
   const notes: ReactNode[] = [];
-  if (shown)
-    notes.push(
-      <span className="font-medium" style={{ color: shown.color }}>
-        <span aria-hidden>● </span>
-        {shown.name}
-      </span>,
-    );
-  if (already > 0) notes.push(<span className={full ? "font-semibold text-amber-800" : "text-ink-faint"}>{full ? `⚠ כבר ${already} היום (${limit.rule})` : `כבר ${already} היום`}</span>);
-  if (others) notes.push(`בטיפול: ${owner ?? "?"}`);
   if (fit === "cannot") notes.push(`${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")}`);
   if (fit === "can") notes.push("זמין/ה");
   if (s.vetted !== "approved") notes.push(<span className="text-amber-800">ממתין/ה לאישור</span>);
+  if (others) notes.push(`בטיפול: ${owner ?? "?"}`);
+  if (shown)
+    notes.push(
+      <span className="font-medium">
+        <span aria-hidden style={{ color: shown.color }}>
+          ●{" "}
+        </span>
+        {shown.name}
+      </span>,
+    );
+  if (already > 0) notes.push(<span className={full ? "font-semibold text-amber-800" : undefined}>{full ? `⚠ כבר ${already} היום (${limit.rule})` : `כבר ${already} היום`}</span>);
   return (
-    <li className="flex items-center gap-2 border-s-[3px] py-1.5 ps-2" style={{ borderInlineStartColor: shown?.color ?? "transparent" }}>
+    <li data-chooser-speaker={s.id} className="flex items-center gap-2 border-s-[3px] py-1.5 ps-2" style={{ borderInlineStartColor: shown?.color ?? "transparent" }}>
       <GenderDot gender={s.gender} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold">{displayName(s)}</span>
         {notes.length > 0 && (
-          <span className="block truncate text-[11px] text-ink-soft">
+          <span className="block text-[11px] leading-snug text-ink-soft">
             {notes.map((n, i) => (
               <Fragment key={i}>
                 {i > 0 && " · "}

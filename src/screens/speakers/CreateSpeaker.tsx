@@ -203,9 +203,17 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
                   </li>
                 ))}
               </ul>
-              {shown.length < current.length && (
-                <Button kind="quiet" aria-expanded={false} onClick={() => setAllFor(form.name)}>
-                  {current.length - shown.length === 1 ? "עוד שם דומה אחד" : `עוד ${current.length - shown.length} שמות דומים`} <span aria-hidden>▾</span>
+              {current.length > MATCHES_SHOWN && (
+                <Button kind="quiet" aria-expanded={allFor === form.name} onClick={() => setAllFor(allFor === form.name ? null : form.name)}>
+                  {allFor === form.name ? (
+                    <>
+                      פחות <span aria-hidden>▴</span>
+                    </>
+                  ) : (
+                    <>
+                      {current.length - MATCHES_SHOWN === 1 ? "עוד שם דומה אחד" : `עוד ${current.length - MATCHES_SHOWN} שמות דומים`} <span aria-hidden>▾</span>
+                    </>
+                  )}
                 </Button>
               )}
               {details && seenFor === form.name && (
