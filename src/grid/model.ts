@@ -1,8 +1,9 @@
 // Everything the grid screen derives from a loaded Week, computed once per load
 // (pure, so it is unit-testable and identical on every device).
-import { displayName } from "../domain/names";
+import { type SpeakerSlots, coveredRows, slotFit, slotsBySpeaker } from "../domain/availability";
+import { byGender, displayName } from "../domain/names";
 import { DAYS, type Day, overlaps } from "../domain/time";
-import type { Approach, Category, Gender, Lesson, Pitch, Speaker, Week, GridRow } from "../domain/types";
+import type { Approach, ApproachStatus, Category, Gender, Lesson, Pitch, Speaker, Week, GridRow } from "../domain/types";
 import { LIVE_PITCH } from "../domain/types";
 import { type DayBalance, categoryLoad, dayBalance } from "../rules/balance";
 import { type Warning, warningsFor } from "../rules/warnings";
@@ -30,8 +31,12 @@ export interface GridModel {
   approachBySpeaker: Map<number, Approach>;
   approachById: Map<number, Approach>;
   categoryById: Map<number, Category>;
-  /** Live and declined pitches of each lesson, most advanced first. */
+  /** Live and declined pitches of each lesson, most advanced first: by where the call stands (CALL_RANK), a declined pitch last. */
   pitchesByLesson: Map<number, Pitch[]>;
+  /** v14: each speaker's availability per slot (src/domain/availability.ts), once per load. */
+  slots: Map<number, SpeakerSlots>;
+  /** The closed lessons each speaker teaches, lead or co — «כבר משובץ/ת» in fitFor. */
+  closedOf: Map<number, Lesson[]>;
   /** The lead speaker of each closed lesson. */
   leadOf: Map<number, Speaker>;
   /** Warning count per lesson id. */
@@ -39,7 +44,11 @@ export interface GridModel {
   memberName: Map<number, string>;
 }
 
-const RANK: Record<string, number> = { approached: 0, candidate: 1, declined: 2 };
+/**
+ * Where the call stands, most advanced first (v14: a pitch is a candidate until its lesson closes — the approach's
+ * status says where the speaker is).
+ */
+const CALL_RANK: Record<ApproachStatus, number> = { positive: 0, approached: 1, no_answer: 2, claimed: 3, declined: 4 };
 
 export function buildModel(week: Week): GridModel {
   const layout = buildLayout(week.rows);
@@ -54,11 +63,19 @@ export function buildModel(week: Week): GridModel {
     if (!(LIVE_PITCH.has(p.state) || p.state === "declined")) continue;
     pitchesByLesson.set(p.lesson_id, [...(pitchesByLesson.get(p.lesson_id) ?? []), p]);
   }
-  for (const list of pitchesByLesson.values()) list.sort((a, b) => RANK[a.state] - RANK[b.state] || a.id - b.id);
+  const rank = (p: Pitch) => {
+    const a = approachById.get(p.approach_id);
+    return p.state === "declined" ? 5 : a ? CALL_RANK[a.status] : 4;
+  };
+  for (const list of pitchesByLesson.values()) list.sort((a, b) => rank(a) - rank(b) || a.id - b.id);
 
   const leadOf = new Map<number, Speaker>();
+  const closedOf = new Map<number, Lesson[]>();
+  const lessonById = new Map(week.lessons.map((l) => [l.id, l]));
   for (const x of week.lessonSpeakers) {
     if (x.role === "lead" && speakerById.has(x.speaker_id)) leadOf.set(x.lesson_id, speakerById.get(x.speaker_id)!);
+    const l = lessonById.get(x.lesson_id);
+    if (l?.state === "closed") closedOf.set(x.speaker_id, [...(closedOf.get(x.speaker_id) ?? []), l]);
   }
 
   const warningCount = new Map<number, number>();
@@ -92,6 +109,8 @@ export function buildModel(week: Week): GridModel {
     approachById,
     categoryById,
     pitchesByLesson,
+    slots: slotsBySpeaker(week.slotAvailability),
+    closedOf,
     leadOf,
     warningCount,
     memberName: new Map(week.team.map((m) => [m.id, m.display_name])),
@@ -106,20 +125,27 @@ export function pitchSpeaker(m: GridModel, p: Pitch): Speaker | undefined {
 
 export type Fit = "cannot" | "busy" | "can" | "neutral";
 
-/** How well a speaker fits a time: what they said they can't do, or are already closed for. */
+/**
+ * How well a speaker fits a time: already closed for it («busy»), else what they said of the lesson rows it covers
+ * (slotFit: «לא» if any row is «לא», «יכול/ה» only if every row is) — nothing said is «neutral».
+ */
 export function fitFor(m: GridModel, speakerId: number, day: Day, start: number, end: number): Fit {
-  const a = m.approachBySpeaker.get(speakerId);
-  const busy = m.week.lessonSpeakers.some((x) => {
-    if (x.speaker_id !== speakerId) return false;
-    const l = m.week.lessons.find((y) => y.id === x.lesson_id);
-    return !!l && l.state === "closed" && l.day === day && overlaps(l.start_min, l.end_min, start, end);
-  });
-  if (busy) return "busy";
-  if (!a) return "neutral";
-  const said = m.week.availability.filter((v) => v.approach_id === a.id && v.day === day && overlaps(v.from_min, v.to_min, start, end));
-  if (said.some((v) => v.kind === "cannot")) return "cannot";
-  if (said.some((v) => v.kind === "can")) return "can";
-  return "neutral";
+  if ((m.closedOf.get(speakerId) ?? []).some((l) => l.day === day && overlaps(l.start_min, l.end_min, start, end))) return "busy";
+  return slotFit(m.slots.get(speakerId), day, coveredRows(m.week.rows, m.week.edition, day, start, end)) ?? "neutral";
+}
+
+/** A fit in words, by the speaker's gender: what a coloured cell or draft says beside its colour (never the colour alone). */
+export function fitText(fit: Fit, g: Gender | null): string | null {
+  switch (fit) {
+    case "can":
+      return `✓ ${byGender(g, "יכול", "יכולה")}`;
+    case "cannot":
+      return `⊘ ${byGender(g, "לא יכול", "לא יכולה")}`;
+    case "busy":
+      return `כבר ${byGender(g, "משובץ", "משובצת")} בשעה הזו`;
+    case "neutral":
+      return null;
+  }
 }
 
 export type PoolSection = "mine" | "free" | "others" | "closed" | "declined";

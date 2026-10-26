@@ -35,7 +35,8 @@ export const WEEK_KEYS = [
   "categories",
   "speakers",
   "approaches",
-  "availability",
+  // v14: availability per slot — a day, a row, can/cannot and a short note («רק עד 21:00»): no contact detail
+  "slotAvailability",
   "lessons",
   "lessonSpeakers",
   "pitches",

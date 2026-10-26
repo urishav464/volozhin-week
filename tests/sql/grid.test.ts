@@ -104,7 +104,7 @@ describe("the grid's tables and functions", () => {
       expect(await sqlstate(q("select public.propose($1, $2, null, 1, 600, 690, null, 'self')", [ed, speaker]))).toBe("P0001");
     });
     await as(db, "authenticated", google(STRANGER), async (q) => {
-      for (const t of ["lessons", "pitches", "approaches", "speakers", "grid_rows", "rooms", "categories", "activity", "speaker_contacts"]) {
+      for (const t of ["lessons", "pitches", "approaches", "speakers", "grid_rows", "rooms", "categories", "activity", "speaker_contacts", "slot_availability"]) {
         expect((await q(`select * from public.${t}`)).rows, t).toEqual([]);
       }
       expect((await q("select public.load_week($1) as w", [ed])).rows[0].w).toBeNull();
@@ -114,7 +114,7 @@ describe("the grid's tables and functions", () => {
   it("load_week returns the whole Week shape, without contact details", async () => {
     await as(db, "authenticated", google(B), async (q) => {
       const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
-      expect(Object.keys(w).sort()).toEqual(["approaches", "availability", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "rooms", "roster", "rows", "sourceFiles", "speakers", "team"]);
+      expect(Object.keys(w).sort()).toEqual(["approaches", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "rooms", "roster", "rows", "slotAvailability", "sourceFiles", "speakers", "team"]);
       expect(w.rows).toHaveLength(21);
       expect(w.lessons).toHaveLength(1);
       expect(JSON.stringify(w)).not.toContain("synthetic-phone");

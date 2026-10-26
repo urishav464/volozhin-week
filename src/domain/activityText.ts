@@ -5,9 +5,8 @@
 // Never a contact value: the log holds field names only (CONTRACT «activity»).
 import type { ActivityEntry } from "../data/speakers";
 import { statusLabel } from "../lib/labels";
-import { dayPart, DAY_PARTS } from "./dayParts";
 import { byGender } from "./names";
-import { DAY_NAMES, type Day } from "./time";
+import { DAY_NAMES, type Day, dayRange } from "./time";
 import type { ApproachStatus, Gender } from "./types";
 
 export interface TimelineLine {
@@ -42,6 +41,9 @@ const SPEAKER_FIELD: Record<string, string> = {
 
 const CONTACT_FIELD: Record<string, string> = { phone: "טלפון", email: "מייל", secretary_note: "דרך המזכירות", notes: "הערות" };
 
+/** v6–v13 logged availability by part of a day (the chips v14's slots replaced); those rows still read. */
+const LEGACY_PART: Record<string, string> = { morning: "בוקר", afternoon: "צהריים", evening: "ערב", night: "לילה" };
+
 const num = (v: unknown): number | null => (typeof v === "number" ? v : typeof v === "string" && v !== "" && !Number.isNaN(Number(v)) ? Number(v) : null);
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const list = (v: unknown, labels: Record<string, string>) => (Array.isArray(v) ? v.map((f) => labels[String(f)] ?? String(f)).join(", ") : "");
@@ -66,10 +68,13 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
       else if (e.kind === "contacts") text = `פרטי הקשר עודכנו: ${list(d.fields, CONTACT_FIELD)}`;
       else text = e.kind;
     } else if (e.entity === "approaches" && e.kind === "availability") {
-      const part = DAY_PARTS.find((p) => p.part === d.part)?.label ?? String(d.part);
-      const day = DAY_NAMES[num(d.day) as Day] ?? "";
+      // v14: one slot — its day and the row's range (an LRM before it); before: a part of a day
+      const day = num(d.day);
+      const [start, end] = [num(d.start), num(d.end)];
+      const part = LEGACY_PART[String(d.part)];
+      const when = day == null || !DAY_NAMES[day as Day] ? null : start != null && end != null ? dayRange(day, start, end) : part ? `${DAY_NAMES[day as Day]} ${part}` : null;
       const kind = d.kind === "can" ? byGender(g, "יכול", "יכולה") : d.kind === "cannot" ? byGender(g, "לא יכול", "לא יכולה") : "לא ידוע";
-      text = dayPart(String(d.part)) ? `זמינות: ${day} ${part} — ${kind}` : "זמינות עודכנה";
+      text = when ? `זמינות: ${when} — ${kind}` : "זמינות עודכנה";
     } else if (e.entity === "approaches") {
       const owner = num(d.owner);
       const offered = num(d.offered_to);
@@ -107,7 +112,7 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
         const what: Record<string, string> = {
           candidate: `${byGender(g, "מועמד", "מועמדת")} למשבצת`,
           approached: "פנו על משבצת",
-          declined: `${byGender(g, "סירב", "סירבה")} למשבצת`,
+          declined: `${statusLabel("declined", g)} למשבצת`,
           accepted: "השיעור נסגר",
           withdrawn: `${byGender(g, "הוסר", "הוסרה")} ממשבצת`,
           superseded: "משבצת נסגרה עם מרצה אחר/ת",

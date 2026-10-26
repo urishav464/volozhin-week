@@ -27,24 +27,29 @@ beforeEach(() => {
 const cell = (day: 0 | 1 | 2 | 3 | 4, start: number, end: number, room_id: number | null = null) => ({ day, start_min: start, end_min: end, room_id });
 
 describe("propose", () => {
-  it("creates the draft, claims the speaker and records the approach", () => {
+  it("creates the draft, claims the speaker «לפני שיחה» and records the approach — placing is not calling (v14)", () => {
     const s = addSpeaker(w, "f");
     const e = new Engine(w, ME);
     const r = e.propose(s.id, cell(1, 510, 600));
     const l = e.week.lessons.find((x) => x.id === r.lesson_id)!;
     expect([l.state, l.room_id, l.day, l.start_min, l.end_min]).toEqual(["draft", 1, 1, 510, 600]);
-    expect(e.week.approaches).toMatchObject([{ speaker_id: s.id, owner_member_id: 1, status: "approached" }]);
-    expect(e.week.pitches).toMatchObject([{ id: r.pitch_id, state: "approached", proposed_by: 1 }]);
+    expect(e.week.approaches).toMatchObject([{ speaker_id: s.id, owner_member_id: 1, status: "claimed", version: 1 }]);
+    expect(e.week.pitches).toMatchObject([{ id: r.pitch_id, state: "candidate", proposed_by: 1 }]);
+    expect(e.shared.log).toMatchObject([{ entity: "approaches", kind: "insert", detail: { status: "claimed", owner: 1, speaker: s.id } }]);
   });
 
-  it("reuses a draft that matches the cell exactly, and never duplicates a pitch", () => {
+  it("reuses a draft that matches the cell exactly, never duplicates a pitch, and writes nothing to an approach already mine", () => {
     const s = addSpeaker(w, "f");
     const e = new Engine(w, ME);
     const a = e.propose(s.id, cell(1, 510, 600));
+    e.setApproachStatus(e.week.approaches[0].id, 1, "approached");
     const b = e.propose(s.id, cell(1, 510, 600));
+    e.propose(s.id, cell(2, 510, 600));
     expect(b).toEqual(a);
-    expect(e.week.lessons).toHaveLength(1);
-    expect(e.week.pitches).toHaveLength(1);
+    expect(e.week.lessons).toHaveLength(2);
+    expect(e.week.pitches.map((p) => p.state)).toEqual(["candidate", "candidate"]);
+    expect(e.week.approaches).toMatchObject([{ status: "approached", version: 2 }]);
+    expect(e.shared.log.map((x) => x.kind)).toEqual(["insert", "update"]);
   });
 
   it("refuses a speaker someone else handles — and leaves no draft behind", () => {
@@ -67,12 +72,27 @@ describe("propose", () => {
     expect(e.week.approaches[0].owner_member_id).toBe(OTHER.memberId);
   });
 
-  it("makes an unvetted speaker a candidate only", () => {
+  it("places and calls an unvetted speaker like any other — the instructor's approval is close_lesson's alone (v14)", () => {
     const s = addSpeaker(w, "f");
     s.vetted = "pending";
     const e = new Engine(w, ME);
     const r = e.propose(s.id, cell(1, 510, 600));
-    expect(e.week.pitches.find((p) => p.id === r.pitch_id)!.state).toBe("candidate");
+    const a = () => e.week.approaches[0];
+    for (const status of ["no_answer", "approached", "positive"] as const) expect(code(() => e.setApproachStatus(a().id, a().version, status, "נתון לדוגמה"))).toBe("ok");
+    expect(code(() => e.setPitch(r.pitch_id, "approached"))).toBe("ok");
+    expect(code(() => e.closeLesson(r.pitch_id))).toBe("not_vetted");
+    new Engine(e.week, { memberId: 9, role: "admin", global: true }, undefined, e.shared).vetSpeakers([s.id], "approved");
+    e.closeLesson(r.pitch_id);
+    expect(e.week.lessons[0].state).toBe("closed");
+  });
+
+  it("takes an approach nobody holds: owner, no offer, one version more — as claim_speaker does", () => {
+    const s = addSpeaker(w, "m");
+    Object.assign(addApproach(w, s, "no_answer"), { owner_member_id: null, offered_to: 2 });
+    const e = new Engine(w, ME);
+    e.propose(s.id, cell(1, 510, 600), "offer");
+    expect(e.week.approaches[0]).toMatchObject({ owner_member_id: ME.memberId, offered_to: null, status: "no_answer", version: 2 });
+    expect(e.shared.log).toMatchObject([{ kind: "update", detail: { owner: ME.memberId, status: "no_answer" } }]);
   });
 
   it("revives a withdrawn pitch instead of adding another", () => {
@@ -84,7 +104,7 @@ describe("propose", () => {
     expect(e.week.pitches[0].state).toBe("withdrawn");
     const again = e.propose(s.id, { lesson_id: target.id });
     expect(again.pitch_id).toBe(r.pitch_id);
-    expect(e.week.pitches[0].state).toBe("approached");
+    expect(e.week.pitches[0].state).toBe("candidate");
   });
 
   it("refuses a cell outside the lesson rows, a closed lesson, a retired speaker, and logistics", () => {
@@ -239,7 +259,7 @@ describe("reshape", () => {
     e.reshape(1, 870, { op: "split_time", parts: [60, 30] });
     const ls = e.week.lessons.sort((a, b) => a.start_min - b.start_min);
     expect(ls.map((l) => [l.start_min, l.end_min])).toEqual([[870, 930], [930, 960]]);
-    expect(e.week.pitches).toMatchObject([{ id: r.pitch_id, lesson_id: ls[0].id, state: "approached" }]);
+    expect(e.week.pitches).toMatchObject([{ id: r.pitch_id, lesson_id: ls[0].id, state: "candidate" }]);
     expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [60, 20] }))).toBe("bad_shape");
     expect(code(() => e.reshape(1, 510, { op: "split_time", parts: [80, 10] }))).toBe("bad_shape");
   });
@@ -336,12 +356,130 @@ describe("transactions and archives", () => {
     expect(code(() => new Engine(w, ADMIN).propose(s.id, cell(1, 510, 600)))).toBe("ok");
   });
 
-  it("an approach owned by nobody is taken by the first proposer", () => {
+  it("an approach owned by nobody is taken by the first proposer, its status as it was", () => {
     const s = addSpeaker(w, "f");
     addApproach(w, s, "claimed").owner_member_id = null;
     const e = new Engine(w, ME);
     e.propose(s.id, cell(1, 510, 600));
-    expect(e.week.approaches[0]).toMatchObject({ owner_member_id: ME.memberId, status: "approached" });
+    expect(e.week.approaches[0]).toMatchObject({ owner_member_id: ME.memberId, status: "claimed", version: 2 });
+  });
+});
+
+describe("the call's result and «החזרה לתהליך» (v14)", () => {
+  it("«סירב/ה» declines every live pitch; bringing one back puts the approach «לפני שיחה» again, one version more", () => {
+    const s = addSpeaker(w, "m");
+    const e = new Engine(w, ME);
+    const first = e.propose(s.id, cell(1, 510, 600));
+    const second = e.propose(s.id, cell(2, 510, 600));
+    const a = () => e.week.approaches[0];
+    e.setApproachStatus(a().id, a().version, "declined", "לא השנה (נתון לדוגמה)");
+    expect(e.week.pitches.map((p) => p.state)).toEqual(["declined", "declined"]);
+    e.setPitch(first.pitch_id, "candidate");
+    expect(a()).toMatchObject({ status: "claimed", version: 3 });
+    expect(e.week.pitches.map((p) => p.state)).toEqual(["candidate", "declined"]);
+    expect(e.shared.log.at(-1)).toMatchObject({ kind: "update", detail: { status: "claimed" } });
+    // the approach is live again: the other declined pitch comes back on its own, the approach untouched
+    e.setPitch(second.pitch_id, "candidate");
+    expect(a()).toMatchObject({ status: "claimed", version: 3 });
+  });
+
+  it("a declined pitch under a live approach comes back alone; declining one pitch leaves the approach", () => {
+    const s = addSpeaker(w, "f");
+    const e = new Engine(w, ME);
+    const r = e.propose(s.id, cell(1, 510, 600));
+    e.setPitch(r.pitch_id, "declined");
+    expect(e.week.approaches[0]).toMatchObject({ status: "claimed", version: 1 });
+    e.setPitch(r.pitch_id, "approached");
+    expect(e.week.approaches[0]).toMatchObject({ status: "claimed", version: 1 });
+    expect(e.week.pitches[0].state).toBe("approached");
+    expect(code(() => new Engine(w, OTHER).setPitch(r.pitch_id, "declined"))).toBe("forbidden");
+  });
+
+  it("refuses logistics, another member's approach, a stale version, a closed lesson's speaker", () => {
+    const s = addSpeaker(w, "f");
+    const e = new Engine(w, ME);
+    const r = e.propose(s.id, cell(1, 510, 600));
+    const id = e.week.approaches[0].id;
+    expect(code(() => new Engine(w, LOGISTICS).setApproachStatus(id, 1, "no_answer"))).toBe("forbidden");
+    expect(code(() => new Engine(w, OTHER).setApproachStatus(id, 1, "no_answer"))).toBe("not_handler");
+    expect(code(() => e.setApproachStatus(id, 0, "no_answer"))).toBe("stale");
+    e.closeLesson(r.pitch_id);
+    expect(code(() => e.setApproachStatus(id, e.week.approaches[0].version, "declined"))).toBe("lesson_closed");
+  });
+});
+
+describe("availability per slot (v14)", () => {
+  const GLOBAL: Actor = { memberId: 7, role: "admin", global: true };
+  // TEMPLATE_2026's rows by id: 1 = 06:30, 4 = 08:30, 13 = dinner (fixed), 14 = 20:00
+  it("any editor marks a slot — no approach needed; a note is cleaned; the same again is nothing; null deletes", () => {
+    const s = addSpeaker(w, "f");
+    const e = new Engine(w, OTHER);
+    e.setSlotAvailability(s.id, 1, 4, "can", "  רק עד   09:30  ");
+    expect(e.week.slotAvailability).toEqual([{ id: 1, speaker_id: s.id, day: 1, row_id: 4, kind: "can", note: "רק עד 09:30", updated_by: OTHER.memberId }]);
+    expect(e.week.approaches).toEqual([]);
+    expect(e.shared.log).toMatchObject([{ edition_id: 1, entity: "approaches", entity_id: null, kind: "availability", detail: { speaker: s.id, day: 1, start: 510, end: 600, kind: "can", note: "רק עד 09:30" } }]);
+    e.setSlotAvailability(s.id, 1, 4, "can", "רק עד 09:30");
+    expect(e.shared.log).toHaveLength(1); // nothing changed: nothing logged
+    new Engine(e.week, ME, undefined, e.shared).setSlotAvailability(s.id, 1, 4, "cannot");
+    expect(e.week.slotAvailability).toMatchObject([{ id: 1, kind: "cannot", note: null, updated_by: ME.memberId }]);
+    e.setSlotAvailability(s.id, 1, 4, null, "נשכח");
+    expect(e.week.slotAvailability).toEqual([]);
+    expect(e.shared.log.at(-1)!.detail).toEqual({ speaker: s.id, day: 1, start: 510, end: 600, kind: null });
+    e.setSlotAvailability(s.id, 1, 4, null);
+    expect(e.shared.log).toHaveLength(3);
+  });
+
+  it("logs under the speaker's approach when there is one; an admin and a global admin write too", () => {
+    const s = addSpeaker(w, "m");
+    const a = addApproach(w, s, "claimed");
+    const admin = new Engine(w, ADMIN);
+    admin.setSlotAvailability(s.id, 2, 14, "can");
+    new Engine(w, GLOBAL, undefined, admin.shared).setSlotAvailability(s.id, 2, 14, "cannot");
+    expect(admin.week.slotAvailability).toMatchObject([{ day: 2, row_id: 14, kind: "cannot", updated_by: GLOBAL.memberId }]);
+    expect(admin.shared.log).toMatchObject([
+      { actor: ADMIN.memberId, entity_id: a.id, detail: { start: 1200, end: 1290, kind: "can" } },
+      { actor: GLOBAL.memberId, entity_id: a.id, detail: { kind: "cannot" } },
+    ]);
+  });
+
+  it("refuses logistics, an archive (but its admin), a speaker missing or retired, a day, a row not in play, a kind, a long note", () => {
+    const s = addSpeaker(w, "f");
+    const retired = addSpeaker(w, "m");
+    retired.retired = true;
+    const e = new Engine(w, ME);
+    const at = (...args: Parameters<Engine["setSlotAvailability"]>) => code(() => e.setSlotAvailability(...args));
+    expect(code(() => new Engine(w, LOGISTICS).setSlotAvailability(s.id, 1, 4, "can"))).toBe("forbidden");
+    expect(at(9999, 1, 4, "can")).toBe("speaker_retired");
+    expect(at(retired.id, 1, 4, "can")).toBe("speaker_retired");
+    expect(at(s.id, 5, 4, "can")).toBe("bad_value");
+    expect(at(s.id, 1.5, 4, "can")).toBe("bad_value");
+    expect(at(s.id, 1, 13, "can")).toBe("outside_grid"); // dinner: no lesson row
+    expect(at(s.id, 0, 1, "can")).toBe("outside_grid"); // Sunday before the opening
+    expect(at(s.id, 4, 14, "can")).toBe("outside_grid"); // Thursday after the close
+    expect(at(s.id, 1, 999, "can")).toBe("outside_grid"); // no such row here
+    expect(at(s.id, 1, 4, "maybe" as never)).toBe("bad_value");
+    expect(at(s.id, 1, 4, "can", "א".repeat(121))).toBe("bad_value");
+    expect(at(s.id, 1, 4, null, "א".repeat(121))).toBe("bad_value"); // checked before the kind says «delete»
+    expect(e.week.slotAvailability).toEqual([]);
+    expect(e.shared.log).toEqual([]);
+    w.edition.status = "archived";
+    expect(code(() => new Engine(w, ME).setSlotAvailability(s.id, 1, 4, "can"))).toBe("archived");
+    expect(code(() => new Engine(w, ADMIN).setSlotAvailability(s.id, 1, 4, "can"))).toBe("ok");
+  });
+});
+
+describe("the call template (v14)", () => {
+  it("is the edition admin's: cleaned, a limit, empty removes it", () => {
+    for (const actor of [ME, LOGISTICS]) expect(code(() => new Engine(w, actor).setCallTemplate("נוסח לדוגמה {{שמי}}"))).toBe("forbidden");
+    const e = new Engine(w, ADMIN);
+    e.setCallTemplate("  נוסח לדוגמה {{שמי}}\r\nשורה שנייה  ");
+    expect(e.week.edition.settings.call_template).toBe("נוסח לדוגמה {{שמי}}\nשורה שנייה");
+    expect(code(() => e.setCallTemplate("א".repeat(4001)))).toBe("bad_value");
+    expect(e.week.edition.settings.call_template).toBe("נוסח לדוגמה {{שמי}}\nשורה שנייה");
+    e.setCallTemplate("   ");
+    expect("call_template" in e.week.edition.settings).toBe(false);
+    e.setCallTemplate(null);
+    expect(e.week.edition.settings).toEqual({});
   });
 });
 

@@ -1,14 +1,14 @@
 // Pieces the speaker screens share: the profile's form fields (create and
-// edit), free topic tags, the availability chips and a toast.
+// edit), free topic tags, the availability grid (slot by slot) and a toast.
 // Built from «הגדרות»'s kit (src/screens/settings/kit.tsx): one column on a
 // phone, every control at least 44px tall.
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CONTACT_PREFS, LIMITS } from "../../data/speakerRules";
 import type { SpeakerPatch } from "../../data/speakers";
-import { type Chip as AvailabilityChip, DAY_PARTS, type DayPart, chipsOf } from "../../domain/dayParts";
+import { activeLessonRows, nextKind, type SlotKind, slotKey } from "../../domain/availability";
 import { byGender } from "../../domain/names";
-import { DAYS, DAY_NAMES, type Day, fmtRange } from "../../domain/time";
-import type { Availability, Category, ContactPref, Gender, Speaker } from "../../domain/types";
+import { DAYS, DAY_NAMES, type Day, dayRange, fmtRange } from "../../domain/time";
+import type { Category, ContactPref, Edition, Gender, GridRow, SlotAvailability, Speaker } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
 import { Button, Field, Fold, GenderField, INPUT } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
@@ -289,88 +289,209 @@ export function TagInput({
   );
 }
 
-// ------------------------------------------------------------------ availability: 5 days × 4 parts
+// ------------------------------------------------------------------ availability: the days × the week's lesson rows (v14)
 
-/** «06:30–13:00»: a part's hours, as the grid's clock shows them (the evening ends at «24:00», not «00:00»). */
-const partHours = (p: (typeof DAY_PARTS)[number]) => (p.to === 1440 ? `${fmtRange(p.from, p.to).split("–")[0]}–24:00` : fmtRange(p.from, p.to));
+type Mark = { kind: SlotKind; note: string | null } | null;
 
-const KIND_TEXT = (kind: AvailabilityChip["kind"], g: Gender | null) =>
+const KIND_TEXT = (kind: SlotKind | null, g: Gender | null) =>
   kind === "can" ? byGender(g, "יכול", "יכולה") : kind === "cannot" ? byGender(g, "לא יכול", "לא יכולה") : "לא ידוע";
+const GLYPH: Record<SlotKind, string> = { can: "✓", cannot: "✗" };
+const TONE: Record<SlotKind | "none", string> = { can: "border-ok/50 bg-ok/10 text-ok", cannot: "border-bad/40 bg-bad/10 text-bad", none: "border-line bg-card text-ink-soft" };
+/** A slot outside the week's hours (Sunday before the opening, Thursday after the close): the grid's own hatching. */
+const HATCH = "bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(29,42,68,0.06)_6px_8px)]";
+
+/** «ראשון 08:30–10:00» — a slot's name for a screen reader (an accessible name is not laid out: no LRM). */
+const slotName = (day: Day, r: GridRow) => `${DAY_NAMES[day]} ${fmtRange(r.start_min, r.end_min)}`;
 
 /**
- * The chips of one approach's availability. Tap a chip to choose it, then
- * «יכול/ה», «לא» or «לא ידוע» (with an optional note) — each a single save.
- * Without `onSet` the grid is read-only.
+ * A speaker's availability, slot by slot: the days are columns, the week's lesson rows are rows. Each slot in play is a
+ * button that cycles — (not known) → ✓ → ✗ → — and saves at once: the change shows before the answer, and a refusal
+ * puts it back (the runner toasts why); every save is said once in a polite line under the grid, not in a toast. The
+ * arrow keys move between the slots (one tab stop for the grid). A note belongs to a marked slot: the list under the
+ * grid, and «+ הערה». Without `onSet` the grid is read-only.
  */
-export function AvailabilityGrid({
+export function SlotGrid({
   rows,
+  edition,
+  slots,
   gender,
   onSet,
-  busy,
 }: {
-  rows: Availability[];
+  rows: readonly GridRow[];
+  edition: Edition;
+  /** This speaker's slots this edition. */
+  slots: readonly SlotAvailability[];
+  /** The speaker's: the words are about them. */
   gender: Gender | null;
-  onSet?: (day: Day, part: DayPart, kind: "can" | "cannot" | null, note: string | null) => Promise<boolean>;
-  busy?: boolean;
+  /** One slot saved; false when it was refused. */
+  onSet?: (day: Day, rowId: number, kind: SlotKind | null, note: string | null) => Promise<boolean>;
 }) {
-  const chips = chipsOf(rows);
-  const [picked, setPicked] = useState<{ day: Day; part: DayPart } | null>(null);
-  const [note, setNote] = useState("");
-  const chip = picked && chips.find((c) => c.day === picked.day && c.part === picked.part);
-  useEffect(() => setNote(chip?.note ?? ""), [chip?.note, picked?.day, picked?.part]);
-  const save = async (kind: "can" | "cannot" | null) => {
-    if (!picked || !onSet) return;
-    if (await onSet(picked.day, picked.part, kind, kind == null ? null : note.trim() || null)) setPicked(null);
+  const id = useId();
+  const active = useMemo(() => DAYS.map((d) => activeLessonRows(rows, edition, d)), [rows, edition]);
+  const live = useMemo(() => new Set(active.flatMap((list, d) => list.map((r) => slotKey(d, r.id)))), [active]);
+  // every lesson row in play on some day; a slot of it that is not in play that day is hatched
+  const lines = useMemo(() => rows.filter((r) => active.some((list) => list.includes(r))).sort((a, b) => a.start_min - b.start_min), [rows, active]);
+  const saved = useMemo(() => new Map(slots.map((v) => [slotKey(v.day, v.row_id), v])), [slots]);
+
+  // A tap shows at once; its save waits for the ones before it (in order), and once a slot has none left the week
+  // read again speaks for it — what was saved, or what was there before a refusal.
+  const [shown, setShown] = useState<Map<string, Mark>>(() => new Map());
+  const pending = useRef(new Map<string, number>());
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const [said, setSaid] = useState("");
+  const markOf = (key: string): Mark => {
+    if (shown.has(key)) return shown.get(key) ?? null;
+    const v = saved.get(key);
+    return v ? { kind: v.kind, note: v.note } : null;
   };
-  const tone = (c: AvailabilityChip) =>
-    c.kind === "can" ? "border-ok/50 bg-ok/10 text-ok" : c.kind === "cannot" ? "border-bad/40 bg-bad/10 text-bad" : "border-line bg-card text-ink-soft";
-  const part = picked && DAY_PARTS.find((p) => p.part === picked.part)!;
-  const notes = chips.filter((c) => c.note);
+  const save = (day: Day, r: GridRow, kind: SlotKind | null, note: string | null, done: string) => {
+    if (!onSet) return Promise.resolve(false);
+    const key = slotKey(day, r.id);
+    pending.current.set(key, (pending.current.get(key) ?? 0) + 1);
+    // never rejects: a failed save must not stop the ones queued after it
+    const next = queue.current.then(async () => {
+      const ok = await onSet(day, r.id, kind, note).catch(() => false);
+      if (ok) setSaid(done);
+      const left = (pending.current.get(key) ?? 1) - 1;
+      if (left > 0) pending.current.set(key, left);
+      else {
+        pending.current.delete(key);
+        setShown((m) => {
+          const out = new Map(m);
+          out.delete(key);
+          return out;
+        });
+      }
+      return ok;
+    });
+    queue.current = next;
+    return next;
+  };
+  const tap = (day: Day, r: GridRow) => {
+    const key = slotKey(day, r.id);
+    const was = markOf(key);
+    const kind = nextKind(was?.kind ?? null);
+    const note = kind ? (was?.note ?? null) : null; // «לא ידוע» keeps no note
+    setShown((m) => new Map(m).set(key, kind ? { kind, note } : null));
+    void save(day, r, kind, note, `נשמר: ${dayRange(day, r.start_min, r.end_min)} — ${KIND_TEXT(kind, gender)}`);
+  };
+
+  // One tab stop: the slot last touched, else the first in play; the arrows move it (right to left: ← is the next day).
+  const [stop, setStop] = useState<string | null>(null);
+  const cells = useRef(new Map<string, HTMLButtonElement>());
+  const order = lines.flatMap((r) => DAYS.map((d) => slotKey(d, r.id)).filter((k) => live.has(k)));
+  const tabStop = stop && live.has(stop) ? stop : order[0];
+  const move = (e: KeyboardEvent<HTMLButtonElement>, day: Day, line: number) => {
+    const rtl = getComputedStyle(e.currentTarget).direction === "rtl";
+    const steps: Record<string, [number, number]> = { ArrowDown: [0, 1], ArrowUp: [0, -1], ArrowLeft: [rtl ? 1 : -1, 0], ArrowRight: [rtl ? -1 : 1, 0] };
+    let to: string | undefined;
+    if (steps[e.key]) {
+      const [dx, dy] = steps[e.key];
+      for (let x = day + dx, y = line + dy; x >= 0 && x < DAYS.length && y >= 0 && y < lines.length; x += dx, y += dy) {
+        const k = slotKey(x, lines[y].id);
+        if (live.has(k)) {
+          to = k;
+          break;
+        }
+      }
+    } else if (e.key === "Home" || e.key === "End") {
+      const inRow = DAYS.map((d) => slotKey(d, lines[line].id)).filter((k) => live.has(k));
+      to = e.key === "Home" ? inRow[0] : inRow[inRow.length - 1];
+    } else return;
+    e.preventDefault();
+    if (to) {
+      setStop(to);
+      cells.current.get(to)?.focus();
+    }
+  };
+
+  // The notes, a run of neighbouring slots with the same word and note said once («ראשון 08:30–13:00»).
+  const notes: { key: string; day: Day; from: GridRow; to: GridRow; kind: SlotKind; note: string }[] = [];
+  for (const d of DAYS) {
+    let last: (typeof notes)[number] | null = null;
+    for (const r of active[d]) {
+      const m = markOf(slotKey(d, r.id));
+      if (m?.note && last && last.kind === m.kind && last.note === m.note) last.to = r;
+      else {
+        last = m?.note ? { key: slotKey(d, r.id), day: d, from: r, to: r, kind: m.kind, note: m.note } : null;
+        if (last) notes.push(last);
+      }
+    }
+  }
+  const marked = lines.flatMap((r) =>
+    DAYS.flatMap((d) => {
+      const key = slotKey(d, r.id);
+      const m = live.has(key) ? markOf(key) : null;
+      return m ? [{ key, day: d, row: r, mark: m }] : [];
+    }),
+  );
+
   return (
     <div className="space-y-2">
-      <table className="w-full table-fixed border-separate border-spacing-1 text-sm" aria-label="זמינות לפי ימים וחלקי יום">
+      <p id={`${id}-how`} className="text-xs text-ink-soft">
+        ✓ {KIND_TEXT("can", gender)} · ✗ {KIND_TEXT("cannot", gender)} · — לא ידוע.
+        {onSet && " הקשה על משבצת מחליפה ביניהם, והשינוי נשמר מיד. במקלדת: החיצים עוברים בין המשבצות."}
+      </p>
+      <table className="w-full table-fixed border-separate border-spacing-1 text-sm" aria-label="זמינות לפי ימים ושעות">
         <thead>
           <tr>
-            <th scope="col" className="w-14">
-              <span className="sr-only">יום</span>
+            <th scope="col" className="w-16">
+              <span className="sr-only">שעה</span>
             </th>
-            {DAY_PARTS.map((p) => (
-              <th key={p.part} scope="col" className="text-xs font-semibold text-ink-soft">
-                {p.label}
-                <span className="block text-[11px] font-normal">
-                  <bdi>{partHours(p)}</bdi>
-                </span>
+            {DAYS.map((d) => (
+              <th key={d} scope="col" className="text-xs font-semibold text-ink-soft">
+                {DAY_NAMES[d]}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {DAYS.map((d) => (
-            <tr key={d}>
-              <th scope="row" className="text-start text-xs font-semibold text-ink-soft">
-                {DAY_NAMES[d]}
+          {lines.map((r, line) => (
+            <tr key={r.id}>
+              <th scope="row" className="text-start text-[11px] font-normal leading-tight text-ink-soft tabular-nums">
+                <bdi>{fmtRange(r.start_min, r.end_min)}</bdi>
               </th>
-              {DAY_PARTS.map((p) => {
-                const c = chips.find((x) => x.day === d && x.part === p.part)!;
-                const label = `${DAY_NAMES[d]} ${p.label}: ${KIND_TEXT(c.kind, gender)}${c.partial ? " (בחלק מהזמן)" : ""}${c.note ? ` — ${c.note}` : ""}`;
-                const mark = c.kind === "can" ? "✓" : c.kind === "cannot" ? "✗" : "?";
-                const on = picked?.day === d && picked.part === p.part;
+              {DAYS.map((d) => {
+                const key = slotKey(d, r.id);
+                if (!live.has(key)) {
+                  return (
+                    <td key={d} className={`rounded-lg ${HATCH}`} title="מחוץ לשעות השבוע">
+                      <span className="sr-only">מחוץ לשעות השבוע</span>
+                    </td>
+                  );
+                }
+                const m = markOf(key);
+                const label = `${slotName(d, r)}: ${KIND_TEXT(m?.kind ?? null, gender)}${m?.note ? ` — ${m.note}` : ""}`;
+                const face = (
+                  <>
+                    {m ? GLYPH[m.kind] : "—"}
+                    {m?.note && <span aria-hidden className="text-[10px] font-normal">•</span>}
+                  </>
+                );
+                const tone = TONE[m?.kind ?? "none"];
                 return (
-                  <td key={p.part}>
+                  <td key={d}>
                     {onSet ? (
                       <button
                         type="button"
+                        ref={(el) => {
+                          if (el) cells.current.set(key, el);
+                          else cells.current.delete(key);
+                        }}
+                        tabIndex={key === tabStop ? 0 : -1}
                         aria-label={label}
-                        aria-pressed={on}
-                        onClick={() => setPicked(on ? null : { day: d, part: p.part })}
-                        className={`flex min-h-11 w-full items-center justify-center rounded-lg border font-bold ${tone(c)} ${on ? "ring-2 ring-ink" : ""}`}
+                        aria-describedby={`${id}-how`}
+                        data-slot={key}
+                        onClick={() => tap(d, r)}
+                        onFocus={() => setStop(key)}
+                        onKeyDown={(e) => move(e, d, line)}
+                        className={`flex min-h-11 w-full items-center justify-center rounded-lg border font-bold ${tone}`}
                       >
-                        {mark}
-                        {(c.partial || c.note) && <span aria-hidden className="text-[10px] font-normal">•</span>}
+                        {face}
                       </button>
                     ) : (
-                      <span role="img" aria-label={label} title={label} className={`flex min-h-9 w-full items-center justify-center rounded-lg border font-bold ${tone(c)}`}>
-                        {mark}
+                      <span role="img" aria-label={label} title={label} data-slot={key} className={`flex min-h-9 w-full items-center justify-center rounded-lg border font-bold ${tone}`}>
+                        {face}
                       </span>
                     )}
                   </td>
@@ -380,40 +501,85 @@ export function AvailabilityGrid({
           ))}
         </tbody>
       </table>
+      {onSet && (
+        <p aria-live="polite" data-slot-said className="min-h-4 text-xs text-ink-soft">
+          {said}
+        </p>
+      )}
       {notes.length > 0 && (
         <ul aria-label="הערות על הזמינות" className="space-y-0.5 text-sm">
-          {notes.map((c) => (
-            <li key={`${c.day}:${c.part}`}>
+          {notes.map((n) => (
+            <li key={n.key}>
               <span className="font-semibold">
-                {DAY_NAMES[c.day]} {DAY_PARTS.find((p) => p.part === c.part)!.label}:
+                {DAY_NAMES[n.day]} <bdi>{fmtRange(n.from.start_min, n.to.end_min)}</bdi>
               </span>{" "}
-              {c.note}
+              · {KIND_TEXT(n.kind, gender)} — {n.note}
             </li>
           ))}
         </ul>
       )}
-      {picked && part && onSet && (
-        <div role="group" aria-label={`זמינות ${DAY_NAMES[picked.day]} ${part.label}`} className="space-y-2 rounded-lg border border-line bg-paper p-3">
-          <p className="text-sm font-semibold">
-            {DAY_NAMES[picked.day]} · {part.label} <bdi className="font-normal text-ink-soft">{partHours(part)}</bdi>
-          </p>
-          <Field id="avail-note" label="הערה (לא חובה)">
-            <input id="avail-note" value={note} maxLength={LIMITS.avail_note} onChange={(e) => setNote(e.target.value)} className={INPUT} placeholder="למשל: רק עד 21:00" />
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            <Button kind="primary" busy={busy} onClick={() => void save("can")}>
-              {byGender(gender, "יכול", "יכולה")}
-            </Button>
-            <Button busy={busy} onClick={() => void save("cannot")}>
-              {byGender(gender, "לא יכול", "לא יכולה")}
-            </Button>
-            <Button kind="quiet" busy={busy} onClick={() => void save(null)}>
-              לא ידוע
-            </Button>
-          </div>
-        </div>
+      {onSet && marked.length > 0 && (
+        <Fold title="+ הערה" hint="למשבצת שסומנה" size="sm">
+          <SlotNote marked={marked} gender={gender} onSave={(day, r, kind, note) => save(day, r, kind, note, `ההערה נשמרה: ${dayRange(day, r.start_min, r.end_min)}`)} />
+        </Fold>
       )}
     </div>
+  );
+}
+
+/** «+ הערה»: a marked slot, its note — saved with the slot's own mark (an empty note takes it away). */
+function SlotNote({
+  marked,
+  gender,
+  onSave,
+}: {
+  marked: { key: string; day: Day; row: GridRow; mark: NonNullable<Mark> }[];
+  gender: Gender | null;
+  onSave: (day: Day, r: GridRow, kind: SlotKind, note: string | null) => Promise<boolean>;
+}) {
+  const id = useId();
+  const [key, setKey] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pick = marked.find((m) => m.key === key);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!pick) return;
+    setBusy(true);
+    const ok = await onSave(pick.day, pick.row, pick.mark.kind, note.trim() || null);
+    setBusy(false);
+    if (ok) {
+      setKey("");
+      setNote("");
+    }
+  };
+  return (
+    <form onSubmit={(e) => void submit(e)} aria-label="הערה למשבצת" className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+      <Field id={`${id}-slot`} label="המשבצת">
+        <select
+          id={`${id}-slot`}
+          value={key}
+          onChange={(e) => {
+            setKey(e.target.value);
+            setNote(marked.find((m) => m.key === e.target.value)?.mark.note ?? "");
+          }}
+          className={INPUT}
+        >
+          <option value="">בחירה</option>
+          {marked.map((m) => (
+            <option key={m.key} value={m.key}>
+              {dayRange(m.day, m.row.start_min, m.row.end_min)} · {KIND_TEXT(m.mark.kind, gender)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field id={`${id}-note`} label="ההערה" hint="גלויה לכל הצוות. שדה ריק מוחק את ההערה.">
+        <input id={`${id}-note`} value={note} maxLength={LIMITS.avail_note} disabled={!pick} onChange={(e) => setNote(e.target.value)} aria-describedby={`${id}-note-hint`} className={INPUT} placeholder="למשל: רק עד 21:00" />
+      </Field>
+      <Button kind="primary" type="submit" disabled={!pick || note.trim() === (pick.mark.note ?? "")} busy={busy} busyLabel="שומר…">
+        שמירה
+      </Button>
+    </form>
   );
 }
 

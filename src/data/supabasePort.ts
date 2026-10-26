@@ -176,6 +176,7 @@ export class SupabasePort implements DataPort {
     if (w && !Array.isArray(w.sourceFiles)) w.sourceFiles = []; // nor a file before v10
     if (w && !Array.isArray(w.memorialPlans)) w.memorialPlans = []; // nor a memorial plan before v11
     if (w && !Array.isArray(w.fallen)) w.fallen = [];
+    if (w && !Array.isArray(w.slotAvailability)) w.slotAvailability = []; // nor availability per slot before v14
     return w;
   }
 

@@ -4,7 +4,6 @@
 // the contract's code — never a raw Postgres message. Contacts are fetched
 // one speaker at a time, through the contacts policy (get_speaker_contacts).
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import type { DayPart } from "../domain/dayParts";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, SpeakerContacts, Vetting } from "../domain/types";
 import { CommandError } from "./commands";
@@ -92,7 +91,7 @@ export class SupabaseSpeakers implements SpeakerPort {
     await this.rpc("answer_handover", { p_approach: approachId, p_accept: accept, p_note: note });
   }
 
-  async setAvailability(editionId: number, speakerId: number, day: Day, part: DayPart, kind: "can" | "cannot" | null, note: string | null = null): Promise<void> {
-    await this.rpc("set_availability", { p_edition: editionId, p_speaker: speakerId, p_day: day, p_part: part, p_kind: kind, p_note: note });
+  async setSlotAvailability(editionId: number, speakerId: number, day: Day, rowId: number, kind: "can" | "cannot" | null, note: string | null = null): Promise<void> {
+    await this.rpc("set_slot_availability", { p_edition: editionId, p_speaker: speakerId, p_day: day, p_row: rowId, p_kind: kind, p_note: note });
   }
 }

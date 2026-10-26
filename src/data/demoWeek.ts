@@ -4,6 +4,8 @@
 // demo (milestone 2) adds a speaker for every «המרצים שלי» group, a hand-over
 // waiting for the demo user, a few contacts made of placeholder words (never
 // a number or address that could be someone's) and a past edition's lessons.
+// v14 adds a speaker who agreed and waits for the instructor's approval (the
+// «אישורים» badge), and availability per slot in place of parts of a day.
 // Milestone 3 adds a lesson in every stage: payment asked, approved (and paid),
 // rejected; a volunteer; a message sent, and one sent and then moved; escorts
 // from a synthetic roster (two lessons close together for one of them); every
@@ -18,8 +20,8 @@
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
 import {
-  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SourceFile, type Speaker,
-  type SpeakerContacts, type TransportDetails, type Week,
+  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SlotAvailability, type SourceFile,
+  type Speaker, type SpeakerContacts, type TransportDetails, type Week,
 } from "../domain/types";
 import type { Sample } from "./demoFiles";
 import type { StoredObject } from "./engine";
@@ -105,11 +107,12 @@ export function demoWeek(): Week {
     return l;
   };
 
-  const drafted = (day: Day, start: number, end: number, speakerIds: number[], state: Pitch["state"] = "approached") => {
+  // a draft's pitches are candidates (v14: propose writes nothing else); where the call stands is the approach's status
+  const drafted = (day: Day, start: number, end: number, speakerIds: number[]) => {
     const l = lesson(day, start, end);
     for (const id of speakerIds) {
       const a = approachOf(id);
-      pitches.push({ id: ++pitchId, lesson_id: l.id, approach_id: a.id, state, proposed_by: a.owner_member_id, at: "2026-11-02T10:00:00Z" });
+      pitches.push({ id: ++pitchId, lesson_id: l.id, approach_id: a.id, state: "candidate", proposed_by: a.owner_member_id, at: "2026-11-02T10:00:00Z" });
     }
     return l;
   };
@@ -145,13 +148,14 @@ export function demoWeek(): Week {
   closed(2, 600, 690, 31, { category_id: 1 });
   closed(2, 960, 1050, 16, { room_id: 1, escort_roster_id: 3, sources_kind: "sheet_presentation", ...sent(1) }); // the demo user's: all in place
   closed(2, 960, 1050, 17, { room_id: 2, parallel_reason: "דוגמה לשיעורים מקבילים" });
-  drafted(2, 1200, 1290, [56], "candidate"); // not yet vetted → candidate only
+  approachOf(56, "positive", 1); // the demo user's: agreed, not yet approved — closing waits for the instructor (the «אישורים» badge)
+  drafted(2, 1200, 1290, [56]);
 
-  // Wednesday: a declined approach still pitched, and an empty evening.
+  // Wednesday: a speaker who declined, placed again (a live pitch: «החזרה לתהליך» puts them «לפני שיחה»), and an empty evening.
   closed(3, 600, 690, 19, { transport: "one_way", ...approved });
   closed(3, 690, 780, 20, { escort_roster_id: 4, escort_note: "נתון לדוגמה: להגיע רבע שעה לפני", ...sent(1) }); // sources still to come
   const declined = approachOf(23, "declined");
-  pitches.push({ id: ++pitchId, lesson_id: lesson(3, 870, 960).id, approach_id: declined.id, state: "approached", proposed_by: 2, at: "2026-11-03T10:00:00Z" });
+  pitches.push({ id: ++pitchId, lesson_id: lesson(3, 870, 960).id, approach_id: declined.id, state: "candidate", proposed_by: 2, at: "2026-11-03T10:00:00Z" });
 
   // Thursday: a shaped-but-empty cell (a draft with no pitch), and the parents' lesson.
   lesson(4, 690, 780);
@@ -166,17 +170,18 @@ export function demoWeek(): Week {
   sundayMemorial.escort_roster_id = 4;
 
   // «המרצים שלי» for the demo user (member 1): one speaker in each group the grid has not filled.
-  approachOf(32, "claimed", 1); // לפנות
-  approachOf(36, "no_answer", 1); // מחכה לתשובה
-  approachOf(28, "positive", 1); // לסגור שעה
+  approachOf(32, "claimed", 1); // להתקשר («לפני שיחה»)
+  approachOf(36, "no_answer", 1); // לנסות שוב
+  approachOf(28, "positive", 1); // לסגור שעה (agreed, approved)
   approachOf(13, "approached", 2).offered_to = 1; // a hand-over waiting for the demo user's answer
+  approachOf(30, "claimed"); // another member's, still to call
 
-  // Availability chips: Sunday morning «לא», Tuesday evening and night «יכול/ה».
-  const availability = [
-    { id: 1, approach_id: approachOf(9).id, day: 0 as Day, from_min: 390, to_min: 780, kind: "cannot" as const, note: "דוגמה: לא בבקרים" },
-    { id: 2, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1140, to_min: 1440, kind: "can" as const, note: null },
-    { id: 3, approach_id: approachOf(30, "claimed").id, day: 2 as Day, from_min: 1440, to_min: 1830, kind: "can" as const, note: null },
-  ];
+  // Availability per slot (v14), by TEMPLATE_2026's row ids: Sunday morning «לא» for speaker 09 (08:30, 10:00, 11:30);
+  // Tuesday evening and night «יכול/ה» for speaker 30 (20:00, 22:30, 00:30, 02:00, 03:30). Seeded: nobody wrote them.
+  const slotAvailability: SlotAvailability[] = [
+    ...[4, 5, 6].map((row_id) => ({ speaker_id: 9, day: 0 as Day, row_id, kind: "cannot" as const, note: "דוגמה: לא בבקרים" })),
+    ...[14, 16, 18, 19, 20].map((row_id) => ({ speaker_id: 30, day: 2 as Day, row_id, kind: "can" as const, note: null })),
+  ].map((v, i) => ({ id: i + 1, ...v, updated_by: null }));
 
   return {
     edition: { id: 1, label: "הדגמה", kind: "demo", start_date: null, first_day_from: 510, last_day_until: 1140, status: "planning", settings: { lesson_minutes: 75, row_minutes: 90 } },
@@ -189,7 +194,7 @@ export function demoWeek(): Week {
     categories: DEMO_CATEGORIES,
     speakers,
     approaches,
-    availability,
+    slotAvailability,
     lessons,
     lessonSpeakers,
     pitches,

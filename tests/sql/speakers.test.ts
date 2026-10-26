@@ -114,7 +114,7 @@ describe("the speaker pool", () => {
     expect(await sig("set_approach_status")).toEqual(["p_approach bigint, p_version integer, p_status text, p_note text DEFAULT NULL::text"]);
     expect(await sig("hand_over")).toEqual(["p_approach bigint, p_to bigint, p_note text DEFAULT NULL::text"]);
     expect(await sig("answer_handover")).toEqual(["p_approach bigint, p_accept boolean, p_note text DEFAULT NULL::text"]);
-    expect(await sig("set_availability")).toEqual(["p_edition bigint, p_speaker bigint, p_day integer, p_part text, p_kind text, p_note text DEFAULT NULL::text"]);
+    expect(await sig("set_slot_availability")).toEqual(["p_edition bigint, p_speaker bigint, p_day integer, p_row bigint, p_kind text, p_note text DEFAULT NULL::text"]);
   });
 
   it("computes trigram similarity exactly as pg_trgm (src/domain/trigram.ts), with the same threshold", async () => {
@@ -209,7 +209,9 @@ describe("the speaker pool", () => {
       expect(await sqlstate(q("insert into public.speaker_contacts (speaker_id, phone) values ($1, 'x')", [sp.s2]))).toBe("42501");
       expect(await sqlstate(q("update public.speaker_contacts set phone = 'x'"))).toBe("42501");
       expect(await sqlstate(q("update public.approaches set owner_member_id = null"))).toBe("42501");
-      expect(await sqlstate(q("insert into public.availability (approach_id, day, from_min, to_min, kind) select id, 0, 390, 780, 'can' from public.approaches limit 1"))).toBe("42501");
+      expect(await sqlstate(q("insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind) select edition_id, speaker_id, 1, (select id from public.grid_rows limit 1), 'can' from public.approaches limit 1"))).toBe("42501");
+      expect(await sqlstate(q("update public.slot_availability set kind = 'can'"))).toBe("42501");
+      expect(await sqlstate(q("delete from public.slot_availability"))).toBe("42501");
       expect(await sqlstate(q("select app.log_event(null, 'speakers', 1, 'x', '{}')"))).toBe("42501");
       expect(await sqlstate(q("select app.contacts_edition(1)"))).toBe("42501");
     });
@@ -224,7 +226,7 @@ describe("the speaker pool", () => {
       ["select public.update_speaker($1, $2, 1, '{}')", [ed, sp.s1]],
       ["select public.vet_speakers(array[$1::bigint], 'approved')", [sp.s1]],
       ["select public.claim_speaker($1, $2)", [ed, sp.s2]],
-      ["select public.set_availability($1, $2, 0, 'morning', 'can')", [ed, sp.s1]],
+      ["select public.set_slot_availability($1, $2, 1, (select id from public.grid_rows where edition_id = $1 and start_min = 510), 'can')", [ed, sp.s1]],
     ];
     const a = Number((await db.query("select id from public.approaches limit 1")).rows[0].id);
     await as(db, "authenticated", google(STRANGER), async (q) => {
@@ -247,7 +249,10 @@ describe("the speaker pool", () => {
       const a = (await q("select id, version from public.approaches where edition_id = $1 and speaker_id = $2", [ed, s])).rows[0];
       await q("select public.update_speaker($1, $2, 1, '{\"bio_short\": \"ביו לדוגמה\"}')", [ed, s]);
       await q("select public.set_approach_status($1, $2, 'no_answer', '  שלחתי הודעה  ')", [a.id, a.version]);
-      await q("select public.set_availability($1, $2, 1, 'evening', 'cannot', 'בחו\"ל')", [ed, s]);
+      // v14: a slot — Monday's 20:00 row; the same again changes nothing and logs nothing
+      for (let i = 0; i < 2; i++) {
+        await q("select public.set_slot_availability($1, $2, 1, (select id from public.grid_rows where edition_id = $1 and start_min = 1200), 'cannot', 'בחו\"ל')", [ed, s]);
+      }
       await q("select public.hand_over($1, $2, 'מכיר/ה אותו')", [a.id, member[B]]);
       await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(B))]);
       await q("select public.answer_handover($1, true)", [a.id]);
@@ -261,7 +266,7 @@ describe("the speaker pool", () => {
       expect(contacts.detail).toEqual({ fields: ["phone", "email", "secretary_note", "notes"] });
       expect(update.detail).toEqual({ fields: ["bio_short"] });
       expect(status.detail).toMatchObject({ status: "no_answer", note: "שלחתי הודעה", owner: member[A] });
-      expect(avail.detail).toEqual({ speaker: s, day: 1, part: "evening", kind: "cannot" });
+      expect(avail.detail).toEqual({ speaker: s, day: 1, start: 1200, end: 1290, kind: "cannot", note: "בחו\"ל" });
       expect(offered.detail).toMatchObject({ offered_to: member[B], note: "מכיר/ה אותו", owner: member[A] });
       expect(answered.detail).toMatchObject({ owner: member[B] });
       expect(answered.detail).not.toHaveProperty("note");
@@ -270,6 +275,79 @@ describe("the speaker pool", () => {
       expect(log.every((r) => r.actor != null)).toBe(true);
       const all = JSON.stringify((await db.query("select detail from public.activity")).rows);
       expect(all).not.toMatch(/555 0100|speaker@example|synthetic|@/);
+    });
+  });
+
+  it("keeps availability per slot (v14): any editor marks a lesson row of the day — no approach, no vetting needed — and the log has each change once", async () => {
+    const row = async (edition: number, start: number, kind = "lesson") =>
+      Number((await db.query("select id from public.grid_rows where edition_id = $1 and start_min = $2 and kind = $3", [edition, start, kind])).rows[0].id);
+    const [r390, r510, r600, r1200, lunch, practiceRow, oldRow] = [
+      await row(ed, 390), await row(ed, 510), await row(ed, 600), await row(ed, 1200), await row(ed, 795, "fixed"), await row(practice, 510), await row(old, 510),
+    ];
+    const s = Number((await db.query("insert into public.speakers (name, gender) values ('מרצה לזמינות', 'm') returning id")).rows[0].id); // pending, handled by nobody
+    const retired = Number((await db.query("insert into public.speakers (name, retired) values ('מרצה שפרש', true) returning id")).rows[0].id);
+    const set = "select public.set_slot_availability($1, $2, $3, $4, $5, $6)";
+    const mine = (q: (sql: string, params?: unknown[]) => Promise<pg.QueryResult>) =>
+      q("select day, row_id, kind, note, updated_by from public.slot_availability where speaker_id = $1 order by id", [s]).then((r) =>
+        r.rows.map((x) => ({ ...x, row_id: Number(x.row_id), updated_by: Number(x.updated_by) })));
+    await as(db, "authenticated", google(B), async (q) => {
+      expect(await refusal(q(set, [ed, s, 1, r510, "can", "  רק   בבוקר "]))).toBe("ok");
+      expect(await refusal(q(set, [ed, s, 1, r510, "can", "רק בבוקר"]))).toBe("ok"); // the same once cleaned: nothing changes, nothing is logged
+      expect(await refusal(q(set, [ed, s, 1, r390, "cannot", null]))).toBe("ok"); // Monday's 06:30 row is in play — only Sunday opens later
+      expect(await refusal(q(set, [ed, s, 1, r390, null, "נשכח"]))).toBe("ok"); // unknown again: the mark goes, its note with it
+      expect(await refusal(q(set, [ed, s, 1, r390, null, null]))).toBe("ok"); // nothing to remove
+      expect(await refusal(q(set, [ed, s, 1, r510, "cannot", null]))).toBe("ok");
+      expect(await mine(q)).toEqual([{ day: 1, row_id: r510, kind: "cannot", note: null, updated_by: member[B] }]);
+      for (const [args, code] of [
+        [[ed, s, 0, r390, "can", null], "outside_grid"], // Sunday, before the opening (08:30)
+        [[ed, s, 4, r1200, "can", null], "outside_grid"], // Thursday, after the close (19:00)
+        [[ed, s, 1, lunch, "can", null], "outside_grid"], // a meal is not a lesson row
+        [[ed, s, 1, practiceRow, "can", null], "outside_grid"], // another edition's row
+        [[ed, s, 1, -1, "can", null], "outside_grid"],
+        [[ed, s, 5, r510, "can", null], "bad_value"],
+        [[ed, s, null, r510, "can", null], "bad_value"],
+        [[ed, s, 1, r510, "maybe", null], "bad_value"],
+        [[ed, s, 1, r510, "can", "א".repeat(121)], "bad_value"],
+        [[ed, retired, 1, r510, "can", null], "speaker_retired"],
+        [[ed, -1, 1, r510, "can", null], "speaker_retired"],
+      ] as const) {
+        expect(await refusal(q(set, [...args])), JSON.stringify(args)).toBe(code);
+      }
+      // logged under no approach (nobody handles the speaker here), found by the speaker's timeline; newest first
+      const log = (await q("select public.speaker_activity($1) as l", [s])).rows[0].l as { entity: string; entity_id: number | null; kind: string; actor: number; detail: unknown }[];
+      expect(log.map((r) => [r.entity, r.entity_id, r.kind, Number(r.actor), r.detail])).toEqual([
+        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 510, end: 600, kind: "cannot" }],
+        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 390, end: 435, kind: null }],
+        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 390, end: 435, kind: "cannot" }],
+        ["approaches", null, "availability", member[B], { speaker: s, day: 1, start: 510, end: 600, kind: "can", note: "רק בבוקר" }],
+      ]);
+
+      // logistics may not mark — but reads it, as the whole team does: the table under RLS, and load_week
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(L))]);
+      expect(await refusal(q(set, [ed, s, 1, r600, "can", null]))).toBe("forbidden");
+      expect(await mine(q)).toEqual([{ day: 1, row_id: r510, kind: "cannot", note: null, updated_by: member[B] }]);
+      const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
+      expect(w.slotAvailability.filter((x: { speaker_id: number }) => x.speaker_id === s)).toEqual([
+        { id: expect.any(Number), speaker_id: s, day: 1, row_id: r510, kind: "cannot", note: null, updated_by: member[B] },
+      ]);
+      // another edition's member reads none of it, and may not mark here
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(PRACTICE))]);
+      expect(await mine(q)).toEqual([]);
+      expect(await refusal(q(set, [ed, s, 1, r600, "can", null]))).toBe("not_member");
+      // the handler, the edition's admin and a global admin may, like any editor
+      for (const [who, kind] of [[A, "can"], [ED_ADMIN, "cannot"], [ADMIN, "can"]]) {
+        await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(who))]);
+        expect(await refusal(q(set, [ed, s, 1, r600, kind, null])), who).toBe("ok");
+      }
+      // an archived edition: its admin only
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(OLD))]);
+      expect(await refusal(q(set, [old, s, 1, oldRow, "can", null]))).toBe("archived");
+      await q("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(google(OLD_ADMIN))]);
+      expect(await refusal(q(set, [old, s, 1, oldRow, "can", null]))).toBe("ok");
+    });
+    await as(db, "anon", null, async (q) => {
+      expect(await sqlstate(q("select * from public.slot_availability"))).toBe("42501");
+      expect(await sqlstate(q(set, [ed, s, 1, r510, "can", null]))).toBe("42501");
     });
   });
 
@@ -451,6 +529,13 @@ describe("the speaker pool", () => {
     };
     expect(await race((c) => c.query("select public.claim_speaker($1, $2)", [ed, s]))).toBe("approach_owned");
     expect((await db.query("select owner_member_id from public.approaches where speaker_id = $1", [s])).rows.map((r) => Number(r.owner_member_id))).toEqual([member[A]]);
+
+    // v14: two people proposing a speaker nobody handles yet, into two cells of different days (two day locks): one takes the speaker,
+    // «לפני שיחה», the other is told so — never a bare unique violation
+    const t = Number((await db.query("insert into public.speakers (name, gender, vetted) values ('מרצה למירוץ בשיבוץ', 'f', 'pending') returning id")).rows[0].id);
+    expect(await race((c, who) => c.query("select public.propose($1, $2, null, $3, 510, 600, null)", [ed, t, who === A ? 1 : 2]))).toBe("approach_owned");
+    expect((await db.query("select owner_member_id, status, version from public.approaches where speaker_id = $1", [t])).rows).toEqual([{ owner_member_id: String(member[A]), status: "claimed", version: 1 }]);
+    expect((await db.query("select p.state from public.pitches p join public.approaches a on a.id = p.approach_id where a.speaker_id = $1", [t])).rows).toEqual([{ state: "candidate" }]);
 
     // two people adding the same new name: one speaker, one refusal
     expect(await race((c) => c.query("select public.create_speaker($1, '{\"name\": \"מרצה חדשה במירוץ\"}', false, false, true)", [ed]))).toBe("speaker_exists");

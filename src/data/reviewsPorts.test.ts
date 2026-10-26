@@ -61,7 +61,7 @@ describe("after the week on the wire", () => {
 
   it("starts an edition with the option, previews it, purges with the typed label — by their parameter names", async () => {
     const preview = {
-      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, duty_phrases: 1, deactivate: 4,
+      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, call_template: true, duty_phrases: 1, deactivate: 4,
       admins_stay: 1, stays: { speakers: 60, categories: 10, fallen: 9, notes: 2 },
     };
     const { sb, sent } = client([[200, 8], [200, preview], [200, { transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, purged_at: "2027-02-20T10:00:00.000Z" }], [400, { code: "P0001", message: "confirm_mismatch" }]]);

@@ -97,6 +97,7 @@ describe("from placement to arrival", () => {
     expect(await sig("set_transport_details")).toEqual(["p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean DEFAULT false"]);
     expect(await sig("set_confirm_template")).toEqual(["p_edition bigint, p_body text"]);
     expect(await sig("set_duty_phrases")).toEqual(["p_edition bigint, p_phrases jsonb"]);
+    expect(await sig("set_call_template")).toEqual(["p_edition bigint, p_body text"]); // v14
     // whole shekels
     expect((await db.query("select data_type from information_schema.columns where table_name = 'lessons' and column_name = 'pay_amount'")).rows[0].data_type).toBe("integer");
   });
@@ -172,6 +173,7 @@ describe("from placement to arrival", () => {
       ["select public.set_transport_details($1, 'x', null, null, null)", [lesson]],
       ["select public.set_confirm_template($1, 'x')", [ed]],
       ["select public.set_duty_phrases($1, '[]')", [ed]],
+      ["select public.set_call_template($1, 'x')", [ed]],
     ];
     await as(db, "authenticated", google(STRANGER), async (q) => {
       for (const [sql, params] of calls) expect(await refusal(q(sql, params)), sql).toBe("not_member");
@@ -181,6 +183,7 @@ describe("from placement to arrival", () => {
     await as(db, "authenticated", google(OLD), async (q) => {
       expect(await refusal(q("select public.set_paid($1, true)", [lesson]))).toBe("not_member");
       expect(await refusal(q("select public.set_confirm_template($1, 'x')", [ed]))).toBe("not_member");
+      expect(await refusal(q("select public.set_call_template($1, 'x')", [ed]))).toBe("not_member");
     });
     await as(db, "authenticated", google(L), async (q) => {
       // logistics reads the schedule, writes paid_at and transport only — no titles, no approvals, no requests
@@ -188,6 +191,7 @@ describe("from placement to arrival", () => {
       expect(await refusal(q("select public.decide_payments(array[$1::bigint], array[1], 'approved')", [lesson]))).toBe("forbidden");
       expect(await refusal(q("select public.set_payment($1, 1, 100, 'none')", [lesson]))).toBe("forbidden");
       expect(await refusal(q("select public.set_escort($1, 1, null, true)", [lesson]))).toBe("forbidden");
+      expect(await refusal(q("select public.set_call_template($1, 'x')", [ed]))).toBe("forbidden"); // an edition admin's
       expect((await q("select count(*)::int as n from public.lessons")).rows[0].n).toBeGreaterThan(0);
     });
     await as(db, "anon", null, async (q) => {
@@ -244,14 +248,21 @@ describe("from placement to arrival", () => {
     expect((await db.query("select count(*)::int as n from public.transport_details where lesson_id = $1", [lesson])).rows[0].n).toBe(0);
   });
 
-  it("keeps the template and the duty phrases on the edition — never seeded; the next real edition carries them over", async () => {
+  it("keeps the templates and the duty phrases on the edition — never seeded; the next real edition carries them over", async () => {
     expect((await db.query("select settings from public.editions where id = $1", [ed])).rows[0].settings).toEqual({ lesson_minutes: 75, row_minutes: 90 });
     await commitAs(ED_ADMIN, "select public.set_confirm_template($1, $2)", [ed, "נוסח לדוגמה {{פנייה}}"]);
     await commitAs(ED_ADMIN, "select public.set_duty_phrases($1, $2::jsonb)", [ed, JSON.stringify([{ when: "self_intro", text: "ניסוח לדוגמה" }])]);
+    // v14: «נקודות לשיחה» — kept as written (its ends trimmed); blank goes back to the code's own text, then edited again
+    await commitAs(ED_ADMIN, "select public.set_call_template($1, $2)", [ed, "\r\n  נקודות לדוגמה\r\n{{שמי}}  \n"]);
+    expect((await db.query("select settings ->> 'call_template' as t from public.editions where id = $1", [ed])).rows[0].t).toBe("נקודות לדוגמה\n{{שמי}}");
+    await commitAs(ED_ADMIN, "select public.set_call_template($1, $2)", [ed, "  \n "]);
+    expect((await db.query("select settings from public.editions where id = $1", [ed])).rows[0].settings).not.toHaveProperty("call_template");
+    await commitAs(ED_ADMIN, "select public.set_call_template($1, $2)", [ed, "נקודות לדוגמה {{שמי}}"]);
     await as(db, "authenticated", google(ADMIN), async (q) => {
       const next = Number((await q("select public.start_edition('תשפ\"ח', null) as e")).rows[0].e);
       expect((await q("select settings from public.editions where id = $1", [next])).rows[0].settings).toEqual({
         lesson_minutes: 75, row_minutes: 90, confirm_template: "נוסח לדוגמה {{פנייה}}", duty_phrases: [{ when: "self_intro", text: "ניסוח לדוגמה" }],
+        call_template: "נקודות לדוגמה {{שמי}}",
       });
     });
   });

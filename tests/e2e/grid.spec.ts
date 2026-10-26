@@ -7,7 +7,8 @@ import { LRM } from "../../src/domain/time";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
 
-async function drag(page: Page, from: Locator, to: Locator) {
+/** Press on `from` and carry it over `to` — still held, so the grid can be read mid-drag. */
+async function carry(page: Page, from: Locator, to: Locator) {
   await from.scrollIntoViewIfNeeded();
   await to.scrollIntoViewIfNeeded();
   const a = (await from.boundingBox())!;
@@ -16,9 +17,14 @@ async function drag(page: Page, from: Locator, to: Locator) {
   await page.mouse.down();
   await page.mouse.move(a.x + a.width / 2 + 10, a.y + a.height / 2 + 10, { steps: 3 });
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+}
+
+async function drag(page: Page, from: Locator, to: Locator) {
+  await carry(page, from, to);
   await page.mouse.up();
 }
 
+const toast = (page: Page, text: string) => page.getByRole("status").filter({ hasText: text });
 
 const cell = (page: Page, day: number, start: number, end: number) => page.locator(`[data-drop="cell:${day}:${start}:${end}"]`);
 const speaker = (page: Page, id: number) => page.locator(`[data-speaker-id="${id}"]`);
@@ -49,16 +55,46 @@ test.describe("desktop", () => {
     await expect(page.locator('[data-day="4"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toBeVisible();
   });
 
-  test("a day short of women turns even once a woman is proposed, then closes", async ({ page }) => {
+  test("a day short of women turns even once a woman is proposed; she agrees on the call, and the lesson closes (v14)", async ({ page }) => {
     const wednesdayLate = cell(page, 3, 1350, 1440);
     await expect(wednesdayLate).toHaveAttribute("data-need", "f");
     await speaker(page, 42).getByRole("button", { name: "שבץ" }).click();
     await cell(page, 3, 1200, 1290).click();
     await expect(wednesdayLate).toHaveAttribute("data-need", "even");
     await page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "מרצה 42" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "סגרנו" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "השיעור נסגר" })).toBeVisible();
+    const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "מרצה 42" });
+    await expect(card).toContainText("לפני שיחה"); // placed is not called
+    await card.getByRole("group", { name: "תוצאת השיחה" }).getByRole("button", { name: "הסכימה", exact: true }).click();
+    await expect(toast(page, "עודכן: ד״ר מרצה 42 · הסכימה")).toBeVisible();
+    await card.getByRole("button", { name: "המרצה אישרה את השעה — סגירה" }).click();
+    await expect(toast(page, "השיעור נסגר")).toBeVisible();
     await expect(page.getByRole("button", { name: /ד״ר מרצה 42 — /, exact: false })).toBeVisible();
+  });
+
+  test("a dragged speaker colours the grid by what they said, and so does their sheet beside it (v14)", async ({ page }) => {
+    await page.getByRole("complementary", { name: "מאגר" }).getByRole("tab", { name: /בטיפול אחרים/ }).click();
+    const src = speaker(page, 30); // «יכולה» on Tuesday from 20:00 through the night
+    const late = cell(page, 2, 1350, 1440);
+    const said = page.locator('[data-day="2"] [data-lesson-id]').filter({ hasText: "מרצה 56" }); // the draft at Tuesday 20:00
+    const nothing = cell(page, 3, 1350, 1440); // Wednesday: nothing said
+    await expect(late).not.toHaveAttribute("data-fit");
+    await carry(page, src, late);
+    await expect(late).toHaveAttribute("data-fit", "can");
+    await expect(late).toContainText("✓ יכולה");
+    await expect(said).toHaveAttribute("data-fit", "can");
+    await expect(nothing).toHaveAttribute("data-fit", "neutral");
+    await page.keyboard.press("Escape"); // the drag called off: nothing proposed, the colours gone
+    await page.mouse.up();
+    await expect(late).not.toHaveAttribute("data-fit");
+    await expect(late).toBeEnabled();
+
+    await src.getByRole("button", { name: "כרטיס הרבנית מרצה 30" }).click();
+    const sheet = page.getByRole("dialog", { name: "הרבנית מרצה 30" });
+    await expect(sheet).toBeVisible();
+    await expect(late).toHaveAttribute("data-fit", "can");
+    await expect(nothing).toHaveAttribute("data-fit", "neutral");
+    await sheet.getByRole("button", { name: "סגירה", exact: true }).click();
+    await expect(late).not.toHaveAttribute("data-fit");
   });
 
   test("splitting a row into two parallel lessons needs a reason", async ({ page }) => {
@@ -156,6 +192,74 @@ test.describe("phone and tablet", () => {
   test("the night merge reads as one lesson with its continuation", async ({ page }) => {
     await page.getByRole("tab", { name: "שני" }).click();
     await expect(page.getByText("המשך השיעור").first()).toBeVisible();
+    await noSidewaysScroll(page);
+  });
+});
+
+// v14: the call first — the candidate card at every width
+test.describe("the call on the card (v14)", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(demoUrl());
+    await expect(page.locator("[data-day-header]").first()).toBeVisible();
+  });
+
+  const day = async (page: Page, name: string) => {
+    if (await page.getByRole("tab", { name }).isVisible()) await page.getByRole("tab", { name }).click();
+  };
+
+  test("the points to say, in the speaker's gender with the caller's name; each result is recorded, the current one not offered", async ({ page }) => {
+    // Sunday 16:00: two speakers talked to, waiting for an answer
+    await page.locator('[data-day="0"] [data-lesson-id]').filter({ hasText: "מרצה 09" }).click();
+    const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "ד״ר מרצה 09" });
+    await expect(card).toContainText("שוחחנו, מחכים לתשובה");
+    await expect(card.locator("[data-call-points]")).toBeHidden(); // folded
+    await card.getByText("📞 נקודות לשיחה").click();
+    const points = card.locator("[data-call-points]");
+    await expect(points).toContainText("*אני מדריך/ה (הדגמה) מהמדרשה הגבוהה בעין פרת");
+    await expect(points).toContainText("*נשמח שתגיע ללמד שעה ורבע, תסכים?");
+    const results = card.getByRole("group", { name: "תוצאת השיחה" });
+    await expect(results.getByRole("button", { name: "שוחחנו, מחכים לתשובה" })).toHaveCount(0);
+    await results.getByLabel("מה נאמר בשיחה").fill("נתון לדוגמה: לחזור אחרי שבת");
+    await results.getByRole("button", { name: "לא ענה", exact: true }).click();
+    await expect(toast(page, "עודכן: ד״ר מרצה 09 · לא ענה")).toBeVisible();
+    await expect(card).toContainText("לא ענה");
+    await expect(results.getByRole("button", { name: "שוחחנו, מחכים לתשובה" })).toBeVisible();
+    await expect(results.getByRole("button", { name: "לא ענה", exact: true })).toHaveCount(0);
+    await noSidewaysScroll(page);
+  });
+
+  test("agreed and waiting for the instructor: «אישור» on the card, then the closing", async ({ page }) => {
+    await day(page, "שלישי");
+    await page.locator('[data-day="2"] [data-lesson-id]').filter({ hasText: "מרצה 56" }).click();
+    const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "מרצה 56" });
+    await expect(card).toContainText("הסכימה");
+    await expect(card).toContainText("ממתינה לאישור המדריך/ה");
+    await expect(card.getByRole("button", { name: /את השעה — סגירה/ })).toHaveCount(0);
+    await card.getByRole("button", { name: "אישור", exact: true }).click();
+    await expect(toast(page, "מרצה 56 אושרה")).toBeVisible();
+    await expect(card.getByRole("button", { name: "המרצה אישרה את השעה — סגירה" })).toBeFocused(); // the focus moves on with the card
+    await card.getByRole("button", { name: "המרצה אישרה את השעה — סגירה" }).click();
+    await expect(toast(page, "השיעור נסגר")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "שיעור סגור" })).toBeVisible();
+  });
+
+  test("«סירבה» frees the slot — the chooser first, who declined folded — and «החזרה לתהליך» brings her back", async ({ page }) => {
+    await day(page, "רביעי");
+    await cell(page, 3, 1200, 1290).click();
+    const free = page.getByRole("dialog", { name: "משבצת פנויה" });
+    await free.getByLabel("חיפוש מרצה למשבצת").fill("מרצה 42");
+    await free.getByRole("button", { name: "הצע", exact: true }).click();
+    const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "מרצה 42" });
+    await card.getByRole("group", { name: "תוצאת השיחה" }).getByRole("button", { name: "סירבה", exact: true }).click();
+    await expect(toast(page, "עודכן: ד״ר מרצה 42 · סירבה")).toBeVisible();
+    await expect(free.getByLabel("חיפוש מרצה למשבצת")).toBeFocused();
+    await expect(page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "פנוי" })).toHaveAttribute("aria-label", /, פנוי$/);
+    await free.getByText("סירבו כאן").click();
+    const declined = free.locator("[data-pitch-id]").filter({ hasText: "מרצה 42" });
+    await expect(declined).toContainText("סירבה");
+    await declined.getByRole("button", { name: "החזרה לתהליך" }).click();
+    await expect(toast(page, "ד״ר מרצה 42 חזרה לתהליך")).toBeVisible();
+    await expect(card).toContainText("לפני שיחה");
     await noSidewaysScroll(page);
   });
 });

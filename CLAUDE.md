@@ -85,7 +85,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (`ref(key)` on the button, `back(key)` on cancel; a new Confirm does the same — DECISIONS «המיקוד»).
 - `src/data/speakers.ts` — the speaker pool (`port.speakers`): search first and create, edit, vet,
   contacts (fetched one speaker at a time, never in a Week or Realtime), approaches, hand-overs,
-  availability. SupabaseSpeakers calls the v6 RPCs; DemoSpeakers runs them on the engine (CONTRACT
+  availability per slot (v14). SupabaseSpeakers calls the RPCs; DemoSpeakers runs them on the engine (CONTRACT
   «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
 - **From placement to arrival (milestone 3, schema v7):** a closed lesson's stages — payment and
   transport (the handler asks, a global admin decides), the summary message, escorts, sources —
@@ -265,7 +265,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v12 (b9311bc, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v13 (c6d6012, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -286,6 +286,15 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   «לפי ימים»), `TopicMatrix.tsx` (topic × day, «לפי ימים»); `TopicChip`/`topicsOf` and `NO_TOPIC_COLOR` in
   `src/grid/bits.tsx`. Every fold is `Fold` (`src/screens/settings/kit.tsx`); a panel's parts are
   `Section` (`count`, `aside`, `label`) inside `Sheet` (`title` node + `label`, `accent` band) — DECISIONS «כל החלונות».
+- **The speakers rethought (schema v14):** the call is the first step. `propose` makes a `claimed` approach and a `candidate`
+  pitch (never «פנו»); the call's result is `set_approach_status` (the card follows the APPROACH, labels from one place:
+  `statusLabel`); the instructor's vetting gates only `close_lesson` (`not_vetted`); `set_pitch` reviving a declined pitch
+  also returns a declined approach to `claimed`. The badge (`waitingForApproval`) = agreed-and-pending + payments.
+  «נקודות לשיחה»: `src/domain/callPoints.ts` (the instructor's text verbatim as the default; `settings.call_template` /
+  `set_call_template` to edit; never blocks), shared UI `src/screens/speakers/call.tsx`. Availability per slot:
+  `slot_availability` (edition, speaker, day, lesson row; can/cannot; any content member; `set_slot_availability`),
+  converted from v6's table in the schema run; every reader goes through `src/domain/availability.ts`. «המרצים שלי»
+  has a «כל הצוות» tab (`/mine/:tab?`, `TeamBoard.tsx`, `teamBoard` in `src/domain/mine.ts`). DECISIONS «המרצים מחדש — גרסה 14».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

@@ -1,25 +1,32 @@
 // The approvals queue (/approvals) — a global admin's: only they vet speakers
 // (DECISIONS, milestone 2 §3) and decide payment and transport requests
-// (milestone 3). Each list: one tap to approve, a short note to reject,
-// checkboxes to approve a batch. A request is decided at the version on
-// screen: one changed meanwhile is refused (`stale`) and read again, never
-// approved unseen. The header's badge counts both lists.
+// (milestone 3). First the speakers who agreed to teach and wait for the
+// approval (v14: closing their time is the one step it holds up), then the
+// requests — both counted by the header's badge — then, folded, every other
+// speaker waiting for it (the archive's batch approve among them). Each list:
+// one tap to approve, a short note to reject, checkboxes to approve a batch. A
+// request is decided at the version on screen: one changed meanwhile is refused
+// (`stale`) and read again, never approved unseen.
 import { useEffect, useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
 import { LIMITS } from "../../data/speakerRules";
 import type { Me } from "../../data/types";
-import { type PaymentRow, pendingPayments, pendingSpeakers, pendingWhoTaught } from "../../domain/mine";
+import { agreedPending, type PaymentRow, pendingPayments, pendingSpeakers, pendingWhoTaught } from "../../domain/mine";
 import { requestText } from "../../domain/stages";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import { STAGE_LIMITS } from "../../data/stageRules";
 import { byGender, displayName } from "../../domain/names";
 import type { Edition, Lesson, Speaker, Week } from "../../domain/types";
 import { useMedia } from "../../lib/useMedia";
-import { Badge, Button, Confirm, Field, GENDER_LABEL, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, Fold, GENDER_LABEL, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
 import { useToast } from "./parts";
 import { SpeakerSheet } from "./SpeakerSheet";
+
+type Vet = (key: string, ids: number[], state: "approved" | "rejected", note: string | null, ok: string) => Promise<boolean>;
+
+const approvedText = (n: number) => (n === 1 ? "מרצה אחד/ת אושר/ה" : `${n} מרצים אושרו`);
 
 export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
@@ -27,33 +34,116 @@ export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
   const wide = useMedia("(min-width: 1024px)");
   const { notify, clear, node } = useToast();
   const { busy, run } = useRunner(notify, clear);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [note, setNote] = useState("");
   const [open, setOpen] = useState<number | null>(null);
-  const noteId = useId();
-  const pending = week ? pendingSpeakers(week) : [];
-  const pendingKey = pending.map((s) => s.id).join(",");
-
-  // A speaker someone else approved meanwhile leaves the selection too.
-  useEffect(() => {
-    const ids = new Set(pendingKey ? pendingKey.split(",").map(Number) : []);
-    setSelected((cur) => {
-      const next = new Set([...cur].filter((id) => ids.has(id)));
-      return next.size === cur.size ? cur : next;
-    });
-  }, [pendingKey]);
+  // each list's note to its approvals (the archive's batch takes the folded list's)
+  const [agreedNote, setAgreedNote] = useState("");
+  const [restNote, setRestNote] = useState("");
 
   if (store.problem === "none") return <p className="mt-10 text-center text-ink-soft">עוד לא נפתח מחזור.</p>;
   if (store.problem === "error") return <p className="mt-10 text-center text-bad">לא הצלחנו לטעון. כדאי לרענן את הדף.</p>;
   if (!week) return <p className="mt-10 text-center text-ink-soft">טוען…</p>;
 
-  const vet = async (key: string, ids: number[], state: "approved" | "rejected", withNote: string | null, ok: string) => {
+  const agreed = agreedPending(week);
+  const agreedIds = new Set(agreed.map((s) => s.id));
+  const rest = pendingSpeakers(week).filter((s) => !agreedIds.has(s.id));
+  const vet: Vet = async (key, ids, state, withNote, ok) => {
     const done = await run(key, () => port.speakers.vet(ids, state, withNote), ok);
     await store.reload();
-    if (done && state === "approved") setNote("");
     return done;
   };
-  const all = pending.length > 0 && selected.size === pending.length;
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4 pb-20">
+      <h2 className="font-display text-2xl font-extrabold">אישורים</h2>
+
+      <Panel title="הסכימו — ממתינים לאישורך" aside={agreed.length === 1 ? "ממתין/ה אחד/ת" : `${agreed.length} ממתינים`}>
+        {agreed.length === 0 ? (
+          <p className="text-ink-soft">אין מרצים שהסכימו ומחכים לאישור.</p>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-soft">הסכימו ללמד במחזור הזה. את השעה סוגרים איתם/ן אחרי האישור.</p>
+            <PendingList label="הסכימו — ממתינים לאישור" batch="agreed" speakers={agreed} week={week} busy={busy} note={agreedNote} onNote={setAgreedNote} vet={vet} onOpen={setOpen} />
+          </div>
+        )}
+      </Panel>
+
+      <Payments port={port} week={week} busy={busy} run={run} reload={store.reload} />
+
+      <div className="rounded-xl border border-line bg-card px-4 shadow-sm sm:px-5">
+        <Fold title="עוד ממתינים לאישור" hint={rest.length}>
+          {rest.length === 0 ? (
+            <p className="pb-2 text-ink-soft">אין עוד מרצים שממתינים לאישור.</p>
+          ) : (
+            <div className="space-y-3 pb-2">
+              <p className="text-sm text-ink-soft">מרצה שאושר/ה אפשר לסגור איתו/ה שעה. עד אז הצוות יכול להציע ולשוחח.</p>
+              {store.editions
+                .filter((e) => e.kind === "archive")
+                .map((e) => (
+                  <TaughtBatch
+                    key={e.id}
+                    port={port}
+                    edition={e}
+                    pending={rest}
+                    busy={busy}
+                    onApprove={async (ids) => {
+                      const done = await vet(`taught:${e.id}`, ids, "approved", restNote.trim() || null, approvedText(ids.length));
+                      if (done) setRestNote("");
+                      return done;
+                    }}
+                  />
+                ))}
+              <PendingList label="עוד ממתינים לאישור" batch="rest" speakers={rest} week={week} busy={busy} note={restNote} onNote={setRestNote} vet={vet} onOpen={setOpen} />
+            </div>
+          )}
+        </Fold>
+      </div>
+
+      {open != null && (
+        <SpeakerSheet key={open} port={port} me={me} week={week} speakerId={open} wide={wide} onClose={() => setOpen(null)} notify={notify} clear={clear} reload={store.reload} />
+      )}
+      {node}
+    </div>
+  );
+}
+
+/** One list of speakers waiting for approval: its note, «סימון הכול» and the batch, and a row each. */
+function PendingList({
+  label,
+  batch,
+  speakers,
+  week,
+  busy,
+  note,
+  onNote,
+  vet,
+  onOpen,
+}: {
+  label: string;
+  /** Tells this list's batch from the other's (the runner's busy key). */
+  batch: string;
+  speakers: Speaker[];
+  week: Week;
+  busy: string | null;
+  note: string;
+  onNote: (note: string) => void;
+  vet: Vet;
+  onOpen: (speakerId: number) => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const noteId = useId();
+  const ids = speakers.map((s) => s.id).join(",");
+  // A speaker someone else approved meanwhile (or who moved to the other list) leaves the selection too.
+  useEffect(() => {
+    const here = new Set(ids ? ids.split(",").map(Number) : []);
+    setSelected((cur) => {
+      const next = new Set([...cur].filter((id) => here.has(id)));
+      return next.size === cur.size ? cur : next;
+    });
+  }, [ids]);
+  const approve = async (key: string, list: number[], ok: string) => {
+    if (await vet(key, list, "approved", note.trim() || null, ok)) onNote("");
+  };
+  const all = speakers.length > 0 && selected.size === speakers.length;
   const toggle = (id: number) =>
     setSelected((cur) => {
       const next = new Set(cur);
@@ -62,78 +152,48 @@ export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
     });
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 pb-20">
-      <h2 className="font-display text-2xl font-extrabold">אישורים</h2>
-
-      <Panel title="מרצים שממתינים לאישור" aside={pending.length === 1 ? "ממתין/ה אחד/ת" : `${pending.length} ממתינים`}>
-        {pending.length === 0 ? (
-          <p className="text-ink-soft">אין מרצים שממתינים לאישור.</p>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-ink-soft">מרצה שאושר/ה אפשר לסגור איתו/ה שיעור. עד אז הצוות יכול להציע, אבל רק כמועמד/ת.</p>
-            {store.editions
-              .filter((e) => e.kind === "archive")
-              .map((e) => (
-                <TaughtBatch
-                  key={e.id}
-                  port={port}
-                  edition={e}
-                  pending={pending}
-                  busy={busy}
-                  onApprove={(ids) => vet(`taught:${e.id}`, ids, "approved", note.trim() || null, ids.length === 1 ? "מרצה אחד/ת אושר/ה" : `${ids.length} מרצים אושרו`)}
-                />
-              ))}
-            <Field id={noteId} label="הערה לאישור (לא חובה, גלויה לצוות)">
-              <input id={noteId} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
-            </Field>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-                <input
-                  type="checkbox"
-                  checked={all}
-                  ref={(el) => {
-                    if (el) el.indeterminate = selected.size > 0 && !all;
-                  }}
-                  onChange={() => setSelected(all ? new Set() : new Set(pending.map((s) => s.id)))}
-                  className="size-5 accent-ink"
-                />
-                סימון הכול
-              </label>
-              <Button
-                kind="primary"
-                className="ms-auto"
-                disabled={selected.size === 0}
-                busy={busy === "batch"}
-                onClick={() => void vet("batch", [...selected], "approved", note.trim() || null, selected.size === 1 ? "מרצה אחד/ת אושר/ה" : `${selected.size} מרצים אושרו`)}
-              >
-                {selected.size > 0 ? `אישור ${selected.size} מסומנים` : "אישור המסומנים"}
-              </Button>
-            </div>
-            <ul aria-label="ממתינים לאישור" className="divide-y divide-line border-y border-line">
-              {pending.map((s) => (
-                <PendingItem
-                  key={s.id}
-                  s={s}
-                  week={week}
-                  checked={selected.has(s.id)}
-                  onToggle={() => toggle(s.id)}
-                  onOpen={() => setOpen(s.id)}
-                  busy={busy}
-                  onApprove={() => vet(`approve:${s.id}`, [s.id], "approved", note.trim() || null, `${displayName(s)} ${byGender(s.gender, "אושר", "אושרה")}`)}
-                  onReject={(why) => vet(`reject:${s.id}`, [s.id], "rejected", why, `${displayName(s)} ${byGender(s.gender, "לא אושר", "לא אושרה")}`)}
-                />
-              ))}
-            </ul>
-          </div>
-        )}
-      </Panel>
-
-      <Payments port={port} week={week} busy={busy} run={run} reload={store.reload} />
-
-      {open != null && (
-        <SpeakerSheet key={open} port={port} me={me} week={week} speakerId={open} wide={wide} onClose={() => setOpen(null)} notify={notify} clear={clear} reload={store.reload} />
-      )}
-      {node}
+    <div role="group" aria-label={label} className="space-y-3">
+      <Field id={noteId} label="הערה לאישור (לא חובה, גלויה לצוות)">
+        <input id={noteId} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => onNote(e.target.value)} className={INPUT} />
+      </Field>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
+          <input
+            type="checkbox"
+            checked={all}
+            ref={(el) => {
+              if (el) el.indeterminate = selected.size > 0 && !all;
+            }}
+            onChange={() => setSelected(all ? new Set() : new Set(speakers.map((s) => s.id)))}
+            className="size-5 accent-ink"
+          />
+          סימון הכול
+        </label>
+        <Button
+          kind="primary"
+          className="ms-auto"
+          disabled={selected.size === 0}
+          busy={busy === `batch:${batch}`}
+          onClick={() => void approve(`batch:${batch}`, [...selected], approvedText(selected.size))}
+        >
+          {selected.size > 0 ? `אישור ${selected.size} מסומנים` : "אישור המסומנים"}
+        </Button>
+      </div>
+      <ul className="divide-y divide-line border-y border-line">
+        {speakers.map((s) => (
+          <PendingItem
+            key={s.id}
+            s={s}
+            week={week}
+            checked={selected.has(s.id)}
+            onToggle={() => toggle(s.id)}
+            onOpen={() => onOpen(s.id)}
+            busy={busy}
+            onApprove={() => approve(`approve:${s.id}`, [s.id], `${displayName(s)} ${byGender(s.gender, "אושר", "אושרה")}`)}
+            onReject={(why) => vet(`reject:${s.id}`, [s.id], "rejected", why, `${displayName(s)} ${byGender(s.gender, "לא אושר", "לא אושרה")}`)}
+          />
+        ))}
+      </ul>
     </div>
   );
 }
@@ -227,7 +287,7 @@ function PendingItem({
   onToggle: () => void;
   onOpen: () => void;
   busy: string | null;
-  onApprove: () => Promise<boolean>;
+  onApprove: () => Promise<void>;
   onReject: (note: string | null) => Promise<boolean>;
 }) {
   const id = useId();

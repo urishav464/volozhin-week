@@ -97,10 +97,36 @@ describe("warningsFor", () => {
     const w = emptyWeek();
     const s = addSpeaker(w, "m", "פלוני");
     const a = addApproach(w, s, "declined");
-    w.availability.push({ id: 1, approach_id: a.id, day: 2, from_min: 390, to_min: 780, kind: "cannot", note: null });
+    w.slotAvailability.push({ id: 1, speaker_id: s.id, day: 2, row_id: 4, kind: "cannot", note: null, updated_by: null }); // Tuesday 08:30
     pitch(w, addLesson(w, 2, 510, 600), a);
     expect(kinds(w)).toEqual(["declined_pitch", "outside_availability"]);
-    expect(warningsFor(w).find((x) => x.kind === "outside_availability")!.message).toContain("פלוני אמר שלא יכול");
+    expect(warningsFor(w).find((x) => x.kind === "outside_availability")!.message).toBe(`פלוני אמר שלא יכול בשלישי ${LRM}08:30–10:00`);
+    expect(warningsFor(w).find((x) => x.kind === "declined_pitch")!.message).toBe("פלוני סירב השנה, ועדיין מוצע כאן");
+  });
+
+  it("judges availability per slot over every lesson row a lesson covers: «לא» on any of them warns, «יכול/ה» never does (v14)", () => {
+    const w = emptyWeek();
+    const s = addSpeaker(w, "f", "פלונית");
+    const a = addApproach(w, s, "claimed");
+    const slot = (day: 0 | 1 | 2 | 3 | 4, row_id: number, kind: "can" | "cannot") =>
+      w.slotAvailability.push({ id: w.slotAvailability.length + 1, speaker_id: s.id, day, row_id, kind, note: null, updated_by: null });
+    const outside = () => warningsFor(w).filter((x) => x.kind === "outside_availability").map((x) => x.lessonIds[0]);
+    slot(1, 18, "can"); // Monday 00:30
+    slot(1, 19, "cannot"); // Monday 02:00
+    const night = addLesson(w, 1, 1470, 1740); // the merged night 00:30–05:00: covers both rows
+    pitch(w, night, a, "candidate");
+    const early = addLesson(w, 1, 1470, 1560); // 00:30 alone: «יכול/ה»
+    pitch(w, early, a, "candidate");
+    expect(outside()).toEqual([night.id]);
+    expect(warningsFor(w).find((x) => x.kind === "outside_availability")!.message).toBe(`פלונית אמרה שלא יכולה בשני ${LRM}00:30–05:00`);
+    // another speaker's «לא», the same day and row, is not hers; another day is not this one
+    const other = addSpeaker(w, "m");
+    w.slotAvailability.push({ id: 9, speaker_id: other.id, day: 1, row_id: 18, kind: "cannot", note: null, updated_by: null });
+    slot(2, 18, "cannot");
+    expect(outside()).toEqual([night.id]);
+    // a withdrawn pitch says nothing
+    w.pitches.find((p) => p.lesson_id === night.id)!.state = "withdrawn";
+    expect(outside()).toEqual([]);
   });
 
   it("warns on a lesson outside the week's hours or over a fixed block", () => {

@@ -2,9 +2,11 @@
 // placement (drag on a desktop, «שבץ» everywhere). A speaker's name opens their
 // sheet; «+ מרצה חדש/ה» starts the search-first create flow with what was typed.
 import { useMemo, useState } from "react";
+import { activeLessonRows, dayKind, slotKey } from "../domain/availability";
 import { byGender, displayName } from "../domain/names";
-import { DAYS, DAY_NAMES, fmtRange } from "../domain/time";
+import { DAYS, DAY_NAMES, fmt, fmtRange } from "../domain/time";
 import type { Gender, Speaker } from "../domain/types";
+import { statusLabel, vettingLabel } from "../lib/labels";
 import { Chip, GenderDot, TopicChip, topicsOf } from "./bits";
 import { type GridModel, POOL_SECTION_LABEL, type PoolSection, poolSection, speakerMatches } from "./model";
 
@@ -150,7 +152,7 @@ function SpeakerCard({
         >
           {displayName(s)}
         </button>
-        {s.vetted !== "approved" && <Chip tone="warn">{byGender(s.gender, "ממתין", "ממתינה")} לאישור</Chip>}
+        {s.vetted !== "approved" && <Chip tone={s.vetted === "rejected" ? "bad" : "warn"}>{vettingLabel(s.vetted, s.gender)}</Chip>}
         {canEdit && section !== "closed" && (
           <button
             type="button"
@@ -168,31 +170,42 @@ function SpeakerCard({
           <TopicChip key={t.name} name={t.name} category={t.category} />
         ))}
         {section === "others" && owner && <span className="truncate">בטיפול: {owner}</span>}
-        {section === "mine" && <span>{a?.status === "positive" ? "חיובי" : a?.status === "claimed" ? "נתפס/ה" : "פנית"}</span>}
-        {section === "declined" && <span>{byGender(s.gender, "סירב", "סירבה")} השנה</span>}
+        {section === "mine" && a && <span>{statusLabel(a.status, s.gender)}</span>}
+        {section === "declined" && <span>{statusLabel("declined", s.gender)} השנה</span>}
         {section === "closed" && closedLesson && (
           <span className="truncate">
             {DAY_NAMES[closedLesson.day]} <bdi>{fmtRange(closedLesson.start_min, closedLesson.end_min)}</bdi>
           </span>
         )}
-        <Availability model={model} speakerId={s.id} />
+        <Availability model={model} speaker={s} />
       </div>
     </li>
   );
 }
 
-function Availability({ model, speakerId }: { model: GridModel; speakerId: number }) {
-  const a = model.approachBySpeaker.get(speakerId);
-  if (!a) return null;
-  const said = model.week.availability.filter((v) => v.approach_id === a.id);
-  if (said.length === 0) return null;
+/**
+ * The speaker's availability day by day (v14: per slot — src/domain/availability.ts): red when any of the day's lesson
+ * rows is «לא», green when one is «יכול/ה». The squares say it to the eye; the strip's name, to a screen reader.
+ */
+function Availability({ model, speaker: s }: { model: GridModel; speaker: Speaker }) {
+  const mine = model.slots.get(s.id);
+  if (!mine) return null;
+  const { rows, edition } = model.week;
+  const days = DAYS.map((d) => {
+    const active = activeLessonRows(rows, edition, d);
+    const at = (kind: "can" | "cannot") => active.filter((r) => mine.get(slotKey(d, r.id))?.kind === kind).map((r) => fmt(r.start_min));
+    const can = at("can");
+    const cannot = at("cannot");
+    const said = [cannot.length > 0 && `${byGender(s.gender, "לא יכול", "לא יכולה")} ${cannot.join(", ")}`, can.length > 0 && `${byGender(s.gender, "יכול", "יכולה")} ${can.join(", ")}`].filter(Boolean);
+    return { d, kind: dayKind(mine, d, active), text: `${DAY_NAMES[d]}: ${said.join("; ") || "לא נמסר"}` };
+  });
+  // nothing said — or only of rows the week no longer holds
+  if (!days.some((x) => x.kind)) return null;
   return (
-    <span className="relative z-10 ms-auto inline-flex gap-0.5" aria-label="זמינות לפי ימים">
-      {DAYS.map((d) => {
-        const v = said.filter((x) => x.day === d);
-        const tone = v.some((x) => x.kind === "cannot") ? "bg-red-300" : v.some((x) => x.kind === "can") ? "bg-emerald-400" : "bg-line";
-        return <span key={d} title={`${DAY_NAMES[d]}: ${v.map((x) => `${x.kind === "can" ? "יכול/ה" : "לא"} ${fmtRange(x.from_min, x.to_min)}`).join(", ") || "לא נמסר"}`} className={`h-2 w-2.5 rounded-sm ${tone}`} />;
-      })}
+    <span role="img" className="relative z-10 ms-auto inline-flex gap-0.5" aria-label={`זמינות — ${days.filter((x) => x.kind).map((x) => x.text).join(" · ")}`}>
+      {days.map(({ d, kind, text }) => (
+        <span key={d} title={text} className={`h-2 w-2.5 rounded-sm ${kind === "cannot" ? "bg-red-300" : kind === "can" ? "bg-emerald-400" : "bg-line"}`} />
+      ))}
     </span>
   );
 }

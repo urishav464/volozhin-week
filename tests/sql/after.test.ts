@@ -536,6 +536,7 @@ describe("after the week", () => {
           grid_rows: Number(await val(run, "owner", "select count(*) from public.grid_template")),
           milestones: 0,
           confirm_template: false,
+          call_template: false,
           duty_phrases: 0,
           deactivate: nonAdmins,
           admins_stay: 1,
@@ -564,10 +565,12 @@ describe("after the week", () => {
         await run(ED_ADMIN, "insert into public.milestones (edition_id, title, days_before) values ($1, 'אבן דרך לבדיקה', 42), ($1, 'עוד אבן דרך', 7)", [ed]);
         await run(ED_ADMIN, "select public.set_duty_phrases($1, '[{\"when\": \"always\", \"text\": \"ניסוח לבדיקה\"}]')", [ed]);
         await run(ED_ADMIN, "select public.set_confirm_template($1, 'נוסח לבדיקה')", [ed]);
+        await run(ED_ADMIN, "select public.set_call_template($1, 'נקודות לבדיקה')", [ed]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(true)")) as Record<string, unknown>;
-        expect(preview).toMatchObject({ archive: [{ id: ed, label: "תשפ\"ז" }], carry_from: { id: ed }, milestones: 2, confirm_template: true, duty_phrases: 1, admins_stay: 1 });
+        expect(preview).toMatchObject({ archive: [{ id: ed, label: "תשפ\"ז" }], carry_from: { id: ed }, milestones: 2, confirm_template: true, call_template: true, duty_phrases: 1, admins_stay: 1 });
         const newId = Number(await val(run, ADMIN, "select public.start_edition('תשפ\"ח', null)")); // the option off: nobody is deactivated
         expect(Number(await val(run, "owner", "select count(*) from public.milestones where edition_id = $1", [newId]))).toBe(2);
+        expect(await val(run, "owner", "select settings ->> 'call_template' from public.editions where id = $1", [newId])).toBe("נקודות לבדיקה");
         expect(Number(await val(run, "owner", "select count(*) from public.members where not active"))).toBe(0);
       });
     });

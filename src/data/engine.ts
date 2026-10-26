@@ -21,7 +21,6 @@
 // Week holds the edition's plans and the names they are for. And «איך עבר» and
 // the purge after the week (CONTRACT.md «After the week», milestone 6): the
 // reviews are kept in `shared`, never in a Week, as the database keeps them apart.
-import { dayPart } from "../domain/dayParts";
 import { dutyNotes } from "../domain/escorts";
 import { addDays, israelDate } from "../domain/israelTime";
 import { earlierEdition, purgeAllowed, reviewWindow } from "../domain/reviews";
@@ -31,7 +30,7 @@ import { nameKey } from "../domain/nameKey";
 import { type Day, DAY_END, DAY_START, overlaps } from "../domain/time";
 import { similarity } from "../domain/trigram";
 import type {
-  Approach, ApproachStatus, Availability, DutyPhrase, GridRow, Lesson, MemorialPlan, MemorialPolicy, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts,
+  Approach, ApproachStatus, DutyPhrase, GridRow, Lesson, MemorialPlan, MemorialPolicy, Pitch, PitchState, SourceFile, SourceMime, Speaker, SpeakerContacts,
   Transport, TransportDetails, Vetting, Week,
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
@@ -202,26 +201,23 @@ export class Engine {
 
       const lesson = this.targetDraft(target);
 
+      // v14: placing a speaker is not calling them — a new approach is «לפני שיחה» (claimed); the call's result is set_approach_status
       if (!approach) {
-        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "approached", avail_note: null, offered_to: null, version: 1 };
+        approach = { id: this.nextId(this.week.approaches), speaker_id: speakerId, owner_member_id: this.actor.memberId, status: "claimed", avail_note: null, offered_to: null, version: 1 };
         this.week.approaches.push(approach);
-      } else if (approach.owner_member_id == null || approach.owner_member_id === this.actor.memberId) {
-        approach.owner_member_id = this.actor.memberId;
-        if (approach.status === "claimed") this.bumpApproach(approach, "approached");
+        this.logApproach(approach, "insert", null);
+      } else if (approach.owner_member_id == null) {
+        // nobody's (back in the pool): whoever places them takes them, as claim_speaker does
+        Object.assign(approach, { owner_member_id: this.actor.memberId, offered_to: null, version: approach.version + 1 });
+        this.logApproach(approach, "update", null);
       }
 
-      let state: PitchState = mode === "offer" && approach.owner_member_id !== this.actor.memberId ? "candidate" : "approached";
-      if (speaker!.vetted !== "approved") state = "candidate";
-
+      // a pitch is a candidate until the lesson closes; a live one is left as it is, a dead one revived
       let pitch = this.week.pitches.find((p) => p.lesson_id === lesson.id && p.approach_id === approach!.id);
       if (pitch) {
-        if (LIVE_PITCH.has(pitch.state)) {
-          if (state === "approached" && pitch.state === "candidate") pitch.state = "approached";
-        } else {
-          Object.assign(pitch, { state, proposed_by: this.actor.memberId, at: this.now() });
-        }
+        if (!LIVE_PITCH.has(pitch.state)) Object.assign(pitch, { state: "candidate", proposed_by: this.actor.memberId, at: this.now() });
       } else {
-        pitch = { id: this.nextId(this.week.pitches), lesson_id: lesson.id, approach_id: approach.id, state, proposed_by: this.actor.memberId, at: this.now() };
+        pitch = { id: this.nextId(this.week.pitches), lesson_id: lesson.id, approach_id: approach.id, state: "candidate", proposed_by: this.actor.memberId, at: this.now() };
         this.week.pitches.push(pitch);
       }
       return { lesson_id: lesson.id, pitch_id: pitch.id };
@@ -250,7 +246,11 @@ export class Engine {
       const l = this.lesson(p.lesson_id);
       if (l.state !== "draft") fail("cell_closed");
       if (!(LIVE_PITCH.has(p.state) || p.state === "declined")) return;
-      if (state === "approached" && this.speakerOf(a).vetted !== "approved") fail("not_vetted");
+      // v14: no vetting gate here (close_lesson's alone). «החזרה לתהליך»: a declined pitch brought back takes a declined approach with it
+      if (p.state === "declined" && state !== "declined" && a.status === "declined") {
+        this.bumpApproach(a, "claimed");
+        this.logApproach(a, "update", null);
+      }
       p.state = state;
     });
   }
@@ -583,7 +583,7 @@ export class Engine {
       if (!STATUSES.includes(status)) fail("bad_value");
       const n = cleanLine(note, LIMITS.note);
       const s = this.speakerOf(a);
-      if ((status === "approached" || status === "positive") && s.vetted !== "approved") fail("not_vetted");
+      // v14: the call's result is recorded whoever the speaker is — the instructor's approval is close_lesson's
       if (status !== "positive" && this.closedHere(s.id)) fail("lesson_closed");
       if (status === a.status && n == null) return;
       // «סירב/ה»: every cell they are still pitched in says so too
@@ -630,28 +630,35 @@ export class Engine {
     });
   }
 
-  /** One availability chip (src/domain/dayParts.ts); rows of the day overlapping the part are cut back to what lies outside it. */
-  setAvailability(speakerId: number, day: number, part: string, kind: "can" | "cannot" | null, note: string | null = null): void {
+  /**
+   * public.set_slot_availability (v14): one slot — a lesson row in play that day — is can / cannot / unknown (null).
+   * Any editor of the edition, no approach needed (src/domain/availability.ts reads it).
+   */
+  setSlotAvailability(speakerId: number, day: number, rowId: number, kind: "can" | "cannot" | null, note: string | null = null): void {
     this.tx(() => {
       this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId);
+      if (!s || s.retired) fail("speaker_retired");
       if (!Number.isInteger(day) || day < 0 || day > 4) fail("bad_value");
-      const range = dayPart(part) ?? fail("bad_value");
+      const row = this.lessonRows(day as Day).find((r) => r.id === rowId) ?? fail("outside_grid");
       if (kind != null && kind !== "can" && kind !== "cannot") fail("bad_value");
-      const n = cleanLine(note, LIMITS.avail_note);
-      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
-      if (!a || !(this.isAdmin() || a.owner_member_id === this.actor.memberId)) fail("not_handler");
-      const hit = this.week.availability
-        .filter((v) => v.approach_id === a!.id && v.day === day && v.from_min < range.to && v.to_min > range.from)
-        .sort((x, y) => x.id - y.id);
-      const rows = this.week.availability.filter((v) => !hit.includes(v));
-      const add = (v: Omit<Availability, "id">) => rows.push({ id: this.nextId([...rows, ...hit]), ...v });
-      for (const { id: _id, ...v } of hit) {
-        if (v.from_min < range.from) add({ ...v, to_min: range.from });
-        if (v.to_min > range.to) add({ ...v, from_min: range.to });
+      const cleaned = cleanLine(note, LIMITS.avail_note); // refused past its limit even with no kind, as the SQL checks
+      const n = kind == null ? null : cleaned;
+      const old = this.week.slotAvailability.find((v) => v.speaker_id === speakerId && v.day === day && v.row_id === rowId);
+      if (kind == null) {
+        if (!old) return;
+        this.week.slotAvailability = this.week.slotAvailability.filter((v) => v !== old);
+      } else if (old) {
+        if (old.kind === kind && old.note === n) return;
+        Object.assign(old, { kind, note: n, updated_by: this.actor.memberId });
+      } else {
+        this.week.slotAvailability.push({ id: this.nextId(this.week.slotAvailability), speaker_id: speakerId, day: day as Day, row_id: rowId, kind, note: n, updated_by: this.actor.memberId });
       }
-      if (kind != null) add({ approach_id: a!.id, day: day as Day, from_min: range.from, to_min: range.to, kind, note: n });
-      this.week.availability = rows;
-      this.log(this.week.edition.id, "approaches", a!.id, "availability", { speaker: speakerId, day, part, kind });
+      // logged under the approach when there is one, so the speaker's «מה קרה» finds it as before (detail.speaker)
+      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      this.log(this.week.edition.id, "approaches", a?.id ?? null, "availability", {
+        speaker: speakerId, day, start: row.start_min, end: row.end_min, kind, ...(n != null ? { note: n } : {}),
+      });
     });
   }
 
@@ -808,6 +815,18 @@ export class Engine {
       const settings = { ...this.week.edition.settings };
       if (v == null) delete settings.confirm_template;
       else settings.confirm_template = v;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /** public.set_call_template (v14): an admin of the edition; empty removes it — back to the instructor's text built into the code. */
+  setCallTemplate(body: string | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      const v = cleanBlock(body, STAGE_LIMITS.template);
+      const settings = { ...this.week.edition.settings };
+      if (v == null) delete settings.call_template;
+      else settings.call_template = v;
       this.week.edition.settings = settings;
     });
   }
@@ -1823,7 +1842,7 @@ export class Engine {
           : {
               edition: { id: host.nextEditionId(), label, kind: "archive", start_date: start, first_day_from: null, last_day_until: ARCHIVE_LAST_DAY_UNTIL, status: "archived", settings: {} },
               rows: structuredClone(TEMPLATE_2026), rooms: [{ id: host.nextRoomId(), name: ARCHIVE_ROOM, sort: 1, is_default: true }], categories: structuredClone(this.week.categories),
-              speakers: this.week.speakers, approaches: [], availability: [], lessons: [], lessonSpeakers: [], pitches: [], team: [], roster: [], escortTicks: [], sourceFiles: [],
+              speakers: this.week.speakers, approaches: [], slotAvailability: [], lessons: [], lessonSpeakers: [], pitches: [], team: [], roster: [], escortTicks: [], sourceFiles: [],
               memorialPlans: [], fallen: [],
             };
         if (existing?.week) {

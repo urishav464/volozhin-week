@@ -8,7 +8,7 @@ export const ERRORS: Record<string, string> = {
   forbidden: "הפעולה הזו שמורה למדריך/ה.",
   // speakers and approaches
   approach_owned: "המרצה כבר בטיפול של חבר/ת צוות אחר/ת. אפשר להציע לו/לה את המשבצת.",
-  not_vetted: "המרצה עוד לא אושר/ה ע״י המדריך/ה — אפשר לסמן כמועמד/ת בלבד.",
+  not_vetted: "סוגרים שעה אחרי אישור המדריך/ה.",
   speaker_retired: "המרצה מסומן/ת כלא פעיל/ה.",
   gender_unknown: "חסר מגדר למרצה — צריך להשלים בפרופיל לפני סגירה.",
   // the speaker pool

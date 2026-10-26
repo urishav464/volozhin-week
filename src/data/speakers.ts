@@ -7,7 +7,6 @@
 // Contact details never travel with a Week (load_week leaves them out, and
 // Realtime never carries them): `contacts()` fetches one speaker's, and only
 // for the people the contacts policy names.
-import type { DayPart } from "../domain/dayParts";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, ContactPref, Edition, Gender, SpeakerContacts, Vetting } from "../domain/types";
 
@@ -125,6 +124,9 @@ export interface SpeakerPort {
   handOver(editionId: number, approachId: number, to: number | null, note?: string | null): Promise<void>;
   /** The member an offer waits for takes the speaker (accept) or gives it back. */
   answerHandOver(editionId: number, approachId: number, accept: boolean, note?: string | null): Promise<void>;
-  /** One chip: a day × a part of it is can / cannot / unknown (null). The handler or an admin. */
-  setAvailability(editionId: number, speakerId: number, day: Day, part: DayPart, kind: "can" | "cannot" | null, note?: string | null): Promise<void>;
+  /**
+   * v14: one slot — a lesson row on a day — is can / cannot / unknown (null). Any content member or admin of the edition
+   * (no approach needed); refuses outside_grid for a row not in play that day (src/domain/availability.ts).
+   */
+  setSlotAvailability(editionId: number, speakerId: number, day: Day, rowId: number, kind: "can" | "cannot" | null, note?: string | null): Promise<void>;
 }

@@ -3,7 +3,7 @@
 //   README.txt       what is in it, in Hebrew, and that it may hold personal data
 //   edition.json     the edition — its settings, grid rows, rooms, categories,
 //                    team names (no e-mail), roster names, lessons, approaches,
-//                    pitches, availability, the escorts' ticks, the activity log,
+//                    pitches, availability per slot, the escorts' ticks, the activity log,
 //                    notes, milestones and the designer's export snapshots
 //   speakers.json    the pool's records of the speakers the edition touched
 //                    (no contact detail)
@@ -106,11 +106,12 @@ function lessonTitleOf(week: Pick<Week, "lessons">, id: number): string | null {
   return week.lessons.find((l) => l.id === id)?.title ?? null;
 }
 
-/** The speakers an edition touched: approached, pitched or teaching. */
+/** The speakers an edition touched: approached, pitched, teaching — or with a slot marked (v14: no approach needed). */
 export function touchedSpeakers(week: Week): number[] {
   const ids = new Set<number>();
   for (const a of week.approaches) ids.add(a.speaker_id);
   for (const x of week.lessonSpeakers) ids.add(x.speaker_id);
+  for (const v of week.slotAvailability) ids.add(v.speaker_id);
   return [...ids].sort((a, b) => a - b);
 }
 
@@ -155,7 +156,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const edition = {
     format: ARCHIVE_FORMAT,
-    format_version: 2,
+    format_version: 3, // v14: slot_availability in place of availability
     schema_version: input.schemaVersion,
     exported_at: input.exportedAt,
     edition: week.edition,
@@ -168,7 +169,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
     lesson_speakers: week.lessonSpeakers,
     approaches: week.approaches,
     pitches: week.pitches,
-    availability: week.availability,
+    slot_availability: week.slotAvailability,
     escort_ticks: week.escortTicks ?? [],
     activity: extras.activity,
     notes: extras.notes,

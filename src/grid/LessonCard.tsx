@@ -1,15 +1,17 @@
-// One lesson on the grid, drawn by its stage: a draft with candidates, a closed
-// lesson (its topic's stripe and name + five stage dots, and a red dot «לעדכן את המרצה"
-// when it changed after the message went out), or a memorial slot. The
-// progress lens paints a closed card by its sources, last year's colours.
+// One lesson on the grid, drawn by its stage: a draft with candidates (each by
+// where the call stands), a closed lesson (its topic's stripe and name + five stage
+// dots, and a red dot «לעדכן את המרצה" when it changed after the message went out),
+// or a memorial slot. The progress lens paints a closed card by its sources, last
+// year's colours.
 import { memorialCard } from "../domain/memorial";
 import { displayName } from "../domain/names";
 import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
 import { readerFilesOf, stagesOf } from "../domain/stages";
 import { LRM, fmtRange } from "../domain/time";
-import type { Lesson } from "../domain/types";
+import { type ApproachStatus, type Gender, LIVE_PITCH, type Lesson } from "../domain/types";
+import { statusLabel } from "../lib/labels";
 import { Chip, GenderDot, Initials, NO_TOPIC_COLOR, ReconfirmDot, StageDots } from "./bits";
-import { type GridModel, pitchSpeaker } from "./model";
+import { type Fit, type GridModel, fitText, pitchSpeaker } from "./model";
 import { lessonOwner } from "./owners";
 
 export type Lens = "diversity" | "progress" | "owner";
@@ -26,19 +28,31 @@ interface Props {
   active?: boolean;
   /** In placement mode: this draft accepts the speaker. */
   placeable?: boolean;
+  /** v14: a draft coloured for a speaker being placed, dragged or looked at (GridDesktop) — and that speaker's gender, for the words. */
+  fit?: Fit | null;
+  fitGender?: Gender | null;
   /** A memorial slot's own time and room, as a line of its own (the day view, when the slot is not its row's alone). */
   where?: { range: string; room: string | null };
   owners?: CardOwners;
   onOpen: () => void;
 }
 
-const PITCH_ICON: Record<string, string> = { approached: "✉", candidate: "?", declined: "✗" };
+/** Where the call stands, at a glance (the card's label says it in words): before the call, no answer, talked, agreed, declined. */
+const CALL_ICON: Record<ApproachStatus, string> = { claimed: "☎", no_answer: "↻", approached: "?", positive: "✓", declined: "✗" };
 
-export function LessonCard({ model, lesson, lens, height, active, placeable, where, owners, onOpen }: Props) {
+/** A free cell coloured by a speaker's fit (GridDesktop, DayView): green «יכול/ה», red «לא», grey where they are already closed. */
+export const FIT_CELL: Record<Exclude<Fit, "neutral">, string> = {
+  can: "border-ok bg-emerald-50 text-emerald-900",
+  cannot: "border-bad/60 bg-red-50 text-red-800",
+  busy: "border-line bg-line/40 text-ink-soft",
+};
+const FIT_RING: Record<Fit, string> = { can: "ring-2 ring-ok", cannot: "ring-2 ring-bad", busy: "", neutral: "" };
+
+export function LessonCard({ model, lesson, lens, height, active, placeable, fit, fitGender = null, where, owners, onOpen }: Props) {
   const compact = height < 64;
   const tiny = height < 40;
   const time = <bdi className="text-[10px] text-ink-faint tabular-nums">{fmtRange(lesson.start_min, lesson.end_min)}</bdi>;
-  const ring = active ? "ring-2 ring-accent" : placeable ? "ring-2 ring-ok/70" : "";
+  const ring = active ? "ring-2 ring-accent" : (fit && FIT_RING[fit]) || (placeable ? "ring-2 ring-accent/40" : "");
   const warnings = model.warningCount.get(lesson.id) ?? 0;
   const parallel = lesson.parallel_reason ? <span title={lesson.parallel_reason}>∥</span> : null;
   const room = model.week.rooms.find((r) => r.id === lesson.room_id);
@@ -87,19 +101,29 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
 
   if (lesson.state === "draft") {
     const pitches = model.pitchesByLesson.get(lesson.id) ?? [];
-    const shown = pitches.slice(0, tiny ? 1 : 2);
+    // who declined here is the panel's «סירבו כאן»: a draft with no live pitch reads as the free cell it is
+    const live = pitches.filter((p) => LIVE_PITCH.has(p.state));
+    const declined = pitches.length - live.length;
+    const shown = live.slice(0, tiny ? 1 : 2);
+    const said = fit ? fitText(fit, fitGender) : null;
+    const who = live.map((p) => {
+      const s = pitchSpeaker(model, p);
+      return `${s ? displayName(s) : "?"} (${statusLabel(model.approachById.get(p.approach_id)?.status ?? "claimed", s?.gender ?? null)})`;
+    });
     return (
       <button
         type="button"
         {...common}
         data-drop={`lesson:${lesson.id}`}
+        data-fit={fit ?? undefined}
         className={`${common.className} border-2 border-dashed border-ink-faint/60 ${lens === "progress" ? PROGRESS_TONE.draft : "bg-card/70"} px-1.5 py-1`}
         style={ownerColor ? { borderInlineStartStyle: "solid", borderInlineStartWidth: 8, borderInlineStartColor: ownerColor } : undefined}
-        aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${pitches.length ? `, ${pitches.length} מועמדים` : ", ללא מרצה"}`}
+        aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${who.length ? `: ${who.join(", ")}` : pitches.length ? ", פנוי" : ", ללא מרצה"}${said ? `, ${said}` : ""}`}
       >
         <span className="flex items-center gap-1">
           {parallel}
-          {!compact && room && lesson.parallel_reason && <span className="truncate text-[10px] text-ink-faint">{room.name}</span>}
+          {said && <span className={`truncate text-[10px] font-semibold ${fit === "can" ? "text-ok" : fit === "cannot" ? "text-bad" : "text-ink-soft"}`}>{said}</span>}
+          {!said && !compact && room && lesson.parallel_reason && <span className="truncate text-[10px] text-ink-faint">{room.name}</span>}
           {!tiny && <span className="ms-auto">{time}</span>}
         </span>
         <span className={`mt-0.5 flex ${compact ? "flex-row gap-1" : "flex-col gap-0.5"}`}>
@@ -107,21 +131,23 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
             const s = pitchSpeaker(model, p);
             const owner = model.memberName.get(model.approachById.get(p.approach_id)?.owner_member_id ?? -1);
             return (
-              <span
-                key={p.id}
-                data-drag={`pitch:${p.id}`}
-                data-drag-label={s ? displayName(s) : ""}
-                className={`flex items-center gap-1 rounded bg-paper px-1 text-[11px] leading-5 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
-              >
-                <span aria-hidden>{PITCH_ICON[p.state] ?? "·"}</span>
+              <span key={p.id} data-drag={`pitch:${p.id}`} data-drag-label={s ? displayName(s) : ""} className="flex items-center gap-1 rounded bg-paper px-1 text-[11px] leading-5">
+                <span aria-hidden>{CALL_ICON[model.approachById.get(p.approach_id)?.status ?? "claimed"]}</span>
                 <GenderDot gender={s?.gender ?? null} />
                 <span className="truncate">{s ? displayName(s) : "?"}</span>
                 {!compact && owner && <span className="truncate text-ink-faint">· {owner}</span>}
               </span>
             );
           })}
-          {pitches.length > shown.length && <span className="text-[11px] text-ink-faint">+{pitches.length - shown.length}</span>}
-          {pitches.length === 0 && <span className="text-[11px] text-ink-faint">{lesson.parallel_reason ? "מקביל — ללא מרצה" : "מעוצב — ללא מרצה"}</span>}
+          {live.length > shown.length && <span className="text-[11px] text-ink-faint">+{live.length - shown.length}</span>}
+          {live.length === 0 &&
+            (declined > 0 ? (
+              <span className="text-[11px] text-ink-faint">
+                פנוי{!compact && ` · סירבו כאן: ${declined}`}
+              </span>
+            ) : (
+              <span className="text-[11px] text-ink-faint">{lesson.parallel_reason ? "מקביל — ללא מרצה" : "מעוצב — ללא מרצה"}</span>
+            ))}
         </span>
       </button>
     );

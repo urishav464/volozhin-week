@@ -2,10 +2,12 @@
 // handler per speaker, no room or speaker in two places at once — are database
 // constraints.) Every warning has a stable key so it can be acknowledged as
 // «מכוון» and stay quiet.
+import { coveredRows, slotFit, slotsBySpeaker } from "../domain/availability";
 import { byGender, displayName } from "../domain/names";
 import { DAY_NAMES, type Day, dayRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
+import { statusLabel } from "../lib/labels";
 import { DEFAULT_GENDER_TOLERANCE, categoryLoad, dayBalance, unbalanced } from "./balance";
 
 export type WarningKind =
@@ -157,8 +159,9 @@ export function warningsFor(week: Week): Warning[] {
     }
   }
 
-  // Closed or pitched outside what the speaker said they can do.
+  // Closed or pitched where the speaker said «לא» — on any lesson row the lesson covers (v14: availability per slot).
   const lessonById = new Map(week.lessons.map((l) => [l.id, l]));
+  const slots = slotsBySpeaker(week.slotAvailability);
   for (const p of week.pitches) {
     if (!["candidate", "approached", "accepted"].includes(p.state)) continue;
     const l = lessonById.get(p.lesson_id);
@@ -166,12 +169,11 @@ export function warningsFor(week: Week): Warning[] {
     if (!l || !a || l.state === "cancelled") continue;
     const s = speakerById.get(a.speaker_id);
     if (!s) continue;
-    const cannot = week.availability.some((v) => v.approach_id === a.id && v.kind === "cannot" && v.day === l.day && overlaps(v.from_min, v.to_min, l.start_min, l.end_min));
-    if (cannot) {
+    if (slotFit(slots.get(s.id), l.day, coveredRows(week.rows, week.edition, l.day, l.start_min, l.end_min)) === "cannot") {
       push({ kind: "outside_availability", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")} ב${dayRange(l.day, l.start_min, l.end_min)}` });
     }
     if (a.status === "declined" && p.state !== "accepted") {
-      push({ kind: "declined_pitch", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${byGender(s.gender, "סירב", "סירבה")} השנה, ועדיין ${byGender(s.gender, "מוצע", "מוצעת")} כאן` });
+      push({ kind: "declined_pitch", severity: "warn", day: l.day, lessonIds: [l.id], message: `${displayName(s)} ${statusLabel("declined", s.gender)} השנה, ועדיין ${byGender(s.gender, "מוצע", "מוצעת")} כאן` });
     }
   }
 

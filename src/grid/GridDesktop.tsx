@@ -1,17 +1,18 @@
 // The full week on a wide screen: the hours down the right edge, the five days
 // flowing right-to-left, every row a band, every lesson a box (layout.ts).
-import { byGender } from "../domain/names";
 import { DAYS, type Day, dayRange, fmt, overlaps } from "../domain/time";
 import type { GridRow, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
-import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
+import { type CardOwners, FIT_CELL, type Lens, LessonCard } from "./LessonCard";
 import { freeCells, placeDay, rowActive } from "./layout";
-import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
+import { type Fit, GENDER_NEED_LABEL, type GridModel, fitFor, fitText, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
   lens: Lens;
   placing: Speaker | null;
+  /** v14: a speaker the grid is coloured for without placing them — dragged by the mouse, or their sheet open beside it. */
+  lookAt?: Speaker | null;
   overKey: string | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (lessonId: number) => void;
@@ -25,9 +26,12 @@ interface Props {
 
 const COLS = "3.25rem repeat(5, minmax(0, 1fr))";
 
-export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, onMemorial, owners, onDayPanel }: Props) {
+export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCell, onLesson, onMemorial, owners, onDayPanel }: Props) {
   const { layout } = model;
   const { edition } = model.week;
+  // green where they said «יכול/ה», red where «לא» — while placing, dragging, or with their sheet open; only placing
+  // shuts a cell they are already closed at (in look mode a click still opens the cell)
+  const who = placing ?? lookAt;
 
   return (
     <div role="grid" aria-label="רשת השבוע" className="min-w-[46rem]">
@@ -86,28 +90,27 @@ export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, o
                 );
               })}
 
-              {/* empty lesson cells — drop targets, tinted by what the day needs */}
+              {/* empty lesson cells — drop targets, tinted by what the day needs, or by a speaker's fit */}
               {free.map((c) => {
                 const key = `cell:${day}:${c.row.start_min}:${c.row.end_min}`;
-                const fit: Fit | null = placing ? fitFor(model, placing.id, day, c.row.start_min, c.row.end_min) : null;
-                const tint = lens === "diversity" && need ? (need === "f" ? "bg-need-f border-pink-200" : "bg-need-m border-sky-200") : "bg-card/70 border-line";
-                const ring = overKey === key ? "ring-2 ring-accent" : fit === "can" ? "ring-2 ring-ok" : "";
+                const fit: Fit | null = who ? fitFor(model, who.id, day, c.row.start_min, c.row.end_min) : null;
+                const said = fit && who ? fitText(fit, who.gender) : null;
+                const tint = fit && fit !== "neutral" ? FIT_CELL[fit] : lens === "diversity" && need ? (need === "f" ? "bg-need-f border-pink-200" : "bg-need-m border-sky-200") : "bg-card/70 border-line";
                 return (
                   <button
                     key={key}
                     type="button"
                     data-drop={key}
                     data-need={need ?? "even"}
-                    disabled={fit === "busy"}
+                    data-fit={fit ?? undefined}
+                    disabled={!!placing && fit === "busy"}
                     onClick={() => onCell(day, c.row)}
                     style={{ top: c.top, height: c.height }}
-                    className={`absolute inset-x-0 m-0.5 rounded-md border text-center text-[11px] transition-colors hover:border-ink-faint disabled:cursor-not-allowed ${tint} ${ring} ${fit === "cannot" || fit === "busy" ? "opacity-40" : ""}`}
-                    aria-label={`${fmt(c.row.start_min)} — ${need ? GENDER_NEED_LABEL[need] : "פנוי"}`}
+                    className={`absolute inset-x-0 m-0.5 rounded-md border text-center text-[11px] transition-colors hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-40 ${tint} ${overKey === key ? "ring-2 ring-accent" : ""}`}
+                    aria-label={`${fmt(c.row.start_min)} — ${need ? GENDER_NEED_LABEL[need] : "פנוי"}${said ? `, ${said}` : ""}`}
                   >
-                    {fit === "cannot" ? (
-                      <span>⊘ {placing ? byGender(placing.gender, "לא יכול", "לא יכולה") : ""}</span>
-                    ) : fit === "busy" ? (
-                      <span>כבר {placing ? byGender(placing.gender, "משובץ", "משובצת") : ""} בשעה הזו</span>
+                    {said ? (
+                      <span>{said}</span>
                     ) : lens === "diversity" && need ? (
                       <span className={need === "f" ? "text-pink-800" : "text-sky-800"}>{GENDER_NEED_LABEL[need]}</span>
                     ) : (
@@ -121,14 +124,15 @@ export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, o
               {/* lessons */}
               {placed.map((p) => {
                 const key = `lesson:${p.lesson.id}`;
-                const placeable = !!placing && p.lesson.state === "draft" && p.lesson.kind === "lesson";
+                const draft = p.lesson.state === "draft" && p.lesson.kind === "lesson";
+                const fit = draft && who ? fitFor(model, who.id, day, p.lesson.start_min, p.lesson.end_min) : null;
                 return (
                   <div
                     key={p.lesson.id}
                     className="absolute"
                     style={{ top: p.top, height: p.height, insetInlineStart: `${(p.lane / p.lanes) * 100}%`, width: `${100 / p.lanes}%` }}
                   >
-                    <LessonCard model={model} lesson={p.lesson} lens={lens} owners={owners} height={p.height} active={overKey === key} placeable={placeable} onOpen={() => onLesson(p.lesson.id)} />
+                    <LessonCard model={model} lesson={p.lesson} lens={lens} owners={owners} height={p.height} active={overKey === key} placeable={!!placing && draft} fit={fit} fitGender={who?.gender ?? null} onOpen={() => onLesson(p.lesson.id)} />
                   </div>
                 );
               })}

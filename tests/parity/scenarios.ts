@@ -23,8 +23,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", propose: "אלפא", cell: [1, 600, 690, FOREIGN_ROOM] }, // another edition's room
     { as: "A", propose: "וו", cell: [1, 600, 690] }, // retired
     { as: "L", propose: "גמא", cell: [1, 600, 690] }, // logistics may not
-    { as: "A", propose: "הא", cell: [1, 600, 690] }, // unvetted → candidate only
-    { as: "A", setPitch: "הא", at: [1, 600], state: "approached" },
+    { as: "A", propose: "הא", cell: [1, 600, 690] }, // unvetted: placed like anyone (v14) — «לפני שיחה», a candidate
+    { as: "A", setPitch: "הא", at: [1, 600], state: "approached" }, // no gate before closing (v14)
   ],
 
   "close, supersede, withdraw, reopen": [
@@ -256,8 +256,9 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", close: "אלפא", at: [1, 510] },
     { as: "admin", vet: ["בטא", "אלפא"], state: "rejected", note: "x" }, // the whole batch waits
     { as: "admin", vet: ["בטא"], state: "rejected", note: "לא מתאים השנה" },
-    { as: "A", propose: "בטא", cell: [1, 600, 690] }, // a rejected speaker: a candidate only
+    { as: "A", propose: "בטא", cell: [1, 600, 690] }, // a rejected speaker: placed and called all the same (v14) …
     { as: "A", setPitch: "בטא", at: [1, 600], state: "approached" },
+    { as: "A", close: "בטא", at: [1, 600] }, // … never closed: not_vetted
     { as: "A", updateSpeaker: "אלפא", patch: { gender: null } },
     { as: "admin", updateSpeaker: "אלפא", patch: { retired: true } },
     { as: "admin", reopen: [1, 510] },
@@ -274,8 +275,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", setStatus: "בטא", status: "no_answer" },
     { as: "A", setStatus: "בטא", status: "no_answer" }, // the same, no note: nothing
     { as: "A", setStatus: "בטא", status: "no_answer", note: "עוד ניסיון" }, // the same, with a note: logged
-    { as: "A", claim: "הא" }, // not yet approved: may be claimed…
-    { as: "A", setStatus: "הא", status: "approached" }, // …not approached
+    { as: "A", claim: "הא" }, // not yet approved: may be claimed …
+    { as: "A", setStatus: "הא", status: "approached" }, // … and called (v14): the approval is close_lesson's
     { as: "A", setStatus: "הא", status: "declined" },
     { as: "A", propose: "בטא", cell: [2, 510, 600] },
     { as: "A", propose: "בטא", cell: [2, 600, 690] },
@@ -316,22 +317,60 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", claim: "בטא" }, // nobody's: anyone may take it
   ],
 
-  "availability chips: a part of a day, cut from older ranges": [
-    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "can" }, // no approach
-    { as: "A", claim: "בטא" },
-    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "can", note: " רק אחרי 9 " },
-    { as: "A", avail: "בטא", day: 1, part: "night", kind: "cannot" },
-    { as: "A", avail: "בטא", day: 1, part: "morning", kind: "cannot" },
-    { as: "A", avail: "בטא", day: 1, part: "morning", kind: null, note: "נשכח" },
-    { as: "A", avail: "בטא", day: 5, part: "morning", kind: "can" },
-    { as: "A", avail: "בטא", day: 1, part: "noon", kind: "can" },
-    { as: "A", avail: "בטא", day: 1, part: "evening", kind: "maybe" },
-    { as: "B", avail: "בטא", day: 2, part: "evening", kind: "can" },
-    { as: "admin", avail: "בטא", day: 2, part: "evening", kind: "can" },
-    { as: "L", avail: "בטא", day: 2, part: "evening", kind: "can" },
-    { as: "B", avail: "זין", day: 2, part: "evening", kind: "cannot" }, // 20:00–06:30 → the night is left
-    { as: "B", avail: "זין", day: 3, part: "afternoon", kind: "can" }, // 11:40–20:00 → a piece on each side
-    { as: "B", avail: "זין", day: 2, part: "night", kind: null },
+  // v14: the call first — placing writes «לפני שיחה», the call's result is the approach's, the instructor's approval close_lesson's
+  "v14: the call first — propose keeps «לפני שיחה»; the approval is close_lesson's": [
+    { as: "A", propose: "הא", cell: [1, 510, 600] }, // pending: a candidate, the approach claimed at version 1
+    { as: "A", propose: "הא", cell: [1, 510, 600] }, // again: nothing written
+    { as: "A", propose: "הא", cell: [2, 510, 600] }, // another cell: another candidate, the approach untouched
+    { as: "A", setStatus: "הא", status: "no_answer" },
+    { as: "A", setStatus: "הא", status: "approached", note: "שוחחנו, יחזור אליי (נתון לדוגמה)" },
+    { as: "A", setStatus: "הא", status: "positive", note: "נושא לדוגמה; בהתנדבות (נתון לדוגמה)" },
+    { as: "A", close: "הא", at: [1, 510] }, // the one gate
+    { as: "admin", vet: ["הא"], state: "approved" },
+    { as: "A", close: "הא", at: [1, 510] }, // closed; the other cell's pitch withdrawn
+    { as: "B", propose: "בטא", cell: [3, 510, 600] },
+    { as: "B", setStatus: "בטא", status: "declined", note: "לא השנה (נתון לדוגמה)" }, // the pitch declined with it
+    { as: "B", setPitch: "בטא", at: [3, 510], state: "candidate" }, // «החזרה לתהליך»: the approach «לפני שיחה» again, one version more
+    { as: "admin", handOver: "בטא", to: null }, // back to the pool
+    { as: "A", propose: "בטא", cell: [3, 600, 690] }, // taken: owner A, no offer, one version more, its status as it was
+    { as: "A", setStatus: "בטא", status: "declined" }, // both pitches declined
+    { as: "A", propose: "בטא", cell: [4, 510, 600] }, // placed again after «סירב/ה»: a live pitch, the approach still declined
+    { as: "A", setStatus: "בטא", status: "claimed" }, // «החזרה לתהליך» from the card
+    { as: "A", setPitch: "בטא", at: [3, 600], state: "candidate" }, // a declined pitch under a live approach: the pitch alone
+    { as: "A", setPitch: "בטא", at: [3, 510], state: "approached" },
+    { as: "L", setStatus: "בטא", status: "no_answer" },
+    { as: "B", setPitch: "בטא", at: [4, 510], state: "declined" }, // not B's any more
+  ],
+
+  // v14: availability per slot — a lesson row in play that day; any editor, no approach; the rows the conversion left kept
+  "availability per slot: any editor, no approach": [
+    { as: "B", slot: "בטא", day: 1, row: 510, kind: "can" }, // nobody handles בטא: any content member
+    { as: "B", slot: "בטא", day: 1, row: 510, kind: "can", note: "  רק עד   09:30 " },
+    { as: "A", slot: "בטא", day: 1, row: 510, kind: "can", note: "רק עד 09:30" }, // the same: nothing written, still B's
+    { as: "A", slot: "בטא", day: 1, row: 510, kind: "cannot" },
+    { as: "A", slot: "בטא", day: 1, row: 510, kind: null, note: "נשכח" },
+    { as: "A", slot: "בטא", day: 1, row: 510, kind: null }, // nothing to delete
+    { as: "A", slot: "בטא", day: 5, row: 510, kind: "can" },
+    { as: "A", slot: "בטא", day: 1, row: 1140, kind: "can" }, // dinner: no lesson row
+    { as: "A", slot: "בטא", day: 0, row: 390, kind: "can" }, // Sunday before the opening
+    { as: "A", slot: "בטא", day: 4, row: 1200, kind: "can" }, // Thursday after the close
+    { as: "A", slot: "בטא", day: 1, row: "foreign", kind: "can" }, // another edition's row
+    { as: "A", slot: "בטא", day: 1, row: 600, kind: "maybe" },
+    { as: "A", slot: "בטא", day: 1, row: 600, kind: "can", note: "א".repeat(121) },
+    { as: "A", slot: "בטא", day: 1, row: 600, kind: null, note: "א".repeat(121) }, // the note is checked before the kind deletes
+    // the order of the checks: the role, the speaker, the day, the row, the kind
+    { as: "L", slot: "וו", day: 5, row: 1140, kind: "maybe" },
+    { as: "A", slot: "וו", day: 5, row: 1140, kind: "maybe" },
+    { as: "A", slot: "אין כזה", day: 1, row: 600, kind: "can" },
+    { as: "A", slot: "בטא", day: 5, row: 1140, kind: "maybe" },
+    { as: "A", slot: "בטא", day: 1, row: 1140, kind: "maybe" },
+    { as: "E", slot: "בטא", day: 2, row: 1200, kind: "can" },
+    { as: "admin", slot: "זין", day: 2, row: 1200, kind: "cannot" }, // B's speaker, a converted row: rewritten
+    { as: "A", slot: "זין", day: 3, row: 690, kind: null }, // not A's speaker: marked all the same
+    { as: "A", slot: "זין", day: 2, row: 1350, kind: "can", note: "ערב ולילה" },
+    { archive: true },
+    { as: "A", slot: "בטא", day: 2, row: 1350, kind: "can" },
+    { as: "E", slot: "בטא", day: 2, row: 1350, kind: "can" }, // an admin may still write in an archive
   ],
 
   "contacts: the handler in the current real edition, and the admin": [
@@ -555,7 +594,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", readTransport: [1, 510] },
   ],
 
-  "the template and the duty phrases: the edition's admin, the instructor's wording": [
+  "the templates and the duty phrases: the edition's admin, the instructor's wording": [
     { as: "A", template: "נוסח לדוגמה {{פנייה}}" },
     { as: "L", template: "נוסח לדוגמה {{פנייה}}" },
     { as: "E", template: "  נוסח לדוגמה {{פנייה}}\r\nשורה שנייה  " },
@@ -572,9 +611,20 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", duty: Array.from({ length: 31 }, (_, i) => ({ when: "always", text: `ניסוח לדוגמה ${i}` })) },
     { as: "E", duty: [] }, // empty: none
     { as: "E", duty: [{ when: "memorial", text: "ניסוח לדוגמה לזיכרון" }, { when: "escort_intro", text: "ניסוח לדוגמה להצגה" }] },
+    // v14: «נקודות לשיחה» — the same rules; absent, the instructor's text in the code
+    { as: "A", callTemplate: "נקודות לדוגמה {{שמי}}" },
+    { as: "L", callTemplate: "נקודות לדוגמה {{שמי}}" },
+    { as: "E", callTemplate: "  נקודות לדוגמה {{שמי}}\r\n*שורה שנייה*  " },
+    { as: "admin", callTemplate: "א".repeat(4001) },
+    { as: "admin", callTemplate: "   " }, // empty: back to the instructor's text
+    { as: "admin", callTemplate: "נקודות לדוגמה {{שמי}}" },
+    { as: "E", callTemplate: null },
+    { as: "E", callTemplate: "נקודות לדוגמה [[שתגיע|שתגיעי]]" },
     { archive: true },
     { as: "E", template: "נוסח לדוגמה אחר" }, // an admin may still write in an archive
     { as: "A", template: "נוסח לדוגמה אחר" },
+    { as: "E", callTemplate: "נקודות לדוגמה אחרות" },
+    { as: "A", callTemplate: "נקודות לדוגמה אחרות" },
   ],
 
   // ------------------------------------------------------------ links and מכריכה לכריכה (milestone 5a)

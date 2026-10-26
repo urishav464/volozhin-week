@@ -60,7 +60,7 @@ test.describe("demo build", () => {
   test("payment: the handler asks, the instructor approves (and rejects) from the queue; the badge counts requests", async ({ page }, info) => {
     await page.goto(demoUrl());
     const badge = nav(page).getByRole("link", { name: /אישורים/ });
-    await expect(badge).toHaveAccessibleName("אישורים, 6 ממתינים"); // five speakers and the demo's waiting request
+    await expect(badge).toHaveAccessibleName("אישורים, 2 ממתינים"); // the demo's waiting request, and a speaker who agreed and waits (v14)
 
     const panel = await openLesson(page, info, "ראשון", "מרצה 07");
     const pay = await stage(panel, "תשלום/הסעה");
@@ -83,7 +83,7 @@ test.describe("demo build", () => {
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByLabel("סכום בשקלים")).toHaveValue("150");
     await pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByRole("button", { name: "ביטול" }).click();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
-    await expect(badge).toHaveAccessibleName("אישורים, 7 ממתינים");
+    await expect(badge).toHaveAccessibleName("אישורים, 3 ממתינים");
     await noSidewaysScroll(page);
 
     await badge.click();
@@ -94,14 +94,14 @@ test.describe("demo build", () => {
     await requests.getByRole("button", { name: "אישור הבקשה של מרצה 07" }).click();
     await expect(toast(page, "הבקשה אושרה")).toBeVisible();
     await expect(requests.getByRole("listitem")).toHaveCount(1);
-    await expect(badge).toHaveAccessibleName("אישורים, 6 ממתינים");
+    await expect(badge).toHaveAccessibleName("אישורים, 2 ממתינים");
 
     await requests.getByRole("button", { name: "דחיית הבקשה של פרופ׳ מרצה 04" }).click();
     await page.getByRole("group", { name: "דחיית הבקשה של פרופ׳ מרצה 04" }).getByLabel("למה? (לא חובה, גלוי לצוות)").fill("נתון לדוגמה: לבדוק שוב");
     await page.getByRole("button", { name: "לא לאשר" }).click();
     await expect(toast(page, "הבקשה לא אושרה")).toBeVisible();
     await expect(page.getByText("אין בקשות לתשלום או להסעה שממתינות לאישור.")).toBeVisible();
-    await expect(badge).toHaveAccessibleName("אישורים, 5 ממתינים");
+    await expect(badge).toHaveAccessibleName("אישורים, 1 ממתין");
 
     // back on the week: approved — the card's first dot is done
     await nav(page).getByRole("link", { name: "השבוע" }).click();
@@ -366,7 +366,7 @@ test.describe("mock build", () => {
     await (await stage(panel, "תשלום/הסעה")).getByRole("button", { name: "סימון ששולם" }).click();
     await expect.poll(() => sb.rpc.get("set_paid")).toEqual([{ p_lesson: lessonOf(1, 1200), p_paid: true }]);
     const msg = await stage(panel, "הודעת סיכום");
-    await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toHaveText(/נוסח לדוגמה לפרופ׳ מרצה 12, 20:00–21:15\./);
+    await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toHaveText(/נוסח לדוגמה לפרופ׳ מרצה 12, \u200E20:00–21:15\./) // v14: the range left to right (an LRM);
     expect(sb.rpc.get("get_speaker_contacts")).toContainEqual({ p_speaker: 12 });
     await msg.getByRole("button", { name: "סומן כנשלח" }).click();
     await expect.poll(() => sb.rpc.get("mark_confirm_sent")).toEqual([{ p_lesson: lessonOf(1, 1200), p_version: 1 }]);

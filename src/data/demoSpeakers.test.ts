@@ -3,7 +3,7 @@
 // contacts across them, the timeline, the hand-over's team, and synthetic data
 // that shows every group of «המרצים שלי».
 import { describe, expect, it } from "vitest";
-import { mySpeakers, pendingSpeakers } from "../domain/mine";
+import { MINE_GROUPS, mySpeakers, pendingSpeakers, waitingForApproval } from "../domain/mine";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
 
@@ -21,8 +21,11 @@ describe("the demo's speaker pool", () => {
     const port = new DemoPort();
     const week = await port.loadWeek(1);
     const g = mySpeakers(week, 1);
-    for (const group of ["offered", "to_approach", "awaiting", "to_schedule", "payment", "reconfirm", "send", "escort", "sources", "closed"] as const) expect(g.get(group)!.length, group).toBeGreaterThan(0);
+    // every group but the two a visitor reaches by acting: «מחכים לתשובה» (after a call) and «סירבו»
+    for (const { group } of MINE_GROUPS) if (group !== "awaiting" && group !== "declined") expect(g.get(group)!.length, group).toBeGreaterThan(0);
     expect(pendingSpeakers(week).length).toBe(5);
+    // v14: the badge counts who agreed and waits for the instructor (speaker 56) and the one payment request
+    expect(waitingForApproval(week)).toBe(2);
     expect(JSON.stringify(week)).not.toMatch(/טלפון לדוגמה|example\.org/); // contacts never travel with a week
   });
 
@@ -88,14 +91,21 @@ describe("the demo's speaker pool", () => {
     const port = new DemoPort();
     const before = JSON.stringify([await port.loadWeek(1), port.shared]);
     expect(await code(port.speakers.vet([1, 9999], "rejected"))).toBe("stale"); // speaker 1 changes first, then 9999 is missing
-    expect(await code(port.speakers.setAvailability(1, 9, 0, "morning", "can", "x".repeat(121)))).toBe("bad_value");
+    expect(await code(port.speakers.setSlotAvailability(1, 9, 0, 4, "can", "x".repeat(121)))).toBe("bad_value");
     expect(JSON.stringify([await port.loadWeek(1), port.shared])).toBe(before);
   });
 
-  it("sets an availability chip and shows a past edition's lessons", async () => {
+  it("marks a slot — any content member, the speaker's timeline says so — and shows a past edition's lessons", async () => {
     const port = new DemoPort();
-    await port.speakers.setAvailability(1, 32, 3, "evening", "cannot", "דוגמה");
-    expect((await port.loadWeek(1)).availability.filter((v) => v.day === 3)).toMatchObject([{ from_min: 1140, to_min: 1440, kind: "cannot", note: "דוגמה" }]);
+    expect((await port.loadWeek(1)).slotAvailability.filter((v) => v.speaker_id === 9).map((v) => [v.day, v.row_id, v.kind])).toEqual([[0, 4, "cannot"], [0, 5, "cannot"], [0, 6, "cannot"]]);
+    await port.speakers.setSlotAvailability(1, 32, 3, 14, "cannot", "דוגמה");
+    expect((await port.loadWeek(1)).slotAvailability.filter((v) => v.day === 3)).toMatchObject([{ speaker_id: 32, row_id: 14, kind: "cannot", note: "דוגמה", updated_by: 1 }]);
+    expect((await port.speakers.activity(32))[0]).toMatchObject({ kind: "availability", detail: { speaker: 32, day: 3, start: 1200, end: 1290, kind: "cannot", note: "דוגמה" } });
+    // not the speaker's handler (32 is the demo user's): a content member marks it all the same
+    const other = new DemoPort({ memberId: 2, role: "content" });
+    await other.speakers.setSlotAvailability(1, 32, 3, 14, "can");
+    expect((await other.loadWeek(1)).slotAvailability.filter((v) => v.day === 3)).toMatchObject([{ kind: "can", note: null, updated_by: 2 }]);
+    expect(await code(other.speakers.setSlotAvailability(1, 32, 3, 13, "can"))).toBe("outside_grid"); // dinner
     expect((await port.speakers.history(1)).map((h) => h.edition_label)).toEqual(["מחזור קודם (לדוגמה)"]);
     expect(await port.speakers.history(2)).toEqual([]);
   });

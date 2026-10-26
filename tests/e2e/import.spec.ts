@@ -115,7 +115,8 @@ test.describe("demo build — the import of 5786", () => {
 
     // the new speakers wait for approval — two of them, «בדיקה אלפ» being «בדיקה אלף»
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();
-    const pending = page.getByRole("list", { name: "ממתינים לאישור" });
+    await page.locator("summary", { hasText: "עוד ממתינים לאישור" }).click(); // v14: not agreed yet — folded
+    const pending = page.getByRole("group", { name: "עוד ממתינים לאישור" });
     await expect(pending.getByText("הרב בדיקה אלף")).toBeVisible();
     await expect(pending.getByText("הרבנית בדיקה בית")).toBeVisible();
     await expect(pending.getByText("בדיקה אלפ", { exact: true })).toHaveCount(0);
@@ -203,11 +204,14 @@ test.describe("demo build — the import of 5786", () => {
 
     // the approvals queue: one confirm approves the five who taught in it — and says who still lacks a gender
     await page.getByRole("banner").getByRole("link", { name: /אישורים/ }).click();
+    // v14: who has not agreed yet waits under «עוד ממתינים לאישור», the archive's batch with them
+    await page.locator("summary", { hasText: "עוד ממתינים לאישור" }).click();
+    const rest = page.getByRole("group", { name: "עוד ממתינים לאישור" });
     const batch = page.getByRole("group", { name: 'אישור באצווה: מי שלימד/ה ב-תשפ"ו לדוגמה' });
     await expect(batch).toContainText("5 מרצים שממתינים לאישור לימדו שיעור");
     if (info.project.name === "desktop") {
       // «לימד/ה אצלנו» on the sheet shows the archive
-      await page.getByRole("list", { name: "ממתינים לאישור" }).getByRole("button", { name: "ארכיון בית", exact: true }).click();
+      await rest.getByRole("button", { name: "ארכיון בית", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "ארכיון בית" })).toContainText('תשפ"ו לדוגמה');
       await page.keyboard.press("Escape");
     }
@@ -215,7 +219,7 @@ test.describe("demo build — the import of 5786", () => {
     await expect(batch).toContainText("ל-4 מהם חסר מגדר");
     await batch.getByRole("button", { name: "אישור 5 מרצים" }).click();
     await expect(toast(page, "5 מרצים אושרו")).toBeVisible();
-    await expect(page.getByRole("list", { name: "ממתינים לאישור" }).getByText("ארכיון בית")).toHaveCount(0);
+    await expect(rest.getByText("ארכיון בית")).toHaveCount(0);
     await noSidewaysScroll(page);
   });
 

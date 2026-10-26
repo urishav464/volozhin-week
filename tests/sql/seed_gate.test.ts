@@ -32,9 +32,15 @@ describe("seed_gate.sql / unseed_gate.sql", () => {
     expect(await count("select count(*) as n from public.lesson_speakers where active")).toBe(18);
     expect(await count("select count(*) as n from public.lessons where kind = 'memorial'")).toBe(10); // both memorial rows of each day (v13)
     expect(await count("select count(*) as n from public.lessons where end_min - start_min = 270")).toBe(1); // the all-night merge
+    // the speaker who cannot do mornings on Sunday: the three morning slots from the opening (v14 — availability per slot)
+    expect((await db.query("select v.day, r.start_min, v.kind, v.note from public.slot_availability v join public.grid_rows r on r.id = v.row_id order by r.start_min")).rows).toEqual([
+      { day: 0, start_min: 510, kind: "cannot", note: "דוגמה: לא בבקרים" },
+      { day: 0, start_min: 600, kind: "cannot", note: "דוגמה: לא בבקרים" },
+      { day: 0, start_min: 690, kind: "cannot", note: "דוגמה: לא בבקרים" },
+    ]);
   });
 
-  it("unseeds everything synthetic and nothing else — speakers the team added in the gate too, unless another edition uses them", async () => {
+  it("unseeds everything synthetic and nothing else — speakers the team added in the gate too, unless another edition uses them (a handler, or a slot)", async () => {
     // the gate's team adds two speakers from the demo edition; a real edition then takes one of them
     const gate = Number((await db.query("select id from public.editions where label = 'הדגמה'")).rows[0].id);
     const real = Number((await db.query("insert into public.editions (label, kind) values ('מחזור אמיתי', 'real') returning id")).rows[0].id);
@@ -49,6 +55,9 @@ describe("seed_gate.sql / unseed_gate.sql", () => {
     }
     expect(await count(`select count(*) as n from public.speakers where source = 'synthetic' and id in (${added.join(",")})`)).toBe(2);
     await db.query("insert into public.approaches (edition_id, speaker_id, owner_member_id) select $1, $2, id from public.members where email = 'real@example.org'", [real, added[1]]);
+    // v14: a slot marked in the real edition for a seeded speaker nobody handles there — the speaker stays, and so does the mark
+    const row = Number((await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind) values ($1, 510, 600, 'lesson') returning id", [real])).rows[0].id);
+    await db.query("insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind) select $1, id, 1, $2, 'can' from public.speakers where name = 'מרצה לדוגמה 59'", [real, row]);
     // a file uploaded in the practice week: its row goes with the edition, its bytes stay — the run says where, as SETUP does
     await db.query("insert into public.source_files (edition_id, cover, storage_path, display_name, mime, size_bytes, page_count) values ($1, true, $2, 'פוסטר.pdf', 'application/pdf', 10, 1)", [gate, `${gate}/cover/00000000-0000-4000-8000-000000000000-poster.pdf`]);
     const notices: string[] = [];
@@ -60,6 +69,7 @@ describe("seed_gate.sql / unseed_gate.sql", () => {
     db.off("notice", heard);
     expect(notices).toEqual([`1 uploaded file(s) of the practice week stay in Storage: Storage → Files → sources → folder ${gate} (right-click → Delete)`]);
     expect((await db.query("select label from public.editions")).rows.map((r) => r.label)).toEqual(["מחזור אמיתי"]);
-    expect((await db.query("select name from public.speakers order by name")).rows.map((r) => r.name)).toEqual(["מרצה אחרת שנוספה בהדגמה", "מרצה אמיתית"]);
+    expect((await db.query("select name from public.speakers order by name")).rows.map((r) => r.name)).toEqual(["מרצה אחרת שנוספה בהדגמה", "מרצה אמיתית", "מרצה לדוגמה 59"]);
+    expect(await count("select count(*) as n from public.slot_availability")).toBe(1);
   });
 });

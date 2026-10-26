@@ -5,17 +5,16 @@ import { ImportRowError } from "../../src/data/imports";
 import { ARCHIVE_ROOM, labelKey } from "../../src/data/importRules";
 import { titlesOf } from "../../src/data/speakerRules";
 import type { NewSpeaker, SpeakerPatch } from "../../src/data/speakers";
-import type { DayPart } from "../../src/domain/dayParts";
 import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
 import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vetting, Week } from "../../src/domain/types";
 import type { KkGroupFields } from "../../src/data/kk";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
+  answers, APPROACHES, type At, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
   type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
-  prefsRow, type Step, transportLine, transportRead,
+  prefsRow, slotLine, SLOTS, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -30,7 +29,7 @@ export function engineDriver(): Driver {
       vetted: s.vetted ?? "approved", vetted_by: null, vetted_note: null, retired: !!s.retired, name_key: s.name, version: 1,
     })),
     approaches: [],
-    availability: [],
+    slotAvailability: [],
     lessons: [],
     lessonSpeakers: [],
     pitches: [],
@@ -45,9 +44,10 @@ export function engineDriver(): Driver {
   for (const [i, a] of APPROACHES.entries()) {
     week.approaches.push({ id: i + 1, speaker_id: speakerId(a.speaker), owner_member_id: memberId(a.owner), status: a.status, avail_note: null, offered_to: null, version: 1 });
   }
-  for (const [i, v] of AVAILABILITY.entries()) {
-    const a = week.approaches.find((x) => x.speaker_id === speakerId(v.speaker))!;
-    week.availability.push({ id: i + 1, approach_id: a.id, day: v.day as Day, from_min: v.from, to_min: v.to, kind: v.kind, note: v.note });
+  /** A grid row by its start (TEMPLATE_2026's ids); «foreign» — another edition's row — is none of this week's. */
+  const rowAt = (start: number | "foreign") => (start === "foreign" ? 999 : (week.rows.find((r) => r.start_min === start)?.id ?? -1));
+  for (const [i, v] of SLOTS.entries()) {
+    week.slotAvailability.push({ id: i + 1, speaker_id: speakerId(v.speaker), day: v.day as Day, row_id: rowAt(v.row), kind: v.kind, note: v.note, updated_by: null });
   }
   const shared: PoolShared = { ...emptyShared(), contacts: Object.fromEntries(Object.entries(CONTACTS).map(([label, c]) => [speakerId(label), { ...c }])) };
 
@@ -250,7 +250,7 @@ export function engineDriver(): Driver {
           e.setApproachStatus(a?.id ?? -1, (a?.version ?? 0) - (step.staleBy ?? 0), step.status as ApproachStatus, step.note ?? null);
         } else if ("handOver" in step) e.handOver(approachOf(step.handOver)?.id ?? -1, step.to == null ? null : memberId(step.to), step.note ?? null);
         else if ("answerHandOver" in step) e.answerHandOver(approachOf(step.answerHandOver)?.id ?? -1, step.accept, step.note ?? null);
-        else if ("avail" in step) e.setAvailability(speakerId(step.avail), step.day, step.part as DayPart, step.kind as "can" | "cannot" | null, step.note ?? null);
+        else if ("slot" in step) e.setSlotAvailability(speakerId(step.slot), step.day, rowAt(step.row), step.kind as "can" | "cannot" | null, step.note ?? null);
         // ---- the import of 5786
         else if ("importCandidates" in step) {
           const payload = { source: step.source === undefined ? "brainstorm-5786" : step.source, titles_from: null, rows: speakerRows(step.importCandidates, speakerId) };
@@ -292,6 +292,7 @@ export function engineDriver(): Driver {
             pickup_address: step.address ?? null, pickup_time: step.time ?? null, driver_name: step.driver ?? null, driver_phone: step.phone ?? null, arranged: step.arranged ?? false,
           });
         } else if ("template" in step) e.setConfirmTemplate(step.template);
+        else if ("callTemplate" in step) e.setCallTemplate(step.callTemplate);
         else if ("duty" in step) e.setDutyPhrases(step.duty as DutyPhrase[]);
         // ---- links and מכריכה לכריכה
         else if ("issue" in step) tokens[step.name] = e.issueLink(step.issue as LinkScope, traineeId(step.trainee ?? null)).token;
@@ -400,7 +401,12 @@ export function engineDriver(): Driver {
         speakers: week.lessonSpeakers.map((x) => `${key(x.lesson_id)}|${sp(x.speaker_id)}|${x.role}`).sort(),
         pool: week.speakers.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
-        availability: week.availability.map((v) => `${approachSpeaker(v.approach_id)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
+        availability: week.slotAvailability
+          .map((v) => {
+            const r = week.rows.find((x) => x.id === v.row_id)!;
+            return slotLine(sp(v.speaker_id), { ...v, start_min: r.start_min, end_min: r.end_min }, member(v.updated_by));
+          })
+          .sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportLine(key(Number(k.split(":")[1])), t)).sort(),
         edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover), week.edition.purged_at != null),
         links: shared.links

@@ -94,6 +94,23 @@ describe("demo settings", () => {
     expect((await port.loadWeek(next)).edition.settings.confirm_template).toBeUndefined();
   });
 
+  it("keeps «נקודות לשיחה» on the edition only once an admin writes them (v14) — the dry run says so, and the next edition carries them", async () => {
+    const port = new DemoPort();
+    const s = port.settings;
+    expect((await port.loadWeek(1)).edition.settings.call_template).toBeUndefined(); // the instructor's text lives in the code, never seeded
+    const first = await s.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: null });
+    expect((await s.previewStart(false)).call_template).toBe(false);
+    await s.setCallTemplate(first, "  נקודות לדוגמה {{שמי}}\r\n");
+    expect((await port.loadWeek(first)).edition.settings.call_template).toBe("נקודות לדוגמה {{שמי}}");
+    expect(await code(s.setCallTemplate(first, "א".repeat(4001)))).toBe("bad_value");
+    expect(await code(new DemoPort({ memberId: 2, role: "content" }).settings.setCallTemplate(1, "נקודות לדוגמה"))).toBe("forbidden");
+    expect((await s.previewStart(false)).call_template).toBe(true);
+    const next = await s.startEdition({ label: "מחזור לדוגמה ב", start_date: null, first_day_from: null });
+    expect((await port.loadWeek(next)).edition.settings.call_template).toBe("נקודות לדוגמה {{שמי}}");
+    await s.setCallTemplate(next, null); // «חזרה לנוסח של המדריך/ה»
+    expect((await port.loadWeek(next)).edition.settings.call_template).toBeUndefined();
+  });
+
   it("guards the default room and rooms in use; the default moves in one step", async () => {
     const port = new DemoPort();
     const s = port.settings;

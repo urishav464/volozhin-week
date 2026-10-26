@@ -5,11 +5,11 @@ import type pg from "pg";
 import { ARCHIVE_ROOM } from "../../src/data/importRules";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
 import {
-  answers, APPROACHES, type At, AVAILABILITY, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
+  answers, APPROACHES, type At, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
   FOREIGN_TRAINEE, type KkStepFields, planLine, purgeRead, reviewLine,
   lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
-  prefsRow, type Step, transportLine, transportRead,
+  prefsRow, slotLine, SLOTS, type Step, transportLine, transportRead,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -23,6 +23,10 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   const foreignRoom = Number((await db.query("insert into public.rooms (edition_id, name, is_default) values ($1, $2, true) returning id", [elsewhere, FOREIGN_ROOM])).rows[0].id);
   for (const r of ROSTER) await db.query("insert into public.roster (edition_id, full_name, gender) values ($1, $2, $3)", [ed, r.name, r.gender]);
   const foreignTrainee = Number((await db.query("insert into public.roster (edition_id, full_name) values ($1, $2) returning id", [elsewhere, FOREIGN_TRAINEE])).rows[0].id);
+  // a lesson row of the other edition (08:30), for a slot this edition's speakers can never be marked on
+  const foreignRow = Number(
+    (await db.query("insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days) select $1, start_min, end_min, kind, label, days from public.grid_template where start_min = 510 returning id", [elsewhere])).rows[0].id,
+  );
   for (const m of MEMBERS) {
     await db.query("insert into public.members (email, display_name, role, edition_id) values ($1, $2, $3, $4)", [m.email, m.name, m.role, m.global ? null : ed]);
   }
@@ -42,11 +46,15 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
   for (const a of APPROACHES) {
     await db.query("insert into public.approaches (edition_id, speaker_id, owner_member_id, status) values ($1, $2, $3, $4)", [ed, await speakerId(a.speaker), memberId(a.owner), a.status]);
   }
-  for (const v of AVAILABILITY) {
-    await db.query(
-      "insert into public.availability (approach_id, day, from_min, to_min, kind, note) select a.id, $3, $4, $5, $6, $7 from public.approaches a where a.edition_id = $1 and a.speaker_id = $2",
-      [ed, await speakerId(v.speaker), v.day, v.from, v.to, v.kind, v.note],
-    );
+  /** A grid row of the edition by its start (a lesson row first); «foreign» — another edition's lesson row. */
+  const rowAt = async (start: number | "foreign") =>
+    start === "foreign"
+      ? foreignRow
+      : Number((await one("select id from public.grid_rows where edition_id = $1 and start_min = $2 order by (kind = 'lesson') desc limit 1", [ed, start]))?.id ?? -1);
+  for (const v of SLOTS) {
+    await db.query("insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind, note) values ($1, $2, $3, $4, $5, $6)", [
+      ed, await speakerId(v.speaker), v.day, await rowAt(v.row), v.kind, v.note,
+    ]);
   }
 
   const roomId = async (name?: string) =>
@@ -374,8 +382,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         const a = await approachOf(step.answerHandOver);
         return call(step.as, "select public.answer_handover($1, $2, $3)", [a?.id ?? -1, step.accept, step.note ?? null]);
       }
-      if ("avail" in step) {
-        return call(step.as, "select public.set_availability($1, $2, $3, $4, $5, $6)", [ed, await speakerId(step.avail), step.day, step.part, step.kind, step.note ?? null]);
+      if ("slot" in step) {
+        return call(step.as, "select public.set_slot_availability($1, $2, $3, $4, $5, $6)", [ed, await speakerId(step.slot), step.day, await rowAt(step.row), step.kind, step.note ?? null]);
       }
       // ---- from placement to arrival
       if ("pay" in step) {
@@ -409,6 +417,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         ]);
       }
       if ("template" in step) return call(step.as, "select public.set_confirm_template($1, $2)", [ed, step.template]);
+      if ("callTemplate" in step) return call(step.as, "select public.set_call_template($1, $2)", [ed, step.callTemplate]);
       if ("duty" in step) return call(step.as, "select public.set_duty_phrases($1, $2::jsonb)", [ed, step.duty === undefined ? null : JSON.stringify(step.duty)]);
       // ---- the sources' files
       if ("store" in step) {
@@ -602,8 +611,8 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const pool = (await db.query("select * from public.speakers")).rows;
       const contacts = (await db.query("select c.*, s.name, s.disambiguator from public.speaker_contacts c join public.speakers s on s.id = c.speaker_id")).rows;
       const availability = (await db.query(`
-        select v.*, s.name, s.disambiguator from public.availability v join public.approaches a on a.id = v.approach_id
-          join public.speakers s on s.id = a.speaker_id where a.edition_id = $1`, [ed])).rows;
+        select v.day, v.kind, v.note, v.updated_by, r.start_min, r.end_min, s.name, s.disambiguator from public.slot_availability v
+          join public.grid_rows r on r.id = v.row_id join public.speakers s on s.id = v.speaker_id where v.edition_id = $1`, [ed])).rows;
       const transport = (await db.query("select t.* from public.transport_details t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed])).rows;
       const settings = (await one("select settings from public.editions where id = $1", [ed])).settings;
       const links = (await db.query("select l.*, r.full_name from public.share_links l left join public.roster r on r.id = l.subject_id where l.edition_id = $1", [ed])).rows;
@@ -637,7 +646,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         speakers: speakers.map((x) => `${byId.get(Number(x.lesson_id))}|${speakerLabel(x)}|${x.role}`).sort(),
         pool: pool.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
-        availability: availability.map((v) => `${speakerLabel(v)}|${v.day}|${v.from_min}-${v.to_min}|${v.kind}|${v.note ?? "-"}`).sort(),
+        availability: availability.map((v) => slotLine(speakerLabel(v), v, member(v.updated_by))).sort(),
         transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
         edition: editionLines(settings, cover, purged),
         links: links

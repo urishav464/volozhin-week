@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, and after the week (milestone 6)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, after the week (milestone 6), and the speakers rethought (schema v14)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -41,9 +41,9 @@ does not exclude it; see `rowActive` in `src/grid/layout.ts`).
 
 ### `propose(edition, speaker, target, mode)` → `{ lesson_id, pitch_id }`
 
-"I approached this speaker about this cell." `target` is either `{ lesson_id }` (an existing
-draft) or `{ day, start_min, end_min, room_id | null }` (a cell). `mode` is `self` (default) or
-`offer` (put the speaker forward to their current owner).
+"This speaker, for this cell" — the call comes after it (v14: `setStatus` records its result). `target` is
+either `{ lesson_id }` (an existing draft) or `{ day, start_min, end_min, room_id | null }` (a cell). `mode` is
+`self` (default) or `offer` (put the speaker forward to their current owner).
 
 1. Speaker must exist and not be `retired` → else `speaker_retired`.
 2. Target lesson:
@@ -54,17 +54,18 @@ draft) or `{ day, start_min, end_min, room_id | null }` (a cell). `mode` is `sel
      (as in `move_lesson`). If a draft with exactly that
      `(day, start, end, room)` exists, use it; else create a draft there (the room invariant may
      refuse with `room_taken`).
-3. Approach for `(edition, speaker)`:
-   - none → create `{ owner = actor, status = 'approached' }`;
-   - owned by the actor (or owner null → becomes actor) → use it; if its status is `claimed`,
-     set `approached`;
+3. Approach for `(edition, speaker)` (v14 — placing a speaker is not calling them):
+   - none → create `{ owner = actor, status = 'claimed' }` («לפני שיחה»), logged;
+   - owner null (sent back to the pool) → the actor takes it as `claim` does: `owner = actor`,
+     `offered_to = null`, `version + 1`, its status as it was;
+   - owned by the actor → nothing is written;
    - owned by someone else: `mode = self` → `approach_owned`; `mode = offer` → use THEIR approach
-     (the pitch below is created as `candidate`, `proposed_by = actor`).
-4. Pitch state: `approached` for `self`; `candidate` for `offer`; **always `candidate` if the
-   speaker is not `vetted = 'approved'`.**
-5. If a pitch `(lesson, approach)` exists: live (`candidate`/`approached`) → upgrade
-   `candidate → approached` when step 4 says `approached`, else leave it; dead (`declined`,
-   `withdrawn`, `superseded`) → revive with step 4's state. `accepted` cannot occur on a draft.
+     as it is (`proposed_by = actor` on the pitch).
+4. The pitch is always `candidate` (v14): where the call stands is the approach's status, and the
+   instructor's approval is asked only by `close_lesson`. The speaker's vetting is not checked here.
+5. If a pitch `(lesson, approach)` exists: live (`candidate`/`approached`) → left as it is; dead
+   (`declined`, `withdrawn`, `superseded`) → revived as `candidate`, `proposed_by = actor`.
+   `accepted` cannot occur on a draft.
 6. Return the lesson and pitch ids.
 
 ### `unpropose(pitch)`
@@ -76,13 +77,18 @@ deleted, giving the cell back.
 
 ### `set_pitch(pitch, state)` — `state ∈ {candidate, approached, declined}`
 
-Owner or admin. Only on a live or declined pitch of a draft. `approached` is refused with
-`not_vetted` for an unvetted speaker.
+Owner or admin (`forbidden`); the lesson a draft (`cell_closed`); a pitch neither live nor declined → no-op.
+No vetting check (v14: `close_lesson` is the one gate). **«החזרה לתהליך»** is this one command: a `declined`
+pitch set back to `candidate` or `approached` while its approach is `declined` also sets the approach
+`claimed` («לפני שיחה»), `version + 1`, logged. Under a live approach the pitch alone comes back; declining a
+pitch leaves the approach as it is.
 
 ### `close_lesson(pitch)`
 
-Owner or admin. The pitch must be live and its lesson a draft (`cell_closed` otherwise).
-1. Speaker vetted (`not_vetted`), gender known (`gender_unknown`), not retired.
+Owner or admin. The pitch must be live (a `candidate` closes as an `approached` one does) and its lesson a
+draft (`cell_closed` otherwise).
+1. Not retired (`speaker_retired`), vetted (`not_vetted` — **the one vetting gate**, v14: placing a speaker,
+   the call and its result never ask for it), gender known (`gender_unknown`).
 2. Lesson → `closed`; `lesson_speakers (lesson, speaker, 'lead')`. The speaker invariant may
    refuse with `speaker_busy` (then nothing changes).
 3. This pitch → `accepted`; other live pitches **on this lesson** → `superseded`; other live
@@ -165,7 +171,7 @@ Parameter names are part of the contract — `SupabasePort` calls them by name.
 
 | RPC | Parameters | Returns |
 |---|---|---|
-| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches availability lessons lessonSpeakers pitches team roster escortTicks`; `roster` since v7, `escortTicks` since v9) |
+| `load_week` | `p_edition bigint` | `jsonb` — the `Week` shape of `src/domain/types.ts` (keys `edition rows rooms categories speakers approaches slotAvailability lessons lessonSpeakers pitches team roster escortTicks`; `roster` since v7, `escortTicks` since v9, `slotAvailability` since v14 in place of `availability`) |
 | `propose` | `p_edition bigint, p_speaker bigint, p_lesson bigint` (null for a cell), `p_day int, p_start int, p_end int, p_room bigint` (null = default room), `p_mode text` (`self`/`offer`) | `jsonb {lesson_id, pitch_id}` |
 | `unpropose` | `p_pitch bigint` | `void` |
 | `set_pitch` | `p_pitch bigint, p_state text` | `void` |
@@ -183,8 +189,8 @@ returns only what the caller's RLS lets them see, and never a contact detail.
 The same two implementations: the SQL functions of `supabase/schema.sql` «Milestone 2» and
 `src/data/engine.ts` (behind `DemoPort`, through `src/data/demoSpeakers.ts`); `tests/parity` runs
 the same scenarios on both. As in the grid, `authenticated` has SELECT only on `speakers`,
-`speaker_contacts`, `approaches` and `availability`; every write below is a `SECURITY DEFINER`
-function in `public` (`search_path = ''`) that checks the caller.
+`speaker_contacts`, `approaches` and `slot_availability` (v14; `availability` before); every write below is
+a `SECURITY DEFINER` function in `public` (`search_path = ''`) that checks the caller.
 
 ## Text and lists (what both sides accept)
 
@@ -293,11 +299,14 @@ someone else's → `approach_owned` (also when two claim at once: one wins).
 
 ### `setStatus(approach, version, status, note)` — `set_approach_status` → `void`
 
-The approach must exist (`stale`); editor of its edition; owner or admin (`not_handler`); version
-(`stale`); `status ∈ {claimed, approached, positive, declined, no_answer}` (`bad_value`); note.
-`approached`/`positive` for a speaker not approved → `not_vetted`; anything but `positive` with a
-closed lesson in the edition → `lesson_closed`. The same status and no note → no-op. `declined`:
-the approach's live pitches → `declined`. `version + 1`; logged with the note.
+The call's result, from the lesson panel, «המרצים שלי» or the speaker sheet. The approach must exist
+(`stale`); editor of its edition; owner or admin (`not_handler`); version (`stale`);
+`status ∈ {claimed, approached, positive, declined, no_answer}` (`bad_value`); note. Any status for any
+speaker — v14 dropped `not_vetted` here (the approval is `close_lesson`'s). Anything but `positive` with a
+closed lesson in the edition → `lesson_closed`. The same status and no note → no-op. `declined`: the
+approach's live pitches → `declined`. `version + 1`; logged with the note (with `positive`, the lesson's topic
+and the answer about volunteering, as the instructor asked). `claimed` is «החזרה לתהליך» for a declined
+speaker placed again (a live pitch); one whose pitch was declined comes back through `set_pitch`.
 
 ### `handOver(approach, to, note)` — `hand_over` → `void`
 
@@ -312,13 +321,35 @@ change and no note → no-op; else `version + 1`, logged with the note.
 The approach must exist (`stale`); editor of its edition; an offer waiting for the actor, else
 `stale`. Accept → owner := actor; either way `offered_to := null`, `version + 1`, logged.
 
-### `setAvailability(edition, speaker, day, part, kind, note)` — `set_availability` → `void`
+### `setSlotAvailability(edition, speaker, day, row, kind, note)` — `set_slot_availability` → `void` (v14)
 
-Editor of the edition; `day` 0–4, `part ∈ {morning 390–780, afternoon 780–1140, evening 1140–1440,
-night 1440–1830}`, `kind ∈ {can, cannot, null}` (`bad_value`); note. The speaker's approach in the
-edition, owned by the actor or the actor admin (`not_handler` — also when there is none). Every
-row of that approach and day overlapping the part is cut back to what lies outside it; then, unless
-`kind` is null, one row for the whole part. Logged.
+One slot — a lesson row in play on a day — is `can` («יכול/ה»), `cannot` («לא») or unknown (`kind` null: no
+row). Any editor of the edition marks it: no approach is needed, and it is not only the handler's. In this order:
+1. editor of the edition (`not_member` / `forbidden` / `archived`, as `app.require_editor`);
+2. the speaker exists and is not retired (`speaker_retired`);
+3. `day` 0–4 (`bad_value`);
+4. the row is one of that day's lesson rows (`app.lesson_rows` ≡ `activeLessonRows`, `src/domain/availability.ts`)
+   — a fixed or kk row, another edition's row, Sunday before the opening, Thursday after the close →
+   `outside_grid`;
+5. `kind ∈ {can, cannot, null}` (`bad_value`);
+6. the note: one line, ≤ 120 (`bad_value` — checked even when `kind` is null, which then drops it).
+
+Then `kind` null deletes the row (none: no-op); the same kind and note → no-op; else the row is written,
+`updated_by` = actor. Only a change is logged: `approaches · availability`, under the speaker's approach in the
+edition (or none), detail `{speaker, day, start, end, kind}` and the note when there is one — so `activity`
+finds it by `detail.speaker` as before.
+
+`slot_availability` (`id, edition_id, speaker_id, day, row_id → grid_rows on delete cascade, kind, note,
+updated_by, updated_at`, unique per edition, speaker, day and row) is read by the edition's whole team
+(`app.can_see_edition`), in `load_week` as `slotAvailability: [{id, speaker_id, day, row_id, kind, note,
+updated_by}]`, and in Realtime. What a lesson or a cell fits — over every row it covers: «לא» if any is «לא»,
+«יכול/ה» only if every one is — is the browser's (`slotFit`). A row a later window leaves out keeps its mark; the
+screens read only the rows in play.
+
+v13's ranges per approach and part of a day were converted once, by `schema.sql` (v14): for each approach, day
+and lesson row in play, `cannot` when a «לא» range overlaps the row, else `can` when a «יכול/ה» range covers the
+whole row, else nothing; the range's note copied onto each row; no activity row written. Then the old table and
+`set_availability` were dropped.
 
 ## Errors (the pool)
 
@@ -342,7 +373,7 @@ contacts_hidden bad_phone bad_contact_email name_required bad_value` — plus th
 | `set_approach_status` | `p_approach bigint, p_version integer, p_status text, p_note text` | `void` |
 | `hand_over` | `p_approach bigint, p_to bigint, p_note text` | `void` |
 | `answer_handover` | `p_approach bigint, p_accept boolean, p_note text` | `void` |
-| `set_availability` | `p_edition bigint, p_speaker bigint, p_day integer, p_part text, p_kind text, p_note text` | `void` |
+| `set_slot_availability` | `p_edition bigint, p_speaker bigint, p_day integer, p_row bigint, p_kind text, p_note text` (default null) — v14, in place of `set_availability` | `void` |
 
 `load_week` (v6) also returns each speaker's `disambiguator contact_pref vetted_by vetted_note
 version` and each approach's `offered_to` — still never a contact detail.
@@ -460,13 +491,19 @@ never outlives that speaker: `reopen_lesson` deletes it with the other stages.
   (`escort_pickup`), so the lesson panel saves the fields its form changed over the details read
   again at the moment of saving (`mergeTransport`, `src/data/stageRules.ts`), never a stale copy.
 
-### Templates — `set_confirm_template` / `set_duty_phrases`
+### Templates — `set_confirm_template` / `set_duty_phrases` / `set_call_template`
 
 An admin of the edition (`app.require_edition_admin`: `not_member`, then `forbidden`). They write
 `editions.settings.confirm_template` (the summary message's template — `src/domain/message.ts`)
 and `editions.settings.duty_phrases` (the escorts' phrases — `src/domain/escorts.ts`), the
-instructor's own wording: **never seeded**, absent until pasted. `start_edition` carries both over
+instructor's own wording: **never seeded**, absent until pasted. `start_edition` carries them over
 from the live real edition (else the newest real one) to the new one.
+
+`set_call_template(edition, body)` (v14) writes `editions.settings.call_template`, «נקודות לשיחה» — the points
+for the phone call (`src/domain/callPoints.ts`): cleaned as a block (≤ 4000, `bad_value`), empty or null removes
+it, not logged — `set_confirm_template`'s rules. Absent, the screens use the instructor's own text, built into the
+code (`DEFAULT_CALL_TEMPLATE`): it is in no database row and is never seeded. `start_edition` carries a saved one
+over like the others.
 
 ## Errors (milestone 3)
 
@@ -488,6 +525,7 @@ no_transport transport_hidden payment_not_approved paid_locked bad_phone bad_val
 | `set_transport_details` | `p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean` (default false) | `void` |
 | `set_confirm_template` | `p_edition bigint, p_body text` | `void` |
 | `set_duty_phrases` | `p_edition bigint, p_phrases jsonb` | `void` |
+| `set_call_template` | `p_edition bigint, p_body text` — v14 | `void` |
 
 `load_week` (v7) also returns the edition's `roster` (`id full_name gender` — names only), and each
 lesson's stage columns (`pay_amount transport approval approval_note approved_by approved_at
@@ -1474,7 +1512,8 @@ new its id (`tests/sql/importAfter.test.ts`).
 Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:
 [{id, label}] (the real editions not archived), carry_from: {id, label} | null (where the wording and
 milestones come from: the live real edition, else the newest real), grid_rows (the template's), milestones
-(carry_from's), confirm_template (boolean), duty_phrases (count), deactivate (with the option: the active
+(carry_from's), confirm_template (boolean), call_template (boolean, v14 — false: the built-in text, nothing to
+carry), duty_phrases (count), deactivate (with the option: the active
 non-admin members of the archived editions; without: 0), admins_stay, stays: {speakers (not retired),
 categories (active), fallen (active), notes (cross-year)}}`.
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityEntry } from "../data/speakers";
 import { timeline } from "./activityText";
+import { LRM } from "./time";
 
 let seq = 0;
 const row = (entity: string, kind: string, detail: Record<string, unknown>, actor: number | null = 2, entity_id = 9): ActivityEntry => ({
@@ -23,8 +24,8 @@ describe("a speaker's timeline", () => {
     ].reverse(); // newest first, as speaker_activity returns them
     const lines = timeline(log, ctx("f")).reverse();
     expect(lines.map((l) => l.text)).toEqual([
-      "בטיפול חניך/ה א׳ · עוד לא פנו",
-      "פנו, מחכים לתשובה",
+      "בטיפול חניך/ה א׳ · לפני שיחה",
+      "שוחחנו, מחכים לתשובה",
       "הוצע להעביר את הטיפול לחניך/ה ב׳",
       "הטיפול עבר לחניך/ה ב׳",
       "הוצע להעביר את הטיפול לחניך/ה א׳",
@@ -48,18 +49,39 @@ describe("a speaker's timeline", () => {
     expect(timeline([row("speakers", "vet", { vetted: "rejected" })], ctx(null))[0].text).toBe("נדחה/תה");
   });
 
-  it("availability chips and cells, with the lesson's time when it is loaded", () => {
+  it("availability per slot (its range, left to right) and cells, with the lesson's time when it is loaded", () => {
     const log = [
-      row("approaches", "availability", { speaker: 4, day: 0, part: "morning", kind: "cannot" }),
-      row("pitches", "insert", { state: "approached", lesson: 5, approach: 9 }),
+      row("approaches", "availability", { speaker: 4, day: 0, start: 510, end: 600, kind: "cannot", note: "לא בבקרים" }),
+      row("approaches", "availability", { speaker: 4, day: 2, start: 1200, end: 1290, kind: null }),
+      row("pitches", "insert", { state: "candidate", lesson: 5, approach: 9 }),
+      row("pitches", "update", { state: "declined", lesson: 5, approach: 9 }),
       row("pitches", "update", { state: "accepted", lesson: 77, approach: 9 }),
     ];
-    expect(timeline(log, ctx("f")).map((l) => l.text)).toEqual(["זמינות: ראשון בוקר — לא יכולה", "הוצעה למשבצת (ראשון 08:30)", "השיעור נסגר"]);
+    const lines = timeline(log, ctx("f"));
+    expect(lines.map((l) => l.text)).toEqual([
+      `זמינות: ראשון ${LRM}08:30–10:00 — לא יכולה`,
+      `זמינות: שלישי ${LRM}20:00–21:30 — לא ידוע`,
+      "הוצעה למשבצת (ראשון 08:30)",
+      "סירבה למשבצת (ראשון 08:30)",
+      "השיעור נסגר",
+    ]);
+    expect(lines[0].note).toBe("לא בבקרים");
+    expect(timeline([log[0]], ctx(null))[0].text).toBe(`זמינות: ראשון ${LRM}08:30–10:00 — לא יכול/ה`);
+  });
+
+  it("a row logged before v14 (a part of a day) still reads; one it cannot place says only that it changed", () => {
+    const log = [
+      row("approaches", "availability", { speaker: 4, day: 1, part: "evening", kind: "can" }),
+      row("approaches", "availability", { speaker: 4, day: 3, part: "night", kind: "cannot" }),
+      row("approaches", "availability", { speaker: 4, day: 3, part: "dawn", kind: "can" }),
+      row("approaches", "availability", { speaker: 4, day: 7, start: 510, end: 600, kind: "can" }),
+    ];
+    expect(timeline(log, ctx("m")).map((l) => l.text)).toEqual(["זמינות: שני ערב — יכול", "זמינות: רביעי לילה — לא יכול", "זמינות עודכנה", "זמינות עודכנה"]);
   });
 
   it("an approach row with nothing older in the list says where it stands", () => {
     const [line] = timeline([row("approaches", "update", { status: "claimed", owner: 3, speaker: 4, offered_to: 2, note: "לדוגמה" })], ctx("m"));
-    expect(line.text).toBe("בטיפול חניך/ה ב׳ · הוצע להעביר את הטיפול לחניך/ה א׳ · עוד לא פנו");
+    expect(line.text).toBe("בטיפול חניך/ה ב׳ · הוצע להעביר את הטיפול לחניך/ה א׳ · לפני שיחה");
     expect(line.note).toBe("לדוגמה");
   });
 
