@@ -403,6 +403,9 @@ test.describe("mock build", () => {
     await form.getByRole("button", { name: "שמירת הנקודות" }).click();
     await expect.poll(() => sb.rpc.get("set_call_template")).toEqual([{ p_edition: 7, p_body: custom }]);
     await expect(text).toHaveValue(custom);
+    // the value above is also what was typed: wait for the panel to start again from the edition read back
+    await expect(page.getByText("נערכו כאן")).toBeVisible();
+    await expect(form.getByRole("button", { name: "חזרה לנוסח של המדריך/ה" })).toBeEnabled();
 
     // the instructor's own text typed back: nothing to store
     await text.fill(DEFAULT_CALL_TEMPLATE);
