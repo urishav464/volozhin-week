@@ -21,7 +21,7 @@ import { DAYS, type Day, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { rowActive } from "../../grid/layout";
-import { Badge, Button, Confirm, Field, INPUT, useFocusBack, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, Fold, INPUT, useFocusBack, useRunner } from "../settings/kit";
 import { dayLabel } from "../public/parts";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
@@ -112,19 +112,15 @@ export function KkScreen({ port, me }: { port: DataPort; me: Me }) {
         <h2 className="font-display text-2xl font-extrabold">מכריכה לכריכה</h2>
         <EditionSelect />
       </div>
-      <p className="text-sm text-ink-soft">
-        קבוצות קריאה במשבצות «מכריכה לכריכה» של הרשת. הספרים, המובילים והתפוסה הם מה שהמדריך/ה כותב/ת — שום דבר לא ממולא מראש. קבוצה בלי תפוסה לא מוצעת בקישור ההרשמה.
-        {admin && (
-          <>
-            {" "}
-            את קישור ההרשמה מנפיקים ב
-            <Link to="/settings/links" className="font-semibold underline">
-              הגדרות ← «קישורים»
-            </Link>
-            .
-          </>
-        )}
-      </p>
+      {/* the rest is the groups' own badges and the «תפוסה» hint; where the link is issued is the admin's one pointer */}
+      {admin && (
+        <p className="text-sm text-ink-soft">
+          קישור ההרשמה:{" "}
+          <Link to="/settings/links" className="inline-flex min-h-11 items-center font-semibold underline">
+            בהגדרות ← «קישורים»
+          </Link>
+        </p>
+      )}
       <WindowPanel week={week} admin={admin} busy={busy} act={act} port={port} onSaved={store.reload} />
       {failed && !kk && (
         <div role="alert" className="rounded-lg border border-bad/30 bg-bad/5 p-4 text-sm">
@@ -164,6 +160,20 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
     setCloses(w ? israelLocal(w.closes_at) : "");
   }, [w?.opens_at, w?.closes_at]);
   const state = kkWindowState(w);
+  // set once or twice a season: the state for everyone, the form behind «עריכת החלון»; closed, the button has the focus
+  // back — saved, the fields follow the saved window (the effect above); cancelled, they return to it
+  const [editing, setEditing] = useState(false);
+  const focusBack = useFocusBack();
+  const done = () => {
+    setProblem(null);
+    setEditing(false);
+    focusBack.back();
+  };
+  const cancel = () => {
+    setOpens(w ? israelLocal(w.opens_at) : "");
+    setCloses(w ? israelLocal(w.closes_at) : "");
+    done();
+  };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -174,12 +184,18 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
     if (!o || !c) return setProblem("השעה הזו לא קיימת בשעון ישראל (הלילה שבו עוברים לשעון קיץ). בוחרים שעה אחרת.");
     if (Date.parse(o) >= Date.parse(c)) return setProblem("הסגירה צריכה להיות אחרי הפתיחה.");
     const ok = await act("window", () => port.kk.setWindow(week.edition.id, o, c), "חלון ההרשמה נשמר");
-    if (ok) await onSaved();
+    if (ok) {
+      await onSaved();
+      done();
+    }
   };
   const close = async () => {
     setProblem(null);
     const ok = await act("window-none", () => port.kk.setWindow(week.edition.id, null, null), "ההרשמה סגורה: אין חלון");
-    if (ok) await onSaved();
+    if (ok) {
+      await onSaved();
+      done();
+    }
   };
 
   return (
@@ -188,9 +204,18 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
         <h3 className="font-display text-lg font-semibold">חלון ההרשמה</h3>
         <Badge tone={state === "open" ? "ok" : "muted"}>{state === "open" ? "פתוחה עכשיו" : "סגורה עכשיו"}</Badge>
       </div>
-      <p className="text-sm">{kkWindowText(w)}</p>
-      {admin ? (
-        <form onSubmit={(e) => void save(e)} aria-label="חלון ההרשמה" className="mt-3 space-y-3" noValidate>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className="text-sm">{kkWindowText(w)}</p>
+        {admin ? (
+          <Button ref={focusBack.ref()} kind="quiet" aria-expanded={editing} aria-controls={`${id}-form`} onClick={() => (editing ? cancel() : setEditing(true))}>
+            עריכת החלון
+          </Button>
+        ) : (
+          <span className="text-xs text-ink-soft">את החלון קובע/ת המדריך/ה.</span>
+        )}
+      </div>
+      {admin && editing && (
+        <form id={`${id}-form`} onSubmit={(e) => void save(e)} aria-label="חלון ההרשמה" className="mt-3 space-y-3" noValidate>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field id={`${id}-o`} label="נפתחת (שעון ישראל)">
               <input id={`${id}-o`} type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} className={INPUT} />
@@ -214,10 +239,9 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
                 בלי חלון (ההרשמה סגורה)
               </Button>
             )}
+            <Button onClick={cancel}>ביטול</Button>
           </div>
         </form>
-      ) : (
-        <p className="mt-1 text-xs text-ink-soft">את החלון קובע/ת המדריך/ה.</p>
       )}
     </section>
   );
@@ -227,6 +251,12 @@ function WindowPanel({ week, admin, busy, act, port, onSaved }: { week: Week; ad
 
 function OccurrenceSection({ o, week, kk, admin, books, busy, act, port }: { o: Occurrence; week: Week; kk: KkData; admin: boolean; books: boolean; busy: string | null; act: Act; port: DataPort }) {
   const [adding, setAdding] = useState(false);
+  // the form closed (saved or cancelled): «+ קבוצה» has the focus back
+  const focusBack = useFocusBack();
+  const doneAdding = () => {
+    setAdding(false);
+    focusBack.back();
+  };
   // the plain string names the region for a screen reader (read in logical order); what is drawn wraps the range in <bdi>
   const label = `${dayLabel(o.day, o.start_min)} ${fmtRange(o.start_min, o.end_min)}`;
   const when = (
@@ -240,13 +270,20 @@ function OccurrenceSection({ o, week, kk, admin, books, busy, act, port }: { o: 
   const leading = leadersIn(kk, o.trackId);
   const leaders = week.roster.filter((r) => leading.has(r.id) && !signups.some((s) => s.roster_id === r.id));
   const missing = o.trackId == null ? [] : week.roster.filter((r) => !leading.has(r.id) && !signups.some((s) => s.roster_id === r.id));
+  // a night with no group yet is one line; «+ קבוצה» sits on the heading line of every night, and its form opens under it
+  const compact = groups.length === 0 && !adding && !o.outside;
   return (
-    <section aria-label={o.outside ? `${label} · מחוץ לרשת` : label} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+    <section aria-label={o.outside ? `${label} · מחוץ לרשת` : label} className={`space-y-3 rounded-xl border border-line bg-card shadow-sm ${compact ? "px-4 py-1.5" : "p-4 sm:p-5"}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h3 className="font-display text-lg font-semibold">{when}</h3>
         {date && <span className="text-sm text-ink-soft">{date}</span>}
         <span className="text-sm text-ink-soft">{groups.length === 0 ? "אין קבוצות" : groups.length === 1 ? "קבוצה אחת" : `${groups.length} קבוצות`}</span>
         {o.outside && <Badge tone="bad">מחוץ לרשת</Badge>}
+        {admin && !o.outside && !adding && (
+          <Button ref={focusBack.ref()} className="ms-auto" onClick={() => setAdding(true)} aria-label={`קבוצה חדשה: ${label}`}>
+            + קבוצה
+          </Button>
+        )}
       </div>
       {o.outside && (
         <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">
@@ -254,28 +291,22 @@ function OccurrenceSection({ o, week, kk, admin, books, busy, act, port }: { o: 
           מחזירים את השעות בהגדרות.
         </p>
       )}
+      {admin && !o.outside && adding && (
+        <GroupForm
+          week={week}
+          title={`קבוצה חדשה · ${label}`}
+          heading={<>קבוצה חדשה · {when}</>}
+          busy={busy === `add-${o.day}-${o.start_min}`}
+          onCancel={doneAdding}
+          onSave={async (fields, onRefused) => {
+            const ok = await act(`add-${o.day}-${o.start_min}`, () => port.kk.addGroup(week.edition.id, o.day, o.start_min, fields), "הקבוצה נוספה", onRefused);
+            if (ok) doneAdding();
+          }}
+        />
+      )}
       {groups.map((g) => (
         <GroupCard key={g.id} g={g} groups={groups} week={week} kk={kk} admin={admin} books={books} busy={busy} act={act} port={port} />
       ))}
-      {admin &&
-        !o.outside &&
-        (adding ? (
-          <GroupForm
-            week={week}
-            title={`קבוצה חדשה · ${label}`}
-            heading={<>קבוצה חדשה · {when}</>}
-            busy={busy === `add-${o.day}-${o.start_min}`}
-            onCancel={() => setAdding(false)}
-            onSave={async (fields, onRefused) => {
-              const ok = await act(`add-${o.day}-${o.start_min}`, () => port.kk.addGroup(week.edition.id, o.day, o.start_min, fields), "הקבוצה נוספה", onRefused);
-              if (ok) setAdding(false);
-            }}
-          />
-        ) : (
-          <Button onClick={() => setAdding(true)} aria-label={`קבוצה חדשה: ${label}`}>
-            + קבוצה
-          </Button>
-        ))}
       {o.trackId != null && groups.length > 0 && (
         <NotYet trackLabel={label} missing={missing} leaders={leaders} groups={groups} admin={admin && !o.outside} busy={busy} act={act} port={port} />
       )}
@@ -316,11 +347,17 @@ function NotYet({
     if (ok) setWho(null);
   };
   return (
-    <details className="rounded-lg border border-line p-3">
-      <summary className="min-h-11 cursor-pointer content-center font-semibold">
-        עוד לא נרשמו ({missing.length})<span className="sr-only"> · {trackLabel}</span>
-      </summary>
-      {leaders.length > 0 && <p className="mt-1 text-sm text-ink-soft">מובילים קבוצה במשבצת הזו: {leaders.map((r) => r.full_name).join(" · ")}</p>}
+    <Fold
+      title="עוד לא נרשמו"
+      hint={
+        <>
+          <span data-kk-missing>{missing.length}</span>
+          <span className="sr-only"> · {trackLabel}</span>
+        </>
+      }
+      className="rounded-lg border border-line px-3 py-0.5"
+    >
+      {leaders.length > 0 && <p className="text-sm text-ink-soft">מובילים קבוצה במשבצת הזו: {leaders.map((r) => r.full_name).join(" · ")}</p>}
       {missing.length === 0 ? (
         <p className="text-sm text-ink-soft">כל החניכים ברשימה נרשמו.</p>
       ) : (
@@ -357,7 +394,7 @@ function NotYet({
           </Button>
         </form>
       )}
-    </details>
+    </Fold>
   );
 }
 
@@ -417,7 +454,7 @@ function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }: { g: 
           ))}
         </ul>
       )}
-      <BookOrder g={g} kk={kk} signed={signups.length} leaders={leaders.length} editable={books} busy={busy} act={act} port={port} />
+      <BookOrder g={g} kk={kk} signed={signups.length} leaders={leaders.length} editable={books} folded busy={busy} act={act} port={port} />
       {admin &&
         (deleting ? (
           <Confirm
@@ -527,8 +564,12 @@ function SignupItem({
   );
 }
 
-/** Copies to order for the group, and whether they were ordered — logistics' and the admins'. Nothing is filled in for them. */
-export function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }: { g: KkGroup; kk: KkData; signed: number; leaders: number; editable: boolean; busy: string | null; act: Act; port: DataPort }) {
+/**
+ * Copies to order for the group, and whether they were ordered — logistics' and the admins'. Nothing is filled in for them.
+ * `folded` (on /kk, where ordering is not the screen's job): the form behind its own read-only line; «לוגיסטיקה ← ספרים»
+ * keeps it open.
+ */
+export function BookOrder({ g, kk, signed, leaders, editable, folded = false, busy, act, port }: { g: KkGroup; kk: KkData; signed: number; leaders: number; editable: boolean; folded?: boolean; busy: string | null; act: Act; port: DataPort }) {
   const id = useId();
   const order = kk.orders.find((o) => o.group_id === g.id) ?? null;
   const [copies, setCopies] = useState(order ? String(order.copies) : "");
@@ -538,14 +579,10 @@ export function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }:
     setCopies(order ? String(order.copies) : "");
     setOrdered(order?.ordered_at != null);
   }, [order?.copies, order?.ordered_at]);
-  const hint = `נרשמו ${signed} · מובילים ${leaders}`;
-  if (!editable) {
-    return (
-      <p className="text-sm text-ink-soft">
-        ספרים: {order ? `${order.copies} עותקים${order.ordered_at ? ` · הוזמנו ב-${israelMoment(order.ordered_at)}` : " · עוד לא הוזמנו"}` : "עוד לא נקבע כמה להזמין"}
-      </p>
-    );
-  }
+  // folded, the card above already says how many signed up
+  const hint = folded ? `מובילים ${leaders}` : `נרשמו ${signed} · מובילים ${leaders}`;
+  const line = `ספרים: ${order ? `${order.copies} עותקים${order.ordered_at ? ` · הוזמנו ב-${israelMoment(order.ordered_at)}` : " · עוד לא הוזמנו"}` : "עוד לא נקבע כמה להזמין"}`;
+  if (!editable) return <p className="text-sm text-ink-soft">{line}</p>;
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
@@ -556,7 +593,7 @@ export function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }:
     await act(`books-${g.id}`, () => port.kk.setBookOrder(g.id, n, ordered), n == null ? "שורת הספרים נמחקה" : "הזמנת הספרים נשמרה");
   };
   const dirty = (order ? String(order.copies) : "") !== copies.trim() || (order?.ordered_at != null) !== ordered;
-  return (
+  const form = (
     <form onSubmit={(e) => void save(e)} aria-label={`ספרים · ${g.title}`} className="flex flex-wrap items-end gap-2" noValidate>
       <Field id={`${id}-n`} label="עותקים להזמנה" hint={hint}>
         <input id={`${id}-n`} type="number" inputMode="numeric" min={0} max={KK_LIMITS.copies} value={copies} onChange={(e) => setCopies(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-n-hint`} />
@@ -575,6 +612,13 @@ export function BookOrder({ g, kk, signed, leaders, editable, busy, act, port }:
         </p>
       )}
     </form>
+  );
+  return folded ? (
+    <Fold title={line} size="sm">
+      {form}
+    </Fold>
+  ) : (
+    form
   );
 }
 

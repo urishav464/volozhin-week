@@ -247,9 +247,9 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
             העלאת קבצים
           </label>
           <span className="ms-2 text-ink-soft pointer-coarse:hidden">או לגרור לכאן</span>
+          {/* the whole rule (what reaches the reader, who sees the files) is the guide's «מקורות ומקראה» */}
           <p className="mt-1 text-xs text-ink-soft">
-            PDF, ‏Word ‏(docx) או תמונה (PNG/JPG), עד 25MB לקובץ. Word נשמר, אבל למקראה צריך PDF.{" "}
-            {memorial ? "רק החומרים למקראה — בלי טלפונים או פרטי קשר של המשפחה." : "רק דפי המקורות — בלי קבצים עם טלפונים או פרטים אישיים."}
+            {`PDF,\u200f Word או תמונה · עד 25MB\u200f · Word לא נכנס למקראה · ${memorial ? "בלי פרטי קשר של המשפחה" : "בלי פרטים אישיים"}`}
           </p>
         </div>
       )}

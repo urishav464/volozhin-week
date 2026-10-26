@@ -46,8 +46,10 @@ test.describe("demo build", () => {
     await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
     await expect(page).toHaveURL(/\/memorial$/);
     await expect(page.getByRole("heading", { name: "זמני זיכרון", level: 2 })).toBeVisible();
-    await expect(page.getByText("ממתין להחלטת ישיבת הצוות")).toBeVisible();
-    await expect(page.getByText("עוד לא נקבעה מדיניות.")).toBeVisible();
+    await expect(page.getByText("ממתין להחלטת ישיבת הצוות")).toBeVisible(); // on the folded policy itself
+    const policy = page.getByRole("region", { name: "המדיניות" });
+    await policy.locator("summary").click();
+    await expect(policy.getByText("עד שתיקבע: אין אזהרות על אורך או על סמיכות לארוחה.")).toBeVisible();
     const tray = page.getByRole("list", { name: "תוכניות שלא שובצו" });
     await expect(tray.locator("[data-memorial-plan]")).toHaveCount(2);
     await noSidewaysScroll(page);
@@ -153,9 +155,10 @@ test.describe("demo build", () => {
     // the slot's verdict: a lesson's words — never «not uploaded» when something was
     const verdict = panel.locator("[data-memorial-reader]");
     await expect(verdict).toHaveAttribute("data-memorial-reader", "memorial_needs_pdf");
-    await expect(verdict).toContainText("מקראה: זמן זיכרון — צריך PDF.");
-    await expect(verdict).toContainText("צריך להעלות PDF");
-    await expect(verdict).not.toContainText("עוד לא הועלו");
+    await expect(verdict).toHaveText("צריך PDF"); // beside «חומרים למקראה»: the panel's title says «זמן זיכרון»
+    const forReader = panel.getByRole("region", { name: "חומרים למקראה" });
+    await expect(forReader).toContainText("צריך להעלות PDF");
+    await expect(forReader).not.toContainText("עוד לא הועלו");
     await page.keyboard.press("Escape");
 
     await nav(page).getByRole("link", { name: "תוצרים" }).click();
@@ -250,27 +253,29 @@ test.describe("demo build", () => {
     await expect(removeSlot).toBeFocused();
     await expect(monday.locator("[data-memorial-slot]")).toHaveCount(2); // still there
 
-    // a plan in the tray
+    // a plan in the tray: «מחיקת התוכנית» is in its form, never on the card
     const plan = page.getByRole("list", { name: "תוכניות שלא שובצו" }).locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 2" });
+    await expect(plan.getByRole("button", { name: "מחיקת התוכנית" })).toHaveCount(0);
+    await plan.getByRole("button", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" }).click();
     const deletePlan = plan.getByRole("button", { name: "מחיקת התוכנית" });
     await deletePlan.click();
     await cancel(plan).press("Enter");
     await expect(deletePlan).toBeFocused();
-    // its form opened meanwhile, «מחיקת התוכנית» is not drawn again: the plan's «שיבוץ» takes the focus, never the page
-    await deletePlan.click();
-    await plan.getByRole("button", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" }).click();
-    await cancel(plan).press("Enter");
-    await expect(plan.getByLabel("שיבוץ", { exact: true })).toBeFocused();
     await expect(plan.getByRole("form", { name: "עריכת התוכנית: חלל/ה לדוגמה 2" })).toBeVisible(); // the form untouched
 
-    // a name in the cross-year list: that row's «מחיקה», not another's — a middle row (one key for every row would hand the
-    // focus to the last row drawn)
+    // a name in the cross-year list (folded): «מחיקה» in the name's form; the form's «ביטול» gives that row's «עריכה» the
+    // focus, not another's — a middle row (one key for every row would hand the focus to the last row drawn)
+    await page.getByRole("region", { name: "רשימת החללים" }).locator("summary").click();
     const fallen = page.getByRole("list", { name: "החללים" });
+    const editName = fallen.getByRole("button", { name: "עריכה: חלל/ה לדוגמה 5" });
+    await editName.click();
     const deleteName = fallen.getByRole("button", { name: "מחיקה: חלל/ה לדוגמה 5" });
     await deleteName.click();
     await cancel(fallen).press("Enter");
     await expect(deleteName).toBeFocused();
     await expect(fallen.locator("[data-fallen]")).toHaveCount(9);
+    await fallen.getByRole("form", { name: "עריכה: חלל/ה לדוגמה 5" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(editName).toBeFocused();
   });
 
   test("a screen whose file is gone after a deploy (the old name answered with index.html): a notice with «רענון», never a blank page", async ({ page }) => {

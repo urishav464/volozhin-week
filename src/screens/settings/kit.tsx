@@ -62,6 +62,41 @@ export function useRunner(notify: (kind: "ok" | "error", text: string) => void, 
   return { busy, run };
 }
 
+/**
+ * A fold: an occasional act or a rarely-needed detail behind one line — its title, a muted hint
+ * (a count, the value in use), and ▾. A real <details>/<summary>, at least 44px tall, the same
+ * look everywhere. `defaultOpen` is only where it starts (an empty list opens its add form).
+ */
+export function Fold({
+  title,
+  hint,
+  defaultOpen,
+  size = "md",
+  className = "",
+  children,
+}: {
+  title: ReactNode;
+  hint?: ReactNode;
+  defaultOpen?: boolean;
+  /** md: a panel's part, as a Section heading; sm: a fold inside a part. */
+  size?: "md" | "sm";
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className={`group ${className}`} open={defaultOpen}>
+      <summary
+        className={`flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md [&::-webkit-details-marker]:hidden ${size === "md" ? "text-[15px] font-semibold text-ink" : "text-sm font-semibold text-ink-soft"}`}
+      >
+        <span>{title}</span>
+        {hint != null && hint !== false && <span className="min-w-0 truncate text-[13px] font-normal text-ink-soft">{hint}</span>}
+        <span aria-hidden className="ms-auto shrink-0 text-ink-soft transition-transform group-open:rotate-180">▾</span>
+      </summary>
+      <div className="pb-1 pt-2">{children}</div>
+    </details>
+  );
+}
+
 const BUTTON = {
   primary: "bg-ink text-paper hover:bg-ink/90",
   secondary: "border border-line bg-paper hover:bg-line/50",

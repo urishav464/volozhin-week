@@ -65,12 +65,13 @@ export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, o
                 if (b.row.kind === "lesson") return <div key={b.row.id} className={base} style={{ top: b.top, height: b.height }} />;
                 const tone = b.row.kind === "kk" ? "bg-accent-soft text-accent" : b.row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft";
                 if (b.row.kind === "memorial" && onMemorial && !lessons.some((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, b.row.start_min, b.row.end_min)) && memorialRowFree(model, day, b.row)) {
+                  // dashed, like an empty cell: one click makes a slot (not a label like the rows around it)
                   return (
                     <button
                       key={b.row.id}
                       type="button"
                       onClick={() => onMemorial(day, b.row)}
-                      className={`${base} ${tone} grid place-items-center px-1 text-center text-[10px] leading-tight hover:bg-amber-100`}
+                      className={`absolute inset-x-0 m-0.5 grid place-items-center rounded-md border border-dashed border-amber-300 ${tone} px-1 text-center text-[11px] font-semibold leading-tight hover:bg-amber-100`}
                       style={{ top: b.top, height: b.height }}
                       aria-label={`הוספת זמן זיכרון: ${dayRange(day, b.row.start_min, b.row.end_min)}`}
                     >
@@ -108,9 +109,7 @@ export function GridDesktop({ model, lens, placing, overKey, onCell, onLesson, o
                     ) : fit === "busy" ? (
                       <span>כבר {placing ? byGender(placing.gender, "משובץ", "משובצת") : ""} בשעה הזו</span>
                     ) : lens === "diversity" && need ? (
-                      <span className={need === "f" ? "text-pink-800" : "text-sky-800"}>
-                        {GENDER_NEED_LABEL[need]} <span className="font-bold">{need === "f" ? "נ" : "ג"}</span>
-                      </span>
+                      <span className={need === "f" ? "text-pink-800" : "text-sky-800"}>{GENDER_NEED_LABEL[need]}</span>
                     ) : (
                       <span className="text-ink-faint">פנוי</span>
                     )}

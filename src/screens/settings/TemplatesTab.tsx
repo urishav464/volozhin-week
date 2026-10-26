@@ -13,7 +13,7 @@ import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable } from "..
 import type { DutyPhrase, DutyWhen, Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Choice } from "../stages/parts";
-import { Badge, Button, Confirm, EditionPicker, Field, INPUT, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, Fold, INPUT, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -158,11 +158,9 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
   return (
     <Panel title="הודעת הסיכום למרצה" aside={saved ? "יש נוסח" : <Badge tone="bad">ריק: ההודעות חסומות</Badge>}>
       <form onSubmit={(e) => void save(e)} aria-label="נוסח הודעת הסיכום" className="space-y-3" noValidate>
+        {/* the badge above says it is empty, and blocking: this says only what to do */}
         {!saved && (
-          <div className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">
-            <p className="font-semibold">עוד אין נוסח, ועד שיהיה ההודעות למרצים חסומות.</p>
-            <p>מדביקים כאן את הנוסח של אשתקד, מתחתית גיליון המעקב, בלי מספרי טלפון. אחר כך מחליפים בו את הפרטים של השיעור במשתנים שלמטה. המערכת לא כותבת נוסח משלה.</p>
-          </div>
+          <p className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">מדביקים את הנוסח של אשתקד (מתחתית גיליון המעקב), בלי טלפונים, ומחליפים בו את פרטי השיעור במשתנים.</p>
         )}
         <Field id={`${id}-text`} label="הנוסח" hint={`עד ${STAGE_LIMITS.template.toLocaleString("he-IL")} תווים. שורות ריקות נשמרות כמו שהן.`}>
           <textarea
@@ -177,8 +175,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
           />
         </Field>
 
-        <details className="rounded-lg border border-line bg-paper p-3" open={!saved}>
-          <summary className="flex min-h-11 cursor-pointer items-center font-semibold">המשתנים והצורות</summary>
+        <Fold title="המשתנים והצורות" hint={MESSAGE_VARIABLES.length + FORMS.length} defaultOpen={!saved} className="rounded-lg border border-line bg-paper px-3 py-0.5">
           <p className="mb-2 text-xs text-ink-soft">הקשה על משתנה מכניסה אותו לנוסח, במקום הסמן.</p>
           <ul aria-label="משתנים" className="space-y-1.5">
             {MESSAGE_VARIABLES.map((v) => (
@@ -200,7 +197,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
               </li>
             ))}
           </ul>
-        </details>
+        </Fold>
 
         {problem && (
           <p role="alert" className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
@@ -319,10 +316,7 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
           ברשימת המלווים, ליד כל שיעור, מופיעים הניסוחים שחלים עליו, בסדר שלהם, ואחריהם ההערה של השיעור. לעולם לא הסכום.
         </p>
         {list.length === 0 ? (
-          <div className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">
-            <p className="font-semibold">עוד אין ניסוחים.</p>
-            <p>מדביקים את הניסוחים מקובץ המלווים של אשתקד, בלי שמות ובלי מספרי טלפון. המערכת לא כותבת ניסוחים משלה.</p>
-          </div>
+          <p className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">מדביקים את הניסוחים מקובץ המלווים של אשתקד, בלי שמות וטלפונים.</p>
         ) : (
           <Rows label="הניסוחים" head={["מתי", "ניסוח"]}>
             {list.map((p, i) => (

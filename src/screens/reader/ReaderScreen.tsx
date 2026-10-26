@@ -25,7 +25,7 @@ import {
 } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
 import { OutputsTabs } from "../outputs/parts";
-import { Badge, Button, Field, INPUT, Panel } from "../settings/kit";
+import { Badge, Button, Field, Fold, INPUT, Panel } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { FileRow } from "../stages/SourceFiles";
 import { actorIn, type Actor, useWeekStore } from "../weekStore";
@@ -80,10 +80,12 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-20">
       {header}
-      <p className="text-ink-soft">
-        המקראה נבנית מהקבצים שהועלו לשיעורים, לפי הלו״ז: שער, תוכן עניינים, ואחריהם כל שיעור שמסומן «במקראה» ויש לו PDF או תמונה — כותרת «מרצה – כותרת» ואחריה הקבצים, כל עמוד
-        מוקטן או מוגדל לגודל A4 — וזמני הזיכרון, ועמוד «סיכום יום» בסוף כל יום. הקובץ נבנה במחשב הזה ויורד אליו, ולא נשמר בשום מקום.
-      </p>
+      <Fold title="מה נכנס למקראה" className="rounded-xl border border-line bg-card px-4 py-1 shadow-sm sm:px-5">
+        <p className="text-sm text-ink-soft">
+          המקראה נבנית מהקבצים שהועלו לשיעורים, לפי הלו״ז: שער, תוכן עניינים, ואחריהם כל שיעור שמסומן «במקראה» ויש לו PDF או תמונה — כותרת «מרצה – כותרת» ואחריה הקבצים, כל
+          עמוד מוקטן או מוגדל לגודל A4 — וזמני הזיכרון, ועמוד «סיכום יום» בסוף כל יום.
+        </p>
+      </Fold>
       <BuildPanel port={port} week={week} manifest={manifest} notify={notify} clear={clear} />
       <ManifestPanel manifest={manifest} />
       <CoverPanel port={port} week={week} manifest={manifest} actor={actor} notify={notify} clear={clear} reload={reload} />
@@ -234,10 +236,7 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
           )}
         </div>
       )}
-      <p className="mt-2 text-xs text-ink-soft">
-        שלד ה-Word: הכותרות לפי הסדר (כל שיעור שמסומן «במקראה» וכל זמן זיכרון, בעמוד משלו), שדה תוכן עניינים שמתעדכן בפתיחה, ועמודי «סיכום יום» — כדי להדביק אליו
-        מקורות שהגיעו ב-Word ולערוך הכול באותה צורה.
-      </p>
+      <p className="mt-2 text-xs text-ink-soft">הקובץ נבנה במחשב הזה ולא נשמר בשום מקום. שלד ה-Word: הכותרות ותוכן העניינים, להדבקת מקורות שהגיעו ב-Word.</p>
     </Panel>
   );
 }
@@ -326,8 +325,8 @@ function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void
     notes.push(r.kind === "memorial" ? `מתוכנית שנמחקה מהמחזור: ${n} להסרה` : `מהמרצה הקודם: ${n} להסרה`);
   }
   if (r.kind === "lesson" && IN_READER[r.status] && !r.title) notes.push("אין כותרת: בכותרת שבמקראה יופיע TBD");
-  if (r.status === "memorial") notes.push("עמוד כותרת בלבד: עוד לא שובץ/ה כאן חלל/ה (במסך «זמני זיכרון»)");
-  else if (r.status === "memorial_missing") notes.push("עמוד כותרת; החומרים עוד לא הועלו (בלוח של זמן הזיכרון)");
+  // a slot with nobody placed says nothing more than its badge «זמן זיכרון» (else the one sentence, on every free slot)
+  if (r.status === "memorial_missing") notes.push("עמוד כותרת; החומרים עוד לא הועלו (בלוח של זמן הזיכרון)");
   // a lesson's verdicts (the badge): what came is Word, or was not read — never «not uploaded» when something was
   else if (r.status === "memorial_needs_pdf") notes.push(r.word.length === 1 ? "הועלה קובץ Word, שלא נכנס למקראה — צריך PDF; בינתיים עמוד כותרת בלבד" : `הועלו ${r.word.length} קבצי Word, שלא נכנסים למקראה — צריך PDF; בינתיים עמוד כותרת בלבד`);
   else if (r.status === "memorial_unreadable") notes.push("בינתיים עמוד כותרת בלבד");

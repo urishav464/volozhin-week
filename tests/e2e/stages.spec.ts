@@ -122,7 +122,7 @@ test.describe("demo build", () => {
     await msg.getByRole("link", { name: /לנוסח, בהגדרות/ }).click();
     await expect(page).toHaveURL(/\/settings\/templates$/);
     await expect(page.getByRole("tab", { name: "תבניות" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByText("עוד אין נוסח, ועד שיהיה ההודעות למרצים חסומות.")).toBeVisible();
+    await expect(page.getByText("ריק: ההודעות חסומות")).toBeVisible();
     const body = page.getByLabel("הנוסח", { exact: true });
     await body.fill("נוסח לדוגמה ל{{פנייה}}: [[מוזמן|מוזמנת]] ללמד ביום {{יום}}, {{תאריך}}, {{שעה}} ({{משך}}), ב");
     await page.getByRole("button", { name: "הוספת {{מקום}} לנוסח" }).click(); // the cheat-sheet inserts at the cursor
@@ -188,11 +188,12 @@ test.describe("demo build", () => {
       await page.mouse.up();
       await expect(toast(page, "השיעור הוזז")).toBeVisible();
       await expect(card(page, "מרצה 12").locator("[data-reconfirm]")).toBeVisible();
-      await expect(card(page, "מרצה 12")).toHaveAttribute("aria-label", /22:30–00:00, לעדכן את המרצה$/);
+      await expect(card(page, "מרצה 12")).toHaveAttribute("aria-label", /22:30–00:00, תלמוד, הלכה ומדרש, לעדכן את המרצה$/); // the topic, then the flag
       panel = await openLesson(page, info, "שני", "מרצה 12");
       await panel.getByRole("button", { name: "להודעה" }).click();
     } else {
       const details = panel.getByRole("region", { name: "פרטי השיעור" });
+      await details.getByRole("button", { name: "עריכה" }).click();
       await details.getByLabel("כותרת").fill("שיעור לדוגמה, כותרת חדשה");
       await details.getByRole("button", { name: "שמירה" }).click();
       await expect(toast(page, /^נשמר$/)).toBeVisible(); // not the demo banner («…שום דבר לא נשמר»)
@@ -244,7 +245,8 @@ test.describe("demo build", () => {
     await expect(readerDot).toHaveAttribute("title", "מקראה: חסר קובץ");
     await noSidewaysScroll(page);
 
-    // «פתיחה מחדש» says first what goes with the speaker: the stages start over
+    // «פתיחה מחדש» (under «פעולות נוספות») says first what goes with the speaker: the stages start over
+    await panel.getByText("פעולות נוספות").click();
     await panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" }).click();
     const ask = panel.getByRole("group", { name: "אישור" });
     await expect(ask).toContainText("בקשת ההסעה ופרטיה · המלווה · המקורות");
@@ -436,8 +438,10 @@ test.describe("mock build", () => {
     await expect(escort).toContainText("אין");
     const sources = await stage(panel, "מקורות");
     await expect(sources.getByRole("form", { name: "מקורות" })).toHaveCount(0);
-    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toHaveCount(0);
-    await expect(panel.getByLabel("כותרת")).toBeDisabled();
+    await expect(panel.getByText("פעולות נוספות")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)", includeHidden: true })).toHaveCount(0);
+    await expect(panel.getByRole("region", { name: "פרטי השיעור" }).getByRole("button", { name: "עריכה" })).toHaveCount(0);
+    await expect(panel.getByLabel("כותרת")).toHaveCount(0);
     await panel.getByRole("button", { name: "סגירה" }).click();
 
     // an approved transport: the pickup and the driver, through the policy

@@ -76,16 +76,13 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
 
   return (
     <div className="space-y-3">
-      <p className="text-sm">
-        {l.confirm_sent_at ? (
-          <>
-            נשלחה · <bdi>{whenText(l.confirm_sent_at)}</bdi>
-            {l.confirm_sent_by != null && <> · {memberName(week, l.confirm_sent_by)}</>}
-          </>
-        ) : (
-          "עוד לא נשלחה."
-        )}
-      </p>
+      {/* not yet sent: the stage's own row says so */}
+      {l.confirm_sent_at && (
+        <p className="text-sm">
+          נשלחה · <bdi>{whenText(l.confirm_sent_at)}</bdi>
+          {l.confirm_sent_by != null && <> · {memberName(week, l.confirm_sent_by)}</>}
+        </p>
+      )}
       {l.needs_reconfirm && (
         <p className="flex items-start gap-2 rounded-lg border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
           <ReconfirmDot className="mt-1" />
@@ -123,7 +120,7 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
       {c.text && (
         <section aria-label="תצוגה מקדימה של ההודעה" className="space-y-1">
           <p className="text-xs font-semibold text-ink-soft">{c.ok ? "ההודעה" : "תצוגה מקדימה (עם מה שחסר)"}</p>
-          <div ref={preview} className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-paper p-3 text-sm leading-relaxed">
+          <div ref={preview} className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-card p-3 text-sm leading-relaxed">
             {c.text}
           </div>
         </section>
@@ -140,18 +137,16 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
               מייל
             </a>
           </div>
-          <p className="text-xs text-ink-soft">
-            {contacts === undefined
-              ? "טוען את פרטי הקשר…"
-              : waHref(contacts?.phone)
-                ? "WhatsApp נפתח בשיחה עם המרצה, עם ההודעה מוכנה. שום דבר לא נשלח מהאתר."
-                : "WhatsApp נפתח בלי נמען: בוחרים את המרצה ברשימת השיחות. שום דבר לא נשלח מהאתר."}
-          </p>
-          <div className="space-y-1 border-t border-line pt-3">
+          {/* a word only when WhatsApp opens without the speaker (the guide says the site itself sends nothing) */}
+          {contacts === undefined ? (
+            <p className="text-xs text-ink-soft">טוען את פרטי הקשר…</p>
+          ) : (
+            !waHref(contacts?.phone) && <p className="text-xs text-ink-soft">WhatsApp ייפתח בלי נמען: בוחרים את המרצה ברשימת השיחות.</p>
+          )}
+          <div className="border-t border-line pt-3">
             <Button kind="primary" busy={busy} onClick={onSent}>
               סומן כנשלח
             </Button>
-            <p className="text-xs text-ink-soft">{l.confirm_sent_at ? "שולחים שוב? מסמנים שוב, והשעה מתעדכנת." : "אחרי שההודעה יצאה בפועל."}</p>
           </div>
         </>
       )}

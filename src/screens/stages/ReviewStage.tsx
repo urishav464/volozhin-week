@@ -1,4 +1,4 @@
-// «איך עבר» — the lesson panel's sixth section, after the five stages (milestone 6):
+// «איך עבר» — the lesson panel's row «אחרי השבוע», apart from the five stages (milestone 6):
 // what went well, what did not, «להזמין שוב?», an overrun, a rating 1–5 (none of
 // them alone required, one of them said). The handler writes once the lesson's
 // day has passed in Israel (src/domain/reviews.ts: reviewWindow); an admin of the
@@ -76,7 +76,7 @@ export function ReviewSection({
             ? "עוד לא נכתב"
             : win.state === "before"
               ? `נפתח ב-${dateText(win.opensOn)}`
-              : "נפתח אחרי השבוע (תאריך השבוע עוד TBD)";
+              : "נפתח אחרי השבוע";
 
   return (
     <StageSection stage={{ key: "review", label: "איך עבר", state, note }} open={open} onToggle={onToggle}>
@@ -211,10 +211,10 @@ function ReviewBody({
     <form onSubmit={(e) => void submit(e)} aria-label="איך עבר" className="space-y-3" noValidate>
       <p className="text-xs text-ink-soft">
         {imported
-          ? "מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה. לצוות התוכן ולמדריך/ה בלבד — בלי מספרי טלפון."
+          ? "מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה. גלוי לצוות התוכן ולמדריך/ה בלבד · בלי מספרי טלפון"
           : isAdmin && win.state !== "open"
             ? "המדריך/ה יכול/ה לכתוב בכל זמן. מי שמטפל/ת במרצה — מהיום שאחרי השיעור."
-          : "לצוות התוכן ולמדריך/ה בלבד: לא לצוות הלוגיסטי, לא בקישורים ולא בייצוא למעצבת. בלי מספרי טלפון."}
+          : "גלוי לצוות התוכן ולמדריך/ה בלבד · בלי מספרי טלפון"}
       </p>
       <Field id={`${id}-well`} label="מה עבד (לא חובה)">
         <textarea id={`${id}-well`} rows={3} value={wentWell} maxLength={REVIEW_TEXT_MAX} onChange={(e) => setWentWell(e.target.value)} className={`${INPUT} py-2`} />

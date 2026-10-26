@@ -79,6 +79,13 @@ type Act = (key: string, fn: () => Promise<unknown>, ok: string, onRefused?: (co
 function Milestones({ edition, list, admin, k, act, busy }: { edition: Edition; list: Milestone[]; admin: boolean; k: KnowledgePort; act: Act; busy: string | null }) {
   const today = israelToday();
   const sorted = [...list].sort(byDue);
+  // adding is occasional, as in «ידע»: «+ אבן דרך» opens the form; closed (added or cancelled), the button has the focus back
+  const [adding, setAdding] = useState(false);
+  const focusBack = useFocusBack();
+  const close = () => {
+    setAdding(false);
+    focusBack.back();
+  };
   return (
     <Panel
       title="אבני דרך"
@@ -96,7 +103,22 @@ function Milestones({ edition, list, admin, k, act, busy }: { edition: Edition; 
           ))}
         </ul>
       )}
-      {admin && <MilestoneForm onSave={(v) => act("add-milestone", () => k.addMilestone(edition.id, v), "אבן הדרך נוספה")} busy={busy === "add-milestone"} />}
+      {admin &&
+        (adding ? (
+          <MilestoneForm
+            busy={busy === "add-milestone"}
+            onCancel={close}
+            onSave={async (v) => {
+              const ok = await act("add-milestone", () => k.addMilestone(edition.id, v), "אבן הדרך נוספה");
+              if (ok) close();
+              return ok;
+            }}
+          />
+        ) : (
+          <Button ref={focusBack.ref()} kind="primary" onClick={() => setAdding(true)}>
+            + אבן דרך
+          </Button>
+        ))}
     </Panel>
   );
 }

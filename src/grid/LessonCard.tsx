@@ -8,7 +8,7 @@ import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "..
 import { readerFilesOf, stagesOf } from "../domain/stages";
 import { LRM, fmtRange } from "../domain/time";
 import type { Lesson } from "../domain/types";
-import { Chip, GenderDot, Initials, ReconfirmDot, StageDots } from "./bits";
+import { Chip, GenderDot, Initials, NO_TOPIC_COLOR, ReconfirmDot, StageDots } from "./bits";
 import { type GridModel, pitchSpeaker } from "./model";
 import { lessonOwner } from "./owners";
 
@@ -134,7 +134,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
   const progressBg = lens === "progress" ? PROGRESS_TONE[progressOf(lesson.sources_kind)] : "bg-card";
   const owner = ownerId != null ? model.memberName.get(ownerId) : undefined;
   // the stripe: the topic's colour (v13: in every lens), the handler's in «אחריות»
-  const stripe = lens === "owner" ? (ownerColor ?? "#c9c2b3") : (cat?.color ?? "#c9c2b3");
+  const stripe = lens === "owner" ? (ownerColor ?? NO_TOPIC_COLOR) : (cat?.color ?? NO_TOPIC_COLOR);
   const reconfirm = lesson.needs_reconfirm;
   return (
     <button
@@ -144,7 +144,8 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, whe
       data-drag-label={lead ? displayName(lead) : ""}
       className={`${common.className} border ${reconfirm ? "border-bad" : "border-line"} ${progressBg} px-1.5 py-1 shadow-sm`}
       style={{ borderInlineStartWidth: 8, borderInlineStartColor: stripe }}
-      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}${reconfirm ? ", לעדכן את המרצה" : ""}`}
+      // the topic too: on a short card its stripe is all that shows of it
+      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}, ${cat?.name ?? "נושא: TBD"}${reconfirm ? ", לעדכן את המרצה" : ""}`}
     >
       <span className="flex items-center gap-1">
         <GenderDot gender={lead?.gender ?? null} />

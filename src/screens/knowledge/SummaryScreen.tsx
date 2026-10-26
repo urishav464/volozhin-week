@@ -12,11 +12,13 @@ import type { DataPort } from "../../data/port";
 import type { LessonReview, ReturningSpeaker } from "../../data/reviews";
 import type { Me } from "../../data/types";
 import { download, fileName, israelDay } from "../../exports/download";
-import { editionSummary, INVITE_TITLE, type SummaryLesson, summaryTables, tally } from "../../exports/summary";
+import { editionSummary, INVITE_TITLE, NO_CATEGORY, type SummaryLesson, summaryTables, tally } from "../../exports/summary";
 import { israelDate } from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import type { InviteAgain } from "../../domain/reviews";
+import type { Category } from "../../domain/types";
 import { DAY_NAMES } from "../../domain/time";
+import { NO_TOPIC_COLOR } from "../../grid/bits";
 import { PrintSetup } from "../outputs/parts";
 import { Button, Panel } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
@@ -128,14 +130,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
         {s.categories.length === 0 ? (
           <p className="text-sm text-ink-soft">אין שיעורים סגורים.</p>
         ) : (
-          <ul className="grid gap-1 text-sm sm:grid-cols-2">
-            {s.categories.map((c) => (
-              <li key={c.name} className="flex justify-between gap-2 rounded-md bg-paper px-2 py-1">
-                <span className="min-w-0 break-words">{c.name}</span>
-                <span className="font-semibold">{c.count}</span>
-              </li>
-            ))}
-          </ul>
+          <CategorySpread categories={s.categories} colors={week.categories} />
         )}
       </Panel>
 
@@ -209,6 +204,35 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
         </div>
       </Panel>
       {node}
+    </div>
+  );
+}
+
+/** «בלי קטגוריה»: the neutral the grid draws where a lesson has no topic. */
+
+/**
+ * The season's spread across the topics, in the grid's colours: one bar of the closed lessons (each topic's share, in the
+ * categories' order, «בלי קטגוריה» grey) over the counts. Counts only — no line says «too few». Printed in colour.
+ */
+function CategorySpread({ categories, colors }: { categories: { name: string; count: number }[]; colors: Category[] }) {
+  // by name: the summary counts by the categories' names, which are unique
+  const colorOf = (name: string) => (name === NO_CATEGORY ? NO_TOPIC_COLOR : (colors.find((c) => c.name === name)?.color ?? NO_TOPIC_COLOR));
+  return (
+    <div style={{ printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }}>
+      <div aria-hidden className="mb-3 flex h-3 gap-0.5 overflow-hidden rounded-full">
+        {categories.map((c) => (
+          <span key={c.name} title={`${c.name} · ${c.count}`} className="min-w-1" style={{ flex: `${c.count} 1 0`, backgroundColor: colorOf(c.name) }} />
+        ))}
+      </div>
+      <ul className="grid gap-1 text-sm sm:grid-cols-2">
+        {categories.map((c) => (
+          <li key={c.name} className="flex items-center gap-2 rounded-md bg-paper px-2 py-1">
+            <span aria-hidden className="h-3 w-1.5 shrink-0 rounded-sm" style={{ backgroundColor: colorOf(c.name) }} />
+            <span className="min-w-0 flex-1 break-words">{c.name}</span>
+            <span className="font-semibold tabular-nums">{c.count}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

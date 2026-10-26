@@ -58,7 +58,8 @@ test.describe("demo build", () => {
 
     // another name, close to an existing one: shown as similar, then added on purpose
     await name.fill("מרצה 077");
-    await expect(maybe.getByRole("listitem").filter({ hasText: "מרצה 07" })).toContainText("שם דומה");
+    await expect(maybe.getByRole("listitem").filter({ hasText: "מרצה 07" })).toBeVisible();
+    await expect(maybe.getByRole("listitem").filter({ hasText: "מרצה 07" })).not.toContainText("אותו שם"); // a similar name: the list itself says so
     await sheet.getByRole("radio", { name: "נקבה" }).check();
     await sheet.getByLabel("נושאים", { exact: true }).fill("שירה");
     await sheet.getByLabel("נושאים", { exact: true }).press("Enter");
@@ -325,7 +326,7 @@ test.describe("mock build", () => {
     // the sheet of one of mine: profile, contacts, availability, vetting, hand-over
     await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "מרצה 32" }).click();
     sheet = page.getByRole("dialog", { name: "מרצה 32" });
-    await sheet.getByRole("button", { name: "עריכת הפרטים" }).click();
+    await sheet.getByRole("region", { name: "פרטים" }).getByRole("button", { name: "עריכה", exact: true }).click();
     await sheet.getByLabel("תיאור קצר").fill("תיאור לדוגמה");
     await sheet.getByRole("form", { name: "עריכת הפרטים" }).getByRole("button", { name: "שמירה" }).click();
     await expect.poll(() => sb.rpc.get("update_speaker")).toEqual([{ p_edition: 7, p_speaker: 32, p_version: 1, p_patch: { bio_short: "תיאור לדוגמה" } }]);

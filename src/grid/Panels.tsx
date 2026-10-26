@@ -2,17 +2,19 @@
 // offers — candidates and closing, the lesson's details, its stages after it
 // closed (payment, the message, the escort, sources: src/screens/stages/,
 // handed in by the week as `stages`), and reshaping the cell.
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { byGender, displayName } from "../domain/names";
-import { DAY_NAMES, type Day, fmtRange } from "../domain/time";
-import type { Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
+import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
+import type { Category, Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
 import { type Span, cellSpan, sticksOut, timeSplitOk } from "../domain/shape";
 import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
-import { Button, Confirm, INPUT, useFocusBack } from "../screens/settings/kit";
+import { DEFAULT_MAX_CATEGORY_PER_DAY } from "../rules/warnings";
+import { Button, Confirm, Fold, INPUT, useFocusBack } from "../screens/settings/kit";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
+import { needText } from "./DayHeader";
 import { rowActive } from "./layout";
-import { type Fit, type GridModel, fitFor, pitchSpeaker, poolSection, speakerMatches } from "./model";
+import { type Fit, type GridModel, POOL_SECTION_LABEL, type PoolSection, fitFor, guessedCategory, pitchSpeaker, poolSection, searchKey, speakerMatches } from "./model";
 
 export interface PanelActions {
   propose: (speakerId: number, target: CellTarget, mode?: "self" | "offer") => void;
@@ -28,6 +30,8 @@ export interface PanelActions {
 
 export function Sheet({
   title,
+  label,
+  accent,
   subtitle,
   onClose,
   onBack,
@@ -35,7 +39,12 @@ export function Sheet({
   children,
   wide,
 }: {
-  title: string;
+  /** The heading: a name, or a node (a speaker's name that opens their sheet). */
+  title: ReactNode;
+  /** The dialog's name for a screen reader, when the heading is not plain text («שיעור סגור»). */
+  label?: string;
+  /** A band across the top in this colour: the lesson's topic, the same as its card's stripe. */
+  accent?: string | null;
   subtitle?: ReactNode;
   onClose: () => void;
   /** Opened from another panel (a lesson, «מרצה חדש/ה»): «חזרה» — and Escape — return to it; × closes both. */
@@ -74,14 +83,16 @@ export function Sheet({
       ref={ref}
       tabIndex={-1}
       role="dialog"
-      aria-label={title}
+      aria-label={label ?? (typeof title === "string" ? title : undefined)}
       className={
         wide
-          ? "fixed inset-y-0 end-0 z-40 flex w-[24rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
-          : "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
+          ? "fixed inset-y-0 end-0 z-40 flex w-[26rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
+          : "fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
       }
     >
-      <header className="flex items-start gap-2 border-b border-line px-4 py-3">
+      {accent && <span aria-hidden data-sheet-accent className={`h-1.5 shrink-0 ${wide ? "" : "rounded-t-2xl"}`} style={{ backgroundColor: accent }} />}
+      {!wide && <span aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line" />}
+      <header className="flex items-start gap-2 border-b border-line px-5 pb-3 pt-4">
         {onBack && (
           <button
             type="button"
@@ -92,25 +103,55 @@ export function Sheet({
             <span aria-hidden>→</span> חזרה
           </button>
         )}
-        <div className="min-w-0">
-          <h2 className="font-display text-lg font-semibold">{title}</h2>
-          {subtitle && <div className="text-sm text-ink-soft">{subtitle}</div>}
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-xl font-bold leading-tight">{title}</h2>
+          {subtitle && <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-soft">{subtitle}</div>}
         </div>
         <button type="button" onClick={onClose} aria-label="סגירה" className="-me-2 -mt-1 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-md text-xl leading-none hover:bg-line/50">
           ×
         </button>
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">{children}</div>
+      <div className="min-h-0 flex-1 divide-y divide-line/70 overflow-y-auto px-5 [&>*]:py-4">{children}</div>
     </div>
   );
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * A part of a panel: its heading, a muted count right after it, and on its other end a small
+ * aside (an action: «עריכה»). Parts are ruled apart by the Sheet. `label` names the region when
+ * the heading is not the right name for a screen reader.
+ */
+export function Section({ title, count, aside, label, children }: { title: string; count?: ReactNode; aside?: ReactNode; label?: string; children: ReactNode }) {
   return (
-    <section aria-label={title}>
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">{title}</h3>
+    <section aria-label={label ?? title}>
+      <div className="mb-2.5 flex min-h-8 items-center gap-2">
+        <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+        {count != null && count !== false && <span className="text-sm tabular-nums text-ink-faint">{count}</span>}
+        {aside && <div className="ms-auto flex items-center gap-1 text-sm text-ink-soft">{aside}</div>}
+      </div>
       {children}
     </section>
+  );
+}
+
+/** A small fact beside a panel's title: the day and hour, the room, a parallel lesson's reason. */
+const META_TONE = { plain: "bg-line/50 text-ink-soft", warn: "bg-amber-100 text-amber-900", bad: "bg-bad/10 text-bad" };
+
+export function Meta({ children, tone = "plain" }: { children: ReactNode; tone?: keyof typeof META_TONE }) {
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${META_TONE[tone]}`}>{children}</span>;
+}
+
+/** The warnings of a lesson or a day, as one quiet list (amber: worth a look; blue: to know). */
+export function WarningList({ items }: { items: { key: string; severity: "info" | "warn"; message: string }[] }) {
+  return (
+    <ul className="space-y-1.5" aria-label="אזהרות">
+      {items.map((w) => (
+        <li key={w.key} className={`flex gap-2 rounded-lg border-s-4 px-3 py-2 text-sm leading-snug ${w.severity === "warn" ? "border-amber-400 bg-amber-50 text-amber-950" : "border-sky-400 bg-sky-50 text-sky-950"}`}>
+          <span aria-hidden>{w.severity === "warn" ? "⚠" : "ℹ"}</span>
+          <span>{w.message}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -139,72 +180,169 @@ export interface LessonPanelProps {
 
 export function LessonPanel(props: LessonPanelProps) {
   const { model, lesson: l, actions, canEdit } = props;
-  const [adding, setAdding] = useState(false);
   const room = model.week.rooms.find((r) => r.id === l.room_id);
   const row = rowOf(model, l);
-  const title = l.kind === "memorial" ? "זמן זיכרון" : l.state === "closed" ? "שיעור סגור" : "משבצת בתהליך";
+  const pitches = model.pitchesByLesson.get(l.id) ?? [];
+  const recruiting = l.state === "draft" && l.kind === "lesson";
+  // a shaped draft nobody was proposed for is still a free cell: it reads, and works, as one
+  const free = recruiting && pitches.length === 0;
+  const name = l.kind === "memorial" ? "זמן זיכרון" : l.state === "closed" ? "שיעור סגור" : free ? "משבצת פנויה" : "משבצת בתהליך";
+  const lead = l.state === "closed" ? model.leadOf.get(l.id) : undefined;
+  const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
+  const topic = l.kind === "lesson" && l.category_id != null ? model.categoryById.get(l.category_id) : undefined;
+  const merged = l.kind === "lesson" && row != null && cellOf(model, l.day, row).merged;
+  const { need, deficit } = model.days[l.day].balance;
   const warnings = model.warnings.filter((w) => w.lessonIds.includes(l.id));
+  // a free draft's first proposal swaps the chooser for the candidates: the focus follows to the new candidate
+  const proposed = useRef(false);
+  const propose = (id: number, mode: "self" | "offer") => {
+    if (free) proposed.current = true;
+    actions.propose(id, { lesson_id: l.id }, mode);
+  };
+  useEffect(() => {
+    if (free || !proposed.current) return;
+    proposed.current = false;
+    document.querySelector<HTMLElement>('[role="dialog"] [data-pitch-id] button')?.focus();
+  }, [free]);
 
   return (
     <Sheet
       wide={props.wide}
-      title={title}
+      title={lead ? <SpeakerTitle speaker={lead} onOpen={() => actions.openSpeaker(lead.id)} /> : name}
+      label={name}
+      accent={l.kind === "memorial" ? "#fcd34d" : topic?.color}
       onClose={props.onClose}
       subtitle={
         <>
-          {DAY_NAMES[l.day]} · <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {room?.name}
-          {l.parallel_reason && <> · ∥ {l.parallel_reason}</>}
+          <Meta>
+            {DAY_NAMES[l.day]} · <bdi dir="ltr">{fmtRange(l.start_min, l.end_min)}</bdi>
+          </Meta>
+          {recruiting && row?.label && <Meta>{row.label}</Meta>}
+          {room && <Meta>{room.name}</Meta>}
+          {l.kind === "lesson" && (l.state === "closed" || topic) && <TopicPill category={topic} />}
+          {owner != null && <Meta>בטיפול: {model.memberName.get(owner)}</Meta>}
+          {l.parallel_reason && <Meta>∥ {l.parallel_reason}</Meta>}
+          {merged && <Meta>מאוחדת</Meta>}
+          {recruiting && need && <Meta tone="warn">{needText(need, deficit)}</Meta>}
         </>
       }
     >
-      {warnings.length > 0 && (
-        <ul className="space-y-1">
-          {warnings.map((w) => (
-            <li key={w.key} className={`rounded-md px-2 py-1 text-sm ${w.severity === "warn" ? "bg-amber-50 text-amber-900" : "bg-sky-50 text-sky-900"}`}>
-              {w.severity === "warn" ? "⚠ " : "ℹ "}
-              {w.message}
-            </li>
-          ))}
-        </ul>
-      )}
+      {warnings.length > 0 && <WarningList items={warnings} />}
 
-      {l.state === "draft" && l.kind === "lesson" && (
-        <Section title="מועמדים">
-          <Candidates {...props} />
-          {canEdit &&
-            (adding ? (
-              <div className="mt-2 rounded-lg border border-line bg-card p-2">
-                <SpeakerChooser model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={(id, mode) => actions.propose(id, { lesson_id: l.id }, mode)} />
-                <Button className="mt-2" onClick={() => setAdding(false)}>
-                  סגירת הרשימה
-                </Button>
-              </div>
-            ) : (
-              <Button className="mt-2" onClick={() => setAdding(true)}>
-                + הצעת מרצה
-              </Button>
-            ))}
-        </Section>
-      )}
+      {recruiting &&
+        (free && canEdit ? (
+          <ProposeSection model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={propose} />
+        ) : (
+          <Section title="מועמדים" count={pitches.length || undefined}>
+            <DayTopics model={model} day={l.day} />
+            <Candidates {...props} />
+            {canEdit && <AddSpeaker key={l.id} model={model} me={props.me} lesson={l} onPick={propose} />}
+          </Section>
+        ))}
 
       {l.state === "closed" && <ClosedDetails {...props} />}
 
       {l.state === "draft" && props.files?.(l)}
 
-      {canEdit && row && l.kind === "lesson" && (
-        <Section title="מבנה המשבצת">
-          <ShapeMenu model={model} day={l.day} row={row} closed={l.state === "closed"} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />
-        </Section>
-      )}
+      {canEdit && row && recruiting && <ShapeFold model={model} day={l.day} row={row} closed={false} onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />}
     </Sheet>
+  );
+}
+
+/** A closed lesson's heading: its speaker, who opens their sheet (the dialog keeps the name «שיעור סגור»). */
+function SpeakerTitle({ speaker: s, onOpen }: { speaker: Speaker; onOpen: () => void }) {
+  return (
+    <span className="flex items-center gap-2">
+      <GenderDot gender={s.gender} />
+      <button type="button" onClick={onOpen} className="-my-2.5 inline-flex min-h-11 min-w-0 items-center text-start hover:underline hover:underline-offset-4">
+        {displayName(s)}
+      </button>
+    </span>
+  );
+}
+
+/** The lesson's topic beside its title: a dot and the name on a wash of the topic's colour — the card's stripe. */
+function TopicPill({ category: c }: { category: Category | undefined }) {
+  if (!c)
+    return (
+      <Meta>
+        <span className="text-ink-faint">נושא: TBD</span>
+      </Meta>
+    );
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-ink" style={{ backgroundColor: `color-mix(in srgb, ${c.color} 12%, transparent)` }}>
+      <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: c.color }} />
+      <span className="sr-only">נושא: </span>
+      {c.name}
+    </span>
+  );
+}
+
+/** The day's limit per topic, and how to name it: «הצעה» until the instructor sets it (src/rules/warnings.ts). */
+function topicLimit(model: GridModel): { max: number; rule: string } {
+  const set = model.week.edition.settings.max_category_per_day;
+  const max = set ?? DEFAULT_MAX_CATEGORY_PER_DAY;
+  return { max, rule: set == null ? `הצעה: עד ${max}` : `עד ${max}` };
+}
+
+/** What the day already holds, topic by topic — the day header's colour bar in words, where a speaker is chosen. */
+function DayTopics({ model, day }: { model: GridModel; day: Day }) {
+  const { max, rule } = topicLimit(model);
+  const topics = [...model.days[day].load]
+    .flatMap(([id, k]) => {
+      const c = model.categoryById.get(id);
+      return c ? [{ c, k }] : [];
+    })
+    .sort((a, b) => a.c.sort - b.c.sort);
+  if (topics.length === 0) return null;
+  return (
+    <p className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-soft">
+      <span>כבר ביום:</span>
+      {topics.map(({ c, k }) => (
+        <Meta key={c.id} tone={k > max ? "warn" : "plain"}>
+          <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: c.color }} />
+          {c.name} · {k}
+          {k > max && ` (${rule})`}
+        </Meta>
+      ))}
+    </p>
+  );
+}
+
+/** «הצעת מרצה» of a free cell — or of a shaped draft nobody was proposed for: the day's topics, then the chooser. */
+function ProposeSection({ model, me, day, start, end, onPick }: { model: GridModel; me: number; day: Day; start: number; end: number; onPick: (speakerId: number, mode: "self" | "offer") => void }) {
+  return (
+    <Section title="הצעת מרצה">
+      <DayTopics model={model} day={day} />
+      <SpeakerChooser model={model} me={me} day={day} start={start} end={end} need={model.days[day].balance.need} onPick={onPick} />
+    </Section>
+  );
+}
+
+/** A draft's «הצעת מרצה»: one button opens the chooser right under it, and closes it again. */
+function AddSpeaker({ model, me, lesson: l, onPick }: { model: GridModel; me: number; lesson: Lesson; onPick: (speakerId: number, mode: "self" | "offer") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 space-y-2">
+      <Button aria-expanded={open} onClick={() => setOpen((x) => !x)}>
+        {open ? (
+          <>
+            הצעת מרצה <span aria-hidden>▴</span>
+          </>
+        ) : (
+          "+ הצעת מרצה"
+        )}
+      </Button>
+      {open && <SpeakerChooser model={model} me={me} day={l.day} start={l.start_min} end={l.end_min} need={model.days[l.day].balance.need} onPick={onPick} />}
+    </div>
   );
 }
 
 function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model: GridModel; lesson: Lesson; me: number; isAdmin: boolean; canEdit: boolean; actions: PanelActions }) {
   const pitches = model.pitchesByLesson.get(l.id) ?? [];
-  if (pitches.length === 0) return <p className="text-sm text-ink-faint">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
+  if (pitches.length === 0) return <p className="text-sm text-ink-soft">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {pitches.map((p: Pitch) => {
         const s = pitchSpeaker(model, p);
         const a = model.approachById.get(p.approach_id);
@@ -213,31 +351,33 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
         const proposer = p.proposed_by != null && p.proposed_by !== a?.owner_member_id ? model.memberName.get(p.proposed_by) : undefined;
         const live = p.state === "approached" || p.state === "candidate";
         return (
-          <li key={p.id} className="rounded-lg border border-line bg-card p-2" data-pitch-id={p.id}>
-            <div className="flex items-center gap-1.5">
+          <li key={p.id} className="rounded-xl border border-line bg-card px-3 py-2.5" data-pitch-id={p.id}>
+            <div className="flex items-center gap-2">
               <GenderDot gender={s?.gender ?? null} />
               {s ? (
                 <button
                   type="button"
                   onClick={() => actions.openSpeaker(s.id)}
-                  className={`inline-flex min-h-11 items-center text-start font-semibold underline underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
+                  className={`inline-flex min-h-9 min-w-0 items-center truncate text-start text-[15px] font-semibold hover:underline hover:underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
                 >
                   {displayName(s)}
                 </button>
               ) : (
                 <span className="font-semibold">?</span>
               )}
-              <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
-                {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
-              </Chip>
+              <span className="ms-auto shrink-0">
+                <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
+                  {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
+                </Chip>
+              </span>
             </div>
-            <p className="text-xs text-ink-soft">
+            <p className="ms-4 text-[13px] text-ink-soft">
               {owner ? `בטיפול: ${owner}` : "ללא אחראי/ת"}
               {proposer && ` · הוצע ע״י ${proposer}`}
-              {s?.vetted !== "approved" && " · ממתין/ה לאישור מדריך/ה"}
+              {s?.vetted !== "approved" && <span className="text-amber-800"> · ממתין/ה לאישור מדריך/ה</span>}
             </p>
-            {canEdit && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {canEdit && (mine || (live && p.proposed_by === me)) && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {mine && live && (
                   <Button kind="primary" onClick={() => actions.close(p.id)}>
                     סגרנו
@@ -249,17 +389,17 @@ function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model
                   </Button>
                 )}
                 {mine && live && (
-                  <Button onClick={() => actions.setPitch(p.id, "declined")}>
+                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "declined")}>
                     {byGender(s?.gender, "סירב", "סירבה")}
                   </Button>
                 )}
                 {mine && p.state === "declined" && (
-                  <Button onClick={() => actions.setPitch(p.id, "approached")}>
+                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "approached")}>
                     החזרה לתהליך
                   </Button>
                 )}
                 {live && (mine || p.proposed_by === me) && (
-                  <Button onClick={() => actions.unpropose(p.id)}>
+                  <Button kind="quiet" className="ms-auto" onClick={() => actions.unpropose(p.id)}>
                     הסרה מהמשבצת
                   </Button>
                 )}
@@ -278,14 +418,18 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
   const [category, setCategory] = useState(l.category_id ?? 0);
   const [audience, setAudience] = useState(l.audience ?? "");
   const [teach, setTeach] = useState(l.teach_min ?? 0);
+  // read first; «עריכה» opens the form, a saved version closes it
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     setTitle(l.title ?? "");
     setCategory(l.category_id ?? 0);
     setAudience(l.audience ?? "");
     setTeach(l.teach_min ?? 0);
+    setEditing(false);
   }, [l.id, l.version, l.title, l.category_id, l.audience, l.teach_min]);
   const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const mine = isAdmin || owner === me;
+  const row = l.kind === "lesson" ? rowOf(model, l) : undefined;
   const lessonMinutes = model.week.edition.settings.lesson_minutes ?? 75;
   const dirty = title !== (l.title ?? "") || category !== (l.category_id ?? 0) || audience !== (l.audience ?? "") || teach !== (l.teach_min ?? 0);
   const save = () =>
@@ -298,63 +442,83 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
 
   return (
     <>
-      <Section title="מרצה">
-        <p className="flex items-center gap-1.5 font-semibold">
-          <GenderDot gender={lead?.gender ?? null} />
-          {lead ? (
-            <button type="button" onClick={() => actions.openSpeaker(lead.id)} className="inline-flex min-h-11 items-center text-start underline underline-offset-4">
-              {displayName(lead)}
-            </button>
-          ) : (
-            "—"
-          )}
-        </p>
-        {owner != null && <p className="text-xs text-ink-soft">בטיפול: {model.memberName.get(owner)}</p>}
-      </Section>
-
-      <Section title="פרטי השיעור">
-        <div className="space-y-2">
-          <label className="block text-sm">
-            כותרת
-            <input value={title} disabled={!canEdit} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-0.5`} />
-          </label>
-          <label className="block text-sm">
-            קטגוריה
-            <select value={category} disabled={!canEdit} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-0.5`}>
-              <option value={0}>— לא נבחרה —</option>
-              {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex gap-2">
-            <label className="block min-w-0 flex-1 text-sm">
-              קהל מיוחד
-              <input value={audience} disabled={!canEdit} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-0.5`} />
-            </label>
-            <label className="block w-28 text-sm">
-              דקות הוראה
-              <input
-                type="number"
-                min={15}
-                step={5}
-                max={l.end_min - l.start_min}
-                value={teach || ""}
-                placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
-                disabled={!canEdit}
-                onChange={(e) => setTeach(Number(e.target.value))}
-                className={`${INPUT} mt-0.5 tabular-nums`}
-              />
-            </label>
-          </div>
-          {canEdit && (
-            <Button kind="primary" disabled={!dirty} onClick={save}>
-              שמירה
+      <Section
+        title="פרטי השיעור"
+        aside={
+          canEdit &&
+          !editing && (
+            <Button kind="quiet" onClick={() => setEditing(true)}>
+              עריכה
             </Button>
-          )}
-        </div>
+          )
+        }
+      >
+        {editing ? (
+          <div className="space-y-3">
+            <label className="block text-sm font-medium">
+              כותרת
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-1`} autoFocus />
+            </label>
+            <label className="block text-sm font-medium">
+              נושא
+              <select value={category} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-1`}>
+                <option value={0}>— לא נבחר —</option>
+                {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex gap-2">
+              <label className="block min-w-0 flex-1 text-sm font-medium">
+                קהל מיוחד
+                <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-1`} />
+              </label>
+              <label className="block w-28 text-sm font-medium">
+                דקות הוראה
+                <input
+                  type="number"
+                  min={15}
+                  step={5}
+                  max={l.end_min - l.start_min}
+                  value={teach || ""}
+                  placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
+                  onChange={(e) => setTeach(Number(e.target.value))}
+                  className={`${INPUT} mt-1 tabular-nums`}
+                />
+              </label>
+            </div>
+            <div className="flex gap-1.5">
+              <Button kind="primary" disabled={!dirty} onClick={save}>
+                שמירה
+              </Button>
+              <Button kind="quiet" onClick={() => setEditing(false)}>
+                ביטול
+              </Button>
+            </div>
+          </div>
+        ) : (
+          // the topic is the header's pill (LessonPanel)
+          <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt className="text-ink-soft">כותרת</dt>
+            <dd className="font-medium">{l.title ?? <span className="text-ink-faint">TBD</span>}</dd>
+            {l.audience && (
+              <>
+                <dt className="text-ink-soft">קהל מיוחד</dt>
+                <dd>{l.audience}</dd>
+              </>
+            )}
+            <dt className="text-ink-soft">דקות הוראה</dt>
+            <dd className="tabular-nums">
+              {l.teach_min ?? (
+                <>
+                  {Math.min(lessonMinutes, l.end_min - l.start_min)} <span className="text-ink-faint">(ברירת המחדל)</span>
+                </>
+              )}
+            </dd>
+          </dl>
+        )}
       </Section>
 
       {stages ? (
@@ -373,14 +537,21 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
         </Section>
       )}
 
-      {canEdit && mine && (
-        <Reopen
-          lesson={l}
-          speakerGender={lead?.gender ?? null}
-          isAdmin={isAdmin}
-          files={(model.week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id).length}
-          onReopen={() => actions.reopen(l.id)}
-        />
+      {/* the occasional acts, one of them destructive: one quiet fold at the end, closed */}
+      {canEdit && (row || mine) && (
+        <Fold title="פעולות נוספות" hint={[mine && "פתיחה מחדש", row && "מבנה המשבצת"].filter(Boolean).join(" · ")}>
+          {row && (
+            <>
+              <p className="mb-2 text-sm font-semibold text-ink-soft">מבנה המשבצת</p>
+              <ShapeMenu model={model} day={l.day} row={row} closed onReshape={(op) => actions.reshape(l.day, row.start_min, op)} />
+            </>
+          )}
+          {mine && (
+            <div className={row ? "mt-4 border-t border-line/70 pt-3" : undefined}>
+              <Reopen lesson={l} isAdmin={isAdmin} files={(model.week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id).length} onReopen={() => actions.reopen(l.id)} />
+            </div>
+          )}
+        </Fold>
       )}
     </>
   );
@@ -391,25 +562,29 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
  * (CONTRACT reopen_lesson). When any stage holds something, it says what goes before doing it.
  * Paid money is never erased (paid_locked); an approved request is the instructor's to reopen.
  */
-function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson: Lesson; speakerGender: Gender | null; isAdmin: boolean; files: number; onReopen: () => void }) {
+function Reopen({ lesson: l, isAdmin, files, onReopen }: { lesson: Lesson; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
   // «ביטול» takes the confirm (and its focus) away: «פתיחה מחדש» takes it back
   const focusBack = useFocusBack();
   const loses = reopenLoses(l);
   if (l.paid_at) {
-    return <p className="text-sm text-ink-soft">התשלום סומן כשולם, ולכן אי אפשר לפתוח את השיעור מחדש. קודם מבטלים את הסימון «שולם», בשלב התשלום.</p>;
+    return <p className="text-sm text-ink-soft">שולם — כדי לפתוח מחדש, קודם מבטלים «שולם» בשלב התשלום.</p>;
   }
   if (l.approval === "approved" && !isAdmin) {
-    return <p className="text-sm text-ink-soft">הבקשה לתשלום או להסעה אושרה, ולכן רק המדריך/ה יכול/ה לפתוח את השיעור מחדש.</p>;
+    return <p className="text-sm text-ink-soft">הבקשה אושרה — רק המדריך/ה פותח/ת מחדש.</p>;
   }
   if (asking) {
     return (
       <Confirm
         text={
           <>
-            פתיחה מחדש מחזירה את השיעור לטיוטה, ומוחקת את מה שנאסף {byGender(speakerGender, "למרצה הזה", "למרצה הזו", "למרצה הזה/הזו")}: {loses.join(" · ")}.
-            אם סוגרים שוב, השלבים מתחילים מההתחלה.
-            {files > 0 && <> {files === 1 ? "הקובץ שהועלה נשאר" : `${files} הקבצים שהועלו נשארים`} בלוח השיעור, מסומן/ים «מהמרצה הקודם», עד שמסירים {files === 1 ? "אותו" : "אותם"}.</>}
+            השיעור יחזור לטיוטה, ויימחקו: {loses.join(" · ")}.
+            {files > 0 && (
+              <>
+                {" "}
+                {files === 1 ? "הקובץ שהועלה נשאר בלוח השיעור, מסומן" : `${files} הקבצים שהועלו נשארים בלוח השיעור, מסומנים`} «מהמרצה הקודם».
+              </>
+            )}
           </>
         }
         confirm="פתיחה מחדש ומחיקה"
@@ -425,7 +600,7 @@ function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson
     );
   }
   return (
-    <Button ref={focusBack.ref()} onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
+    <Button kind="danger" ref={focusBack.ref()} onClick={() => (loses.length > 0 ? setAsking(true) : onReopen())}>
       פתיחה מחדש (חזרה לטיוטה)
     </Button>
   );
@@ -434,7 +609,7 @@ function Reopen({ lesson: l, speakerGender, isAdmin, files, onReopen }: { lesson
 // ------------------------------------------------------------------ empty cell
 
 export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide }: { model: GridModel; me: number; day: Day; row: GridRow; canEdit: boolean; actions: PanelActions; onClose: () => void; wide: boolean }) {
-  const need = model.days[day].balance.need;
+  const { need, deficit } = model.days[day].balance;
   return (
     <Sheet
       wide={wide}
@@ -442,19 +617,18 @@ export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide
       onClose={onClose}
       subtitle={
         <>
-          {DAY_NAMES[day]} · <bdi>{fmtRange(row.start_min, row.end_min)}</bdi>
-          {need && <> · {need === "f" ? "היום חסרות מרצות" : "היום חסרים מרצים"}</>}
+          <Meta>
+            {DAY_NAMES[day]} · <bdi dir="ltr">{fmtRange(row.start_min, row.end_min)}</bdi>
+          </Meta>
+          {row.label && <Meta>{row.label}</Meta>}
+          {need && <Meta tone="warn">{needText(need, deficit)}</Meta>}
         </>
       }
     >
       {canEdit ? (
         <>
-          <Section title="הצעת מרצה">
-            <SpeakerChooser model={model} me={me} day={day} start={row.start_min} end={row.end_min} need={need} onPick={(id, mode) => actions.propose(id, { day, start_min: row.start_min, end_min: row.end_min, room_id: null }, mode)} />
-          </Section>
-          <Section title="מבנה המשבצת">
-            <ShapeMenu model={model} day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
-          </Section>
+          <ProposeSection model={model} me={me} day={day} start={row.start_min} end={row.end_min} onPick={(id, mode) => actions.propose(id, { day, start_min: row.start_min, end_min: row.end_min, room_id: null }, mode)} />
+          <ShapeFold model={model} day={day} row={row} closed={false} onReshape={(op) => actions.reshape(day, row.start_min, op)} />
         </>
       ) : (
         <p className="text-sm text-ink-soft">צפייה בלבד.</p>
@@ -467,13 +641,26 @@ export function CellPanel({ model, me, day, row, canEdit, actions, onClose, wide
 
 const FIT_RANK: Record<Fit, number> = { can: 0, neutral: 1, cannot: 2, busy: 3 };
 const SECTION_RANK = { mine: 0, free: 1, others: 2, closed: 3, declined: 4 } as const;
+/** The chooser's groups, in rank order: a speaker closed this year or who declined is not offered. */
+const CHOOSER_GROUPS: readonly PoolSection[] = ["mine", "free", "others"];
+/** A group shows this many rows until «עוד N». */
+const GROUP_PEEK = 6;
+/** A search shows at most this many matches; a narrower one finds the rest. */
+const SEARCH_CAP = 30;
+
+interface ChooserItem {
+  s: Speaker;
+  section: PoolSection;
+  fit: Fit;
+}
 
 export function SpeakerChooser({ model, me, day, start, end, need, onPick }: { model: GridModel; me: number; day: Day; start: number; end: number; need?: Gender | null; onPick: (speakerId: number, mode: "self" | "offer") => void }) {
   const [query, setQuery] = useState("");
+  const searching = searchKey(query) !== "";
   const ranked = useMemo(() => {
     return model.week.speakers
       .filter((s) => !s.retired && speakerMatches(s, query))
-      .map((s) => ({ s, section: poolSection(model, s.id, me), fit: fitFor(model, s.id, day, start, end) }))
+      .map((s): ChooserItem => ({ s, section: poolSection(model, s.id, me), fit: fitFor(model, s.id, day, start, end) }))
       .filter((x) => x.section !== "closed" && x.section !== "declined" && x.fit !== "busy")
       .sort(
         (a, b) =>
@@ -481,40 +668,136 @@ export function SpeakerChooser({ model, me, day, start, end, need, onPick }: { m
           Number(!!need && b.s.gender === need) - Number(!!need && a.s.gender === need) ||
           FIT_RANK[a.fit] - FIT_RANK[b.fit] ||
           a.s.name.localeCompare(b.s.name, "he"),
-      )
-      .slice(0, 30);
+      );
   }, [model, me, day, start, end, need, query]);
+  const shown = searching ? ranked.slice(0, SEARCH_CAP) : ranked;
+  // a proposal moves its speaker to another group (a new row): the focus follows them, or stays in the chooser
+  const root = useRef<HTMLDivElement>(null);
+  const picked = useRef<number | null>(null);
+  const pick = (id: number, mode: "self" | "offer") => {
+    picked.current = id;
+    onPick(id, mode);
+  };
+  useEffect(() => {
+    const id = picked.current;
+    if (id == null) return;
+    picked.current = null;
+    (root.current?.querySelector<HTMLElement>(`[data-chooser-speaker="${id}"] button`) ?? root.current?.querySelector<HTMLElement>("input"))?.focus();
+  }, [ranked]);
 
   return (
-    <div className="space-y-1.5">
-      <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש מרצה" aria-label="חיפוש מרצה למשבצת" className={INPUT} />
-      <ul className="max-h-72 space-y-1 overflow-y-auto">
-        {ranked.map(({ s, section, fit }) => (
-          <ChooserRow key={s.id} model={model} speaker={s} section={section} fit={fit} need={need ?? null} onPick={onPick} />
-        ))}
-        {ranked.length === 0 && <li className="p-2 text-center text-sm text-ink-faint">אין התאמות</li>}
-      </ul>
+    <div ref={root} className="space-y-2">
+      <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="חיפוש מרצה, נושא או מוסד" aria-label="חיפוש מרצה למשבצת" className={INPUT} />
+      {CHOOSER_GROUPS.map((g) => {
+        const items = shown.filter((x) => x.section === g);
+        return items.length > 0 && <ChooserGroup key={g} model={model} day={day} section={g} items={items} flat={searching} onPick={pick} />;
+      })}
+      {shown.length === 0 && <p className="p-2 text-center text-sm text-ink-faint">אין התאמות. מרצה שלא במאגר מוסיפים ב«+ מרצה חדש/ה».</p>}
+      {shown.length < ranked.length && <p className="text-center text-xs text-ink-faint">מוצגים {SEARCH_CAP} — מדייקים את החיפוש כדי לצמצם.</p>}
     </div>
   );
 }
 
-function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: GridModel; speaker: Speaker; section: string; fit: Fit; need: Gender | null; onPick: (id: number, mode: "self" | "offer") => void }) {
-  const owner = model.memberName.get(model.approachBySpeaker.get(s.id)?.owner_member_id ?? -1);
-  const others = section === "others";
+/**
+ * One group of the chooser under its label and count, said once instead of on every row: «שלי» and «פנויים» open, six
+ * rows and «עוד N»; «בטיפול אחרים» — offering to a teammate, the occasional case — folded. A search shows them all.
+ */
+function ChooserGroup({ model, day, section, items, flat, onPick }: { model: GridModel; day: Day; section: PoolSection; items: ChooserItem[]; flat: boolean; onPick: (id: number, mode: "self" | "offer") => void }) {
+  const [more, setMore] = useState(false);
+  const label = POOL_SECTION_LABEL[section];
+  const cut = !flat && items.length > GROUP_PEEK;
+  const limit = topicLimit(model);
+  const list = (
+    <>
+      <ul aria-label={label} className="divide-y divide-line/70">
+        {(cut && !more ? items.slice(0, GROUP_PEEK) : items).map(({ s, fit }) => (
+          <ChooserRow key={s.id} model={model} speaker={s} others={section === "others"} fit={fit} load={model.days[day].load} limit={limit} onPick={onPick} />
+        ))}
+      </ul>
+      {cut && (
+        <Button kind="quiet" className="text-sm" aria-expanded={more} onClick={() => setMore((x) => !x)}>
+          {more ? "פחות" : `עוד ${items.length - GROUP_PEEK}`}
+        </Button>
+      )}
+    </>
+  );
+  if (section === "others" && !flat) {
+    return (
+      <Fold size="sm" title={label} hint={items.length}>
+        {list}
+      </Fold>
+    );
+  }
   return (
-    <li className="flex items-center gap-1.5 rounded-lg border border-line bg-card px-2 py-1.5">
+    <div>
+      <h4 className="flex items-baseline gap-1.5 text-xs font-semibold text-ink-soft">
+        {label} <span className="font-normal tabular-nums text-ink-faint">{items.length}</span>
+      </h4>
+      {list}
+    </div>
+  );
+}
+
+/**
+ * A speaker to propose, striped and marked with their first topic's colour (the grid's, when it names a topic) and how
+ * many of it the day already closed — amber, with the limit, once one more would pass it.
+ */
+function ChooserRow({
+  model,
+  speaker: s,
+  others,
+  fit,
+  load,
+  limit,
+  onPick,
+}: {
+  model: GridModel;
+  speaker: Speaker;
+  others: boolean;
+  fit: Fit;
+  load: Map<number, number>;
+  limit: { max: number; rule: string };
+  onPick: (id: number, mode: "self" | "offer") => void;
+}) {
+  const owner = model.memberName.get(model.approachBySpeaker.get(s.id)?.owner_member_id ?? -1);
+  const guess = guessedCategory(model, s);
+  const topic = guess != null ? model.categoryById.get(guess) : undefined;
+  const shown = topic?.active ? topic : undefined;
+  const already = shown ? (load.get(shown.id) ?? 0) : 0;
+  const full = already >= limit.max;
+  // what decides first (can they, are they approved), then the topic and how much of it the day holds
+  const notes: ReactNode[] = [];
+  if (fit === "cannot") notes.push(`${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")}`);
+  if (fit === "can") notes.push("זמין/ה");
+  if (s.vetted !== "approved") notes.push(<span className="text-amber-800">ממתין/ה לאישור</span>);
+  if (others) notes.push(`בטיפול: ${owner ?? "?"}`);
+  if (shown)
+    notes.push(
+      <span className="font-medium">
+        <span aria-hidden style={{ color: shown.color }}>
+          ●{" "}
+        </span>
+        {shown.name}
+      </span>,
+    );
+  if (already > 0) notes.push(<span className={full ? "font-semibold text-amber-800" : undefined}>{full ? `⚠ כבר ${already} היום (${limit.rule})` : `כבר ${already} היום`}</span>);
+  return (
+    <li data-chooser-speaker={s.id} className="flex items-center gap-2 border-s-[3px] py-1.5 ps-2" style={{ borderInlineStartColor: shown?.color ?? "transparent" }}>
       <GenderDot gender={s.gender} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold">{displayName(s)}</span>
-        <span className="block truncate text-[11px] text-ink-soft">
-          {others ? `בטיפול: ${owner}` : section === "mine" ? "שלי" : "פנוי/ה"}
-          {fit === "cannot" && ` · ${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")}`}
-          {fit === "can" && " · זמין/ה"}
-          {need && s.gender === need && " · מתאים לאיזון"}
-          {s.vetted !== "approved" && " · ממתין לאישור"}
-        </span>
+        {notes.length > 0 && (
+          <span className="block text-[11px] leading-snug text-ink-soft">
+            {notes.map((n, i) => (
+              <Fragment key={i}>
+                {i > 0 && " · "}
+                {n}
+              </Fragment>
+            ))}
+          </span>
+        )}
       </span>
-      <Button onClick={() => onPick(s.id, others ? "offer" : "self")}>
+      <Button className="shrink-0 text-sm" onClick={() => onPick(s.id, others ? "offer" : "self")}>
         {others ? "הצע ל" + (owner ?? "אחראי/ת") : "הצע"}
       </Button>
     </li>
@@ -523,34 +806,46 @@ function ChooserRow({ model, speaker: s, section, fit, need, onPick }: { model: 
 
 // ------------------------------------------------------------------ reshaping
 
+/** The shape menu, folded: an occasional act (merge, split) that should not crowd the panel's everyday one. */
+function ShapeFold(props: Parameters<typeof ShapeMenu>[0]) {
+  return (
+    <Fold title="מבנה המשבצת" hint="איחוד · פיצול">
+      <ShapeMenu {...props} />
+    </Fold>
+  );
+}
+
 /** The cell a reshape acts on, and the day's lesson rows (CONTRACT `reshape`, v13). */
 function cellOf(model: GridModel, day: Day, row: GridRow) {
   const rows = model.week.rows.filter((r) => r.kind === "lesson" && rowActive(r, day, model.week.edition));
   const lessons = model.week.lessons.filter((l) => l.day === day && l.state !== "cancelled");
   const span = cellSpan(row, lessons);
-  return { rows, span, stuck: sticksOut(span, lessons) };
+  return {
+    rows,
+    span,
+    merged: span.start !== row.start_min || span.end !== row.end_min,
+    // anything on the row: «החזרה למבנה הבסיס» has something to undo (on a free row it is a no-op)
+    held: lessons.some((l) => overlaps(l.start_min, l.end_min, row.start_min, row.end_min)),
+    stuck: sticksOut(span, lessons),
+  };
 }
 
+/**
+ * The one-click acts on top; each split — one is chosen at a time, and seldom — folded under them.
+ */
 export function ShapeMenu({ model, day, row, closed, onReshape }: { model: GridModel; day: Day; row: GridRow; closed: boolean; onReshape: (op: ReshapeOp) => void }) {
   const [reason, setReason] = useState("");
-  const { rows, span, stuck } = cellOf(model, day, row);
-  const merged = span.start !== row.start_min || span.end !== row.end_min;
+  const { rows, span, merged, held, stuck } = cellOf(model, day, row);
   return (
-    <div className="space-y-3 text-sm">
-      {merged && (
-        <p className="text-xs text-ink-soft">
-          משבצת מאוחדת: <bdi>{fmtRange(span.start, span.end)}</bdi>. הפיצול חל על כולה.
-        </p>
-      )}
+    <div className="space-y-2 text-sm">
+      {merged && <p className="text-xs text-ink-soft">משבצת מאוחדת — הפיצול חל על כולה.</p>}
       <div className="flex flex-wrap gap-1.5">
         <Button onClick={() => onReshape({ op: "merge_next" })}>איחוד עם המשבצת הבאה</Button>
-        {!closed && <Button onClick={() => onReshape({ op: "reset" })}>החזרה למבנה הבסיס</Button>}
+        {!closed && held && <Button onClick={() => onReshape({ op: "reset" })}>החזרה למבנה הבסיס</Button>}
       </div>
-      <div>
-        <p className="mb-1 font-semibold">פיצול למקבילים</p>
-        <p className="mb-1 text-xs text-ink-soft">שיעורים מקבילים מפצלים את הקבוצה — כדאי רק כשיש סיבה.</p>
+      <Fold size="sm" title="פיצול למקבילים" hint="2 או 3, עם סיבה">
         <div className="flex flex-wrap gap-1.5">
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="הסיבה" aria-label="סיבה לפיצול" className={`${INPUT} min-w-0 flex-1 basis-32`} />
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="למה במקביל? (חובה)" aria-label="סיבה לפיצול" className={`${INPUT} min-w-0 flex-1 basis-40`} />
           <Button disabled={!reason.trim()} onClick={() => onReshape({ op: "split_parallel", count: 2, reason })}>
             2 מקבילים
           </Button>
@@ -558,18 +853,22 @@ export function ShapeMenu({ model, day, row, closed, onReshape }: { model: GridM
             3 מקבילים
           </Button>
         </div>
-      </div>
-      {!closed &&
-        (stuck ? (
-          <p className="text-xs text-ink-soft">
-            <span className="font-semibold">פיצול בזמן:</span> שיעור במקביל מתחיל או נגמר מחוץ למשבצת הזו — מזיזים אותו או מחזירים למבנה הבסיס קודם.
-          </p>
-        ) : (
-          <TimeSplit key={`${span.start}:${span.end}`} rows={rows} span={span} onReshape={onReshape} />
-        ))}
+      </Fold>
+      {!closed && (
+        <Fold size="sm" title="פיצול בזמן" hint="בכל מספר דקות">
+          {stuck ? (
+            <p className="text-xs text-ink-soft">שיעור במקביל מתחיל או נגמר מחוץ למשבצת הזו — מזיזים אותו או מחזירים למבנה הבסיס קודם.</p>
+          ) : (
+            <TimeSplit key={`${span.start}:${span.end}`} rows={rows} span={span} onReshape={onReshape} />
+          )}
+        </Fold>
+      )}
     </div>
   );
 }
+
+/** A part's minutes: a field of its own width (INPUT is a full-width block), so the parts line up like a small table. */
+const MINUTES = `${INPUT.replace("block w-full ", "")} w-20 shrink-0 tabular-nums`;
 
 /** split_time with any minutes: every part but the last is typed; the last is what is left of the cell. */
 function TimeSplit({ rows, span, onReshape }: { rows: GridRow[]; span: Span; onReshape: (op: ReshapeOp) => void }) {
@@ -581,12 +880,11 @@ function TimeSplit({ rows, span, onReshape }: { rows: GridRow[]; span: Span; onR
   let t = span.start;
   const ranges = parts.map((m) => [t, (t += m)] as const);
   return (
-    <fieldset>
-      <legend className="mb-1 font-semibold">פיצול בזמן</legend>
-      <ol className="space-y-1">
+    <div>
+      <ol className="space-y-1.5">
         {ranges.map(([a, b], i) => (
-          <li key={i} className="flex flex-wrap items-center gap-1.5">
-            <span className="w-14 text-xs text-ink-soft">חלק {i + 1}</span>
+          <li key={i} className="flex flex-nowrap items-center gap-2">
+            <span className="w-12 shrink-0 text-xs text-ink-soft">חלק {i + 1}</span>
             {i < typed.length ? (
               <input
                 type="number"
@@ -596,35 +894,35 @@ function TimeSplit({ rows, span, onReshape }: { rows: GridRow[]; span: Span; onR
                 value={typed[i]}
                 onChange={(e) => setTyped((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))}
                 aria-label={`דקות בחלק ${i + 1}`}
-                className={`${INPUT} w-20`}
+                className={MINUTES}
               />
             ) : (
-              <span className="w-20 px-2" aria-label={`דקות בחלק ${i + 1}`}>
+              <span className="w-20 shrink-0 px-3 tabular-nums" aria-label={`דקות בחלק ${i + 1}`}>
                 {parts[i]}
               </span>
             )}
-            <span className="text-xs text-ink-soft">
+            <span className="min-w-0 truncate text-xs text-ink-soft">
               דק׳ · <bdi dir="ltr">{fmtRange(a, b)}</bdi>
             </span>
-            {i === typed.length - 1 && typed.length > 1 && (
-              <button type="button" className="text-xs text-ink-soft underline" onClick={() => setTyped((xs) => xs.slice(0, -1))}>
-                הסרת חלק
-              </button>
-            )}
           </li>
         ))}
       </ol>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <Button disabled={!ok} onClick={() => onReshape({ op: "split_time", parts })}>
           פיצול ל-{parts.length} חלקים
         </Button>
         {parts[parts.length - 1] >= 30 && (
-          <button type="button" className="text-xs text-ink-soft underline" onClick={() => setTyped((xs) => [...xs, String(Math.max(15, Math.round(parts[parts.length - 1] / 2 / 5) * 5))])}>
+          <Button kind="quiet" onClick={() => setTyped((xs) => [...xs, String(Math.max(15, Math.round(parts[parts.length - 1] / 2 / 5) * 5))])}>
             + חלק נוסף
-          </button>
+          </Button>
+        )}
+        {typed.length > 1 && (
+          <Button kind="quiet" onClick={() => setTyped((xs) => xs.slice(0, -1))}>
+            הסרת חלק
+          </Button>
         )}
       </div>
-      {!ok && <p className="mt-1 text-xs text-bad">כל חלק לפחות 15 דקות, בכפולות של 5, ומתחיל ונגמר בתוך שעת שיעור.</p>}
-    </fieldset>
+      {!ok && <p className="mt-1 text-xs text-bad">כל חלק: 15 דק׳ לפחות, בכפולות של 5, בתוך שעות השיעור.</p>}
+    </div>
   );
 }

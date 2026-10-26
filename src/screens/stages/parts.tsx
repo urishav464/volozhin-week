@@ -8,6 +8,7 @@ import type { Stage } from "../../domain/stages";
 import { TICK_TEAM_LABEL, ticksOf } from "../../domain/escorts";
 import { type Lesson, TICK_ITEMS, type Week } from "../../domain/types";
 import { STAGE_DOT } from "../../grid/bits";
+import { Button } from "../settings/kit";
 import type { Actor } from "../weekStore";
 
 /** A command, then the week again; `onRefused` may show a refusal beside the form instead of a toast. */
@@ -49,34 +50,57 @@ export function archivedEdition(week: Week): boolean {
 
 /**
  * One stage of the lesson as a disclosure: its dot, name and where it stands — tapping it
- * opens the section. Collapsed, the five read as the card's five dots do.
+ * opens the section. Collapsed, the five read as the card's five dots do. A row of `StageList`:
+ * the list draws the frame and the hairlines, an open row's body is tinted, never boxed.
  */
 export function StageSection({ stage, open, onToggle, children }: { stage: Pick<Stage, "label" | "state" | "note"> & { key: string }; open: boolean; onToggle: () => void; children: ReactNode }) {
   const id = `stage-${stage.key}`;
   return (
-    <section id={id} aria-label={stage.label} data-stage-section={stage.key} data-state={stage.state} className="scroll-mt-2 rounded-lg border border-line bg-card">
+    <section id={id} aria-label={stage.label} data-stage-section={stage.key} data-state={stage.state} className="group/stage scroll-mt-2">
       <h4>
         <button
           type="button"
           aria-expanded={open}
           aria-controls={`${id}-body`}
           onClick={onToggle}
-          className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-1.5 text-start hover:bg-line/30"
+          className="flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-start hover:bg-line/30 group-first/stage:rounded-t-[7px] group-last/stage:aria-[expanded=false]:rounded-b-[7px]"
         >
           <span aria-hidden className={`size-3 shrink-0 rounded-full border-2 ${STAGE_DOT[stage.state]}`} />
           <span className="shrink-0 font-semibold">{stage.label}</span>
           <span className="min-w-0 truncate text-sm text-ink-soft">{stage.note}</span>
-          <span aria-hidden className="ms-auto shrink-0 text-ink-soft">
-            {open ? "▴" : "▾"}
+          <span aria-hidden className={`ms-auto shrink-0 text-ink-soft transition-transform ${open ? "rotate-180" : ""}`}>
+            ▾
           </span>
         </button>
       </h4>
       {open && (
-        <div id={`${id}-body`} className="space-y-3 border-t border-line px-3 py-3">
+        <div id={`${id}-body`} className="space-y-3 bg-paper px-3 pb-3.5 pt-2.5 group-last/stage:rounded-b-[7px]">
           {children}
         </div>
       )}
     </section>
+  );
+}
+
+/** The frame of a list of `StageSection`s: one box, a hairline between rows. */
+export function StageList({ children }: { children: ReactNode }) {
+  return <div className="divide-y divide-line rounded-lg border border-line bg-card">{children}</div>;
+}
+
+/**
+ * A stage's saved values, read first (as «פרטי השיעור» is): label and value in rows, and on the first row a quiet
+ * «עריכה» that opens the form — only for whom may edit.
+ */
+export function SavedView({ onEdit, children }: { onEdit?: () => void; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <dl className="grid min-w-0 flex-1 grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">{children}</dl>
+      {onEdit && (
+        <Button kind="quiet" className="-me-2 -mt-2.5 shrink-0" onClick={onEdit}>
+          עריכה
+        </Button>
+      )}
+    </div>
   );
 }
 

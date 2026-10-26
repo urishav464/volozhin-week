@@ -19,17 +19,19 @@ import { ownerColors } from "../grid/owners";
 import { DayPanel } from "../grid/DayPanel";
 import { weekBalance } from "../rules/balance";
 import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
-import { buildModel } from "../grid/model";
+import { buildModel, weekTopics } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
 import { Pool } from "../grid/Pool";
+import { TopicMatrix } from "../grid/TopicMatrix";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
 import { reopenLoses, type StageKey } from "../domain/stages";
-import { STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
+import { NO_TOPIC_COLOR, STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
 import { CreateSpeaker } from "./speakers/CreateSpeaker";
 import { LessonStages } from "./stages/LessonStages";
 import { MemorialSlotPanel } from "./memorial/SlotPanel";
 import { DraftFiles } from "./stages/SourceFiles";
+import { Fold } from "./settings/kit";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
 import { actorIn, useWeekStore } from "./weekStore";
 
@@ -74,6 +76,9 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const [toast, setToast] = useState<Toast>(null);
   const [offer, setOffer] = useState<Offer>(null);
   const [phoneTab, setPhoneTab] = useState<"day" | "pool">("day");
+  // the legends' second layer on a wide screen: the topics «לפי ימים», the progress dots (a phone folds the whole legend)
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  const [dotsOpen, setDotsOpen] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -303,7 +308,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       )}
       <div role="radiogroup" aria-label="עדשה" className="flex overflow-hidden rounded-lg border border-line">
         {LENSES.map(([key, label]) => (
-          <button key={key} type="button" role="radio" aria-checked={lens === key} onClick={() => setLens(key)} className={`px-3 py-1 text-sm ${lens === key ? "bg-ink text-paper" : "bg-card text-ink-soft"}`}>
+          <button key={key} type="button" role="radio" aria-checked={lens === key} onClick={() => setLens(key)} className={`px-3 text-sm ${wide ? "py-1" : "min-h-11"} ${lens === key ? "bg-ink text-paper" : "bg-card text-ink-soft"}`}>
             {label}
           </button>
         ))}
@@ -313,82 +318,87 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           מאגר המרצים
         </button>
       )}
-      <button type="button" onClick={() => setPanel({ kind: "warnings" })} className="rounded-lg border border-line bg-card px-3 py-1 text-sm">
-        אזהרות <span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
-      </button>
-      {/* v13: the week's closed lessons, women and men — each day's own is in its header and panel */}
-      <span className="text-xs text-ink-soft tabular-nums" aria-label="השבוע כולו" data-week-balance>
-        השבוע: {fmtCount(weekTotal.closed.f)} מרצות · {fmtCount(weekTotal.closed.m)} מרצים
+      {/* on a phone the bottom bar has «אזהרות» */}
+      {wide && (
+        <button type="button" onClick={() => setPanel({ kind: "warnings" })} className="rounded-lg border border-line bg-card px-3 py-1 text-sm">
+          אזהרות <span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
+        </button>
+      )}
+      {/* v13: the week's closed lessons, women and men, in the cells' pink and sky — each day's own is in its header and panel */}
+      <span className="inline-flex flex-wrap items-center gap-1 text-xs text-ink-soft tabular-nums" aria-label="השבוע כולו" data-week-balance>
+        השבוע:{" "}
+        <span className="rounded bg-need-f px-1.5 text-pink-900">{fmtCount(weekTotal.closed.f)} מרצות</span>{" "}
+        <span className="rounded bg-need-m px-1.5 text-sky-900">{fmtCount(weekTotal.closed.m)} מרצים</span>
         {unbalancedDays > 0 && <span className="font-semibold text-bad"> · {unbalancedDays === 1 ? "יום אחד לא מאוזן" : `${unbalancedDays} ימים לא מאוזנים`}</span>}
       </span>
     </div>
   );
 
-  // The diversity lens (v13): what each topic's colour is, how many of the week's closed lessons have it, and the empty cells' tints.
+  // The diversity lens (v13): what each topic's colour is and how many of the week's closed lessons have it
+  // (the empty cells say «דרושה מרצה» / «דרוש מרצה» themselves); «לפי ימים» opens the topic × day table.
   const team = ownerColors(model.week.team);
   const owners = { colorOf: new Map(team.map((m) => [m.id, m.color])), only: onlyOwner };
-  const perCategory = new Map<number, number>();
-  for (const l of model.week.lessons) if (l.kind === "lesson" && l.state === "closed" && l.category_id != null) perCategory.set(l.category_id, (perCategory.get(l.category_id) ?? 0) + 1);
   const topics = (
     <ul aria-label="מקרא הנושאים" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
-      {model.week.categories
-        .filter((c) => c.active || perCategory.has(c.id))
-        .map((c) => (
-          <li key={c.id} className="inline-flex items-center gap-1">
-            <span aria-hidden className="h-3 w-1.5 rounded-sm" style={{ backgroundColor: c.color }} />
-            <span style={{ color: c.color }} className="font-semibold">
-              {c.name}
-            </span>
-            <span className="tabular-nums">{perCategory.get(c.id) ?? 0}</span>
-          </li>
-        ))}
-      <li className="inline-flex items-center gap-1">
-        <span aria-hidden className="size-3 rounded border border-pink-200 bg-need-f" />
-        חסרות מרצות
-      </li>
-      <li className="inline-flex items-center gap-1">
-        <span aria-hidden className="size-3 rounded border border-sky-200 bg-need-m" />
-        חסרים מרצים
-      </li>
+      {weekTopics(model).map(({ category: c, count }) => (
+        <li key={c.id} className="inline-flex items-center gap-1">
+          <span aria-hidden className="h-3 w-1.5 rounded-sm" style={{ backgroundColor: c.color }} />
+          {c.name}
+          <span className={`font-semibold tabular-nums ${count ? "text-ink" : "text-ink-faint"}`}>{count}</span>
+        </li>
+      ))}
     </ul>
   );
-  // on a phone the legend folds away: the day comes first
+  // on a phone the legend folds away (the day comes first), and the table is the legend: its rows are the topics
   const diversityLegend =
     lens === "diversity" &&
     (wide ? (
-      topics
+      <div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {topics}
+          <LegendToggle open={matrixOpen} onToggle={() => setMatrixOpen((v) => !v)} controls="topic-matrix">
+            לפי ימים
+          </LegendToggle>
+        </div>
+        {matrixOpen && (
+          <div id="topic-matrix" className="mt-2 w-fit max-w-full overflow-x-auto rounded-xl border border-line bg-card p-3">
+            <TopicMatrix model={model} />
+          </div>
+        )}
+      </div>
     ) : (
-      <details className="text-xs text-ink-soft">
-        <summary className="min-h-8 cursor-pointer py-1">מקרא הנושאים</summary>
-        {topics}
-      </details>
+      <Fold size="sm" title="מקרא הנושאים" hint="לפי ימים">
+        <div className="overflow-x-auto rounded-xl border border-line bg-card p-2">
+          <TopicMatrix model={model} />
+        </div>
+      </Fold>
     ));
 
   // The owner lens (v13): a colour per handler, on drafts too; «רק של X» fades the others' cards.
   const ownerLegend = lens === "owner" && (
     <div role="group" aria-label="מקרא האחריות" className="flex flex-wrap items-center gap-1.5 text-xs">
-      {[...team.map((m) => ({ key: m.id as number | "none", name: m.name, color: m.color })), { key: "none" as const, name: "בלי אחראי/ת", color: "#c9c2b3" }].map((m) => (
+      {[...team.map((m) => ({ key: m.id as number | "none", name: m.name, color: m.color })), { key: "none" as const, name: "בלי אחראי/ת", color: NO_TOPIC_COLOR }].map((m) => (
         <button
           key={m.key}
           type="button"
           aria-pressed={onlyOwner === m.key}
           onClick={() => setOnlyOwner((cur) => (cur === m.key ? null : m.key))}
-          className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-2 ${onlyOwner === m.key ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
+          className={`inline-flex items-center gap-1 rounded-full border ${wide ? "min-h-7 px-2" : "min-h-11 px-3"} ${onlyOwner === m.key ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
         >
           <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: m.color }} />
           {onlyOwner === m.key ? `רק של ${m.name}` : m.name}
         </button>
       ))}
       {onlyOwner != null && (
-        <button type="button" onClick={() => setOnlyOwner(null)} className="text-ink-soft underline">
+        <button type="button" onClick={() => setOnlyOwner(null)} className={`px-1 text-ink-soft underline ${wide ? "" : "min-h-11"}`}>
           כולם
         </button>
       )}
     </div>
   );
 
-  // The progress lens: last year's colours on the cards, and what the five dots are.
-  const progressLegend = lens === "progress" && (
+  // The progress lens: last year's colours on the cards (always shown), and what the five dots are (folded: read once).
+  const tones = (
     <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
       {PROGRESS_LEGEND.map(([tone, label]) => (
         <li key={tone} className="inline-flex items-center gap-1">
@@ -396,7 +406,11 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           {label}
         </li>
       ))}
-      <li>הנקודות, לפי הסדר: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה</li>
+    </ul>
+  );
+  const dots = (
+    <ul aria-label="הנקודות שעל הכרטיס" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      <li>לפי הסדר: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה</li>
       {(["done", "waiting", "problem", "open", "na"] as const).map((st) => (
         <li key={st} className="inline-flex items-center gap-1">
           <span aria-hidden className={`size-2.5 rounded-full border-2 ${STAGE_DOT[st]}`} />
@@ -409,6 +423,30 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       </li>
     </ul>
   );
+  const progressLegend =
+    lens === "progress" &&
+    (wide ? (
+      <div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {tones}
+          <LegendToggle open={dotsOpen} onToggle={() => setDotsOpen((v) => !v)} controls="progress-dots">
+            מה הנקודות?
+          </LegendToggle>
+        </div>
+        {dotsOpen && (
+          <div id="progress-dots" className="mt-1">
+            {dots}
+          </div>
+        )}
+      </div>
+    ) : (
+      <Fold size="sm" title="מקרא ההתקדמות">
+        <div className="space-y-2">
+          {tones}
+          {dots}
+        </div>
+      </Fold>
+    ));
 
   const legend = diversityLegend || ownerLegend || progressLegend;
 
@@ -611,5 +649,23 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** A legend's «more» on a wide screen (the topics «לפי ימים», the progress dots): a small disclosure at the row's end. */
+function LegendToggle({ open, onToggle, controls, children }: { open: boolean; onToggle: () => void; controls: string; children: string }) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={controls}
+      onClick={onToggle}
+      className="inline-flex min-h-7 items-center gap-1 rounded-md px-1.5 text-xs font-semibold text-ink-soft hover:bg-line/50 hover:text-ink"
+    >
+      {children}
+      <span aria-hidden className={`transition-transform ${open ? "rotate-180" : ""}`}>
+        ▾
+      </span>
+    </button>
   );
 }

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { byGender, displayName } from "../domain/names";
 import { DAYS, DAY_NAMES, fmtRange } from "../domain/time";
 import type { Gender, Speaker } from "../domain/types";
-import { Chip, GenderDot } from "./bits";
+import { Chip, GenderDot, TopicChip, topicsOf } from "./bits";
 import { type GridModel, POOL_SECTION_LABEL, type PoolSection, poolSection, speakerMatches } from "./model";
 
 interface Props {
@@ -69,8 +69,8 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
             <option value="f">נשים</option>
             <option value="m">גברים</option>
           </select>
-          <select aria-label="קטגוריה" value={category} onChange={(e) => setCategory(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-sm">
-            <option value="">כל הקטגוריות</option>
+          <select aria-label="נושא" value={category} onChange={(e) => setCategory(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-sm">
+            <option value="">כל הנושאים</option>
             {model.week.categories.filter((c) => c.active).map((c) => (
               <option key={c.id} value={c.name}>
                 {c.name}
@@ -78,6 +78,7 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
             ))}
           </select>
         </div>
+        {/* a phone's targets are 44px tall; the desktop column keeps them small */}
         <div role="tablist" aria-label="מצב" className="flex flex-wrap gap-1">
           {SECTIONS.map((s) => (
             <button
@@ -86,7 +87,7 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
               role="tab"
               aria-selected={section === s}
               onClick={() => setSection(s)}
-              className={`rounded-full border px-2.5 py-1 text-xs ${section === s ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
+              className={`min-h-11 shrink-0 whitespace-nowrap rounded-full border px-2.5 text-xs lg:min-h-0 lg:py-1 ${section === s ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
             >
               {POOL_SECTION_LABEL[s]} <span className="tabular-nums opacity-80">{bySection.get(s)?.length ?? 0}</span>
             </button>
@@ -127,12 +128,16 @@ function SpeakerCard({
   const owner = a?.owner_member_id != null ? model.memberName.get(a.owner_member_id) : undefined;
   const closedLesson = model.week.lessons.find((l) => l.state === "closed" && model.week.lessonSpeakers.some((x) => x.lesson_id === l.id && x.speaker_id === s.id));
   const draggable = canEdit && section !== "closed";
+  const topics = topicsOf(s.topics, model.week.categories).slice(0, 2);
+  // the first of the week's topics as the card's stripe: a speaker dragged from here carries the colour the cell will show
+  const stripe = topics[0]?.category?.color;
   return (
     <li
       data-drag={draggable ? `speaker:${s.id}` : undefined}
       data-drag-label={displayName(s)}
       data-speaker-id={s.id}
       className={`relative rounded-lg border bg-card p-2 ${placing ? "border-accent ring-2 ring-accent/40" : "border-line"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      style={stripe ? { borderInlineStartWidth: 4, borderInlineStartColor: stripe } : undefined}
     >
       <div className="flex items-center gap-1.5">
         <GenderDot gender={s.gender} />
@@ -146,15 +151,22 @@ function SpeakerCard({
           {displayName(s)}
         </button>
         {s.vetted !== "approved" && <Chip tone="warn">{byGender(s.gender, "ממתין", "ממתינה")} לאישור</Chip>}
+        {canEdit && section !== "closed" && (
+          <button
+            type="button"
+            onClick={onPlace}
+            aria-pressed={placing}
+            className={`relative z-10 ms-auto min-h-11 shrink-0 rounded-md border px-3 text-xs font-semibold lg:min-h-7 lg:px-2 ${placing ? "border-accent bg-accent text-paper" : "border-line bg-paper hover:bg-line/50"}`}
+          >
+            {placing ? "בוחרים משבצת…" : "שבץ"}
+          </button>
+        )}
       </div>
       {(s.bio_short || s.affiliation) && <p className="truncate text-xs text-ink-soft">{s.bio_short ?? s.affiliation}</p>}
-      <div className="mt-1 flex flex-wrap items-center gap-1">
-        {s.topics.slice(0, 2).map((t) => (
-          <Chip key={t}>{t}</Chip>
+      <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink-soft">
+        {topics.map((t) => (
+          <TopicChip key={t.name} name={t.name} category={t.category} />
         ))}
-        <Availability model={model} speakerId={s.id} />
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-ink-soft">
         {section === "others" && owner && <span className="truncate">בטיפול: {owner}</span>}
         {section === "mine" && <span>{a?.status === "positive" ? "חיובי" : a?.status === "claimed" ? "נתפס/ה" : "פנית"}</span>}
         {section === "declined" && <span>{byGender(s.gender, "סירב", "סירבה")} השנה</span>}
@@ -163,16 +175,7 @@ function SpeakerCard({
             {DAY_NAMES[closedLesson.day]} <bdi>{fmtRange(closedLesson.start_min, closedLesson.end_min)}</bdi>
           </span>
         )}
-        {canEdit && section !== "closed" && (
-          <button
-            type="button"
-            onClick={onPlace}
-            aria-pressed={placing}
-            className={`relative z-10 ms-auto rounded-md border px-2 py-0.5 text-xs font-semibold ${placing ? "border-accent bg-accent text-paper" : "border-line bg-paper hover:bg-line/50"}`}
-          >
-            {placing ? "בוחרים משבצת…" : "שבץ"}
-          </button>
-        )}
+        <Availability model={model} speakerId={s.id} />
       </div>
     </li>
   );

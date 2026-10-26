@@ -14,7 +14,7 @@ import type { Edition } from "../../domain/types";
 import { download, fileName, israelDay, PERSONAL_FILE, ZIP_MIME } from "../../exports/download";
 import type { SourcesProgress } from "../../exports/archiveGather";
 import { EXPECTED_SCHEMA_VERSION } from "../../lib/schema";
-import { Button, INPUT, KIND_LABEL, Panel, useAction } from "./kit";
+import { Button, Fold, INPUT, KIND_LABEL, Panel, useAction } from "./kit";
 
 export function ArchivePanel({ data, editions, onDownloaded }: { data: DataPort; editions: Edition[]; onDownloaded?: (editionId: number) => void }) {
   const { busy, run } = useAction();
@@ -79,11 +79,7 @@ export function ArchivePanel({ data, editions, onDownloaded }: { data: DataPort;
   return (
     <Panel title="ייצוא ארכיון (גיבוי)">
       <div className="space-y-2 text-sm">
-        <p>
-          זה הגיבוי של המערכת: כל מה שנשמר על המחזור — השיעורים, הפניות וההצעות, הזמינות, שמות החניכים, החדרים, הקטגוריות, ההגדרות והנוסחים, יומן הפעולות, הידע ואבני
-          הדרך, מכריכה לכריכה (הקבוצות, ההרשמות והזמנות הספרים), הסימונים של המלווים, תוכניות זמני הזיכרון ורשימת החללים, רשימת קבצי המקורות ו«איך עבר» — בקובץ zip אחד, ובתוכו גם
-          טבלת המעקב. כדאי לייצא אחרי הייבוא, באמצע העונה ובסוף השנה — ובכל מקרה לפני מחיקת המידע האישי אחרי השבוע.
-        </p>
+        {/* the safety note stays in view; what the zip holds is reference, folded */}
         <p className="rounded-lg bg-accent-soft px-3 py-2">
           <b>הארכיון כולל מידע אישי:</b> פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף ונהגים) ואנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות), בקובץ נפרד בשם
           <span dir="ltr" className="my-1 block break-all text-start font-mono text-xs">
@@ -91,6 +87,13 @@ export function ArchivePanel({ data, editions, onDownloaded }: { data: DataPort;
           </span>
           פרטי הקשר של המשפחות לא יוצאים מהמערכת בשום ייצוא אחר — רק כאן, כי את הארכיון מורידים רק אדמינים. שומרים אותו במקום מוגן — לא בתיקייה משותפת, לא במייל ולא בצ׳אט — ומוחקים עותקים ישנים.
         </p>
+        <Fold title="מה יש בארכיון" size="sm">
+          <p>
+            זה הגיבוי של המערכת: כל מה שנשמר על המחזור — השיעורים, הפניות וההצעות, הזמינות, שמות החניכים, החדרים, הקטגוריות, ההגדרות והנוסחים, יומן הפעולות, הידע ואבני
+            הדרך, מכריכה לכריכה (הקבוצות, ההרשמות והזמנות הספרים), הסימונים של המלווים, תוכניות זמני הזיכרון ורשימת החללים, רשימת קבצי המקורות ו«איך עבר» — בקובץ zip אחד, ובתוכו גם
+            טבלת המעקב. כדאי לייצא אחרי הייבוא, באמצע העונה ובסוף השנה — ובכל מקרה לפני מחיקת המידע האישי אחרי השבוע.
+          </p>
+        </Fold>
       </div>
       <div className="mt-3 space-y-1">
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
