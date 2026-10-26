@@ -1,7 +1,9 @@
 // «מרצה חדש/ה» — search first. The name typed is looked up in the pool as you
 // type (the same name key, or a similar one: pg_trgm ≥ 0.6, «הצעה»), and the
-// matches are shown as «ייתכן שזה…» before the rest of the form opens. A person
-// of the very same name needs a disambiguator. Gender is chosen, never guessed.
+// matches are shown as «ייתכן שזה…» before the rest of the form opens (the first
+// five; the rest behind one tap). A person of the very same name needs a
+// disambiguator. Gender is chosen, never guessed; what is not needed now waits
+// in «עוד פרטים» (ProfileFields `fold`).
 // The database refuses the same cases again (CONTRACT «create»), so a race with
 // someone adding the same speaker a moment earlier still ends in Hebrew.
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
@@ -39,6 +41,9 @@ interface Props {
 
 const FIELD_OF: Record<string, "name" | "disambiguator"> = { name_required: "name", disambiguator_required: "disambiguator", speaker_exists: "disambiguator" };
 
+/** How many matches show before «עוד N שמות דומים»: «זה מישהו אחר — להמשיך» stays on the first screen. */
+const MATCHES_SHOWN = 5;
+
 export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose, onOpen, onCreated, notify, clear, reload }: Props) {
   const id = useId();
   const actor = actorIn(me, week.edition);
@@ -49,6 +54,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
   // The matches the user saw before «להמשיך» fold into one line; a new name shows its own in full.
   const [seenFor, setSeenFor] = useState<string | null>(null);
   const [showSeen, setShowSeen] = useState(false);
+  const [allFor, setAllFor] = useState<string | null>(null);
   const [claim, setClaim] = useState(true);
   const [approve, setApprove] = useState(false);
   const [notes, setNotes] = useState("");
@@ -80,6 +86,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
   const current = found && found.name === form.name ? found.matches : null; // null: still searching
   const sameName = !!current?.some((m) => m.match === "same");
   const folded = details && seenFor === form.name && !showSeen;
+  const shown = current && allFor !== form.name ? current.slice(0, MATCHES_SHOWN) : current;
 
   // «להמשיך»: the fields open below the matches — take the eye and the focus there.
   const opened = useRef(false);
@@ -90,6 +97,10 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
     first?.focus();
     first?.closest("div")?.scrollIntoView({ block: "start" });
   }, [details, id]);
+  // A refusal about the disambiguator takes the focus there — once it is drawn: out of «עוד פרטים» if it was folded.
+  useEffect(() => {
+    if (problem?.field === "disambiguator") document.getElementById(`${id}-f-dis`)?.focus();
+  }, [problem, id]);
   // Notes are private, like the contacts: saved only for someone who will see them.
   const realEdition = week.edition.kind === "real" && week.edition.status !== "archived";
   const mayNotes = actor.global || (claim && realEdition);
@@ -101,7 +112,6 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
     // Said here first: the database's answer to the same case is «speaker_exists» (the same, empty, disambiguator).
     if (sameName && !form.disambiguator.trim()) {
       setProblem({ text: errorMessage("disambiguator_required"), field: "disambiguator" });
-      document.getElementById(`${id}-f-dis`)?.focus();
       return;
     }
     let made: { speaker_id: number; approach_id: number | null } | null = null;
@@ -117,7 +127,6 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
         if (!code || !["name_required", "disambiguator_required", "speaker_exists", "speaker_similar", "bad_value"].includes(code)) return false;
         setProblem({ text: errorMessage(code), field: FIELD_OF[code] ?? null });
         if (code === "name_required") nameRef.current?.focus();
-        else if (FIELD_OF[code] === "disambiguator") document.getElementById(`${id}-f-dis`)?.focus();
         return true;
       },
     );
@@ -140,7 +149,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
   };
 
   return (
-    <Sheet wide={wide} title="מרצה חדש/ה" subtitle="קודם מחפשים במאגר, כדי שאותו אדם לא ייכנס פעמיים." onClose={onClose}>
+    <Sheet wide={wide} title="מרצה חדש/ה" subtitle="קודם מחפשים במאגר" onClose={onClose}>
       <form onSubmit={(e) => void submit(e)} className="space-y-4" noValidate>
         <Field id={`${id}-name`} label="שם המרצה (בלי תואר)">
           <input
@@ -161,8 +170,8 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
         </Field>
 
         <section aria-label="ייתכן שזה…" className="space-y-1.5">
-          {/* one short line for a screen reader, not the whole list after every pause in typing */}
-          <p role="status" className="text-sm text-ink-soft">
+          {/* one short line for a screen reader, not the whole list after every pause in typing — and the list's heading */}
+          <p role="status" className={current?.length && !folded ? "font-semibold" : folded ? "sr-only" : "text-sm text-ink-soft"}>
             {!key ? "" : current == null ? "מחפשים במאגר…" : current.length === 0 ? "אין במאגר שם דומה." : sameName ? "אותו שם כבר במאגר." : current.length === 1 ? "נמצא במאגר שם דומה אחד." : `נמצאו במאגר ${current.length} שמות דומים.`}
           </p>
           {current && current.length > 0 && folded && (
@@ -170,11 +179,10 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
               {current.length === 1 ? "שם דומה אחד במאגר" : `${current.length} שמות דומים במאגר`} — הצגה
             </Button>
           )}
-          {current && current.length > 0 && !folded && (
+          {current && shown && current.length > 0 && !folded && (
             <>
-              <p className="font-semibold">ייתכן שזה…</p>
               <ul className="space-y-1.5">
-                {current.map((m) => (
+                {shown.map((m) => (
                   <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-line bg-card px-3 py-2">
                     <span className="min-w-0 flex-1 basis-40">
                       <span className="block font-semibold break-words">
@@ -183,7 +191,8 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
                       </span>
                       <span className="flex flex-wrap items-center gap-1 text-xs text-ink-soft">
                         {m.affiliation && <span className="break-words">{m.affiliation}</span>}
-                        <Chip tone={m.match === "same" ? "warn" : "plain"}>{m.match === "same" ? "אותו שם" : "שם דומה"}</Chip>
+                        {/* a similar name needs no chip: the list is the similar names */}
+                        {m.match === "same" && <Chip tone="warn">אותו שם</Chip>}
                         {m.vetted !== "approved" && <Chip>{vettingLabel(m.vetted, m.gender)}</Chip>}
                         {m.retired && <Chip>{byGender(m.gender, "לא פעיל", "לא פעילה")}</Chip>}
                       </span>
@@ -194,6 +203,11 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
                   </li>
                 ))}
               </ul>
+              {shown.length < current.length && (
+                <Button kind="quiet" aria-expanded={false} onClick={() => setAllFor(form.name)}>
+                  {current.length - shown.length === 1 ? "עוד שם דומה אחד" : `עוד ${current.length - shown.length} שמות דומים`} <span aria-hidden>▾</span>
+                </Button>
+              )}
               {details && seenFor === form.name && (
                 <Button kind="quiet" aria-expanded onClick={() => setShowSeen(false)}>
                   הסתרת השמות הדומים
@@ -222,23 +236,25 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
               form={form}
               set={set}
               titles={titlesOf(week.edition.settings)}
+              categories={week.categories}
               withName={false}
               invalid={problem?.field === "disambiguator" ? "disambiguator" : null}
               problem={problem?.field === "disambiguator" ? problem.text : null}
               needDisambiguator={sameName}
+              fold
+              extra={
+                mayNotes && (
+                  <Field id={`${id}-notes`} label="הערות לפנייה (פרטי)" hint="רק המטפל/ת והמדריך/ה">
+                    <textarea id={`${id}-notes`} value={notes} rows={2} maxLength={1000} onChange={(e) => setNotes(e.target.value)} className={`${INPUT} py-2`} />
+                  </Field>
+                )
+              }
             />
             {actor.canEdit && (
               <label className="flex min-h-11 cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={claim} onChange={(e) => setClaim(e.target.checked)} className="size-5 accent-ink" />
                 אני מטפל/ת במרצה (ב«המרצים שלי»)
               </label>
-            )}
-            {mayNotes ? (
-              <Field id={`${id}-notes`} label="הערות לפנייה (פרטי)" hint="גלוי רק למי שמטפל/ת במרצה ולמדריך/ה, כמו פרטי הקשר.">
-                <textarea id={`${id}-notes`} value={notes} rows={2} maxLength={1000} onChange={(e) => setNotes(e.target.value)} className={`${INPUT} py-2`} />
-              </Field>
-            ) : (
-              <p className="text-xs text-ink-soft">הערות פרטיות ופרטי קשר נכנסים בכרטיס המרצה, אצל מי שמטפל/ת במרצה במחזור של השנה.</p>
             )}
             {actor.global && (
               <label className="flex min-h-11 cursor-pointer items-center gap-2">

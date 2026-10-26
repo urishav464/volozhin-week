@@ -15,7 +15,7 @@ import { addDays } from "../../domain/israelTime";
 import { purgeAllowed } from "../../domain/reviews";
 import type { Edition } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Badge, Button, INPUT, Panel, useAction, useSettings } from "./kit";
+import { Badge, Button, Fold, INPUT, Panel, useAction, useSettings } from "./kit";
 
 /** «20.2.2027» */
 function day(iso: string): string {
@@ -39,6 +39,16 @@ export function closingEdition(editions: Edition[]): Edition | null {
     null
   );
 }
+
+/** What the next edition starts with — said once, behind the checklist's last fold. */
+const CARRIED = [
+  "הנוסחים: תבנית הודעת הסיכום וניסוחי «משהו שחשוב לדעת» (מהמחזור האמיתי הפעיל).",
+  "אבני הדרך (הכותרת ו-W−n; אף אחת לא מסומנת «בוצע»).",
+  "הערות הידע «לכל השנים». הערות של המחזור נשארות איתו.",
+  "מאגר המרצים, עם פרטי הקשר ועם «איך עבר» של השנים הקודמות.",
+  "הקטגוריות, ורשימת החללים עם אנשי הקשר של המשפחות.",
+  "רשת השבוע מהתבנית של 2026 וחדר «בית מדרש». החדרים האחרים, החניכים והצוות — מוסיפים מחדש.",
+];
 
 const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
 
@@ -117,16 +127,14 @@ export function RolloverChecklist({
               ))}
           </li>
         ))}
-        <li data-step={5} className="rounded-lg border border-line bg-paper px-3 py-2">
-          <b>מה עובר לשנה הבאה</b>
-          <ul className="mt-1 list-disc ps-5 text-sm">
-            <li>הנוסחים: תבנית הודעת הסיכום וניסוחי «משהו שחשוב לדעת» (מהמחזור האמיתי הפעיל).</li>
-            <li>אבני הדרך (הכותרת ו-W−n; אף אחת לא מסומנת «בוצע»).</li>
-            <li>הערות הידע «לכל השנים». הערות של המחזור נשארות איתו.</li>
-            <li>מאגר המרצים, עם פרטי הקשר ועם «איך עבר» של השנים הקודמות.</li>
-            <li>הקטגוריות, ורשימת החללים עם אנשי הקשר של המשפחות.</li>
-            <li>רשת השבוע מהתבנית של 2026 וחדר «בית מדרש». החדרים האחרים, החניכים והצוות — מוסיפים מחדש.</li>
-          </ul>
+        <li data-step={5} className="rounded-lg border border-line bg-paper px-3 py-0.5">
+          <Fold title="מה עובר לשנה הבאה" hint={CARRIED.length}>
+            <ul className="list-disc ps-5 text-sm">
+              {CARRIED.map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ul>
+          </Fold>
         </li>
       </ol>
       <DryRun deactivate={deactivate} setDeactivate={setDeactivate} />
@@ -257,7 +265,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               </select>
             </label>
           )}
-          <div>
+          <Fold title="מה נמחק ומה נשאר" size="sm">
             <p className="font-semibold">מה נמחק:</p>
             <ul className="list-disc ps-5">
               <li>פרטי ההסעה של כל השיעורים: כתובות איסוף, שעות איסוף, שמות הנהגים והטלפונים שלהם.</li>
@@ -277,7 +285,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               <li>פרטי הקשר של המרצים ואנשי הקשר של המשפחות: הם לכל השנים, ומשמשים בשנה הבאה.</li>
               <li>חברי הצוות (את ההשבתה עושים בפתיחת המחזור הבא).</li>
             </ul>
-          </div>
+          </Fold>
           {e.purged_at ? (
             <p data-purged className="rounded-lg bg-ok/10 px-3 py-2">
               המידע האישי של <b>{e.label}</b> נמחק ב-{moment(e.purged_at)}. אפשר להריץ שוב (למשל אם נכתבו פרטי הסעה מאז): מה שכבר נמחק לא חוזר.

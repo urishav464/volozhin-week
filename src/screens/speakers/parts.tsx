@@ -1,5 +1,5 @@
 // Pieces the speaker screens share: the profile's form fields (create and
-// edit), free topic tags, the availability chips, a toast, and a section title.
+// edit), free topic tags, the availability chips and a toast.
 // Built from «הגדרות»'s kit (src/screens/settings/kit.tsx): one column on a
 // phone, every control at least 44px tall.
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useState } from "react";
@@ -8,24 +8,10 @@ import type { SpeakerPatch } from "../../data/speakers";
 import { type Chip as AvailabilityChip, DAY_PARTS, type DayPart, chipsOf } from "../../domain/dayParts";
 import { byGender } from "../../domain/names";
 import { DAYS, DAY_NAMES, type Day, fmtRange } from "../../domain/time";
-import type { Availability, ContactPref, Gender, Speaker } from "../../domain/types";
+import type { Availability, Category, ContactPref, Gender, Speaker } from "../../domain/types";
 import { CONTACT_PREF_LABEL } from "../../lib/labels";
-import { Button, Field, GenderField, INPUT } from "../settings/kit";
+import { Button, Field, Fold, GenderField, INPUT } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
-
-// ------------------------------------------------------------------ a section of a sheet or a screen
-
-export function Section({ title, aside, children, label }: { title: ReactNode; aside?: ReactNode; children: ReactNode; label?: string }) {
-  return (
-    <section aria-label={label} className="space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <h3 className="font-display text-base font-semibold">{title}</h3>
-        {aside && <span className="text-sm text-ink-soft">{aside}</span>}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 // ------------------------------------------------------------------ the profile's fields
 
@@ -93,28 +79,67 @@ export function patchOf(s: Speaker, f: ProfileForm): SpeakerPatch {
  * Title, (name,) disambiguator, gender, affiliation, a short bio, topics and the
  * preferred channel. Gender is chosen, never guessed from the name. `invalid`
  * names the field a refusal is about, so it is marked and described.
+ * `fold` (creating a speaker, a quick act): what is not needed now — the
+ * disambiguator unless it is, the bio, the channel and the create flow's own
+ * `extra` — waits closed in «עוד פרטים»; the sheet holds every field later.
  */
 export function ProfileFields({
   id,
   form,
   set,
   titles,
+  categories,
   withName,
   invalid,
   problem,
   needDisambiguator,
+  fold,
+  extra,
 }: {
   id: string;
   form: ProfileForm;
   set: (patch: Partial<ProfileForm>) => void;
   titles: readonly string[];
+  /** The week's topics, offered under the topic field. */
+  categories: readonly Category[];
   withName: boolean;
   invalid?: "name" | "disambiguator" | null;
   problem?: string | null;
   /** A speaker of this very name is in the pool: another person needs a disambiguator. */
   needDisambiguator?: boolean;
+  fold?: boolean;
+  extra?: ReactNode;
 }) {
   const err = (f: "name" | "disambiguator") => (invalid === f ? { "aria-invalid": true as const, "aria-describedby": `${id}-problem` } : {});
+  const dis = (
+    <Field
+      id={`${id}-dis`}
+      label={needDisambiguator ? "פרט מבחין (חובה: יש במאגר מרצה בשם הזה)" : "פרט מבחין (לא חובה)"}
+      hint={needDisambiguator ? "מוסד או עיר" : undefined}
+    >
+      <input id={`${id}-dis`} value={form.disambiguator} maxLength={LIMITS.disambiguator} onChange={(e) => set({ disambiguator: e.target.value })} className={INPUT} {...err("disambiguator")} />
+    </Field>
+  );
+  // a refusal about it, or a namesake in the pool, keeps it in sight (and focusable)
+  const disFolded = fold && !needDisambiguator && invalid !== "disambiguator";
+  const bio = (
+    <Field id={`${id}-bio`} label="תיאור קצר" hint="גלוי לכל הצוות">
+      <textarea id={`${id}-bio`} value={form.bio_short} maxLength={LIMITS.bio_short} rows={3} onChange={(e) => set({ bio_short: e.target.value })} className={`${INPUT} py-2`} />
+    </Field>
+  );
+  const topics = <TagInput id={`${id}-topics`} tags={form.topics} draft={form.topicDraft} categories={categories} onChange={set} />;
+  const pref = (
+    <Field id={`${id}-pref`} label="ערוץ קשר מועדף" hint="המספר עצמו — בפרטי הקשר">
+      <select id={`${id}-pref`} value={form.contact_pref} onChange={(e) => set({ contact_pref: e.target.value as ContactPref | "" })} className={INPUT}>
+        <option value="">לא צוין</option>
+        {CONTACT_PREFS.map((p) => (
+          <option key={p} value={p}>
+            {CONTACT_PREF_LABEL[p]}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
@@ -135,13 +160,7 @@ export function ProfileFields({
           </Field>
         )}
       </div>
-      <Field
-        id={`${id}-dis`}
-        label={needDisambiguator ? "פרט מבחין (חובה: יש במאגר מרצה בשם הזה)" : "פרט מבחין (לא חובה)"}
-        hint="מוסד או עיר, כדי להבדיל בין שני אנשים באותו שם."
-      >
-        <input id={`${id}-dis`} value={form.disambiguator} maxLength={LIMITS.disambiguator} onChange={(e) => set({ disambiguator: e.target.value })} className={INPUT} {...err("disambiguator")} />
-      </Field>
+      {!disFolded && dis}
       {problem && (
         <p id={`${id}-problem`} role="alert" className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
           {problem}
@@ -151,20 +170,26 @@ export function ProfileFields({
       <Field id={`${id}-aff`} label="מוסד">
         <input id={`${id}-aff`} value={form.affiliation} maxLength={LIMITS.affiliation} onChange={(e) => set({ affiliation: e.target.value })} className={INPUT} />
       </Field>
-      <Field id={`${id}-bio`} label="תיאור קצר" hint="כמה מילים על המרצה ועל מה שמלמד/ת. גלוי לכל הצוות.">
-        <textarea id={`${id}-bio`} value={form.bio_short} maxLength={LIMITS.bio_short} rows={3} onChange={(e) => set({ bio_short: e.target.value })} className={`${INPUT} py-2`} />
-      </Field>
-      <TagInput id={`${id}-topics`} tags={form.topics} draft={form.topicDraft} onChange={set} />
-      <Field id={`${id}-pref`} label="ערוץ קשר מועדף" hint="רק הערוץ. המספר או הכתובת נכנסים לפרטי הקשר.">
-        <select id={`${id}-pref`} value={form.contact_pref} onChange={(e) => set({ contact_pref: e.target.value as ContactPref | "" })} className={INPUT}>
-          <option value="">לא צוין</option>
-          {CONTACT_PREFS.map((p) => (
-            <option key={p} value={p}>
-              {CONTACT_PREF_LABEL[p]}
-            </option>
-          ))}
-        </select>
-      </Field>
+      {fold ? (
+        <>
+          {topics}
+          <Fold title="עוד פרטים" hint="לא חובה · אפשר גם בכרטיס" size="sm">
+            <div className="space-y-3">
+              {disFolded && dis}
+              {bio}
+              {pref}
+              {extra}
+            </div>
+          </Fold>
+        </>
+      ) : (
+        <>
+          {bio}
+          {topics}
+          {pref}
+          {extra}
+        </>
+      )}
     </div>
   );
 }
@@ -178,14 +203,20 @@ export function TagInput({
   id,
   tags,
   draft,
+  categories,
   onChange,
 }: {
   id: string;
   tags: string[];
   draft: string;
+  /** The week's topics: a tag of that very name wears its colour (and the pool's topic filter finds it); one tap adds one not yet chosen. */
+  categories: readonly Category[];
   onChange: (p: { topics?: string[]; topicDraft: string }) => void;
 }) {
   const full = tags.length >= LIMITS.topics;
+  const active = categories.filter((c) => c.active);
+  const colorOf = (t: string) => active.find((c) => c.name === t)?.color;
+  const offered = full ? [] : active.filter((c) => !tags.includes(c.name));
   const add = () => {
     if (!draft) return;
     onChange({ topics: withTopic(tags, draft), topicDraft: "" });
@@ -203,14 +234,22 @@ export function TagInput({
       </label>
       {tags.length > 0 && (
         <ul aria-label="הנושאים שנבחרו" className="mb-1.5 flex flex-wrap gap-1.5">
-          {tags.map((t) => (
-            <li key={t} className="inline-flex items-center gap-1 rounded-full border border-line bg-paper ps-3 text-sm">
-              {t}
-              <button type="button" onClick={() => onChange({ topics: tags.filter((x) => x !== t), topicDraft: draft })} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft hover:bg-line/60">
-                ×
-              </button>
-            </li>
-          ))}
+          {tags.map((t) => {
+            const color = colorOf(t);
+            return (
+              <li
+                key={t}
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-paper ps-3 text-sm"
+                style={color ? { backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`, borderColor: `color-mix(in srgb, ${color} 35%, transparent)` } : undefined}
+              >
+                {color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />}
+                {t}
+                <button type="button" onClick={() => onChange({ topics: tags.filter((x) => x !== t), topicDraft: draft })} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft hover:bg-line/60">
+                  ×
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="flex gap-2">
@@ -229,6 +268,23 @@ export function TagInput({
           הוספה
         </Button>
       </div>
+      {offered.length > 0 && (
+        <ul aria-label="נושאי השבוע" className="mt-1.5 flex flex-wrap gap-1">
+          {offered.map((c) => (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => onChange({ topics: withTopic(tags, c.name), topicDraft: draft })}
+                aria-label={`הוספת הנושא ${c.name}`}
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed border-line px-2.5 text-xs text-ink-soft hover:bg-line/40 hover:text-ink sm:min-h-8"
+              >
+                <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: c.color }} />
+                {c.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

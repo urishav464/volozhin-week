@@ -295,11 +295,14 @@ function Transports({ port, week, actor, notify, clear, label }: TabProps) {
                           <Chip tone={dd.arranged ? "ok" : "warn"}>{dd.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
                           {mayWrite && (
                             <>
+                              {/* set, the chip is the state: a quiet «ביטול» undoes it (its name still says what) */}
                               <Button
+                                kind={dd.arranged ? "quiet" : "secondary"}
                                 busy={busy === `transport-${r.lesson.id}`}
                                 onClick={() => void save(r, { ...EMPTY_TRANSPORT, ...dd }, { ...EMPTY_TRANSPORT, ...dd, arranged: !dd.arranged }, dd.arranged ? "הסימון «סודר» בוטל" : "סומן שההסעה סודרה")}
+                                aria-label={dd.arranged ? "ביטול «סודר»" : undefined}
                               >
-                                {dd.arranged ? "ביטול «סודר»" : "סימון «סודר»"}
+                                {dd.arranged ? "ביטול" : "סימון «סודר»"}
                               </Button>
                               <Button onClick={() => setEditing(r.lesson.id)} aria-label={`עריכת פרטי ההסעה: ${r.speaker || r.title}`}>
                                 עריכה
@@ -350,7 +353,7 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
           ))}
         </dl>
       )}
-      <p className="text-sm text-ink-soft print:hidden">רק סכומים שהמדריך/ה אישר/ה. המערכת לא ממלאת סכום.</p>
+      <p className="text-sm text-ink-soft print:hidden">רק סכומים שהמדריך/ה אישר/ה.</p>
       {DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
         const ofDay = rows.filter((r) => r.day === d);
         return (
@@ -366,6 +369,7 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
                   <Chip tone={r.paidAt ? "ok" : "warn"}>{r.paidAt ? `שולם · ${israelDate(r.paidAt)}` : "טרם שולם"}</Chip>
                   {mayMarkPaid && (
                     <Button
+                      kind={r.paidAt ? "quiet" : "secondary"}
                       busy={busy === `paid-${r.lesson.id}`}
                       onClick={() =>
                         void run(`paid-${r.lesson.id}`, async () => {
@@ -375,7 +379,7 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
                       }
                       aria-label={`${r.paidAt ? "ביטול הסימון «שולם»" : "סימון ששולם"}: ${r.speaker || r.title}`}
                     >
-                      {r.paidAt ? "ביטול «שולם»" : "סימון ששולם"}
+                      {r.paidAt ? "ביטול" : "סימון ששולם"}
                     </Button>
                   )}
                 </div>
@@ -422,7 +426,7 @@ function Books({ port, week, actor, notify, clear, label }: TabProps) {
           <Button onClick={() => void load()}>לנסות שוב</Button>
         </div>
       )}
-      <p className="text-sm text-ink-soft print:hidden">כמה עותקים להזמין כותבים כאן. המערכת לא ממלאת מספר: מספר הנרשמים והמובילים מופיע רק לעזרה.</p>
+      <p className="text-sm text-ink-soft print:hidden">כמה עותקים להזמין כותבים כאן.</p>
       {kk &&
         DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
           const ofDay = rows.filter((r) => r.day === d);
@@ -464,7 +468,7 @@ function Prints({ port, week, notify, label }: Pick<TabProps, "port" | "week" | 
         notify={notify}
         summary={rows.length === 0 ? "אין שיעורים שצריך להדפיס להם." : `${rows.length === 1 ? "שיעור אחד" : `${rows.length} שיעורים`} להדפסה${none ? ` · ${none} עוד בלי קבצים` : ""}`}
       />
-      <p className="text-sm text-ink-soft print:hidden">השיעורים שהמקורות שלהם מודפסים מראש או באותו יום, והקבצים שהועלו להם. כמה עותקים להדפיס — לפי מה שסוכם בצוות; המערכת לא קובעת.</p>
+      <p className="text-sm text-ink-soft print:hidden">השיעורים שהמקורות שלהם מודפסים מראש או באותו יום. כמה עותקים — לפי מה שסוכם בצוות.</p>
       {groups.map((g) => (
         <section key={g.when} aria-label={PRINT_WHEN_LABEL[g.when]} className="space-y-3 print:hidden">
           <h3 className="font-display text-xl font-bold">{PRINT_WHEN_LABEL[g.when]}</h3>

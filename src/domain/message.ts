@@ -253,7 +253,7 @@ export function parseTemplate(src: string): { nodes: Node[]; errors: string[] } 
 // ------------------------------------------------------------------ composing
 
 const PROBLEM_TEXT: Record<Exclude<ProblemCode, "syntax" | "unknown_variable">, string> = {
-  template_empty: "אין עדיין נוסח להודעת הסיכום. המדריך/ה מדביק/ה אותו בהגדרות, בלשונית «תבניות» (הנוסח של אשתקד, מתחתית גיליון המעקב).",
+  template_empty: "אין עדיין נוסח להודעת הסיכום — המדריך/ה מוסיף/ה אותו בהגדרות ← «תבניות».",
   not_closed: "השיעור עוד לא נסגר.",
   no_speaker: "לשיעור אין מרצה.",
   approval_pending: "התשלום או ההסעה עוד ממתינים לאישור המדריך/ה.",

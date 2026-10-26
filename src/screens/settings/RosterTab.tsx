@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { type PasteStatus, parseRosterPaste, pasteColumns, previewPaste } from "../../settings/roster";
-import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -62,31 +62,30 @@ export function RosterTab({ editions, editionId, setEditionId }: Props) {
       ) : !list || editionId == null ? (
         <Loading />
       ) : (
-        <>
+        <Panel title="רשימת החניכים" aside={<span aria-live="polite">{list.length === 1 ? "חניך/ה אחד/ת" : `${list.length} חניכים`}</span>}>
+          {list.length === 0 ? (
+            <p className="text-ink-soft">הרשימה ריקה.</p>
+          ) : (
+            <>
+              {list.length > 8 && (
+                <div className="mb-3 max-w-sm">
+                  <label htmlFor="roster-filter" className="sr-only">
+                    חיפוש ברשימה
+                  </label>
+                  <input id="roster-filter" type="search" className={INPUT} placeholder="חיפוש ברשימה" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                </div>
+              )}
+              <Rows label="רשימת החניכים" head={["שם", "מגדר"]}>
+                {shown.map((r) => (
+                  <RosterItem key={r.id} r={r} editionId={editionId} onChanged={load} />
+                ))}
+              </Rows>
+              {shown.length === 0 && <p className="mt-2 text-sm text-ink-soft">אין שם שמתאים לחיפוש.</p>}
+            </>
+          )}
+          {/* names are pasted once a season: under the list, folded — open while the list is empty */}
           <PasteNames key={editionId} editionId={editionId} existing={list} onAdded={load} />
-          <Panel title="רשימת החניכים" aside={<span aria-live="polite">{list.length === 1 ? "חניך/ה אחד/ת" : `${list.length} חניכים`}</span>}>
-            {list.length === 0 ? (
-              <p className="text-ink-soft">הרשימה ריקה. מדביקים את השמות בטופס שלמעלה.</p>
-            ) : (
-              <>
-                {list.length > 8 && (
-                  <div className="mb-3 max-w-sm">
-                    <label htmlFor="roster-filter" className="sr-only">
-                      חיפוש ברשימה
-                    </label>
-                    <input id="roster-filter" type="search" className={INPUT} placeholder="חיפוש ברשימה" value={filter} onChange={(e) => setFilter(e.target.value)} />
-                  </div>
-                )}
-                <Rows label="רשימת החניכים" head={["שם", "מגדר"]}>
-                  {shown.map((r) => (
-                    <RosterItem key={r.id} r={r} editionId={editionId} onChanged={load} />
-                  ))}
-                </Rows>
-                {shown.length === 0 && <p className="mt-2 text-sm text-ink-soft">אין שם שמתאים לחיפוש.</p>}
-              </>
-            )}
-          </Panel>
-        </>
+        </Panel>
       )}
     </>
   );
@@ -95,6 +94,8 @@ export function RosterTab({ editions, editionId, setEditionId }: Props) {
 function PasteNames({ editionId, existing, onAdded }: { editionId: number; existing: RosterEntry[]; onAdded: () => Promise<void> }) {
   const { port, notify } = useSettings();
   const { busy, run } = useAction();
+  // where the fold starts, once: the first names pasted do not close it under the hand that pasted them
+  const [startOpen] = useState(existing.length === 0);
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
   const id = useId();
@@ -129,7 +130,7 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
   };
 
   return (
-    <Panel title="הוספת חניכים">
+    <Fold title="+ הדבקת שמות" defaultOpen={startOpen} className="mt-2">
       <form onSubmit={save} className="space-y-3">
         <Field
           id={`${id}-paste`}
@@ -199,7 +200,7 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
           )}
         </div>
       </form>
-    </Panel>
+    </Fold>
   );
 }
 

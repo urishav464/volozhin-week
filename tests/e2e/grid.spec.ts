@@ -65,6 +65,7 @@ test.describe("desktop", () => {
     await cell(page, 4, 870, 960).click();
     const dialog = page.getByRole("dialog", { name: "משבצת פנויה" });
     await dialog.getByText("מבנה המשבצת").click();
+    await dialog.getByText("פיצול למקבילים").click();
     await expect(dialog.getByRole("button", { name: "2 מקבילים" })).toBeDisabled();
     await dialog.getByLabel("סיבה לפיצול").fill("שני מסלולים");
     await dialog.getByRole("button", { name: "2 מקבילים" }).click();
@@ -75,6 +76,7 @@ test.describe("desktop", () => {
     await cell(page, 4, 960, 1050).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByText("מבנה המשבצת").click();
+    await dialog.getByText("פיצול בזמן").click();
     await dialog.getByLabel("דקות בחלק 1").fill("65");
     await expect(dialog.getByLabel("דקות בחלק 2")).toHaveText("25");
     await dialog.getByLabel("דקות בחלק 1").fill("80");
@@ -99,6 +101,7 @@ test.describe("desktop", () => {
     const dialog = page.getByRole("dialog");
     await dialog.getByText("מבנה המשבצת").click();
     await expect(dialog.getByText("משבצת מאוחדת")).toBeVisible();
+    await dialog.getByText("פיצול למקבילים").click();
     await dialog.getByLabel("סיבה לפיצול").fill("שני מסלולים");
     await dialog.getByRole("button", { name: "2 מקבילים" }).click();
     await expect(merged).toHaveCount(2);
@@ -118,6 +121,7 @@ test.describe("desktop", () => {
     await expect(dialog.getByText("שני שיעורי «תנ\"ך» ברצף בשלישי")).toBeVisible();
     await expect(dialog.getByText("3 שיעורי «מחשבת ישראל» ברצף בראשון")).toHaveCount(1);
     await expect(dialog.getByText(/סירב השנה/)).toBeVisible();
+    await dialog.getByText("לידיעה", { exact: true }).click(); // what is only to know waits in a fold at the end
     await expect(dialog.getByText(/במקביל/)).toBeVisible();
   });
 });
@@ -166,14 +170,25 @@ test.describe("reading the grid (v13)", () => {
   test("a day header opens the day: its women and men against the tolerance, its topics, its hours", async ({ page }) => {
     await expect(page.getByRole("button", { name: /^(הסתרת|הצגת) הלילה$/ })).toHaveCount(0); // the night is always shown
     await expect(page.locator("[data-week-balance]")).toContainText("2 ימים לא מאוזנים");
+    // the topics axis in the day's header (the phone's too), and the topics × days table:
+    // behind «לפי ימים» on a wide screen, inside the folded legend on a phone
+    await expect(page.locator('[data-day-header="0"] [data-topic-axis="thin"]')).toHaveCount(1);
+    const byDays = page.getByRole("button", { name: "לפי ימים", exact: true });
+    if (await byDays.isVisible()) await byDays.click();
+    else await page.getByText("מקרא הנושאים", { exact: true }).click();
+    await expect(page.getByRole("table", { name: "הנושאים לפי ימים" }).getByRole("row", { name: /מחשבת ישראל/ })).toContainText("3");
     await page.locator('[data-day-header="0"]').first().click();
     const panel = page.getByRole("dialog", { name: "יום ראשון" });
     await expect(panel.locator("[data-day-balance]")).toContainText("לא מאוזן — הפרש של 3 בסגורים");
+    await expect(panel.locator('[data-topic-axis="large"]')).toBeVisible();
     await expect(panel.getByRole("list", { name: "הנושאים של היום" })).toContainText("מחשבת ישראל · 3");
+    await panel.getByText("עוד אין ביום הזה").click();
     await expect(panel.getByRole("list", { name: "נושאים שעוד אין ביום הזה" })).toBeVisible();
+    await panel.getByText("השעות", { exact: true }).click();
     await expect(panel.getByRole("list", { name: "השעות של יום ראשון" })).toContainText("פתיחת השבוע (לדוגמה)");
     await expect(panel.getByRole("list", { name: "השעות של יום ראשון" })).toContainText("בתהליך:");
     // the instructor sets the tolerance there; Sunday's 1 to 4 is within 3
+    await panel.getByText("כללי הרשת").click();
     await panel.getByLabel("הפרש מותר ביום בין מרצות למרצים").fill("3");
     await panel.getByRole("button", { name: "שמירה" }).click();
     await expect(page.getByRole("status").filter({ hasText: "כללי הרשת נשמרו" })).toBeVisible();

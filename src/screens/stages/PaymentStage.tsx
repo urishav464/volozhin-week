@@ -22,53 +22,70 @@ export function PaymentStage(ctx: StageCtx) {
   // (or «בקשה מחדש» after a rejection). Open at the version it was opened on: a save closes it again.
   const [changingAt, setChangingAt] = useState<number | null>(null);
   const formOpen = asked == null || l.approval === "rejected" || changingAt === l.version;
+  const formShown = week.edition.kind !== "archive" && mine && formOpen;
+  const deciding = actor.global && l.approval === "pending";
   const decider = l.approval === "approved" || l.approval === "rejected" ? memberName(week, l.approved_by) : null;
   const tone = l.approval === "approved" ? "ok" : l.approval === "rejected" ? "bad" : l.approval === "pending" ? "warn" : "plain";
+  // The summary says only what nothing below says: the open form shows the amount and the transport, the decision
+  // box that the request waits («ממתין» is enough beside «אישור»; the stage's row says for whom).
+  const rows = {
+    asked: !formShown,
+    approval: asked != null && !deciding,
+    note: l.approval_note != null,
+    paid: l.pay_amount != null && l.approval === "approved",
+  };
   return (
     <>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <dt className="text-ink-soft">תשלום</dt>
-        <dd>{l.pay_amount != null ? <bdi className="font-semibold">{shekels(l.pay_amount)}</bdi> : "בלי תשלום (התנדבות, או שעוד לא הוחלט)"}</dd>
-        <dt className="text-ink-soft">הסעה</dt>
-        <dd>{TRANSPORT_LABEL[l.transport]}</dd>
-        {asked && (
-          <>
-            <dt className="text-ink-soft">אישור</dt>
-            <dd className="flex flex-wrap items-center gap-1.5">
-              <Chip tone={tone}>{l.approval === "none" ? IMPORTED_PAY : APPROVAL_LABEL[l.approval]}</Chip>
-              {decider && (
-                <span className="text-ink-soft">
-                  {decider}
-                  {l.approved_at && <> · <bdi>{whenText(l.approved_at)}</bdi></>}
-                </span>
-              )}
-            </dd>
-          </>
-        )}
-        {l.approval_note && (
-          <>
-            <dt className="text-ink-soft">הערה</dt>
-            <dd className="break-words">«{l.approval_note}»</dd>
-          </>
-        )}
-        {l.pay_amount != null && l.approval === "approved" && (
-          <>
-            <dt className="text-ink-soft">בפועל</dt>
-            <dd>{l.paid_at ? <>שולם · <bdi>{whenText(l.paid_at)}</bdi></> : "טרם שולם"}</dd>
-          </>
-        )}
-      </dl>
+      {Object.values(rows).some(Boolean) && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+          {rows.asked && (
+            <>
+              <dt className="text-ink-soft">תשלום</dt>
+              <dd>{l.pay_amount != null ? <bdi className="font-semibold">{shekels(l.pay_amount)}</bdi> : "לא התבקש תשלום"}</dd>
+              <dt className="text-ink-soft">הסעה</dt>
+              <dd>{TRANSPORT_LABEL[l.transport]}</dd>
+            </>
+          )}
+          {rows.approval && (
+            <>
+              <dt className="text-ink-soft">אישור</dt>
+              <dd className="flex flex-wrap items-center gap-1.5">
+                <Chip tone={tone}>{l.approval === "none" ? IMPORTED_PAY : l.approval === "pending" ? "ממתין" : APPROVAL_LABEL[l.approval]}</Chip>
+                {decider && (
+                  <span className="text-ink-soft">
+                    {decider}
+                    {l.approved_at && <> · <bdi>{whenText(l.approved_at)}</bdi></>}
+                  </span>
+                )}
+              </dd>
+            </>
+          )}
+          {rows.note && (
+            <>
+              <dt className="text-ink-soft">הערה</dt>
+              <dd className="break-words">«{l.approval_note}»</dd>
+            </>
+          )}
+          {rows.paid && (
+            <>
+              <dt className="text-ink-soft">בפועל</dt>
+              <dd>{l.paid_at ? <>שולם · <bdi>{whenText(l.paid_at)}</bdi></> : "טרם שולם"}</dd>
+            </>
+          )}
+        </dl>
+      )}
 
-      {actor.global && l.approval === "pending" && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
+      {deciding && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
 
+      {/* an undo is quiet beside the stage's one main action */}
       {mayMarkPaid && l.pay_amount != null && l.approval === "approved" && (
-        <Button busy={busy === "paid"} onClick={() => void act("paid", () => cmds.setPaid(l.id, !l.paid_at), l.paid_at ? "הסימון «שולם» בוטל" : "סומן ששולם")}>
+        <Button kind={l.paid_at ? "quiet" : "secondary"} busy={busy === "paid"} onClick={() => void act("paid", () => cmds.setPaid(l.id, !l.paid_at), l.paid_at ? "הסימון «שולם» בוטל" : "סומן ששולם")}>
           {l.paid_at ? "ביטול הסימון «שולם»" : "סימון ששולם"}
         </Button>
       )}
 
       {week.edition.kind === "archive" ? null : mine ? (
-        formOpen ? (
+        formShown ? (
           <RequestForm
             key={l.version}
             lesson={l}
@@ -162,7 +179,7 @@ function RequestForm({
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="בקשת תשלום והסעה" className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void submit(e)} aria-label="בקשת תשלום והסעה" className="space-y-3 not-first:border-t not-first:border-line not-first:pt-3" noValidate>
       <Choice
         name={`${id}-paid`}
         legend="תשלום"
@@ -175,7 +192,7 @@ function RequestForm({
         onChange={setKind}
       />
       {kind === "paid" && (
-        <Field id={`${id}-amount`} label="סכום בשקלים" hint="מספר שלם: מה שסוכם עם המרצה. המערכת לא ממלאת סכום.">
+        <Field id={`${id}-amount`} label="סכום בשקלים" hint="מה שסוכם עם המרצה, במספר שלם.">
           <div className="flex max-w-xs items-center gap-2">
             <input
               id={`${id}-amount`}
@@ -195,7 +212,7 @@ function RequestForm({
           </div>
         </Field>
       )}
-      {paid && <p className="text-xs text-ink-soft">הסכום כבר סומן כשולם, ולכן הוא נשאר כמו ששולם. כדי לשנות אותו, קודם מבטלים את הסימון «שולם» (הצוות הלוגיסטי או אדמין).</p>}
+      {paid && <p className="text-xs text-ink-soft">שולם — כדי לשנות את הסכום, קודם מבטלים «שולם».</p>}
       <Choice name={`${id}-transport`} legend="הסעה" value={transport} options={TRANSPORTS.map((t) => [t, TRANSPORT_LABEL[t]] as const)} onChange={setTransport} />
       {problem && <Problem>{problem}</Problem>}
       {l.approval === "approved" && !same && <p className="text-xs text-ink-soft">שינוי בבקשה שאושרה מחזיר אותה לאישור המדריך/ה.</p>}
@@ -235,8 +252,16 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
       : errorMessage("transport_hidden");
 
   return (
-    <div role="group" aria-label="פרטי ההסעה" className="space-y-2 rounded-lg border border-line bg-paper p-3">
-      <p className="text-sm font-semibold">פרטי ההסעה</p>
+    <div role="group" aria-label="פרטי ההסעה" className="space-y-2 not-first:border-t not-first:border-line not-first:pt-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="text-sm font-semibold">פרטי ההסעה</p>
+        <span className="text-xs text-ink-soft">· מידע אישי</span>
+        {d && !editing && (
+          <span className="ms-auto">
+            <Chip tone={d.arranged ? "ok" : "warn"}>{d.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
+          </span>
+        )}
+      </div>
       {failed && d === undefined ? (
         <div role="alert" className="space-y-1">
           <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
@@ -259,7 +284,6 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
       ) : (
         <>
           <TransportView d={d} />
-          <p className="text-xs text-ink-soft">מידע אישי: נשמר רק במסד הנתונים, וגלוי רק למי שמטפל/ת במרצה, למדריך/ה ולצוות הלוגיסטי אחרי האישור.</p>
           <Button onClick={() => setEditing(true)}>עריכת פרטי ההסעה</Button>
         </>
       )}
@@ -267,54 +291,48 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   );
 }
 
+/** Pickup and driver as saved (whether it is arranged: a chip in the block's heading). */
 function TransportView({ d }: { d: TransportDetails }) {
   const empty = !d.pickup_address && !d.pickup_time && !d.driver_name && !d.driver_phone;
   const tel = telHref(d.driver_phone);
-  return (
-    <>
-      {empty ? (
-        <p className="text-sm text-ink-soft">עוד לא נרשמו פרטים.</p>
-      ) : (
-        <dl className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-1 text-sm">
-          {d.pickup_address && (
-            <>
-              <dt className="text-ink-soft">כתובת איסוף</dt>
-              <dd className="min-w-0 break-words">{d.pickup_address}</dd>
-            </>
-          )}
-          {d.pickup_time && (
-            <>
-              <dt className="text-ink-soft">שעת איסוף</dt>
-              <dd className="min-w-0 break-words">{d.pickup_time}</dd>
-            </>
-          )}
-          {d.driver_name && (
-            <>
-              <dt className="text-ink-soft">נהג/ת</dt>
-              <dd className="min-w-0 break-words">{d.driver_name}</dd>
-            </>
-          )}
-          {d.driver_phone && (
-            <>
-              <dt className="pt-0.5 text-ink-soft">טלפון</dt>
-              <dd className="min-w-0 space-y-1">
-                <div className="break-all">
-                  <bdi>{d.driver_phone}</bdi>
-                </div>
-                {tel && (
-                  <a href={tel} className={LINK_BUTTON}>
-                    חיוג לנהג/ת
-                  </a>
-                )}
-              </dd>
-            </>
-          )}
-        </dl>
+  return empty ? (
+    <p className="text-sm text-ink-soft">עוד לא נרשמו פרטים.</p>
+  ) : (
+    <dl className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-1 text-sm">
+      {d.pickup_address && (
+        <>
+          <dt className="text-ink-soft">כתובת איסוף</dt>
+          <dd className="min-w-0 break-words">{d.pickup_address}</dd>
+        </>
       )}
-      <p className="text-sm">
-        <Chip tone={d.arranged ? "ok" : "warn"}>{d.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
-      </p>
-    </>
+      {d.pickup_time && (
+        <>
+          <dt className="text-ink-soft">שעת איסוף</dt>
+          <dd className="min-w-0 break-words">{d.pickup_time}</dd>
+        </>
+      )}
+      {d.driver_name && (
+        <>
+          <dt className="text-ink-soft">נהג/ת</dt>
+          <dd className="min-w-0 break-words">{d.driver_name}</dd>
+        </>
+      )}
+      {d.driver_phone && (
+        <>
+          <dt className="pt-0.5 text-ink-soft">טלפון</dt>
+          <dd className="min-w-0 space-y-1">
+            <div className="break-all">
+              <bdi>{d.driver_phone}</bdi>
+            </div>
+            {tel && (
+              <a href={tel} className={LINK_BUTTON}>
+                חיוג לנהג/ת
+              </a>
+            )}
+          </dd>
+        </>
+      )}
+    </dl>
   );
 }
 

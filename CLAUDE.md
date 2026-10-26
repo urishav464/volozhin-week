@@ -280,7 +280,12 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (absent = 1, «הצעה»; `unbalanced`, `src/rules/balance.ts`) — the `gender_day` warning, keyed by the day,
   on no card. `set_grid_rules` (an edition admin) sets it and `max_category_per_day`. The day header opens
   `src/grid/DayPanel.tsx`; the «אחריות» lens colours each handler (`src/grid/owners.ts`) with «רק של X».
-  The night is always shown (no toggle).
+  The night is always shown (no toggle). **The topics axis** (26.10, no schema change): `src/grid/axis.ts`
+  (`topicAxis` → `DayModel.axis`, once per load in `buildModel`), `TopicAxis.tsx` (thin in every day header,
+  large in the day panel; aria-hidden — its text twins are the panel's lists, the card's aria-label and
+  «לפי ימים»), `TopicMatrix.tsx` (topic × day, «לפי ימים»); `TopicChip`/`topicsOf` and `NO_TOPIC_COLOR` in
+  `src/grid/bits.tsx`. Every fold is `Fold` (`src/screens/settings/kit.tsx`); a panel's parts are
+  `Section` (`count`, `aside`, `label`) inside `Sheet` (`title` node + `label`, `accent` band) — DECISIONS «כל החלונות».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

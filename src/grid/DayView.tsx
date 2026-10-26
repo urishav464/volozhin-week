@@ -47,7 +47,7 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, on
               role="tab"
               aria-selected={d === day}
               onClick={() => onDay(d)}
-              className={`flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${d === day ? "border-ink bg-ink text-paper" : "border-line bg-card"}`}
+              className={`flex min-h-11 shrink-0 items-center gap-1 rounded-full border px-3.5 text-sm ${d === day ? "border-ink bg-ink text-paper" : "border-line bg-card"}`}
             >
               {DAY_NAMES[d]}
               <span className={`size-2 rounded-full ${n === "f" ? "bg-pink-400" : n === "m" ? "bg-sky-500" : "bg-ok"}`} aria-label={n ? GENDER_NEED_LABEL[n] : "מאוזן"} />

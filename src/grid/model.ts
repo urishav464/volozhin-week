@@ -6,6 +6,7 @@ import type { Approach, Category, Gender, Lesson, Pitch, Speaker, Week, GridRow 
 import { LIVE_PITCH } from "../domain/types";
 import { type DayBalance, categoryLoad, dayBalance } from "../rules/balance";
 import { type Warning, warningsFor } from "../rules/warnings";
+import { type AxisBlock, topicAxis } from "./axis";
 import { type FreeCell, type Layout, type Placed, buildLayout, freeCells, placeDay } from "./layout";
 
 export interface DayModel {
@@ -15,6 +16,8 @@ export interface DayModel {
   memorialFree: FreeCell[];
   balance: DayBalance;
   load: Map<number, number>;
+  /** The day's topics in time order (axis.ts): the colour strip of its header and panel. */
+  axis: AxisBlock[];
   warnings: Warning[];
 }
 
@@ -74,6 +77,7 @@ export function buildModel(week: Week): GridModel {
       memorialFree: freeCells(layout, day, week.lessons, week.edition, "memorial"),
       balance: dayBalance(day, week, free.length),
       load: categoryLoad(day, week.lessons),
+      axis: topicAxis(week, day),
       warnings: warnings.filter((w) => w.day === day),
     };
   });
@@ -166,6 +170,13 @@ export function guessedCategory(m: GridModel, s: Speaker): number | null {
 
 export function lessonsOfDay(m: GridModel, day: Day): Lesson[] {
   return m.week.lessons.filter((l) => l.day === day && l.state !== "cancelled");
+}
+
+/** The topics a legend lists — active, or closed this week — each with the week's closed lessons in it (the days' loads summed). */
+export function weekTopics(m: GridModel): { category: Category; count: number }[] {
+  return m.week.categories
+    .map((category) => ({ category, count: m.days.reduce((s, d) => s + (d.load.get(category.id) ?? 0), 0) }))
+    .filter((x) => x.category.active || x.count > 0);
 }
 
 export const GENDER_NEED_LABEL: Record<Gender, string> = { f: "דרושה מרצה", m: "דרוש מרצה" };

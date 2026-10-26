@@ -22,7 +22,8 @@ test.describe("demo build — an admin", () => {
     await expect(page.getByRole("tab", { name: "צוות" })).toHaveAttribute("aria-selected", "true");
     await noSidewaysScroll(page);
 
-    // a member: the address is stored the way the database wants it
+    // a member: the address is stored the way the database wants it (the form folds under the list once there is a team)
+    await page.getByText("+ חבר/ת צוות").click();
     await page.getByLabel("כתובת Gmail").fill("  New.Member@Example.org ");
     await page.getByLabel("שם", { exact: true }).fill("חבר/ת צוות לדוגמה");
     await page.getByRole("radio", { name: "צוות לוגיסטי" }).check();
@@ -42,6 +43,7 @@ test.describe("demo build — an admin", () => {
     // the roster: paste, preview, save
     await page.getByRole("tab", { name: "חניכים" }).click();
     await expect(page).toHaveURL(/\/settings\/roster$/);
+    await page.getByText("+ הדבקת שמות").click(); // folded under the list once it has names
     await page.getByLabel("הדבקת שמות").fill("חניך/ה לדוגמה 01\nחניך/ה לדוגמה 02\nחניך/ה לדוגמה 02\n3\tחניך/ה לדוגמה 03\tנ");
     const preview = page.getByRole("list", { name: "תצוגה מקדימה" });
     await expect(preview.getByRole("listitem")).toHaveCount(4);
@@ -267,6 +269,7 @@ test.describe("mock build", () => {
     await expect(page.getByRole("tab")).toHaveText(["מחזור", "צוות", "חניכים", "חדרים", "תבניות", "קישורים"]);
 
     // no way to mint an admin, and no handle on a fellow admin's row
+    await page.getByText("+ חבר/ת צוות").click();
     await expect(page.getByRole("radio", { name: "צוות תוכן" })).toBeVisible();
     await expect(page.getByRole("radio", { name: "מדריך/ה של המחזור" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "עריכת חבר/ת צוות לדוגמה" })).toBeVisible();

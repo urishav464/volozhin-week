@@ -15,7 +15,7 @@ import { whatsappTextHref } from "../../domain/contactLinks";
 import { escortable } from "../../domain/escorts";
 import { israelMoment } from "../../domain/israelTime";
 import type { Edition, Week } from "../../domain/types";
-import { Badge, Button, Confirm, EditionPicker, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Fold, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   data: DataPort;
@@ -95,10 +95,7 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
     };
     return (
       <>
-        <p className="text-sm text-ink-soft">
-          קישור נפתח בלי כניסה, ומציג רק את מה שהוא נועד לו. הקוד שבקישור מוצג רק ברגע ההנפקה: מעתיקים או שולחים אותו מיד. אחר כך אפשר רק להחליף אותו בקישור חדש (הישן מפסיק
-          לעבוד) או לבטל.
-        </p>
+        <HowLinksWork />
         {archived && <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">המחזור בארכיון: לא מנפיקים בו קישורים, והקישורים שלו לא נפתחים.</p>}
         <EscortLinks data={data} week={week} links={links} archived={archived} issued={slot} reload={load} />
         <ClassLinks data={data} week={week} links={links} archived={archived} issued={slot} reload={load} />
@@ -111,6 +108,33 @@ export function LinksTab({ data, editions, editionId, setEditionId }: Props) {
       <EditionPicker editions={editions} value={editionId} onChange={setEditionId} />
       {body()}
     </>
+  );
+}
+
+/** What every link does, once, behind a fold: the panels below show only the links and their state (each row's badge its expiry). */
+function HowLinksWork() {
+  return (
+    <Fold title="איך הקישורים עובדים" className="rounded-xl border border-line bg-card px-4 py-1 shadow-sm sm:px-5">
+      <ul className="list-disc space-y-1 ps-5 text-sm">
+        <li>
+          קישור נפתח בלי כניסה, ומציג רק את מה שהוא נועד לו:
+          <ul className="mt-1 list-[circle] space-y-1 ps-5">
+            <li>
+              <b>למלווה:</b> השיעורים שלו/ה, «משהו שחשוב לדעת» וארבעת הסימונים. הטלפון של המרצה מופיע רק משבוע לפני השבוע.
+            </li>
+            <li>
+              <b>הרשמה למכריכה לכריכה:</b> רשימת החניכים בשמות בלבד והקבוצות שפתוחות להרשמה.
+            </li>
+            <li>
+              <b>הלו"ז:</b> הלו"ז הציבורי בלבד, כמו בייצוא למעצבת.
+            </li>
+          </ul>
+        </li>
+        <li>הקוד שבקישור מוצג רק ברגע ההנפקה: מעתיקים או שולחים אותו מיד.</li>
+        <li>«קישור חדש» מחליף אותו: הישן מפסיק לעבוד מיד. «ביטול הקישור» סוגר אותו בלי להחליף.</li>
+        <li>קישור למלווה ולו"ז פג בסוף השבוע (או 30 יום אחרי ההנפקה, כל עוד התאריך TBD) (הצעה).</li>
+      </ul>
+    </Fold>
   );
 }
 
@@ -208,10 +232,6 @@ function EscortLinks({ data, week, links, archived, issued, reload }: RowProps) 
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id);
   return (
     <Panel title="קישורים למלווים" aside={escorts.length === 1 ? "מלווה אחד/ת" : `${escorts.length} מלווים`}>
-      <p className="mb-3 text-sm text-ink-soft">
-        לכל חניך/ה שמלווה: השיעורים שלו/ה, «משהו שחשוב לדעת» וארבעת הסימונים. הטלפון של המרצה מופיע רק משבוע לפני השבוע. הקישור פג בסוף השבוע (או 30 יום אחרי ההנפקה, כל עוד
-        התאריך TBD) (הצעה).
-      </p>
       {escorts.length === 0 ? (
         <p className="text-ink-soft">עוד אין חניכים שמלווים שיעור סגור. משבצים מלווה בלוח של שיעור סגור, בשלב «מלווה».</p>
       ) : (
@@ -242,23 +262,17 @@ function ClassLinks({ data, week, links, archived, issued, reload }: RowProps) {
   const w = week.edition.settings?.kk_window;
   return (
     <Panel title="קישורים לכל החניכים">
-      <ul className="mb-3 space-y-1 text-sm text-ink-soft">
-        <li>
-          <b className="text-ink">הרשמה למכריכה לכריכה:</b> רשימת החניכים בשמות בלבד והקבוצות שפתוחות להרשמה. פג כשחלון ההרשמה נסגר
-          {w ? ` (${israelMoment(w.closes_at)})` : "; עוד אין חלון, ולכן ההרשמה סגורה"} (הצעה) —{" "}
-          <Link to="/kk" className="font-semibold underline">
-            החלון והקבוצות במסך «מכריכה לכריכה»
-          </Link>
-          .
-        </li>
-        <li>
-          <b className="text-ink">הלו"ז:</b> הלו"ז הציבורי בלבד, כמו בייצוא למעצבת. פג בסוף השבוע (או 30 יום אחרי ההנפקה, כל עוד התאריך TBD) (הצעה).
-        </li>
-      </ul>
       <Rows label="קישורים לכל החניכים" head={["קישור", "הקישור"]}>
         <LinkRow data={data} week={week} scope="kk_signup" subject={null} who="הרשמה למכריכה לכריכה" cells={["הרשמה למכריכה לכריכה"]} link={currentOf(links, "kk_signup", null)} archived={archived} issued={issued} reload={reload} />
         <LinkRow data={data} week={week} scope="schedule" subject={null} who='הלו"ז' cells={['לו"ז לצפייה']} link={currentOf(links, "schedule", null)} archived={archived} issued={issued} reload={reload} />
       </Rows>
+      {/* the sign-up's expiry is the window's, set elsewhere: the one line a row's badge cannot say */}
+      <p className="mt-2 text-sm text-ink-soft">
+        ההרשמה פגה כשחלון ההרשמה נסגר{w ? "" : "; עוד אין חלון, ולכן ההרשמה סגורה"} (הצעה) —{" "}
+        <Link to="/kk" className="inline-flex min-h-11 items-center font-semibold underline">
+          החלון ב«מכריכה לכריכה»
+        </Link>
+      </p>
     </Panel>
   );
 }

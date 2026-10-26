@@ -290,11 +290,14 @@ test.describe("demo build", () => {
     await note.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול" }).press("Enter");
     await expect(note.getByRole("button", { name: "מחיקת אתגר לדוגמה" })).toBeFocused();
 
+    const plus = page.getByRole("button", { name: "+ אבן דרך" });
+    await plus.click();
     const add = page.getByRole("form", { name: "אבן דרך חדשה" });
     await add.getByLabel("אבן הדרך").fill("אבן דרך חדשה לדוגמה");
     await add.getByLabel("כמה ימים לפני השבוע").fill("30");
     await add.getByRole("button", { name: "הוספת אבן דרך" }).click();
     await expect(toast(page, "אבן הדרך נוספה")).toBeVisible();
+    await expect(plus).toBeFocused(); // added: the form closes, the button that opened it has the focus back
     const m = milestones.getByRole("listitem").filter({ hasText: "אבן דרך חדשה לדוגמה" });
     await expect(m).toContainText("W−30 · הצעה");
     await m.getByRole("checkbox").check();
@@ -305,6 +308,7 @@ test.describe("demo build", () => {
     await m.getByRole("button", { name: "מחיקת אבן דרך חדשה לדוגמה" }).click();
     await m.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול" }).press("Enter");
     await expect(m.getByRole("button", { name: "מחיקת אבן דרך חדשה לדוגמה" })).toBeFocused();
+    await plus.click();
     await add.getByLabel("אבן הדרך").fill("לא תקין");
     await add.getByLabel("כמה ימים לפני השבוע").fill("400");
     await add.getByRole("button", { name: "הוספת אבן דרך" }).click();

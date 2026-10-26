@@ -17,7 +17,7 @@
 //     fallen at a time — the family's contact person;
 //   - the cross-year list of the fallen (a global admin): names are entered here
 //     only, never in git.
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { WeekCommands } from "../../data/commands";
 import { type Fallen, type FallenContacts, EMPTY_FALLEN_CONTACTS, FAMILY_STATUS_LABEL, FAMILY_STATUSES, MEMORIAL_LIMITS, type PlanPatch } from "../../data/memorial";
 import type { DataPort } from "../../data/port";
@@ -29,12 +29,12 @@ import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week }
 import { errorMessage } from "../../errors";
 import { memorialWaiting } from "../../reader/model";
 import { warningsFor } from "../../rules/warnings";
-import { Badge, Button, Confirm, Field, GenderField, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
+import { Badge, Button, Confirm, Field, Fold, GenderField, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { FileRow, SourceFiles } from "../stages/SourceFiles";
 import { Problem } from "../stages/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
-import { MemorialReaderLine } from "./SlotPanel";
+import { MemorialReaderPill, MemorialReaderSaid, useMemorialReader } from "./SlotPanel";
 
 type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
 
@@ -86,10 +86,8 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
         <h2 className="font-display text-2xl font-extrabold">זמני זיכרון</h2>
         <EditionSelect />
       </div>
-      <p className="text-sm text-ink-soft">
-        לכל חלל/ה תוכנית אחת במחזור: מה המשפחה אמרה, מי מדבר/ת, כמה דקות, והחומרים למקראה. משבצים אותה בזמן זיכרון ברשת. המלווה של זמן הזיכרון הוא/היא איש/אשת הקשר של הצוות עם המשפחה.
-        {!ctx.admin && " את התוכניות ואת השיבוץ עושה המדריך/ה של המחזור."}
-      </p>
+      {/* what a plan holds, and the liaison, are the guide's «זמני זיכרון» */}
+      {!ctx.admin && <p className="text-sm text-ink-soft">את התוכניות ואת השיבוץ עושה המדריך/ה של המחזור.</p>}
 
       <PolicyPanel {...ctx} />
 
@@ -171,161 +169,214 @@ function PolicyPanel({ week, admin, cmds, busy, act }: Ctx) {
   const set = parts.some(Boolean);
   const badge = parts.every(Boolean) ? <Badge tone="ok">נקבעה בישיבת הצוות</Badge> : <Badge tone="accent">{set ? "חלק ממנה ממתין להחלטת ישיבת הצוות" : PENDING}</Badge>;
   const pending = <span className="text-ink-soft">{PENDING}</span>;
+  // set once, at a staff meeting: folded, its state in the badge
   return (
-    <Panel title="המדיניות" aside={badge}>
-      {!set ? (
-        <p className="text-sm text-ink-soft">עוד לא נקבעה מדיניות. היא תיקבע בישיבת הצוות; עד אז אין אזהרות על אורך או על סמיכות לארוחה. תוכנית ארוכה מהמשבצת שלה מסומנת תמיד.</p>
-      ) : (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt className="text-ink-soft">איפה</dt>
-          <dd className="min-w-0 break-words whitespace-pre-line">{policy?.placement ?? pending}</dd>
-          <dt className="text-ink-soft">עד כמה דקות</dt>
-          <dd>{policy?.max_minutes != null ? `${policy.max_minutes} דקות` : pending}</dd>
-          <dt className="text-ink-soft">ליד ארוחה</dt>
-          <dd>{policy?.warn_adjacent_meal == null ? pending : policy.warn_adjacent_meal ? "להזהיר על זמן זיכרון צמוד לארוחה" : "בלי אזהרה"}</dd>
-        </dl>
-      )}
-      {admin &&
-        (editing ? (
-          <form onSubmit={(e) => void save(e)} aria-label="עריכת המדיניות" className="mt-3 space-y-3" noValidate>
-            <Field id={`${id}-where`} label="איפה ממקמים זמני זיכרון" hint={`מה שהוחלט בישיבת הצוות. ריק: ${PENDING}.`}>
-              <textarea id={`${id}-where`} value={placement} maxLength={MEMORIAL_LIMITS.placement} onChange={(e) => setPlacement(e.target.value)} rows={2} className={`${INPUT} py-2`} aria-describedby={`${id}-where-hint`} />
-            </Field>
-            <Field id={`${id}-max`} label="עד כמה דקות (לא חובה)" hint={`מה שהוחלט בישיבת הצוות. ריק: ${PENDING}, ובינתיים בלי אזהרה על אורך.`}>
-              <input id={`${id}-max`} type="number" inputMode="numeric" min={1} max={MEMORIAL_LIMITS.minutes} value={max} onChange={(e) => setMax(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-max-hint`} />
-            </Field>
-            <Field id={`${id}-meal`} label="זמן זיכרון צמוד לארוחה">
-              <select id={`${id}-meal`} value={meal} onChange={(e) => setMeal(e.target.value as "" | "warn" | "no")} className={SELECT}>
-                <option value="">{PENDING}</option>
-                <option value="warn">להזהיר על זמן זיכרון צמוד לארוחה</option>
-                <option value="no">בלי אזהרה</option>
-              </select>
-            </Field>
-            {problem && <Problem>{problem}</Problem>}
-            <div className="flex flex-wrap gap-2">
-              <Button kind="primary" type="submit" busy={busy === "policy"} busyLabel="שומר…">
-                שמירה
-              </Button>
-              <Button onClick={() => setEditing(false)}>ביטול</Button>
-            </div>
-          </form>
+    <section aria-label="המדיניות" className="rounded-xl border border-line bg-card px-4 py-1 shadow-sm sm:px-5">
+      <Fold title="המדיניות" hint={badge}>
+        {!set ? (
+          <p className="text-sm text-ink-soft">עד שתיקבע: אין אזהרות על אורך או על סמיכות לארוחה. תוכנית ארוכה מהמשבצת מסומנת תמיד.</p>
         ) : (
-          <Button className="mt-3" onClick={open}>
-            {set ? "עריכת המדיניות" : "קביעת המדיניות"}
-          </Button>
-        ))}
-    </Panel>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-ink-soft">איפה</dt>
+            <dd className="min-w-0 break-words whitespace-pre-line">{policy?.placement ?? pending}</dd>
+            <dt className="text-ink-soft">עד כמה דקות</dt>
+            <dd>{policy?.max_minutes != null ? `${policy.max_minutes} דקות` : pending}</dd>
+            <dt className="text-ink-soft">ליד ארוחה</dt>
+            <dd>{policy?.warn_adjacent_meal == null ? pending : policy.warn_adjacent_meal ? "להזהיר על זמן זיכרון צמוד לארוחה" : "בלי אזהרה"}</dd>
+          </dl>
+        )}
+        {admin &&
+          (editing ? (
+            <form onSubmit={(e) => void save(e)} aria-label="עריכת המדיניות" className="mb-2 mt-3 space-y-3" noValidate>
+              <Field id={`${id}-where`} label="איפה ממקמים זמני זיכרון" hint="ריק = עוד לא הוחלט.">
+                <textarea id={`${id}-where`} value={placement} maxLength={MEMORIAL_LIMITS.placement} onChange={(e) => setPlacement(e.target.value)} rows={2} className={`${INPUT} py-2`} aria-describedby={`${id}-where-hint`} />
+              </Field>
+              <Field id={`${id}-max`} label="עד כמה דקות (לא חובה)" hint="ריק = עוד לא הוחלט (ובינתיים בלי אזהרה על אורך).">
+                <input id={`${id}-max`} type="number" inputMode="numeric" min={1} max={MEMORIAL_LIMITS.minutes} value={max} onChange={(e) => setMax(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-max-hint`} />
+              </Field>
+              <Field id={`${id}-meal`} label="זמן זיכרון צמוד לארוחה">
+                <select id={`${id}-meal`} value={meal} onChange={(e) => setMeal(e.target.value as "" | "warn" | "no")} className={SELECT}>
+                  <option value="">{PENDING}</option>
+                  <option value="warn">להזהיר על זמן זיכרון צמוד לארוחה</option>
+                  <option value="no">בלי אזהרה</option>
+                </select>
+              </Field>
+              {problem && <Problem>{problem}</Problem>}
+              <div className="flex flex-wrap gap-2">
+                <Button kind="primary" type="submit" busy={busy === "policy"} busyLabel="שומר…">
+                  שמירה
+                </Button>
+                <Button onClick={() => setEditing(false)}>ביטול</Button>
+              </div>
+            </form>
+          ) : (
+            <Button className="mb-2 mt-3" onClick={open}>
+              {set ? "עריכת המדיניות" : "קביעת המדיניות"}
+            </Button>
+          ))}
+      </Fold>
+    </section>
   );
 }
 
 // ------------------------------------------------------------------ the slots
 
 function DaySlots(props: Ctx & { day: Day }) {
-  const { week, day, admin } = props;
+  const { week, day } = props;
   const rows = memorialRowsOf(week, day);
   const slots = memorialSlots(week).filter((l) => l.day === day);
   if (rows.length === 0 && slots.length === 0) return null;
   return (
     <section aria-label={`יום ${DAY_NAMES[day]}`} className="rounded-xl border border-line bg-card p-3">
-      <h4 className="mb-2 font-display text-lg font-semibold">יום {DAY_NAMES[day]}</h4>
+      <h4 className="mb-1 font-display text-lg font-semibold">יום {DAY_NAMES[day]}</h4>
       <div className="space-y-3">
-        {rows.map((r) => {
-          const inRow = slots.filter((l) => overlaps(l.start_min, l.end_min, r.start_min, r.end_min));
-          return (
-            <div key={r.id} className="space-y-2">
-              <p className="text-sm font-semibold text-amber-900">
-                {r.label} · <bdi dir="ltr">{fmtRange(r.start_min, r.end_min)}</bdi>
-              </p>
-              {inRow.length === 0 && <p className="text-sm text-ink-soft">אין כאן זמן זיכרון.</p>}
-              <ul className="grid items-start gap-2 md:grid-cols-2 lg:grid-cols-1">
-                {inRow.map((l) => (
-                  <li key={l.id}>
-                    <SlotCard {...props} slot={l} />
-                  </li>
-                ))}
-              </ul>
-              {admin && <AddSlot {...props} row={r} />}
-            </div>
-          );
-        })}
+        {rows.map((r) => (
+          <SlotRow key={r.id} {...props} row={r} slots={slots.filter((l) => overlaps(l.start_min, l.end_min, r.start_min, r.end_min))} />
+        ))}
         {/* a slot outside today's rows (the grid changed since): still listed, to move its plan or remove it */}
         {slots
           .filter((l) => !rows.some((r) => overlaps(l.start_min, l.end_min, r.start_min, r.end_min)))
           .map((l) => (
-            <SlotCard key={l.id} {...props} slot={l} />
+            <SlotCard key={l.id} {...props} slot={l} row={null} />
           ))}
       </div>
     </section>
   );
 }
 
-function SlotCard(props: Ctx & { slot: Lesson }) {
-  const { week, slot: l, admin, cmds, busy, act } = props;
-  const plan = planOf(week, l.id);
-  const [asking, setAsking] = useState(false);
+type Row = { id: number; start_min: number; end_min: number; label: string };
+
+/** A memorial row of the day: its heading — with «+ זמן זיכרון», an admin's — then its slots. */
+function SlotRow(props: Ctx & { day: Day; row: Row; slots: Lesson[] }) {
+  const { day, row: r, slots, admin } = props;
+  const [adding, setAdding] = useState(false);
   const focusBack = useFocusBack();
-  const tray = (week.memorialPlans ?? []).filter((p) => p.lesson_id == null);
+  const close = () => {
+    setAdding(false);
+    focusBack.back();
+  };
   return (
-    <div data-memorial-slot={l.id} className={`rounded-lg border p-3 ${plan ? "border-amber-300 bg-amber-50" : "border-dashed border-amber-300 bg-paper"}`}>
-      <p className="text-sm font-semibold">
-        <bdi>{slotLabel(week, l)}</bdi>
-      </p>
-      {plan ? (
-        <div className="mt-2">
-          <PlanCard {...props} plan={plan} slot={l} />
-        </div>
-      ) : (
-        <>
-          <p className="text-sm text-ink-soft">פנוי</p>
-          {admin && tray.length > 0 && (
-            <PickPlan slotLabelText={slotLabel(week, l)} plans={tray} week={week} busy={busy === `place-slot-${l.id}`} onPick={(p) => void act(`place-slot-${l.id}`, () => cmds.placeMemorialPlan(p.id, p.version, l.id), `«${fallenName(week, p.fallen_id)}» שובץ/ה`)} />
-          )}
-          {admin &&
-            (asking ? (
-              <Confirm
-                text="להסיר את זמן הזיכרון הזה מהרשת?"
-                confirm="כן, להסיר"
-                busy={busy === `remove-${l.id}`}
-                onConfirm={() => void act(`remove-${l.id}`, () => cmds.removeMemorialSlot(l.id), "זמן הזיכרון הוסר")}
-                onCancel={() => {
-                  setAsking(false);
-                  focusBack.back();
-                }}
-              />
-            ) : (
-              <Button ref={focusBack.ref()} kind="danger" className="mt-2" onClick={() => setAsking(true)}>
-                הסרת המשבצת
-              </Button>
-            ))}
-        </>
+    <div className="space-y-2">
+      <div className="flex min-h-11 items-center gap-2">
+        <p className="text-sm font-semibold text-amber-900">
+          {r.label} · <bdi dir="ltr">{fmtRange(r.start_min, r.end_min)}</bdi>
+        </p>
+        {admin && (
+          <Button ref={focusBack.ref()} kind="quiet" className="ms-auto" aria-expanded={adding} onClick={() => setAdding((x) => !x)} aria-label={`הוספת זמן זיכרון: ${dayRange(day, r.start_min, r.end_min)}`}>
+            + זמן זיכרון
+          </Button>
+        )}
+      </div>
+      {adding && <AddSlot {...props} row={r} onClose={close} />}
+      {slots.length === 0 && !admin && <p className="text-sm text-ink-soft">אין כאן זמן זיכרון.</p>}
+      {slots.length > 0 && (
+        <ul className="grid items-start gap-2 md:grid-cols-2 lg:grid-cols-1">
+          {slots.map((l) => (
+            <li key={l.id}>
+              <SlotCard {...props} slot={l} row={r} />
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
 }
 
-/** The slot's side of the picker: one of the tray's plans onto this slot. */
+/**
+ * A slot: under its row's heading, only what tells it apart from the row — its room, and its own time when it is not
+ * the whole row (the grid's day view says it alike); the whole label stays for a screen reader. A free one is a line:
+ * the tray's plans to place on it, and its removal.
+ */
+function SlotCard(props: Ctx & { slot: Lesson; row: Row | null }) {
+  const { week, slot: l, row, admin, cmds, busy, act } = props;
+  const plan = planOf(week, l.id);
+  const [asking, setAsking] = useState(false);
+  const focusBack = useFocusBack();
+  const tray = (week.memorialPlans ?? []).filter((p) => p.lesson_id == null);
+  const label = slotLabel(week, l);
+  const room = week.rooms.find((r) => r.id === l.room_id)?.name ?? null;
+  const range = row && l.start_min === row.start_min && l.end_min === row.end_min ? null : fmtRange(l.start_min, l.end_min);
+  const where = row ? (
+    <>
+      <span className="sr-only">{label}</span>
+      <span aria-hidden>
+        {range && <bdi dir="ltr">{range}</bdi>}
+        {range && room && " · "}
+        {room}
+      </span>
+    </>
+  ) : (
+    <bdi>{label}</bdi>
+  );
+  if (plan) {
+    return (
+      <div data-memorial-slot={l.id} className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3">
+        <p className="text-xs font-semibold text-amber-900">{where}</p>
+        <PlanCard {...props} plan={plan} slot={l} />
+      </div>
+    );
+  }
+  return (
+    <div data-memorial-slot={l.id} className="rounded-lg border border-dashed border-amber-300 bg-paper px-3 py-1">
+      <div className="flex flex-wrap items-center gap-x-2">
+        <p className="min-w-0 flex-1 py-2.5 text-sm">
+          {!row || range || room ? (
+            <>
+              <span className="font-semibold">{where}</span> ·{" "}
+            </>
+          ) : (
+            where
+          )}
+          <span className="text-ink-soft">פנוי</span>
+        </p>
+        {admin && !asking && (
+          <Button ref={focusBack.ref()} kind="danger" onClick={() => setAsking(true)}>
+            הסרת המשבצת
+          </Button>
+        )}
+        {admin && tray.length > 0 && (
+          <PickPlan slotLabelText={label} plans={tray} week={week} busy={busy === `place-slot-${l.id}`} onPick={(p) => void act(`place-slot-${l.id}`, () => cmds.placeMemorialPlan(p.id, p.version, l.id), `«${fallenName(week, p.fallen_id)}» שובץ/ה`)} />
+        )}
+      </div>
+      {asking && (
+        <div className="pb-2">
+          <Confirm
+            text="להסיר את זמן הזיכרון הזה מהרשת?"
+            confirm="כן, להסיר"
+            busy={busy === `remove-${l.id}`}
+            onConfirm={() => void act(`remove-${l.id}`, () => cmds.removeMemorialSlot(l.id), "זמן הזיכרון הוסר")}
+            onCancel={() => {
+              setAsking(false);
+              focusBack.back();
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The slot's side of the picker: one of the tray's plans onto this slot (the tray card's «שיבוץ» is the other side). */
 function PickPlan({ slotLabelText, plans, week, busy, onPick }: { slotLabelText: string; plans: MemorialPlan[]; week: Week; busy: boolean; onPick: (p: MemorialPlan) => void }) {
   const id = useId();
   const [chosen, setChosen] = useState<number | "">("");
   const plan = plans.find((p) => p.id === chosen) ?? null;
   return (
-    <div className="mt-2 flex flex-wrap items-end gap-2">
-      <div className="min-w-0 flex-1 basis-48">
-        <label htmlFor={id} className="text-sm font-semibold">
-          שיבוץ מהמגש
-        </label>
-        <select id={id} value={chosen} onChange={(e) => setChosen(e.target.value === "" ? "" : Number(e.target.value))} className={SELECT} aria-describedby={`${id}-for`}>
-          <option value="">בחירת חלל/ה…</option>
-          {plans.map((p) => (
-            <option key={p.id} value={p.id}>
-              {fallenName(week, p.fallen_id)}
-            </option>
-          ))}
-        </select>
-        <span id={`${id}-for`} className="sr-only">
-          לזמן הזיכרון {slotLabelText}
-        </span>
-      </div>
+    <div className="flex basis-full items-center gap-2 pb-2">
+      <label htmlFor={id} className="sr-only">
+        שיבוץ מהמגש
+      </label>
+      <select id={id} value={chosen} onChange={(e) => setChosen(e.target.value === "" ? "" : Number(e.target.value))} className={`${SELECT} min-w-0 flex-1`} aria-describedby={`${id}-for`}>
+        <option value="">שיבוץ מהמגש: בחירת חלל/ה…</option>
+        {plans.map((p) => (
+          <option key={p.id} value={p.id}>
+            {fallenName(week, p.fallen_id)}
+          </option>
+        ))}
+      </select>
+      <span id={`${id}-for`} className="sr-only">
+        לזמן הזיכרון {slotLabelText}
+      </span>
       <Button kind="primary" disabled={!plan} busy={busy} busyLabel="משבץ…" onClick={() => plan && onPick(plan)}>
         שיבוץ
       </Button>
@@ -333,22 +384,14 @@ function PickPlan({ slotLabelText, plans, week, busy, onPick }: { slotLabelText:
   );
 }
 
-/** «+ זמן זיכרון» in a memorial row: the whole row by default; any part of it, any room. */
-function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { id: number; start_min: number; end_min: number; label: string } }) {
+/** What «+ זמן זיכרון» opens under a memorial row's heading: the whole row by default; any part of it, any room. */
+function AddSlot({ week, day, row, cmds, busy, act, onClose }: Ctx & { day: Day; row: Row; onClose: () => void }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
   const [start, setStart] = useState(fmt(row.start_min));
   const [end, setEnd] = useState(fmt(row.end_min));
   const [room, setRoom] = useState<number | "">("");
   const [problem, setProblem] = useState<string | null>(null);
   const key = `slot-${day}-${row.id}`;
-  if (!open) {
-    return (
-      <Button onClick={() => setOpen(true)} aria-label={`הוספת זמן זיכרון: ${dayRange(day, row.start_min, row.end_min)}`}>
-        + זמן זיכרון
-      </Button>
-    );
-  }
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
@@ -362,7 +405,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
       setProblem(errorMessage(code));
       return true;
     });
-    if (done) setOpen(false);
+    if (done) onClose();
   };
   return (
     <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${dayRange(day, row.start_min, row.end_min)}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
@@ -389,7 +432,7 @@ function AddSlot({ week, day, row, cmds, busy, act }: Ctx & { day: Day; row: { i
         <Button kind="primary" type="submit" busy={busy === key} busyLabel="מוסיף…">
           הוספה
         </Button>
-        <Button onClick={() => setOpen(false)}>ביטול</Button>
+        <Button onClick={onClose}>ביטול</Button>
       </div>
     </form>
   );
@@ -401,8 +444,6 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
   const { week, plan: p, slot, admin, cmds, busy, act } = props;
   const id = useId();
   const [editing, setEditing] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const focusBack = useFocusBack();
   const name = fallenName(week, p.fallen_id);
   const choices = freeSlots(week, p);
   const liaison = slot?.escort_roster_id != null ? (week.roster.find((r) => r.id === slot.escort_roster_id)?.full_name ?? "חניך/ה שנמחק/ה") : null;
@@ -447,7 +488,6 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <select
-              ref={focusBack.ref("place")}
               id={`${id}-place`}
               value={chosen}
               disabled={busy === `place-${p.id}`}
@@ -482,48 +522,43 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
 
       {slot && admin && <LiaisonPicker {...props} slot={slot} />}
 
-      {admin &&
-        (editing ? (
-          <PlanForm plan={p} name={name} busy={busy} onCancel={() => setEditing(false)} onSave={(patch, onRefused) => act(`plan-${p.id}`, () => cmds.updateMemorialPlan(p.id, p.version, patch), "התוכנית נשמרה", onRefused)} onSaved={() => setEditing(false)} />
-        ) : (
-          <div className="flex flex-wrap gap-2">
+      {admin && editing && (
+        <PlanForm
+          plan={p}
+          name={name}
+          busy={busy}
+          onCancel={() => setEditing(false)}
+          onSave={(patch, onRefused) => act(`plan-${p.id}`, () => cmds.updateMemorialPlan(p.id, p.version, patch), "התוכנית נשמרה", onRefused)}
+          onSaved={() => setEditing(false)}
+          // a plan is deleted only from the tray: rare, and for good — in its form, never on every card
+          remove={
+            p.lesson_id == null
+              ? {
+                  text: <>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.{waiting.length > 0 && " החומרים שהועלו לה לא נמחקים איתה: הם נשארים, להסרה."}</>,
+                  busy: busy === `delete-${p.id}`,
+                  run: () => act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה"),
+                }
+              : null
+          }
+        />
+      )}
+      {admin && (
+        <div className="flex flex-wrap items-start gap-2">
+          {!editing && (
             <Button onClick={() => setEditing(true)} aria-label={`עריכת התוכנית: ${name}`}>
               עריכה
             </Button>
-            {p.lesson_id == null && !asking && (
-              <Button ref={focusBack.ref()} kind="danger" onClick={() => setAsking(true)}>
-                מחיקת התוכנית
-              </Button>
-            )}
-          </div>
-        ))}
-      {asking && (
-        <Confirm
-          text={<>למחוק את התוכנית של «{name}» במחזור הזה? השם נשאר ברשימת החללים.{waiting.length > 0 && " החומרים שהועלו לה לא נמחקים איתה: הם נשארים, להסרה."}</>}
-          confirm="כן, למחוק"
-          busy={busy === `delete-${p.id}`}
-          onConfirm={() => void act(`delete-${p.id}`, () => cmds.deleteMemorialPlan(p.id), "התוכנית נמחקה")}
-          onCancel={() => {
-            setAsking(false);
-            // its form opened meanwhile, «מחיקת התוכנית» is not drawn again: the plan's «שיבוץ», the card's control above the form
-            focusBack.back(editing ? "place" : "");
-          }}
-        />
-      )}
-
-      {admin && <FamilyContacts {...props} fallenId={p.fallen_id} name={name} />}
-
-      {slot && (
-        <div className="space-y-2 rounded-lg border border-line bg-card p-2">
-          <MemorialReaderLine week={week} lesson={slot} />
-          <SourceFiles port={props.port} week={week} lesson={slot} actor={props.actor} notify={props.notify} clear={props.clear} reload={props.reload} />
+          )}
+          <FamilyContacts {...props} fallenId={p.fallen_id} name={name} />
         </div>
       )}
+
+      {slot && <PlanMaterials {...props} slot={slot} />}
       {/* in the tray: the materials already uploaded for it — its own, waiting to go with it to a slot; never leftovers */}
       {waiting.length > 0 && (
         <div className="space-y-1 rounded-lg border border-line bg-card p-2" role="group" aria-label={`החומרים של התוכנית: ${name}`}>
           <p className="text-sm font-semibold">החומרים · ממתין לשיבוץ</p>
-          <p className="text-xs text-ink-soft">הועלו לתוכנית הזאת. הם עוברים איתה לזמן הזיכרון שבו היא תשובץ, ונכנסים למקראה משם.</p>
+          <p className="text-xs text-ink-soft">עוברים איתה לזמן הזיכרון שבו תשובץ.</p>
           <ul className="divide-y divide-line">
             {waiting.map((f) => (
               <FileRow key={f.id} port={props.port} week={week} file={f} actor={props.actor} notify={props.notify} reload={props.reload} />
@@ -535,6 +570,44 @@ function PlanCard(props: Ctx & { plan: MemorialPlan; slot: Lesson | null }) {
   );
 }
 
+/** A placed plan's materials, folded: the reader's verdict on the fold; the files and the upload inside (also in the week's slot panel). */
+function PlanMaterials({ port, week, actor, notify, clear, reload, slot }: Ctx & { slot: Lesson }) {
+  const reader = useMemorialReader(week, slot.id);
+  return (
+    <Fold size="sm" title="חומרים למקראה" hint={reader && <MemorialReaderPill status={reader.status} files={reader.files.length} />} className="rounded-lg border border-line bg-card px-2">
+      {reader && <MemorialReaderSaid status={reader.status} />}
+      <SourceFiles port={port} week={week} lesson={slot} actor={actor} notify={notify} clear={clear} reload={reload} />
+    </Fold>
+  );
+}
+
+/** A form's own deletion: at the end of its buttons; its «are you sure?» on a line of its own, whose «ביטול» gives the button the focus back. */
+function FormDelete({ label, ariaLabel, text, busy, run }: { label: string; ariaLabel?: string; text: ReactNode; busy: boolean; run: () => Promise<unknown> }) {
+  const [asking, setAsking] = useState(false);
+  const focusBack = useFocusBack();
+  if (!asking) {
+    return (
+      <Button ref={focusBack.ref()} kind="danger" className="ms-auto" aria-label={ariaLabel} onClick={() => setAsking(true)}>
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <div className="w-full">
+      <Confirm
+        text={text}
+        confirm="כן, למחוק"
+        busy={busy}
+        onConfirm={() => void run().then(() => setAsking(false))}
+        onCancel={() => {
+          setAsking(false);
+          focusBack.back();
+        }}
+      />
+    </div>
+  );
+}
+
 function PlanForm({
   plan: p,
   name,
@@ -542,6 +615,7 @@ function PlanForm({
   onSave,
   onSaved,
   onCancel,
+  remove,
 }: {
   plan: MemorialPlan;
   name: string;
@@ -549,6 +623,8 @@ function PlanForm({
   onSave: (patch: PlanPatch, onRefused: (code: string | null) => boolean) => Promise<boolean>;
   onSaved: () => void;
   onCancel: () => void;
+  /** «מחיקת התוכנית», a plan in the tray's. */
+  remove: { text: ReactNode; busy: boolean; run: () => Promise<unknown> } | null;
 }) {
   const id = useId();
   const [status, setStatus] = useState<FamilyStatus>(p.family_status);
@@ -601,6 +677,7 @@ function PlanForm({
           שמירה
         </Button>
         <Button onClick={onCancel}>ביטול</Button>
+        {remove && <FormDelete label="מחיקת התוכנית" {...remove} />}
       </div>
     </form>
   );
@@ -651,7 +728,7 @@ function LiaisonPicker({ week, slot: l, cmds, busy, act }: Ctx & { slot: Lesson 
  * The family's contact person — personal data of a bereaved family: admins only, fetched when opened, one fallen
  * at a time (get_fallen_contacts). Never in the week, a link, or an export but the admin's archive.
  */
-function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { fallenId: number; name: string }) {
+function FamilyContacts({ port, busy, act, fallenId, name }: Ctx & { fallenId: number; name: string }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [c, setC] = useState<FallenContacts | null | undefined>(undefined);
@@ -677,14 +754,14 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
   }
   const tel = telHref(c?.phone);
   return (
-    <div id={`${id}-box`} role="group" aria-label={`פרטי הקשר של המשפחה: ${name}`} className="space-y-2 rounded-lg border border-line bg-paper p-3">
+    <div id={`${id}-box`} role="group" aria-label={`פרטי הקשר של המשפחה: ${name}`} className="w-full space-y-2 rounded-lg border border-line bg-paper p-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-semibold">פרטי הקשר של המשפחה</p>
         <Button kind="quiet" className="ms-auto" onClick={() => setOpen(false)} aria-expanded>
           סגירה
         </Button>
       </div>
-      <p className="text-xs text-ink-soft">מידע אישי של משפחה שכולה: גלוי רק למדריך/ה (אדמין). לא נכנס לשבוע, לקישורים, לרשימות או לקבצים — רק לארכיון של האדמין.</p>
+      <p className="text-xs text-ink-soft">מידע אישי של משפחה שכולה — גלוי רק למדריך/ה.</p>
       {failed && c === undefined ? (
         <div role="alert">
           <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
@@ -693,7 +770,7 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
       ) : c === undefined ? (
         <p className="text-sm text-ink-soft">טוען…</p>
       ) : c === null ? (
-        <p className="text-sm text-ink-soft">פרטי הקשר גלויים רק למדריך/ה של מחזור שיש בו תוכנית ל{name}.</p>
+        <p className="text-sm text-ink-soft">פרטי הקשר גלויים רק למדריך/ה של מחזור אמיתי שיש בו תוכנית ל{name}, ולאדמין של כל המחזורים.</p>
       ) : editing ? (
         <ContactsForm
           c={c}
@@ -761,7 +838,6 @@ function FamilyContacts({ port, week, busy, act, fallenId, name }: Ctx & { falle
           <Button onClick={() => setEditing(true)}>עריכת פרטי הקשר</Button>
         </>
       )}
-      {week.edition.kind !== "real" && <p className="text-xs text-ink-soft">במחזור תרגול או הדגמה פרטי הקשר לא נפתחים, גם למדריך/ה — רק אדמין של כל המחזורים רואה אותם.</p>}
     </div>
   );
 }
@@ -878,86 +954,107 @@ function AddPlan({ port, week, cmds, busy, act }: Ctx) {
   );
 }
 
-/** The cross-year list (a global admin): add, rename, deactivate; delete one no edition planned for. */
+/**
+ * The cross-year list (a global admin): add, rename, deactivate; delete one no edition planned for. Touched maybe once
+ * a year: folded at the foot of the screen, «מחיקה» inside a name's form.
+ */
 function FallenList(props: Ctx) {
   const { port, busy, act } = props;
   const { list, failed, load } = useFallen(port, true);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
-  const [asking, setAsking] = useState<number | null>(null);
   const focusBack = useFocusBack();
   const run: Act = async (key, fn, ok, onRefused) => {
     const done = await act(key, fn, ok, onRefused);
     await load();
     return done;
   };
+  // a name's form closed: its «עריכה» takes the focus back
+  const close = (fid: number) => {
+    setEditing(null);
+    focusBack.back(String(fid));
+  };
+  const count = list == null ? null : list.length === 1 ? "שם אחד" : `${list.length} שמות`;
   return (
-    <Panel title="רשימת החללים" aside="אחת לכל השנים · רק אדמין של כל המחזורים עורך/ת">
-      <p className="mb-2 text-sm text-ink-soft">את השמות מכניסים רק כאן, באתר — לא בקובץ ולא בקוד.</p>
-      {failed && !list && (
-        <div role="alert" className="mb-2">
-          <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
-          <Button onClick={() => void load()}>לנסות שוב</Button>
-        </div>
-      )}
-      {list && list.length === 0 && <p className="text-sm text-ink-soft">עוד אין שמות ברשימה.</p>}
-      {list && list.length > 0 && (
-        <ul aria-label="החללים" className="divide-y divide-line">
-          {list.map((f) => (
-            <li key={f.id} data-fallen={f.id} className="py-2">
-              {editing === f.id ? (
-                <FallenForm initial={f} busy={busy === `fallen-${f.id}`} onCancel={() => setEditing(null)} onSave={async (fields, onRefused) => {
-                  if (await run(`fallen-${f.id}`, () => port.memorial.saveFallen(f.id, fields), "נשמר", onRefused)) setEditing(null);
-                }} />
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="min-w-0 flex-1 basis-40 break-words font-semibold">{f.name}</span>
-                  {!f.active && <Badge tone="muted">לא פעיל/ה</Badge>}
-                  <Button onClick={() => setEditing(f.id)} aria-label={`עריכה: ${f.name}`}>
-                    עריכה
-                  </Button>
-                  {asking !== f.id && (
-                    <Button ref={focusBack.ref(String(f.id))} kind="danger" onClick={() => setAsking(f.id)} aria-label={`מחיקה: ${f.name}`}>
-                      מחיקה
+    <section aria-label="רשימת החללים" className="rounded-xl border border-line bg-card px-4 py-1 shadow-sm sm:px-5">
+      <Fold title="רשימת החללים" hint={count && `${count} · לכל השנים`}>
+        {failed && !list && (
+          <div role="alert" className="mb-2">
+            <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
+            <Button onClick={() => void load()}>לנסות שוב</Button>
+          </div>
+        )}
+        {list && list.length === 0 && <p className="text-sm text-ink-soft">עוד אין שמות ברשימה.</p>}
+        {list && list.length > 0 && (
+          <ul aria-label="החללים" className="divide-y divide-line">
+            {list.map((f) => (
+              <li key={f.id} data-fallen={f.id} className="py-2">
+                {editing === f.id ? (
+                  <FallenForm
+                    initial={f}
+                    busy={busy === `fallen-${f.id}`}
+                    onCancel={() => close(f.id)}
+                    onSave={async (fields, onRefused) => {
+                      if (await run(`fallen-${f.id}`, () => port.memorial.saveFallen(f.id, fields), "נשמר", onRefused)) close(f.id);
+                    }}
+                    remove={{
+                      text: <>למחוק את «{f.name}» מהרשימה? אם יש לו/ה תוכנית באחד המחזורים, אי אפשר — מסמנים «לא פעיל/ה» במקום.</>,
+                      busy: busy === `fallen-del-${f.id}`,
+                      run: async () => {
+                        if (await run(`fallen-del-${f.id}`, () => port.memorial.deleteFallen(f.id), "נמחק מהרשימה")) setEditing(null);
+                      },
+                    }}
+                  />
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 basis-40 break-words font-semibold">{f.name}</span>
+                    {!f.active && <Badge tone="muted">לא פעיל/ה</Badge>}
+                    <Button ref={focusBack.ref(String(f.id))} kind="quiet" onClick={() => setEditing(f.id)} aria-label={`עריכה: ${f.name}`}>
+                      עריכה
                     </Button>
-                  )}
-                  {f.note && <p className="w-full text-xs text-ink-soft">{f.note}</p>}
-                  {asking === f.id && (
-                    <div className="w-full">
-                      <Confirm
-                        text={<>למחוק את «{f.name}» מהרשימה? אם יש לו/ה תוכנית באחד המחזורים, אי אפשר — מסמנים «לא פעיל/ה» במקום.</>}
-                        confirm="כן, למחוק"
-                        busy={busy === `fallen-del-${f.id}`}
-                        onConfirm={() => void run(`fallen-del-${f.id}`, () => port.memorial.deleteFallen(f.id), "נמחק מהרשימה").then(() => setAsking(null))}
-                        onCancel={() => {
-                          setAsking(null);
-                          focusBack.back(String(f.id));
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {adding ? (
-        <div className="mt-3">
-          <FallenForm initial={null} busy={busy === "fallen-new"} onCancel={() => setAdding(false)} onSave={async (fields, onRefused) => {
-            if (await run("fallen-new", () => port.memorial.saveFallen(null, fields), "נוסף לרשימה", onRefused)) setAdding(false);
-          }} />
-        </div>
-      ) : (
-        <Button className="mt-3" onClick={() => setAdding(true)}>
-          + שם לרשימה
-        </Button>
-      )}
-    </Panel>
+                    {f.note && <p className="w-full text-xs text-ink-soft">{f.note}</p>}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {adding ? (
+          <div className="mb-2 mt-3">
+            <FallenForm
+              initial={null}
+              busy={busy === "fallen-new"}
+              onCancel={() => setAdding(false)}
+              onSave={async (fields, onRefused) => {
+                if (await run("fallen-new", () => port.memorial.saveFallen(null, fields), "נוסף לרשימה", onRefused)) setAdding(false);
+              }}
+              remove={null}
+            />
+          </div>
+        ) : (
+          <Button className="mb-2 mt-3" onClick={() => setAdding(true)}>
+            + שם לרשימה
+          </Button>
+        )}
+      </Fold>
+    </section>
   );
 }
 
-function FallenForm({ initial, busy, onSave, onCancel }: { initial: Fallen | null; busy: boolean; onSave: (f: { name: string; gender: Gender | null; note: string | null; active: boolean }, onRefused: (code: string | null) => boolean) => Promise<void>; onCancel: () => void }) {
+function FallenForm({
+  initial,
+  busy,
+  onSave,
+  onCancel,
+  remove,
+}: {
+  initial: Fallen | null;
+  busy: boolean;
+  onSave: (f: { name: string; gender: Gender | null; note: string | null; active: boolean }, onRefused: (code: string | null) => boolean) => Promise<void>;
+  onCancel: () => void;
+  /** «מחיקה», a name's already on the list. */
+  remove: { text: ReactNode; busy: boolean; run: () => Promise<unknown> } | null;
+}) {
   const id = useId();
   const [name, setName] = useState(initial?.name ?? "");
   const [gender, setGender] = useState<Gender | null>(initial?.gender ?? null);
@@ -993,6 +1090,7 @@ function FallenForm({ initial, busy, onSave, onCancel }: { initial: Fallen | nul
           שמירה
         </Button>
         <Button onClick={onCancel}>ביטול</Button>
+        {remove && initial && <FormDelete label="מחיקה" ariaLabel={`מחיקה: ${initial.name}`} {...remove} />}
       </div>
     </form>
   );

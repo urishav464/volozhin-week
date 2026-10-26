@@ -2,7 +2,8 @@
 // edition and where that stands, their contacts (only for the people the
 // contacts policy names — a global admin, or the handler in the current real
 // edition), the availability chips, the admin's vetting, what they taught in
-// past editions, and the timeline; each closed lesson with its five stage dots
+// past editions and how it went (SpeakerReviews.tsx), and the timeline, folded;
+// each closed lesson with its five stage dots
 // and the summary message (the same composer as the lesson panel, with the
 // contacts this sheet already holds). Opened from the pool, from a lesson, from
 // «המרצים שלי» and from the approvals queue; the same grid sheet (Panels.tsx)
@@ -19,16 +20,16 @@ import { timeline } from "../../domain/activityText";
 import { mailHref, telHref, waHref } from "../../domain/contactLinks";
 import { byGender, displayName } from "../../domain/names";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
-import type { Approach, ApproachStatus, Lesson, Speaker, SpeakerContacts, TeamMember, Week } from "../../domain/types";
+import type { Approach, ApproachStatus, ContactPref, Lesson, Speaker, SpeakerContacts, TeamMember, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Chip, ReconfirmDot, StageDots } from "../../grid/bits";
-import { Sheet } from "../../grid/Panels";
+import { GenderDot, ReconfirmDot, StageDots, TopicChip, topicsOf } from "../../grid/bits";
+import { Meta, Section, Sheet } from "../../grid/Panels";
 import { CONTACT_PREF_LABEL, statusLabel, vettingLabel } from "../../lib/labels";
-import { Button, Field, GENDER_LABEL, INPUT, useRunner } from "../settings/kit";
+import { Button, Field, Fold, INPUT, useRunner } from "../settings/kit";
 import { type Actor, actorIn } from "../weekStore";
 import { MessageComposer } from "../stages/MessageComposer";
-import { AvailabilityGrid, formOf, type Notify, patchOf, type ProfileForm, ProfileFields, Section } from "./parts";
-import { SpeakerReviews } from "./SpeakerReviews";
+import { AvailabilityGrid, formOf, type Notify, patchOf, type ProfileForm, ProfileFields } from "./parts";
+import { TaughtHere } from "./SpeakerReviews";
 
 export interface SpeakerSheetProps {
   port: DataPort;
@@ -63,6 +64,8 @@ export function SpeakerSheet(props: SpeakerSheetProps) {
 }
 
 const LINK_BUTTON = "inline-flex min-h-11 items-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold hover:bg-line/50";
+/** The speaker's preferred channel: its button is the primary one. */
+const LINK_PREFERRED = "inline-flex min-h-11 items-center rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90";
 
 const STATUS_ORDER: ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
 
@@ -73,9 +76,10 @@ function statusButton(st: ApproachStatus, s: Speaker): string {
 }
 
 const WHEN = new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jerusalem" });
-const when = (at: string) => {
+const DAY = new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "numeric", timeZone: "Asia/Jerusalem" });
+const when = (at: string, f = WHEN) => {
   const d = new Date(at);
-  return Number.isNaN(d.getTime()) ? "" : WHEN.format(d);
+  return Number.isNaN(d.getTime()) ? "" : f.format(d);
 };
 
 function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, clear, reload, onPlace, onLesson }: SpeakerSheetProps & { s: Speaker }) {
@@ -133,95 +137,115 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
     [log, names, s.gender, week.lessons],
   );
 
+  // Who they are, in the header: approved is the normal case, so only the exceptions are said.
+  const where = [s.disambiguator, s.affiliation].filter(Boolean).join(" · ");
+  const facts = [
+    where && <Meta key="where">{where}</Meta>,
+    s.vetted === "pending" && (
+      <Meta key="vet" tone="warn">
+        {vettingLabel(s.vetted, s.gender)}
+      </Meta>
+    ),
+    s.vetted === "rejected" && (
+      <Meta key="vet" tone="bad">
+        {vettingLabel(s.vetted, s.gender)}
+      </Meta>
+    ),
+    s.retired && <Meta key="retired">{byGender(s.gender, "לא פעיל", "לא פעילה")}</Meta>,
+  ].filter(Boolean);
+
   return (
     <Sheet
       wide={wide}
-      title={displayName(s)}
+      // the dot and the name, as the lesson panel's heading that opens this sheet
+      title={
+        <span className="flex items-center gap-2">
+          <GenderDot gender={s.gender} />
+          {displayName(s)}
+        </span>
+      }
+      label={displayName(s)}
       onClose={onClose}
       onBack={onBack}
       backLabel={backLabel}
-      subtitle={
-        <span className="flex flex-wrap items-center gap-1.5">
-          {(s.disambiguator || s.affiliation) && <span>{[s.disambiguator, s.affiliation].filter(Boolean).join(" · ")}</span>}
-          <Chip tone={s.vetted === "approved" ? "ok" : s.vetted === "rejected" ? "bad" : "warn"}>{vettingLabel(s.vetted, s.gender)}</Chip>
-          {s.retired && <Chip>{byGender(s.gender, "לא פעיל", "לא פעילה")}</Chip>}
-        </span>
-      }
+      subtitle={facts.length > 0 ? facts : undefined}
     >
       <Details port={port} s={s} week={week} actor={actor} handler={handler} busy={busy} act={act} />
 
-      <Section title="הטיפול השנה" aside={edition.label} label="הטיפול השנה">
-        <ApproachView s={s} a={a} actor={actor} handler={handler} nameOf={nameOf} />
-        {a?.offered_to != null && a.offered_to === actor.memberId && actor.canEdit && (
-          <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
-            <p className="text-sm">{nameOf(a.owner_member_id)} מציע/ה להעביר אליך את הטיפול.</p>
-            <div className="flex flex-wrap gap-2">
-              <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
-                קבלת הטיפול
-              </Button>
-              <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה נדחתה")}>
-                דחיית ההצעה
-              </Button>
+      <Section title="הטיפול השנה">
+        <div className="space-y-2">
+          <ApproachView s={s} a={a} actor={actor} handler={handler} nameOf={nameOf} />
+          {a?.offered_to != null && a.offered_to === actor.memberId && actor.canEdit && (
+            <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
+              <p className="text-sm">{nameOf(a.owner_member_id)} מציע/ה להעביר אליך את הטיפול.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
+                  קבלת הטיפול
+                </Button>
+                <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה נדחתה")}>
+                  דחיית ההצעה
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
-        {a?.offered_to != null && a.offered_to !== actor.memberId && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span>
-              הוצע להעביר את הטיפול ל{nameOf(a.offered_to)}. עד שתתקבל תשובה, הטיפול לא עובר.
-            </span>
-            {(handler || actor.isAdmin) && actor.canEdit && (
-              // The handler withdraws with «to nobody»; for an admin that would send the speaker back to the
-              // pool (an admin reassigns at once), so an admin "reassigns" to the same handler, which clears the offer.
-              <Button
-                kind="quiet"
-                busy={busy === "withdraw"}
-                onClick={() => void act("withdraw", () => port.speakers.handOver(edition.id, a.id, actor.isAdmin ? a.owner_member_id : null), "ההצעה בוטלה")}
-              >
-                ביטול ההצעה
-              </Button>
-            )}
-          </div>
-        )}
-        {mayClaim && (
-          <Button kind="primary" busy={busy === "claim"} onClick={() => void act("claim", () => port.speakers.claim(edition.id, s.id), "המרצה בטיפולך")}>
-            אני מטפל/ת
-          </Button>
-        )}
-        {mayManage && a && (
-          <StatusControls
-            key={a.id}
-            s={s}
-            a={a}
-            closedHere={closedHere.length > 0}
-            busy={busy}
-            onSet={(st, note) =>
-              act(`status:${st}`, () => port.speakers.setStatus(edition.id, a.id, a.version, st, note), st === a.status ? "ההערה נשמרה" : `עודכן: ${statusLabel(st, s.gender)}`)
-            }
-          />
-        )}
-        {a?.status === "positive" && closedHere.length === 0 && mayManage && onPlace && (
-          <Button kind="primary" onClick={() => onPlace(s.id)}>
-            שבץ בשבוע
-          </Button>
-        )}
-        {closedHere.length > 0 && (
-          <ClosedLessons
-            week={week}
-            s={s}
-            lessons={closedHere}
-            actor={actor}
-            contacts={contacts}
-            busy={busy}
-            notify={notify}
-            onSent={(l) => void act(`sent:${l.id}`, () => port.commands(edition.id).markConfirmSent(l.id, l.version), "סומן שההודעה נשלחה")}
-            onLesson={onLesson}
-          />
-        )}
-        {mayManage && a && <HandOver key={`${a.id}:${a.owner_member_id}`} team={week.team} a={a} actor={actor} busy={busy} onGo={(to, note) => act("handover", () => port.speakers.handOver(edition.id, a.id, to, note), handOverText(s, to, actor, nameOf))} />}
+          )}
+          {a?.offered_to != null && a.offered_to !== actor.memberId && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span>
+                הוצע להעביר את הטיפול ל{nameOf(a.offered_to)}. עד שתתקבל תשובה, הטיפול לא עובר.
+              </span>
+              {(handler || actor.isAdmin) && actor.canEdit && (
+                // The handler withdraws with «to nobody»; for an admin that would send the speaker back to the
+                // pool (an admin reassigns at once), so an admin "reassigns" to the same handler, which clears the offer.
+                <Button
+                  kind="quiet"
+                  busy={busy === "withdraw"}
+                  onClick={() => void act("withdraw", () => port.speakers.handOver(edition.id, a.id, actor.isAdmin ? a.owner_member_id : null), "ההצעה בוטלה")}
+                >
+                  ביטול ההצעה
+                </Button>
+              )}
+            </div>
+          )}
+          {mayClaim && (
+            <Button kind="primary" busy={busy === "claim"} onClick={() => void act("claim", () => port.speakers.claim(edition.id, s.id), "המרצה בטיפולך")}>
+              אני מטפל/ת
+            </Button>
+          )}
+          {mayManage && a && (
+            <StatusControls
+              key={a.id}
+              s={s}
+              a={a}
+              closedHere={closedHere.length > 0}
+              busy={busy}
+              onSet={(st, note) =>
+                act(`status:${st}`, () => port.speakers.setStatus(edition.id, a.id, a.version, st, note), st === a.status ? "ההערה נשמרה" : `עודכן: ${statusLabel(st, s.gender)}`)
+              }
+            />
+          )}
+          {a?.status === "positive" && closedHere.length === 0 && mayManage && onPlace && (
+            <Button kind="primary" onClick={() => onPlace(s.id)}>
+              שבץ בשבוע
+            </Button>
+          )}
+          {closedHere.length > 0 && (
+            <ClosedLessons
+              week={week}
+              s={s}
+              lessons={closedHere}
+              actor={actor}
+              contacts={contacts}
+              busy={busy}
+              notify={notify}
+              onSent={(l) => void act(`sent:${l.id}`, () => port.commands(edition.id).markConfirmSent(l.id, l.version), "סומן שההודעה נשלחה")}
+              onLesson={onLesson}
+            />
+          )}
+          {mayManage && a && <HandOver key={`${a.id}:${a.owner_member_id}`} team={week.team} a={a} actor={actor} busy={busy} onGo={(to, note) => act("handover", () => port.speakers.handOver(edition.id, a.id, to, note), handOverText(s, to, actor, nameOf))} />}
+        </div>
       </Section>
 
-      <Section title="פרטי קשר" label="פרטי קשר">
+      <Section title="פרטי קשר">
         {sideFailed && contacts === undefined ? (
           <p role="alert" className="text-sm text-bad">
             לא הצלחנו לטעון. <button type="button" className="underline" onClick={() => void loadSide()}>לנסות שוב</button>
@@ -231,7 +255,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
         ) : contacts === null ? (
           <p className="text-sm text-ink-soft">
             {handler && !(edition.kind === "real" && edition.status !== "archived")
-              ? "פרטי הקשר נפתחים רק במחזור האמיתי של השנה: לא במחזור תרגול, הדגמה או ארכיון."
+              ? "פרטי הקשר נפתחים רק במחזור האמיתי של השנה."
               : errorMessage("contacts_hidden")}
           </p>
         ) : (
@@ -239,59 +263,53 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
         )}
       </Section>
 
-      <Section title="זמינות" aside={a ? null : "נשמרת אצל מי שמטפל/ת השנה"} label="זמינות">
+      <Section title="זמינות">
+        {!a && <p className="mb-2 text-xs text-ink-soft">נשמרת אצל מי שמטפל/ת השנה.</p>}
         <AvailabilityGrid
           rows={a ? week.availability.filter((v) => v.approach_id === a.id) : []}
           gender={s.gender}
           busy={busy === "avail"}
           onSet={mayManage ? (day, part, kind, note) => act("avail", () => port.speakers.setAvailability(edition.id, s.id, day, part, kind, note), "הזמינות נשמרה") : undefined}
         />
-        {a && !mayManage && <p className="text-xs text-ink-soft">את הזמינות מעדכנים מי שמטפל/ת במרצה והמדריך/ה.</p>}
+        {a && !mayManage && <p className="mt-2 text-xs text-ink-soft">את הזמינות מעדכנים מי שמטפל/ת במרצה והמדריך/ה.</p>}
       </Section>
 
       <Vetting s={s} actor={actor} nameOf={nameOf} busy={busy} onVet={(state, note) => act(`vet:${state}`, () => port.speakers.vet([s.id], state, note), vetText(state, s))} />
 
-      <Section title={byGender(s.gender, "לימד אצלנו", "לימדה אצלנו")} label="שיעורים במחזורים">
-        {history == null ? (
-          <p className="text-sm text-ink-soft">{sideFailed ? "לא נטען." : "טוען…"}</p>
-        ) : history.length === 0 ? (
-          <p className="text-sm text-ink-soft">אין שיעורים סגורים במחזורים הקודמים במערכת.</p>
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {history.map((h, i) => (
-              <li key={`${h.edition_id}:${i}`} className="rounded-md bg-card px-2 py-1.5">
-                <b>{h.edition_label}</b> · {DAY_NAMES[h.day]} <bdi>{fmtRange(h.start_min, h.end_min)}</bdi> · {h.title ?? "ללא כותרת"}
-                {h.category && <span className="text-ink-soft"> · {h.category}</span>}
-                {h.role === "co" && <span className="text-ink-soft"> · מרצה שותף/ה</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      <TaughtHere port={port} s={s} actor={actor} edition={edition} categories={week.categories} history={history} failed={sideFailed} />
 
-      <SpeakerReviews port={port} s={s} actor={actor} edition={edition} />
-
-      <Section title="מה קרה" label="ציר הפעולות">
-        {lines == null ? (
-          <p className="text-sm text-ink-soft">{sideFailed ? "לא נטען." : "טוען…"}</p>
-        ) : lines.length === 0 ? (
-          <p className="text-sm text-ink-soft">עוד אין פעולות.</p>
-        ) : (
-          <ol className="space-y-1.5 text-sm">
-            {lines.map((l) => (
-              <li key={l.id} className="border-s-2 border-line ps-2">
-                <span className="text-xs text-ink-soft tabular-nums">
-                  <bdi>{when(l.at)}</bdi>
-                </span>{" "}
-                {l.who && <b>{l.who}: </b>}
-                {l.text}
-                {l.note && <span className="block text-ink-soft">«{l.note}»</span>}
-              </li>
-            ))}
-          </ol>
-        )}
-      </Section>
+      <Timeline lines={lines} failed={sideFailed} />
     </Sheet>
+  );
+}
+
+/** «מה קרה»: occasional reading, folded — its summary says how much there is and when it last moved. */
+function Timeline({ lines, failed }: { lines: ReturnType<typeof timeline> | null; failed: boolean }) {
+  if (lines == null || lines.length === 0) {
+    return (
+      <Section title="מה קרה" label="ציר הפעולות" count={lines == null ? (failed ? "לא נטען" : "טוען…") : "אין עדיין"}>
+        {null}
+      </Section>
+    );
+  }
+  const latest = lines.reduce((m, l) => (l.at > m ? l.at : m), lines[0].at);
+  return (
+    <section aria-label="ציר הפעולות">
+      <Fold title="מה קרה" hint={`${lines.length === 1 ? "פעולה אחת" : `${lines.length} פעולות`} · אחרונה ${when(latest, DAY)}`}>
+        <ol className="space-y-1.5 text-sm">
+          {lines.map((l) => (
+            <li key={l.id} className="border-s-2 border-line ps-2">
+              <span className="text-xs text-ink-soft tabular-nums">
+                <bdi>{when(l.at)}</bdi>
+              </span>{" "}
+              {l.who && <b>{l.who}: </b>}
+              {l.text}
+              {l.note && <span className="block text-ink-soft">«{l.note}»</span>}
+            </li>
+          ))}
+        </ol>
+      </Fold>
+    </section>
   );
 }
 
@@ -336,29 +354,30 @@ function Details({ port, s, week, actor, handler, busy, act }: { port: DataPort;
       />
     );
   }
+  const topics = topicsOf(s.topics, week.categories);
+  // No heading: the bio and the topics open the sheet; «עריכה» on its far end, as «פרטי השיעור» in the lesson panel.
   return (
-    <Section title="פרטים" label="פרטים">
-      {s.bio_short ? <p className="whitespace-pre-line">{s.bio_short}</p> : <p className="text-sm text-ink-soft">אין תיאור.</p>}
-      {s.topics.length > 0 && (
+    <section aria-label="פרטים" className="space-y-2">
+      <div className="flex items-start gap-2">
+        {s.bio_short ? <p className="min-w-0 flex-1 whitespace-pre-line">{s.bio_short}</p> : <p className="min-w-0 flex-1 text-sm text-ink-soft">אין תיאור.</p>}
+        {mayEdit && (
+          <Button kind="quiet" className="-me-2 -mt-2.5 shrink-0" onClick={() => setEditing(true)}>
+            עריכה
+          </Button>
+        )}
+      </div>
+      {!s.gender && <p className="text-sm font-semibold text-amber-900">מגדר לא ידוע: צריך להשלים לפני סגירת שיעור</p>}
+      {topics.length > 0 && (
         <ul aria-label="נושאים" className="flex flex-wrap gap-1">
-          {s.topics.map((t) => (
-            <li key={t}>
-              <Chip>{t}</Chip>
+          {topics.map((t) => (
+            <li key={t.name}>
+              <TopicChip name={t.name} category={t.category} />
             </li>
           ))}
         </ul>
       )}
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <dt className="text-ink-soft">מגדר</dt>
-        <dd>{s.gender ? GENDER_LABEL[s.gender] : <span className="font-semibold text-amber-900">לא ידוע: צריך להשלים לפני סגירת שיעור</span>}</dd>
-        <dt className="text-ink-soft">ערוץ מועדף</dt>
-        <dd>{s.contact_pref ? CONTACT_PREF_LABEL[s.contact_pref] : "לא צוין"}</dd>
-      </dl>
-      {mayEdit && <Button onClick={() => setEditing(true)}>עריכת הפרטים</Button>}
-      {!mayEdit && (handler || actor.isAdmin) && actor.canEdit && (
-        <p className="text-xs text-ink-soft">את פרטי המרצה עורכים במחזור האמיתי של השנה: המאגר משותף לכל השנים, ומחזור תרגול, הדגמה או ארכיון לא משנה אותו.</p>
-      )}
-    </Section>
+      {!mayEdit && (handler || actor.isAdmin) && actor.canEdit && <p className="text-xs text-ink-soft">את הפרטים עורכים רק במחזור האמיתי של השנה.</p>}
+    </section>
   );
 }
 
@@ -397,7 +416,7 @@ function ProfileEdit({
   };
   return (
     <form onSubmit={(e) => void submit(e)} aria-label="עריכת הפרטים" className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
-      <ProfileFields id={id} form={form} set={(p) => setForm((f) => ({ ...f, ...p }))} titles={titlesOf(week.edition.settings)} withName invalid={problem?.field ?? null} problem={problem?.text} />
+      <ProfileFields id={id} form={form} set={(p) => setForm((f) => ({ ...f, ...p }))} titles={titlesOf(week.edition.settings)} categories={week.categories} withName invalid={problem?.field ?? null} problem={problem?.text} />
       {actor.global && (
         <label className="flex min-h-11 cursor-pointer items-center gap-2">
           <input type="checkbox" checked={retired} onChange={(e) => setRetired(e.target.checked)} className="size-5 accent-ink" />
@@ -510,20 +529,27 @@ function ClosedLessons({
         const handler = week.approaches.find((x) => x.speaker_id === s.id)?.owner_member_id ?? null;
         const mine = lead && actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
         return (
-          <li key={l.id} className="space-y-2 rounded-lg border border-line bg-card px-3 py-1.5 text-sm">
+          <li key={l.id} className="space-y-1 rounded-lg border border-line bg-card px-3 pb-1 pt-2 text-sm">
+            <p className="min-w-0">
+              <span className="font-semibold">
+                {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
+              </span>{" "}
+              · {l.title ?? "כותרת: TBD"}
+            </p>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1">
-                נסגר: {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi> · {l.title ?? "כותרת: TBD"}
-              </span>
               <StageDots lesson={l} week={week} />
               {l.needs_reconfirm && <ReconfirmDot />}
-              {onLesson && <Button onClick={() => onLesson(l.id)}>לשיעור</Button>}
+              {lead && (
+                <Button kind="quiet" aria-expanded={open === l.id} onClick={() => setOpen((cur) => (cur === l.id ? null : l.id))}>
+                  הודעת סיכום <span aria-hidden>{open === l.id ? "▴" : "▾"}</span>
+                </Button>
+              )}
+              {onLesson && (
+                <Button className="ms-auto" onClick={() => onLesson(l.id)}>
+                  לשיעור
+                </Button>
+              )}
             </div>
-            {lead && (
-              <Button kind="quiet" aria-expanded={open === l.id} onClick={() => setOpen((cur) => (cur === l.id ? null : l.id))}>
-                הודעת סיכום {open === l.id ? "▴" : "▾"}
-              </Button>
-            )}
             {lead && open === l.id && (
               <div className="border-t border-line pb-1 pt-2">
                 <MessageComposer
@@ -560,8 +586,8 @@ function HandOver({ team, a, actor, busy, onGo }: { team: TeamMember[]; a: Appro
   const options = team.filter((t) => (t.role === "content" || t.role === "admin") && t.id !== a.owner_member_id && (actor.isAdmin || t.id !== actor.memberId));
   if (!open) {
     return (
-      <Button onClick={() => setOpen(true)} aria-expanded={false}>
-        העברה לחבר/ת צוות
+      <Button kind="quiet" onClick={() => setOpen(true)} aria-expanded={false}>
+        העברה לחבר/ת צוות <span aria-hidden>▾</span>
       </Button>
     );
   }
@@ -585,7 +611,7 @@ function HandOver({ team, a, actor, busy, onGo }: { team: TeamMember[]; a: Appro
         <input id={`${id}-note`} value={note} maxLength={LIMITS.note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
       </Field>
       <p className="text-xs text-ink-soft">
-        {actor.isAdmin ? "ההעברה מיידית, בלי לחכות לתשובה." : "הטיפול עובר רק כשהצד השני מקבל/ת את ההצעה. עד אז פרטי הקשר נשארים אצלך."}
+        {actor.isAdmin ? "ההעברה מיידית." : "הטיפול עובר רק כשהצד השני מקבל/ת."}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button kind="primary" disabled={!to} busy={busy === "handover"} onClick={() => void go()}>
@@ -664,6 +690,12 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
   const tel = telHref(c.phone);
   const wa = waHref(c.phone);
   const mail = mailHref(c.email);
+  // The preferred channel is said once: its button is the primary one, and «מועדף» beside it; a channel with
+  // nothing to press (no number, no address) is said in a line.
+  const pref = s.contact_pref;
+  const link = (p: ContactPref) => (pref === p ? LINK_PREFERRED : LINK_BUTTON);
+  const mark = (p: ContactPref) => pref === p && <span className="text-xs text-ink-soft">מועדף</span>;
+  const pressable: Record<ContactPref, boolean> = { phone: !!tel, whatsapp: !!wa, email: !!mail, secretary: !!c.secretary_note };
   return (
     <div className="space-y-2">
       {empty ? (
@@ -678,17 +710,19 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
                   <bdi>{c.phone}</bdi>
                 </div>
                 {(tel || wa) && (
-                  <span className="flex flex-wrap gap-1.5">
+                  <span className="flex flex-wrap items-center gap-1.5">
                     {tel && (
-                      <a href={tel} className={LINK_BUTTON}>
+                      <a href={tel} className={link("phone")}>
                         חיוג
                       </a>
                     )}
+                    {tel && mark("phone")}
                     {wa && (
-                      <a href={wa} target="_blank" rel="noopener noreferrer" className={LINK_BUTTON}>
+                      <a href={wa} target="_blank" rel="noopener noreferrer" className={link("whatsapp")}>
                         WhatsApp
                       </a>
                     )}
+                    {wa && mark("whatsapp")}
                   </span>
                 )}
               </dd>
@@ -702,9 +736,12 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
                   <bdi>{c.email}</bdi>
                 </div>
                 {mail && (
-                  <a href={mail} className={LINK_BUTTON}>
-                    שליחת מייל
-                  </a>
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <a href={mail} className={link("email")}>
+                      שליחת מייל
+                    </a>
+                    {mark("email")}
+                  </span>
                 )}
               </dd>
             </>
@@ -712,7 +749,10 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
           {c.secretary_note && (
             <>
               <dt className="text-ink-soft">דרך המזכירות</dt>
-              <dd className="min-w-0 whitespace-pre-line break-words">{c.secretary_note}</dd>
+              <dd className="min-w-0 whitespace-pre-line break-words">
+                {c.secretary_note}
+                {pref === "secretary" && <span className="block text-xs text-ink-soft">מועדף</span>}
+              </dd>
             </>
           )}
           {c.notes && (
@@ -723,7 +763,7 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
           )}
         </dl>
       )}
-      {s.contact_pref && <p className="text-xs text-ink-soft">ערוץ מועדף: {CONTACT_PREF_LABEL[s.contact_pref]}</p>}
+      {pref && !pressable[pref] && <p className="text-xs text-ink-soft">ערוץ מועדף: {CONTACT_PREF_LABEL[pref]}</p>}
       <Button onClick={() => setEditing(true)}>עריכת פרטי הקשר</Button>
     </div>
   );
@@ -743,45 +783,47 @@ function Vetting({ s, actor, nameOf, busy, onVet }: { s: Speaker; actor: Actor; 
     ["pending", "החזרה להמתנה"],
   ];
   return (
-    <Section title="אישור המדריך/ה" label="אישור המדריך/ה">
-      <p className="text-sm">
-        {vettingLabel(s.vetted, s.gender)}
-        {s.vetted !== "pending" && s.vetted_by != null && <span className="text-ink-soft"> · {nameOf(s.vetted_by)}</span>}
-      </p>
-      {s.vetted_note && <p className="text-sm text-ink-soft">«{s.vetted_note}»</p>}
-      {actor.global && s.vetted !== "pending" && !open && (
-        <Button onClick={() => setOpen(true)} aria-expanded={false}>
-          שינוי האישור
-        </Button>
-      )}
-      {actor.global && (s.vetted === "pending" || open) && (
-        <div className="space-y-2 rounded-lg border border-line bg-paper p-3">
-          <Field id={`${id}-note`} label="הערה על האישור (לא חובה, גלויה לכל הצוות)">
-            <input id={`${id}-note`} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            {choices
-              .filter(([st]) => st !== s.vetted || note.trim())
-              .map(([st, label]) => (
-                <Button
-                  key={st}
-                  kind={st === "approved" ? "primary" : "secondary"}
-                  busy={busy === `vet:${st}`}
-                  onClick={async () => {
-                    if (await onVet(st, note.trim() || null)) setNote("");
-                  }}
-                >
-                  {label}
+    <Section title="אישור המדריך/ה">
+      <div className="space-y-2">
+        <p className="text-sm">
+          {vettingLabel(s.vetted, s.gender)}
+          {s.vetted !== "pending" && s.vetted_by != null && <span className="text-ink-soft"> · {nameOf(s.vetted_by)}</span>}
+        </p>
+        {s.vetted_note && <p className="text-sm text-ink-soft">«{s.vetted_note}»</p>}
+        {actor.global && s.vetted !== "pending" && !open && (
+          <Button onClick={() => setOpen(true)} aria-expanded={false}>
+            שינוי האישור
+          </Button>
+        )}
+        {actor.global && (s.vetted === "pending" || open) && (
+          <div className="space-y-2 rounded-lg border border-line bg-paper p-3">
+            <Field id={`${id}-note`} label="הערה על האישור (לא חובה, גלויה לכל הצוות)">
+              <input id={`${id}-note`} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              {choices
+                .filter(([st]) => st !== s.vetted || note.trim())
+                .map(([st, label]) => (
+                  <Button
+                    key={st}
+                    kind={st === "approved" ? "primary" : "secondary"}
+                    busy={busy === `vet:${st}`}
+                    onClick={async () => {
+                      if (await onVet(st, note.trim() || null)) setNote("");
+                    }}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              {open && (
+                <Button kind="quiet" onClick={() => setOpen(false)}>
+                  ביטול
                 </Button>
-              ))}
-            {open && (
-              <Button kind="quiet" onClick={() => setOpen(false)}>
-                ביטול
-              </Button>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </Section>
   );
 }

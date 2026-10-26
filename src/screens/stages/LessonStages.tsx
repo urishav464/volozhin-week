@@ -1,8 +1,10 @@
 // A closed lesson's stages in the lesson panel (DESIGN «התא לפי שלב»): the five
 // the card's dots stand for — תשלום/הסעה · הודעת סיכום · מלווה · מקורות ·
-// מקראה — each a section that opens, and a red banner while the speaker must
-// be told again. Every change is a WeekCommand (CONTRACT «From placement to
-// arrival»), so the demo refuses exactly what the database refuses.
+// מקראה — each a row of one list that opens, a red banner while the speaker
+// must be told again (until the message is open: its own box says it there),
+// and «איך עבר» apart, «אחרי השבוע». A stage already filled in is read first,
+// its form behind «עריכה». Every change is a WeekCommand (CONTRACT «From
+// placement to arrival»), so the demo refuses exactly what the database refuses.
 //
 // Who may do what (the database decides; the screen only offers it):
 //   the handler or an admin — the payment/transport request, «סומן כנשלח»;
@@ -13,11 +15,11 @@ import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data/stageRules";
-import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro } from "../../domain/escorts";
+import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro, ticksOf } from "../../domain/escorts";
 import { PRINT_WHEN_LABEL, readerFilesOf, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import { byGender } from "../../domain/names";
-import type { Gender, PrintWhen, SourcesKind, SpeakerContacts, Week } from "../../domain/types";
+import { type Gender, type PrintWhen, type SourcesKind, type SpeakerContacts, TICK_ITEMS, type Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ReconfirmDot } from "../../grid/bits";
 import { escortClashes, ESCORT_MIN_GAP } from "../../rules/warnings";
@@ -25,7 +27,7 @@ import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
 import { MessageComposer } from "./MessageComposer";
-import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, type StageCtx, StageSection } from "./parts";
+import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, SavedView, type StageCtx, StageList, StageSection } from "./parts";
 import { PaymentStage } from "./PaymentStage";
 import { SourceFiles } from "./SourceFiles";
 import { ReviewSection } from "./ReviewStage";
@@ -49,6 +51,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   const { busy, run } = useRunner(notify, clear);
   const [open, setOpen] = useState<Set<StageKey>>(() => new Set(focus ? [focus] : []));
   const [reviewOpen, setReviewOpen] = useState(false);
+  const afterId = useId();
   // From «המרצים שלי»: the section it was opened for comes into view.
   useEffect(() => {
     if (focus) requestAnimationFrame(() => document.getElementById(`stage-${focus}`)?.scrollIntoView({ block: "start" }));
@@ -90,7 +93,9 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
         return (
           <>
             <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />
-            <SourcesStage key={l.version} {...ctx} onReader={() => show("reader")} />
+            <div className="border-t border-line pt-3">
+              <SourcesStage key={l.version} {...ctx} />
+            </div>
           </>
         );
       case "reader":
@@ -98,31 +103,43 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
     }
   };
 
+  // Two parts of the panel (the Sheet rules them apart): the five stages, then «איך עבר» — not one of the card's dots.
   return (
-    <section aria-labelledby="stages-title" className="space-y-2">
-      <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-semibold text-ink">
-        שלבים
-      </h3>
-      {l.needs_reconfirm && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
-          <ReconfirmDot />
-          <span className="min-w-0 flex-1">
-            <b>לעדכן את המרצה:</b> השיעור השתנה אחרי שהודעת הסיכום נשלחה.
-          </span>
-          {!open.has("msg") && <Button onClick={() => show("msg")}>להודעה</Button>}
-        </div>
-      )}
-      {week.edition.kind === "archive" && <ImportNote cmds={cmds} lessonId={l.id} />}
-      {stages.map((s) => (
-        <StageSection key={s.key} stage={s} open={open.has(s.key)} onToggle={() => toggle(s.key)}>
-          {body(s.key)}
-        </StageSection>
-      ))}
+    <>
+      <section aria-labelledby="stages-title" className="space-y-2">
+        <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-semibold text-ink">
+          שלבים
+        </h3>
+        {l.needs_reconfirm && !open.has("msg") && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
+            <ReconfirmDot />
+            <span className="min-w-0 flex-1">
+              <b>לעדכן את המרצה:</b> השיעור השתנה אחרי שהודעת הסיכום נשלחה.
+            </span>
+            <Button onClick={() => show("msg")}>להודעה</Button>
+          </div>
+        )}
+        {week.edition.kind === "archive" && <ImportNote cmds={cmds} lessonId={l.id} />}
+        <StageList>
+          {stages.map((s) => (
+            <StageSection key={s.key} stage={s} open={open.has(s.key)} onToggle={() => toggle(s.key)}>
+              {body(s.key)}
+            </StageSection>
+          ))}
+        </StageList>
+      </section>
       {/* after the week (milestone 6): opinions about the speaker — the edition's content members and admins only */}
       {actor.role !== "logistics" && l.kind === "lesson" && (
-        <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
+        <section aria-labelledby={afterId}>
+          <h3 id={afterId} className="mb-2 flex min-h-8 items-center text-sm font-semibold text-ink-soft">
+            אחרי השבוע
+          </h3>
+          <StageList>
+            <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
+          </StageList>
+        </section>
       )}
-    </section>
+    </>
   );
 }
 
@@ -200,7 +217,11 @@ function gapText(gap: number): string {
   return `${gap} דקות ביניהם`;
 }
 
-/** The escort from the edition's roster (with each trainee's load), self-introduction, a note, and the duty notes they will read. */
+/**
+ * The escort from the edition's roster (with each trainee's load), self-introduction, a note, and the duty notes they
+ * will read. Once something is saved it is read first; «עריכה» opens the form, and a save (a new version, a new key)
+ * closes it again.
+ */
 function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }: StageCtx & { speakerGender: Gender | null }) {
   const id = useId();
   const load = useMemo(() => escortLoad(week), [week]);
@@ -208,13 +229,13 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
   // Nothing saved yet, and the lesson is at night: «הצגה עצמית» is pre-filled as a suggestion — stored only on «שמירה».
   const fresh = l.escort_roster_id == null && !l.self_intro && l.escort_note == null;
   const suggested = fresh && suggestSelfIntro(l);
+  const [editing, setEditing] = useState(fresh);
   const [rosterId, setRosterId] = useState<number | null>(l.escort_roster_id);
   const [selfIntro, setSelfIntro] = useState(l.self_intro || suggested);
   const [note, setNote] = useState(l.escort_note ?? "");
   const [problem, setProblem] = useState<string | null>(null);
   const nameOf = (rid: number | null) => (rid == null ? null : (week.roster.find((r) => r.id === rid)?.full_name ?? "חניך/ה שנמחק/ה"));
   const clashes = rosterId != null ? escortClashes(week, l, rosterId) : [];
-  const notes = dutyNotes({ kind: l.kind, self_intro: selfIntro, transport: l.transport, approval: l.approval }, week.edition.settings.duty_phrases);
   const noteValue = note.trim() || null;
   const dirty = rosterId !== l.escort_roster_id || selfIntro !== l.self_intro || noteValue !== l.escort_note;
 
@@ -228,105 +249,137 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
     });
   };
 
-  const dutyList = (
-    <div className="space-y-1">
-      <p className="text-sm font-semibold">משהו שחשוב לדעת (ברשימת המלווים)</p>
-      {notes.length === 0 && !noteValue ? (
-        <p className="text-sm text-ink-soft">
-          {(week.edition.settings.duty_phrases ?? []).length === 0
-            ? "עוד אין ניסוחים: המדריך/ה מדביק/ה אותם בהגדרות, בלשונית «תבניות» (מקובץ המלווים של אשתקד)."
-            : "אין ניסוח שחל על השיעור הזה."}
-        </p>
-      ) : (
-        <ul aria-label="משהו שחשוב לדעת" className="list-disc space-y-0.5 ps-5 text-sm">
-          {notes.map((t, i) => (
-            <li key={i}>{t}</li>
-          ))}
-          {noteValue && <li>{noteValue}</li>}
-        </ul>
-      )}
-    </div>
-  );
+  const cancel = () => {
+    setRosterId(l.escort_roster_id);
+    setSelfIntro(l.self_intro);
+    setNote(l.escort_note ?? "");
+    setProblem(null);
+    setEditing(false);
+  };
 
-  // what the escort ticked through their link (the team only reads it)
-  const ticks = l.escort_roster_id != null && (
-    <div className="space-y-1">
-      <p className="text-sm font-semibold">מה המלווה סימן/ה בקישור</p>
-      <EscortTicksLine week={week} lessonId={l.id} />
-    </div>
-  );
+  // what the escorts' list will say: as saved in the read view, as the form stands in it
+  const dutyList = (intro: boolean, extra: string | null) => {
+    const notes = dutyNotes({ kind: l.kind, self_intro: intro, transport: l.transport, approval: l.approval }, week.edition.settings.duty_phrases);
+    return (
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">ברשימת המלווים יופיע</p>
+        {notes.length === 0 && !extra ? (
+          <p className="text-sm text-ink-soft">
+            {(week.edition.settings.duty_phrases ?? []).length === 0 ? "עוד אין ניסוחים — בהגדרות ← «תבניות»." : "אין ניסוח שחל על השיעור הזה."}
+          </p>
+        ) : (
+          <ul aria-label="משהו שחשוב לדעת" className="list-disc space-y-0.5 ps-5 text-sm">
+            {notes.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+            {extra && <li>{extra}</li>}
+          </ul>
+        )}
+      </div>
+    );
+  };
 
-  if (!actor.canEdit) {
+  // what the escort ticked through their link (the team only reads it); before the first tick, one quiet line
+  const tickTimes = ticksOf(week.escortTicks ?? [], l.id);
+  const ticks =
+    l.escort_roster_id != null &&
+    (TICK_ITEMS.some((item) => tickTimes[item] != null) ? (
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">מה המלווה סימן/ה בקישור</p>
+        <EscortTicksLine week={week} lessonId={l.id} />
+      </div>
+    ) : (
+      <p className="text-sm text-ink-soft">המלווה עוד לא סימן/ה דבר בקישור.</p>
+    ));
+
+  if (!actor.canEdit || !editing) {
     return (
       <>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+        <SavedView onEdit={actor.canEdit ? () => setEditing(true) : undefined}>
           <dt className="text-ink-soft">מלווה</dt>
           <dd>{nameOf(l.escort_roster_id) ?? "אין"}</dd>
           <dt className="text-ink-soft">הצגה עצמית</dt>
           <dd>{l.self_intro ? "כן" : "לא"}</dd>
-        </dl>
+        </SavedView>
+        {dutyList(l.self_intro, l.escort_note)}
         {ticks}
-        {dutyList}
       </>
     );
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="שיבוץ מלווה" className="space-y-3" noValidate>
-      {roster.length === 0 ? (
-        <p className="text-sm text-ink-soft">רשימת החניכים של המחזור ריקה. מוסיפים אותה בהגדרות, בלשונית «חניכים».</p>
-      ) : (
-        <Field id={`${id}-who`} label="מלווה מרשימת החניכים" hint="ליד כל שם: כמה שיעורים הוא/היא כבר מלווה.">
-          <select id={`${id}-who`} value={rosterId ?? ""} onChange={(e) => setRosterId(e.target.value ? Number(e.target.value) : null)} className={INPUT} aria-describedby={`${id}-who-hint`}>
-            <option value="">בלי מלווה</option>
-            {/* an escort deleted from the roster meanwhile stays visible until changed */}
-            {rosterId != null && !roster.some((r) => r.id === rosterId) && <option value={rosterId}>{nameOf(rosterId)}</option>}
-            {roster.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.full_name} · {loadText(load.get(r.id) ?? 0)}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-      {clashes.length > 0 && (
-        <ul aria-label="שיעורים קרובים של המלווה" className="space-y-1">
-          {clashes.map(({ lesson: o, gap }) => (
-            <li key={o.id} className="rounded-md bg-amber-50 px-2 py-1 text-sm text-amber-900">
-              ⚠ {nameOf(rosterId)} כבר מלווה ב{DAY_NAMES[o.day]} <bdi>{fmtRange(o.start_min, o.end_min)}</bdi>: {gapText(gap)} (הצעה: לפחות {ESCORT_MIN_GAP} דקות)
-            </li>
-          ))}
-        </ul>
-      )}
-      <div>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" checked={selfIntro} onChange={(e) => setSelfIntro(e.target.checked)} className="size-5 accent-ink" />
-          הצגה עצמית: {byGender(speakerGender, "המרצה מציג את עצמו", "המרצה מציגה את עצמה", "המרצה מציג/ה את עצמו/ה")}
-        </label>
-        {suggested && selfIntro && !l.self_intro && (
-          <p className="text-xs text-ink-soft">
-            <b>הצעה:</b> השיעור מ-<bdi>{fmt(SELF_INTRO_FROM)}</bdi> ועד הבוקר, ולכן הסימון מוצע מראש. הוא נשמר רק ב«שמירה».
-          </p>
+    <>
+      <form onSubmit={(e) => void submit(e)} aria-label="שיבוץ מלווה" className="space-y-3" noValidate>
+        {roster.length === 0 ? (
+          <p className="text-sm text-ink-soft">רשימת החניכים של המחזור ריקה. מוסיפים אותה בהגדרות, בלשונית «חניכים».</p>
+        ) : (
+          <Field id={`${id}-who`} label="מלווה מרשימת החניכים">
+            <select id={`${id}-who`} value={rosterId ?? ""} onChange={(e) => setRosterId(e.target.value ? Number(e.target.value) : null)} className={INPUT}>
+              <option value="">בלי מלווה</option>
+              {/* an escort deleted from the roster meanwhile stays visible until changed */}
+              {rosterId != null && !roster.some((r) => r.id === rosterId) && <option value={rosterId}>{nameOf(rosterId)}</option>}
+              {roster.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.full_name} · {loadText(load.get(r.id) ?? 0)}
+                </option>
+              ))}
+            </select>
+          </Field>
         )}
+        {clashes.length > 0 && (
+          <ul aria-label="שיעורים קרובים של המלווה" className="space-y-1">
+            {clashes.map(({ lesson: o, gap }) => (
+              <li key={o.id} className="rounded-md bg-amber-50 px-2 py-1 text-sm text-amber-900">
+                ⚠ {nameOf(rosterId)} כבר מלווה ב{DAY_NAMES[o.day]} <bdi>{fmtRange(o.start_min, o.end_min)}</bdi>: {gapText(gap)} (הצעה: לפחות {ESCORT_MIN_GAP} דקות)
+              </li>
+            ))}
+          </ul>
+        )}
+        <div>
+          <label className="flex min-h-11 cursor-pointer items-center gap-2">
+            <input type="checkbox" checked={selfIntro} onChange={(e) => setSelfIntro(e.target.checked)} className="size-5 accent-ink" />
+            הצגה עצמית: {byGender(speakerGender, "המרצה מציג את עצמו", "המרצה מציגה את עצמה", "המרצה מציג/ה את עצמו/ה")}
+          </label>
+          {suggested && selfIntro && !l.self_intro && (
+            <p className="text-xs text-ink-soft">
+              <b>הצעה:</b> השיעור מ-<bdi>{fmt(SELF_INTRO_FROM)}</bdi> ועד הבוקר, ולכן הסימון מוצע מראש. הוא נשמר רק ב«שמירה».
+            </p>
+          )}
+        </div>
+        <Field id={`${id}-note`} label="הערה למלווה (לא חובה)" hint="בלי מספרי טלפון.">
+          <textarea id={`${id}-note`} rows={2} value={note} maxLength={STAGE_LIMITS.escort_note} onChange={(e) => setNote(e.target.value)} className={`${INPUT} py-2`} aria-describedby={`${id}-note-hint`} />
+        </Field>
+        {problem && <Problem>{problem}</Problem>}
+        <div className="flex flex-wrap gap-2">
+          <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "escort"} busyLabel="שומר…">
+            שמירה
+          </Button>
+          {!fresh && (
+            <Button kind="quiet" onClick={cancel}>
+              ביטול
+            </Button>
+          )}
+        </div>
+      </form>
+      {/* what the form leads to, read only: the escorts' list, and the link's ticks */}
+      <div className="space-y-3 border-t border-line pt-3">
+        {dutyList(selfIntro, noteValue)}
+        {ticks}
       </div>
-      <Field id={`${id}-note`} label="הערה למלווה (לא חובה)" hint="נכנסת ל«משהו שחשוב לדעת». בלי מספרי טלפון.">
-        <textarea id={`${id}-note`} rows={2} value={note} maxLength={STAGE_LIMITS.escort_note} onChange={(e) => setNote(e.target.value)} className={`${INPUT} py-2`} aria-describedby={`${id}-note-hint`} />
-      </Field>
-      {dutyList}
-      {ticks}
-      {problem && <Problem>{problem}</Problem>}
-      <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "escort"} busyLabel="שומר…">
-        שמירה
-      </Button>
-    </form>
+    </>
   );
 }
 
 // ------------------------------------------------------------------ sources
 
-/** What arrived for the lesson and when it is printed (the files themselves: SourceFiles, above it). */
-function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx & { onReader: () => void }) {
+/**
+ * What arrived for the lesson and when it is printed (the files themselves: SourceFiles, above it). Read first once
+ * anything arrived; «עריכה» opens the form, a save (a new version, a new key) closes it.
+ */
+function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   const id = useId();
+  const pending = l.sources_kind === "pending";
+  const [editing, setEditing] = useState(pending);
   const [kind, setKind] = useState<SourcesKind>(l.sources_kind);
   const [print, setPrint] = useState<PrintWhen>(l.print_when);
   const [note, setNote] = useState(l.sources_note ?? "");
@@ -340,9 +393,19 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
     next.sources_kind !== l.sources_kind || next.print_when !== l.print_when || next.sources_note !== l.sources_note || next.presentation_url !== l.presentation_url || next.in_reader !== l.in_reader;
   const link = l.presentation_url && /^https?:\/\//i.test(l.presentation_url) ? l.presentation_url : null;
 
-  if (!actor.canEdit) {
+  const cancel = () => {
+    setKind(l.sources_kind);
+    setPrint(l.print_when);
+    setNote(l.sources_note ?? "");
+    setUrl(l.presentation_url ?? "");
+    setInReader(l.in_reader);
+    setProblem(null);
+    setEditing(false);
+  };
+
+  if (!actor.canEdit || !editing) {
     return (
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+      <SavedView onEdit={actor.canEdit ? () => setEditing(true) : undefined}>
         <dt className="text-ink-soft">מה התקבל</dt>
         <dd>{SOURCES_LABEL[l.sources_kind]}</dd>
         <dt className="text-ink-soft">הדפסה</dt>
@@ -363,7 +426,9 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
             </dd>
           </>
         )}
-      </dl>
+        <dt className="text-ink-soft">במקראה</dt>
+        <dd>{l.in_reader ? "כן" : "לא"}</dd>
+      </SavedView>
     );
   }
 
@@ -411,20 +476,19 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act, onReader }: StageCtx 
           <input type="checkbox" checked={inReader && printable} disabled={!printable} onChange={(e) => setInReader(e.target.checked)} className="size-5 accent-ink" />
           להכניס למקראה
         </label>
-        {!printable && <p className="text-xs text-ink-soft">אין כאן מה להדפיס (טרם התקבלו, בלי מקורות, או מצגת בלבד).</p>}
-      </div>
-      <div className="space-y-1">
-        <p className="text-xs text-ink-soft">
-          כשמעלים קובץ ראשון, «טרם התקבלו» הופך ל«דף מקורות», והשיעור מסומן להיכנס למקראה (אם יש בו מה להדפיס).
-        </p>
-        <button type="button" onClick={onReader} className={LINK_BUTTON}>
-          על המקראה
-        </button>
+        {!printable && <p className="text-xs text-ink-soft">אין מה להדפיס.</p>}
       </div>
       {problem && <Problem>{problem.text}</Problem>}
-      <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "sources"} busyLabel="שומר…">
-        שמירה
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button kind="primary" type="submit" disabled={!dirty} busy={busy === "sources"} busyLabel="שומר…">
+          שמירה
+        </Button>
+        {!pending && (
+          <Button kind="quiet" onClick={cancel}>
+            ביטול
+          </Button>
+        )}
+      </div>
     </form>
   );
 }
@@ -439,7 +503,7 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
     unreadable: "מסומן למקראה, אבל הקבצים שהועלו לא נקראו (מוגנים בסיסמה, פגומים או בפורמט אחר): צריך להעלות קובץ אחר.",
     missing: "מסומן למקראה, ועוד לא הועלה קובץ: חסר.",
     not_marked: "הקבצים הועלו, ועוד לא סומן שהשיעור נכנס למקראה.",
-    pending: "המקורות עוד לא התקבלו.",
+    pending: "",
     presentation_only: "מצגת בלבד: לא נכנסת למקראה.",
     no_sources: "בלי מקורות: אין מה להדפיס במקראה.",
     ...MEMORIAL_SAID,
@@ -449,20 +513,26 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
     row && row.word.length > 0 && status === "included" && wordText(row.word.length),
     row && row.unread.length > 0 && status !== "unreadable" && unreadText(row.unread.length, status === "included"),
   ].filter(Boolean);
+  // «למקורות ולקבצים» only while something there is still to do
+  const settled = (status === "included" && besides.length === 0) || status === "presentation_only" || status === "no_sources";
+  const toSources = actor.canEdit && !settled;
+  const toReader = actor.role !== "logistics";
   return (
     <div className="space-y-2 text-sm">
       <p>
         <b>{STATUS_LABEL[status]}.</b> {said[status]}
         {besides.map((t) => ` ${t}.`).join("")}
       </p>
-      <div className="flex flex-wrap gap-2">
-        {actor.canEdit && <Button onClick={onSources}>למקורות ולקבצים</Button>}
-        {actor.role !== "logistics" && (
-          <Link to="/reader" className={LINK_BUTTON}>
-            למקראה ‹
-          </Link>
-        )}
-      </div>
+      {(toSources || toReader) && (
+        <div className="flex flex-wrap gap-2">
+          {toSources && <Button onClick={onSources}>למקורות ולקבצים</Button>}
+          {toReader && (
+            <Link to="/reader" className={LINK_BUTTON}>
+              למקראה ‹
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

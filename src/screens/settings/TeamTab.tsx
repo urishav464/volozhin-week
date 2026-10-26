@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ROLE_LABEL } from "../../lib/labels";
-import { Badge, Button, Confirm, EditionPicker, Field, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -73,7 +73,6 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
       ) : (
         <>
           <EditionPicker editions={editions} value={editionId} onChange={setEditionId} />
-          {editionId != null && <AddMember key={editionId} editionId={editionId} onAdded={load} />}
           {failed ? (
             <LoadError onRetry={() => void load()} />
           ) : !rows || !everywhere ? (
@@ -90,7 +89,7 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                 }
               >
                 {rows.length === 0 ? (
-                  <p className="text-ink-soft">עוד אין אף אחד ברשימה של המחזור הזה. מוסיפים בטופס שלמעלה.</p>
+                  <p className="text-ink-soft">עוד אין אף אחד בצוות של המחזור הזה.</p>
                 ) : (
                   <Rows label="צוות המחזור" head={["שם", "מייל", "מגדר", "תפקיד", "מצב"]}>
                     {rows.map((m) => (
@@ -101,8 +100,10 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                 {!me.global_admin && rows.some((r) => r.role === "admin" && r.email !== me.email) && (
                   <p className="mt-3 text-xs text-ink-soft">שורה של מדריך/ה משנה רק מי שמדריך/ה בכל המחזורים.</p>
                 )}
+                {/* adding is occasional: under the list, folded — open while the edition has nobody */}
+                {editionId != null && <AddMember key={editionId} editionId={editionId} empty={rows.length === 0} onAdded={load} />}
               </Panel>
-              <Panel title="בכל המחזורים" aside={me.global_admin ? "מוסיפים רק לפי מדריך ההקמה" : "לצפייה בלבד"}>
+              <Panel title="בכל המחזורים" aside={me.global_admin ? undefined : "לצפייה בלבד"}>
                 {everywhere.length === 0 ? (
                   <p className="text-ink-soft">אין.</p>
                 ) : (
@@ -244,9 +245,11 @@ function RoleField({ name, value, onChange }: { name: string; value: Role; onCha
   );
 }
 
-function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => Promise<void> }) {
+function AddMember({ editionId, empty, onAdded }: { editionId: number; empty: boolean; onAdded: () => Promise<void> }) {
   const { port } = useSettings();
   const { busy, run } = useAction();
+  // where the fold starts, once: the first member added does not close it under the hand that added them
+  const [startOpen] = useState(empty);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [gender, setGender] = useState<Gender | null>(null);
@@ -282,7 +285,7 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
   };
 
   return (
-    <Panel title="הוספת חבר/ת צוות">
+    <Fold title="+ חבר/ת צוות" defaultOpen={startOpen} className="mt-2">
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2" noValidate aria-describedby={problem ? `${id}-problem` : undefined}>
         <Field id={`${id}-email`} label="כתובת Gmail" hint="הכתובת שאיתה נכנסים עם Google.">
           <input
@@ -320,7 +323,7 @@ function AddMember({ editionId, onAdded }: { editionId: number; onAdded: () => P
           </Button>
         </div>
       </form>
-    </Panel>
+    </Fold>
   );
 }
 

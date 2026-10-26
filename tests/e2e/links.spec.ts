@@ -270,7 +270,8 @@ test.describe("demo build", () => {
     await a.getByRole("button", { name: "הסרה", exact: true }).click();
     await expect(toast(page, "ההרשמה הוסרה")).toBeVisible();
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 6");
-    await sunday.getByText("עוד לא נרשמו (2)").click(); // ה׳ leads ספר א׳: not someone who still needs a group
+    await expect(sunday.locator("[data-kk-missing]")).toHaveText("2"); // ה׳ leads ספר א׳: not someone who still needs a group
+    await sunday.getByText("עוד לא נרשמו", { exact: true }).click();
     const notYet = sunday.getByRole("list", { name: "עוד לא נרשמו · ראשון 21:30–22:30" });
     await expect(notYet).toContainText("מלווה לדוגמה ד׳");
     await expect(notYet).not.toContainText("מלווה לדוגמה ה׳");
@@ -309,19 +310,21 @@ test.describe("demo build", () => {
     await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 0 מתוך 2");
 
     // a placement by the staff, from «עוד לא נרשמו» (ה׳ leads the new group: not among them)
-    await monday.getByText("עוד לא נרשמו (5)").click();
+    await expect(monday.locator("[data-kk-missing]")).toHaveText("5");
+    await monday.getByText("עוד לא נרשמו", { exact: true }).click();
     const place = monday.getByRole("form", { name: "שיבוץ · שני 21:30–22:30" });
     await place.getByLabel("חניך/ה").selectOption({ label: "מלווה לדוגמה א׳" });
     await place.getByLabel("לקבוצה").selectOption({ label: "ספר חדש לדוגמה" });
     await place.getByRole("button", { name: "שיבוץ" }).click();
     await expect(toast(page, "שובץ/ה")).toBeVisible();
     await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 2");
-    await expect(monday.getByText("עוד לא נרשמו (4)")).toBeVisible();
+    await expect(monday.locator("[data-kk-missing]")).toHaveText("4");
 
-    // the books to order: nothing filled in for the admin; the count they type, ordered
+    // the books to order (folded under their line on this screen): nothing filled in for the admin; the count they type, ordered
+    await g.getByText("ספרים: עוד לא נקבע כמה להזמין").click();
     const books = g.getByRole("form", { name: "ספרים · ספר חדש לדוגמה" });
     await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("");
-    await expect(books).toContainText("נרשמו 1 · מובילים 2");
+    await expect(books).toContainText("מובילים 2");
     await books.getByLabel("עותקים להזמנה").fill("3");
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();
     await books.getByRole("button", { name: "שמירה" }).click();
@@ -340,6 +343,7 @@ test.describe("demo build", () => {
     await expect(g).toBeVisible();
 
     // the window: closed by the admin, then the public form says so
+    await page.getByRole("button", { name: "עריכת החלון" }).click();
     await page.getByRole("button", { name: "בלי חלון (ההרשמה סגורה)" }).click();
     await expect(toast(page, "ההרשמה סגורה: אין חלון")).toBeVisible();
     await expect(page.getByRole("region", { name: "חלון ההרשמה" })).toContainText("ההרשמה עוד לא נפתחה.");
@@ -646,7 +650,8 @@ test.describe("mock build", () => {
     await expect(sunday.getByRole("article", { name: "ספר לדוגמה" }).locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 5");
     expect(sb.rpc.get("load_kk")?.[0]).toEqual({ p_edition: 7 });
 
-    // the window, in Israel's time
+    // the window, in Israel's time (its form behind «עריכת החלון»)
+    await page.getByRole("button", { name: "עריכת החלון" }).click();
     const win = page.getByRole("form", { name: "חלון ההרשמה" });
     await win.getByLabel("נפתחת (שעון ישראל)").fill("2027-01-10T20:00");
     await win.getByLabel("נסגרת (שעון ישראל)").fill("2027-01-17T20:00");
@@ -672,6 +677,7 @@ test.describe("mock build", () => {
     await place.getByLabel("לקבוצה").selectOption({ label: "ספר לדוגמה" });
     await place.getByRole("button", { name: "שיבוץ" }).click();
     await expect.poll(() => sb.rpc.get("kk_place")).toEqual([{ p_group: 21, p_roster: week.roster[1].id }]);
+    await sunday.getByRole("article", { name: "ספר לדוגמה" }).getByText(/^ספרים:/).click();
     const books = sunday.getByRole("form", { name: "ספרים · ספר לדוגמה" });
     await books.getByLabel("עותקים להזמנה").fill("5");
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();

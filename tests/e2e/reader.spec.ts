@@ -258,6 +258,7 @@ test.describe("demo build", () => {
   test("reopening a lesson keeps its files, «מהמרצה הקודם», out of the reader and for removal", async ({ page }, info) => {
     await page.goto(demoUrl());
     const panel = await openLesson(page, info, "שלישי", "מרצה 16");
+    await panel.getByText("פעולות נוספות").click();
     await panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" }).click();
     await expect(panel.getByRole("group", { name: "אישור" })).toContainText("הקובץ שהועלה נשאר בלוח השיעור");
     await panel.getByRole("button", { name: "פתיחה מחדש ומחיקה" }).click();

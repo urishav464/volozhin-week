@@ -36,8 +36,9 @@ export function CategoriesTab() {
   return (
     <>
       <Panel title="קטגוריות" aside={`${list.filter((c) => c.active).length} פעילות · לכל השנים`}>
-        <p className="mb-3 text-sm text-ink-soft">הקטגוריה שייכת לשיעור, וצבעה מסמן אותו ברשת. קטגוריה שיש בה שיעורים משביתים — היא נשארת בשיעורים של שנים קודמות.</p>
-        <Rows label="קטגוריות" head={["קטגוריה", "צבע", "מצב"]}>
+        <Strip list={list.filter((c) => c.active)} />
+        <p className="mb-3 text-sm text-ink-soft">הצבע מסמן את השיעור ברשת, בציר של כל יום ובמקרא — לפי הסדר שכאן.</p>
+        <Rows label="קטגוריות" head={["קטגוריה", "מצב"]}>
           {list.map((c, i) => (
             <CategoryItem
               key={c.id}
@@ -61,13 +62,38 @@ function Swatch({ color }: { color: string }) {
   return <span aria-hidden className="inline-block size-4 shrink-0 rounded-full border border-ink/10 align-[-2px]" style={{ background: color }} />;
 }
 
+/** The active categories' colours in their order — the grid's legend, at a glance; ↑↓ move it at once. The list names them. */
+function Strip({ list }: { list: Category[] }) {
+  if (list.length === 0) return null;
+  return (
+    <div aria-hidden className="mb-3 flex h-2 gap-0.5 overflow-hidden rounded-full">
+      {list.map((c) => (
+        <span key={c.id} title={c.name} className="min-w-0 flex-1" style={{ background: c.color }} />
+      ))}
+    </div>
+  );
+}
+
+/** A #rrggbb colour's hue, 0–360 — the picker's order. */
+function hue(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (d === 0) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+/** The palette by hue (red → … → plum), so near neighbours (חום/חלודה, זית/חאקי) sit side by side. A copy: PALETTE's own order is the schema's and the handlers' colours. */
+const BY_HUE = [...PALETTE].sort((a, b) => hue(a.color) - hue(b.color));
+
 /**
  * A radio group of the palette's colours — names for screen readers, a ring
  * for the chosen one, and a dot under a colour another category already has
  * (two categories in one colour blur the grid's colour coding).
  */
 function ColorField({ name, value, onChange, taken }: { name: string; value: string; onChange: (c: string) => void; taken?: Set<string> }) {
-  const options = PALETTE.some((p) => p.color === value) || !value ? PALETTE : [{ color: value, name: "הצבע הנוכחי" }, ...PALETTE];
+  const options = PALETTE.some((p) => p.color === value) || !value ? BY_HUE : [{ color: value, name: "הצבע הנוכחי" }, ...BY_HUE];
   const anyTaken = !!taken && options.some((p) => taken.has(p.color));
   return (
     <fieldset className="min-w-0">
@@ -129,8 +155,8 @@ function CategoryItem({
     <span className="inline-flex items-center gap-2">
       <Swatch color={c.color} />
       {c.name}
+      <span className="sr-only"> · צבע {colorName(c.color)}</span>
     </span>,
-    colorName(c.color),
     c.active ? "" : <Badge tone="muted">מושבתת</Badge>,
   ];
 
@@ -220,7 +246,7 @@ function CategoryItem({
             <Confirm
               text={
                 <>
-                  <b>{c.name}</b>: {errorMessage("category_in_use")}
+                  <b>{c.name}</b>: {errorMessage("category_in_use")} גם מושבתת, היא נשארת בשיעורים הקיימים.
                 </>
               }
               confirm="השבתה"

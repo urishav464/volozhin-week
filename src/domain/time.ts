@@ -16,6 +16,9 @@ export const DAY_NAMES: Record<Day, string> = {
   4: "חמישי",
 };
 
+/** A day's letter, for a column too narrow for its name (the topics table); its full name stays for a screen reader. */
+export const DAY_LETTERS: Record<Day, string> = { 0: "א׳", 1: "ב׳", 2: "ג׳", 3: "ד׳", 4: "ה׳" };
+
 /** 1470 → "00:30", 510 → "08:30". */
 export function fmt(min: number): string {
   const m = ((min % 1440) + 1440) % 1440;
