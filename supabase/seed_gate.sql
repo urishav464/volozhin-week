@@ -23,7 +23,6 @@ declare
   v_cats   text[];
   i        integer;
   v_l      bigint;
-  v_a      bigint;
   r        record;
 begin
   if exists (select 1 from public.editions where label = 'הדגמה') then
@@ -73,9 +72,10 @@ begin
       select v_ed, v_l, a.id, 'accepted' from public.approaches a where a.edition_id = v_ed and a.speaker_id = v_sp[r.sp];
   end loop;
 
-  -- A speaker who cannot do mornings on Sunday (the "unavailable" task).
-  insert into public.approaches (edition_id, speaker_id, status) values (v_ed, v_sp[9], 'claimed') returning id into v_a;
-  insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a, 0, 390, 780, 'cannot', 'דוגמה: לא בבקרים');
+  -- A speaker who cannot do mornings on Sunday (the "unavailable" task): Sunday's three morning slots (v14).
+  insert into public.approaches (edition_id, speaker_id, status) values (v_ed, v_sp[9], 'claimed');
+  insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind, note)
+  select v_ed, v_sp[9], 0, g.id, 'cannot', 'דוגמה: לא בבקרים' from app.lesson_rows(v_ed, 0) g where g.end_min <= 780;
 
   -- Memorial slots: placeholders only; the names of the fallen are entered by the instructor, never seeded.
   -- Both memorial rows, before lunch and after it — the same slot (v13): ten in the week.

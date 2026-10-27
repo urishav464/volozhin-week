@@ -225,7 +225,9 @@ export default function App() {
 
 /**
  * The header's sections: what this member may open. The approvals queue is a global admin's (only they vet
- * speakers and decide payment and transport); its badge counts both.
+ * speakers and decide payment and transport); its badge counts what holds the team up — speakers who agreed and
+ * wait for the approval before their time is closed, and the requests (src/domain/mine.ts waitingForApproval).
+ * «המרצים שלי» holds the team's board too (/mine/team), so the header keeps its ten sections.
  */
 function navFor(me: Me, week: Week | null): NavItem[] {
   const items: NavItem[] = [{ to: "/", label: "השבוע" }];
@@ -293,8 +295,8 @@ function GateScreen(props: {
       );
     case "home":
       // The gate above stays in front of every route. «הגדרות» is for admins
-      // only, the approvals queue for a global admin, «המרצים שלי» for whoever
-      // handles speakers; anyone else who opens one lands on the week. The
+      // only, the approvals queue for a global admin, «המרצים שלי» (both its tabs) for
+      // whoever handles speakers; anyone else who opens one lands on the week. The
       // outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
       // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
       // edition on screen).
@@ -303,7 +305,7 @@ function GateScreen(props: {
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
           <Route path="/" element={<WeekScreen port={props.port} me={gate.me} />} />
-          <Route path="/mine" element={handlesSpeakers(gate.me) ? <MineScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
+          <Route path="/mine/:tab?" element={handlesSpeakers(gate.me) ? <MineScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/approvals" element={gate.me.global_admin ? <ApprovalsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />

@@ -4,4 +4,4 @@
 // personal data (speaker_contacts, members, activity, editions, roster,
 // transport_details): Realtime sends a DELETE's primary key to every signed-in
 // subscriber, RLS or not.
-export const REALTIME_TABLES = ["lessons", "lesson_speakers", "pitches", "approaches", "speakers", "availability"] as const;
+export const REALTIME_TABLES = ["lessons", "lesson_speakers", "pitches", "approaches", "speakers", "slot_availability"] as const;

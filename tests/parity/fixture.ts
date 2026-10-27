@@ -49,11 +49,13 @@ export const CONTACTS: Record<string, { phone: string | null; email: string | nu
   "אלפא": { phone: "טלפון לדוגמה", email: null, secretary_note: "נתון לדוגמה", notes: null },
 };
 
-/** Approaches the edition starts with (owner by actor key), and their availability rows (an older, hand-entered shape: ranges across parts). */
+/** Approaches the edition starts with (owner by actor key). */
 export const APPROACHES: { speaker: string; owner: ActorKey; status: "claimed" }[] = [{ speaker: "זין", owner: "B", status: "claimed" }];
-export const AVAILABILITY: { speaker: string; day: number; from: number; to: number; kind: "can" | "cannot"; note: string | null }[] = [
-  { speaker: "זין", day: 2, from: 1200, to: 1830, kind: "can", note: "ערב ולילה" },
-  { speaker: "זין", day: 3, from: 700, to: 1200, kind: "cannot", note: null },
+/** Availability per slot the edition starts with (v14), a row by its start — written by nobody, as a conversion leaves them. */
+export const SLOTS: { speaker: string; day: number; row: number; kind: "can" | "cannot"; note: string | null }[] = [
+  { speaker: "זין", day: 2, row: 1200, kind: "can", note: "ערב ולילה" },
+  { speaker: "זין", day: 2, row: 1470, kind: "can", note: "ערב ולילה" },
+  { speaker: "זין", day: 3, row: 690, kind: "cannot", note: null },
 ];
 
 /** A speaker as steps name them: «name», or «name#disambiguator» for a namesake. */
@@ -107,7 +109,8 @@ export type Step =
   | { as: ActorKey; setStatus: string; status: string; note?: string | null; staleBy?: number }
   | { as: ActorKey; handOver: string; to: ActorKey | null; note?: string | null }
   | { as: ActorKey; answerHandOver: string; accept: boolean; note?: string | null }
-  | { as: ActorKey; avail: string; day: number; part: string; kind: string | null; note?: string | null }
+  /** set_slot_availability (v14): a row by its start, or «foreign» — a lesson row of another edition. */
+  | { as: ActorKey; slot: string; day: number; row: number | "foreign"; kind: string | null; note?: string | null }
   // from placement to arrival (milestone 3) — lessons by place, trainees by name
   | { as: ActorKey; pay: At; amount: number | null; transport: string; staleBy?: number }
   | { as: ActorKey; decide: At[]; decision: string; note?: string | null; staleBy?: number }
@@ -118,6 +121,8 @@ export type Step =
   | { as: ActorKey; readTransport: At }
   | { as: ActorKey; setTransport: At; address?: string | null; time?: string | null; driver?: string | null; phone?: string | null; arranged?: boolean }
   | { as: ActorKey; template: string | null }
+  /** set_call_template (v14): «נקודות לשיחה». */
+  | { as: ActorKey; callTemplate: string | null }
   | { as: ActorKey; duty: unknown }
   // links and מכריכה לכריכה (milestone 5a) — tokens by the name a step gave them, groups by title, tracks by [day, start]
   | { as: ActorKey; issue: string; trainee?: string | null; name: string }
@@ -292,10 +297,11 @@ export interface Normal {
   /** the speakers themselves */
   pool: string[];
   contacts: string[];
+  /** slot_availability (v14): speaker, day, the row by its times, the kind and note, who wrote it */
   availability: string[];
   /** transport_details, by lesson */
   transport: string[];
-  /** the edition's template and duty phrases, and the sign-up window */
+  /** the edition's templates and duty phrases, and the sign-up window */
   edition: string[];
   /** share_links: scope, subject, revoked, expiry (by rule), who issued */
   links: string[];
@@ -407,6 +413,11 @@ export function lessonLine(
   ].join("|");
 }
 
+/** An availability row as the state compares it: the row by its times (the engine's ids are TEMPLATE_2026's, the database's its own). */
+export function slotLine(speaker: string, v: { day: number; start_min: number; end_min: number; kind: string; note: string | null }, by: string): string {
+  return `${speaker}|${v.day}|${v.start_min}-${v.end_min}|${v.kind}|${d(v.note)}|by=${by}`;
+}
+
 export function transportLine(label: string, t: { pickup_address: string | null; pickup_time: string | null; driver_name: string | null; driver_phone: string | null; arranged: boolean }): string {
   return `${label}|addr=${d(t.pickup_address)}|time=${d(t.pickup_time)}|drv=${d(t.driver_name)}|ph=${d(t.driver_phone)}|arr=${t.arranged}`;
 }
@@ -416,9 +427,9 @@ export function transportRead(t: Parameters<typeof transportLine>[1] | null): st
   return t == null ? "hidden" : transportLine("seen", t);
 }
 
-/** The edition's template and phrases, as comparable lines. */
+/** The edition's templates and phrases, as comparable lines. */
 export function editionLines(settings: {
-  confirm_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
+  confirm_template?: string | null; call_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
   reader_headers?: [string, string] | null;
   memorial?: object | null;
   gender_tolerance?: number | null;
@@ -429,6 +440,7 @@ export function editionLines(settings: {
     `rules=${settings.gender_tolerance ?? "-"}/${settings.max_category_per_day ?? "-"}`,
     `memorial=${settings.memorial ? stable(settings.memorial) : "-"}`,
     `template=${d(settings.confirm_template)}`,
+    `call=${d(settings.call_template)}`,
     `duty=${(settings.duty_phrases ?? []).map((p) => `${p.when}:${p.text}`).join(",") || "-"}`,
     `window=${settings.kk_window ? `${settings.kk_window.opens_at}..${settings.kk_window.closes_at}` : "-"}`,
     `headers=${settings.reader_headers ? settings.reader_headers.join("|") : "-"}`,

@@ -50,7 +50,10 @@ describe("the archive's 5ב-2 files", () => {
     const files = archiveFiles({ week: w, extras, more, schemaVersion: 11, exportedAt: AT });
     expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", "kk.json", "memorial.json", PERSONAL_FILE, "sources.json", "speakers.json", "tracking.xlsx"].sort());
     const json = (k: string) => JSON.parse(strFromU8(files[k]));
-    expect(json("edition.json")).toMatchObject({ format_version: 2, escort_ticks: [{ lesson_id: 1, item: "met" }] });
+    expect(json("edition.json")).toMatchObject({ format_version: 3, escort_ticks: [{ lesson_id: 1, item: "met" }] });
+    // v14: availability per slot, as the Week holds it
+    expect(json("edition.json").slot_availability).toEqual(w.slotAvailability);
+    expect(json("edition.json")).not.toHaveProperty("availability");
     expect(json("kk.json")).toMatchObject({
       groups: [{ id: 3, title: "ספר לדוגמה" }],
       leaders: [{ roster_id: 2, name: "מלווה לדוגמה ב׳" }],
@@ -97,6 +100,16 @@ describe("the archive's 5ב-2 files", () => {
     expect(empty[PERSONAL_FILE]).toBeUndefined();
     const one = archiveFiles({ week: w, extras, more: { ...base, fallenContacts: [{ fallen_id: 1, contact_name: null, relation: "קרבה לדוגמה", phone: null, email: null, note: null }] }, schemaVersion: 11, exportedAt: AT });
     expect(JSON.parse(strFromU8(one[PERSONAL_FILE])).family_contacts).toHaveLength(1);
+  });
+
+  it("count a speaker whose slot was marked as touched (v14: no approach needed) — speakers.json names every speaker slot_availability does", () => {
+    const w = demoWeek();
+    const marked = w.speakers.find((s) => !touchedSpeakers(w).includes(s.id))!;
+    w.slotAvailability.push({ id: 99, speaker_id: marked.id, day: 1, row_id: 4, kind: "can", note: null, updated_by: 2 });
+    expect(touchedSpeakers(w)).toContain(marked.id);
+    const files = archiveFiles({ week: w, extras, schemaVersion: 14, exportedAt: AT });
+    const listed = new Set(JSON.parse(strFromU8(files["speakers.json"])).speakers.map((s: { id: number }) => s.id));
+    for (const v of w.slotAvailability) expect(listed.has(v.speaker_id), String(v.speaker_id)).toBe(true);
   });
 
   it("put each source file in its day's folder — a memorial file where its plan is now, the poster apart — and name the unread", () => {

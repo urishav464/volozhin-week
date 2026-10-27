@@ -42,7 +42,7 @@ export function closingEdition(editions: Edition[]): Edition | null {
 
 /** What the next edition starts with — said once, behind the checklist's last fold. */
 const CARRIED = [
-  "הנוסחים: תבנית הודעת הסיכום וניסוחי «משהו שחשוב לדעת» (מהמחזור האמיתי הפעיל).",
+  "הנוסחים: «נקודות לשיחה» (כשנערכו בהגדרות), תבנית הודעת הסיכום וניסוחי «משהו שחשוב לדעת» (מהמחזור האמיתי הפעיל).",
   "אבני הדרך (הכותרת ו-W−n; אף אחת לא מסומנת «בוצע»).",
   "הערות הידע «לכל השנים». הערות של המחזור נשארות איתו.",
   "מאגר המרצים, עם פרטי הקשר ועם «איך עבר» של השנים הקודמות.",
@@ -182,7 +182,8 @@ function DryRun({ deactivate, setDeactivate }: { deactivate: boolean; setDeactiv
           <dd>{p.carry_from ? p.carry_from.label : "אין מחזור אמיתי — מתחילים בלי"}</dd>
           <dt className="text-ink-soft">יועתקו</dt>
           <dd data-dry="copy">
-            {p.grid_rows} שורות רשת · {p.milestones} אבני דרך · {p.confirm_template ? "תבנית הודעת הסיכום" : "בלי תבנית הודעה"} · {p.duty_phrases} ניסוחי מלווים
+            {p.grid_rows} שורות רשת · {p.milestones} אבני דרך · {p.call_template ? "«נקודות לשיחה» שנערכו" : "בלי «נקודות לשיחה» שנערכו (נשאר הטקסט המובנה)"} ·{" "}
+            {p.confirm_template ? "תבנית הודעת הסיכום" : "בלי תבנית הודעה"} · {p.duty_phrases} ניסוחי מלווים
           </dd>
           <dt className="text-ink-soft">יושבתו</dt>
           <dd data-dry="deactivate">

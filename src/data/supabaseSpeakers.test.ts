@@ -51,7 +51,7 @@ describe("SupabaseSpeakers on the wire", () => {
     await s.setStatus(7, 17, 2, "approached", "שלחתי");
     await s.handOver(7, 17, 3);
     await s.answerHandOver(7, 17, false);
-    await s.setAvailability(7, 41, 2, "evening", "cannot", null);
+    await s.setSlotAvailability(7, 41, 2, 14, "cannot", null);
     expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
       ["speaker_matches", { p_name: "פלונית" }],
       ["create_speaker", { p_edition: 7, p_fields: { name: "פלונית", gender: "f", topics: ["תנ״ך"] }, p_claim: true, p_approve: false, p_confirmed: true }],
@@ -65,7 +65,7 @@ describe("SupabaseSpeakers on the wire", () => {
       ["set_approach_status", { p_approach: 17, p_version: 2, p_status: "approached", p_note: "שלחתי" }],
       ["hand_over", { p_approach: 17, p_to: 3, p_note: null }],
       ["answer_handover", { p_approach: 17, p_accept: false, p_note: null }],
-      ["set_availability", { p_edition: 7, p_speaker: 41, p_day: 2, p_part: "evening", p_kind: "cannot", p_note: null }],
+      ["set_slot_availability", { p_edition: 7, p_speaker: 41, p_day: 2, p_row: 14, p_kind: "cannot", p_note: null }],
     ]);
     expect(sent.every((r) => r.method === "POST")).toBe(true);
   });
@@ -83,11 +83,12 @@ describe("SupabaseSpeakers on the wire", () => {
 
   it("turns the database's refusals into their codes — and so into Hebrew", async () => {
     const p0001 = (message: string): [number, unknown] => [400, { code: "P0001", message, details: null, hint: null }];
-    const { s } = port([p0001("speaker_similar"), p0001("contacts_hidden"), p0001("not_handler"), p0001("bad_member"), [403, { code: "42501", message: "permission denied for function vet_speakers" }], [404, { code: "PGRST202", message: "Could not find the function" }]]);
+    const { s } = port([p0001("speaker_similar"), p0001("contacts_hidden"), p0001("not_handler"), p0001("bad_member"), p0001("outside_grid"), [403, { code: "42501", message: "permission denied for function vet_speakers" }], [404, { code: "PGRST202", message: "Could not find the function" }]]);
     expect(await code(s.create(7, { name: "פלונית" }))).toBe("speaker_similar");
     expect(await code(s.setContacts(3, { phone: null, email: null, secretary_note: null, notes: null }))).toBe("contacts_hidden");
     expect(await code(s.setStatus(7, 17, 1, "positive"))).toBe("not_handler");
     expect(await code(s.handOver(7, 17, 5))).toBe("bad_member");
+    expect(await code(s.setSlotAvailability(7, 3, 0, 1, "can"))).toBe("outside_grid"); // a row not in play that day
     expect(await code(s.vet([3], "approved"))).toBe("forbidden");
     expect(await code(s.matches("x"))).toMatch(/^raw:/); // schema.sql not re-run: a PortError, not a refusal
     expect(errorMessage("speaker_similar")).toMatch(/^ייתכן שהמרצה כבר במאגר/);

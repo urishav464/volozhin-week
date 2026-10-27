@@ -17,7 +17,7 @@ export function emptyWeek(): Week {
     ],
     speakers: [],
     approaches: [],
-    availability: [],
+    slotAvailability: [],
     lessons: [],
     lessonSpeakers: [],
     pitches: [],

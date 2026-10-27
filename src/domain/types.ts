@@ -81,14 +81,18 @@ export interface Approach {
   version: number;
 }
 
-export interface Availability {
+/**
+ * v14: a speaker's word on one lesson row of one day this edition — «יכול/ה» (can) or «לא» (cannot); no row = nothing
+ * said («לא ידוע»). Any content member writes it (no approach needed); the whole team reads it (src/domain/availability.ts).
+ */
+export interface SlotAvailability {
   id: number;
-  approach_id: number;
+  speaker_id: number;
   day: Day;
-  from_min: number;
-  to_min: number;
+  row_id: number;
   kind: "can" | "cannot";
   note: string | null;
+  updated_by: number | null;
 }
 
 export type LessonKind = "lesson" | "memorial";
@@ -232,6 +236,8 @@ export interface EditionSettings {
   titles?: string[];
   /** The summary message's template (src/domain/message.ts) — the instructor's own wording; absent until pasted. */
   confirm_template?: string;
+  /** v14: «נקודות לשיחה» (src/domain/callPoints.ts) — absent = the instructor's own text, built into the code. */
+  call_template?: string;
   /** The escorts' «משהו שחשוב לדעת» phrases — the instructor's own; absent until pasted. */
   duty_phrases?: DutyPhrase[];
   /** מכריכה לכריכה's sign-up window (ISO instants, as toISOString writes them); absent = closed. The admin sets it. */
@@ -304,7 +310,8 @@ export interface Week {
   categories: Category[];
   speakers: Speaker[];
   approaches: Approach[];
-  availability: Availability[];
+  /** v14: availability per slot (replaces v6's per approach and part of day). */
+  slotAvailability: SlotAvailability[];
   lessons: Lesson[];
   lessonSpeakers: LessonSpeaker[];
   pitches: Pitch[];

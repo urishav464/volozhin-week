@@ -209,7 +209,7 @@ test.describe("mock build", () => {
     expect(saved.week!.userId).toBe(fakeSession().user.id);
     // only the Week is kept: its own keys, and no contact or transport detail anywhere in it
     expect(Object.keys(saved.week!.week).sort()).toEqual(
-      ["approaches", "availability", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "sourceFiles", "speakers", "team"].sort(),
+      ["approaches", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "slotAvailability", "sourceFiles", "speakers", "team"].sort(),
     );
     expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
 

@@ -1,7 +1,10 @@
 // «הגדרות» in a real browser: an admin runs the team from the site (demo
-// build, every width), a non-admin never reaches it (mock build), and adding a
-// member goes out as the right REST call with the member's own token.
+// build, every width), a non-admin never reaches it (mock build), adding a
+// member goes out as the right REST call with the member's own token, and
+// «נקודות לשיחה» (v14) — previewed, saved, back to the instructor's text — go
+// out as set_call_template.
 import { expect, type Page, test } from "@playwright/test";
+import { DEFAULT_CALL_TEMPLATE } from "../../src/domain/callPoints";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
@@ -181,6 +184,47 @@ test.describe("demo build — an admin", () => {
     await cancel();
     await expect(button("מחיקת הניסוח: ניסוח לדוגמה ב")).toBeFocused();
   });
+
+  test("«נקודות לשיחה»: the instructor's text until edited, previewed by the speaker's gender; an edit saved, then back to the instructor's — «ביטול» gives the focus back", async ({ page }) => {
+    await page.goto(`${demoUrl()}/settings/templates`);
+    const form = page.getByRole("form", { name: "נקודות לשיחת הטלפון" });
+    const text = form.getByLabel("נקודות לשיחה", { exact: true });
+    const back = form.getByRole("button", { name: "חזרה לנוסח של המדריך/ה" });
+    await expect(text).toHaveValue(DEFAULT_CALL_TEMPLATE);
+    await expect(form.getByRole("button", { name: "שמירת הנקודות" })).toBeDisabled();
+    await expect(back).toBeDisabled(); // nothing saved: it is the instructor's already
+
+    // the preview: X is my name on the team; the speaker addressed by gender — both forms while it is unknown
+    const preview = page.getByRole("region", { name: "תצוגה מקדימה של הנקודות" });
+    const shown = preview.locator("[data-call-preview]");
+    await expect(shown).toContainText("*אני מדריך/ה (הדגמה) מהמדרשה הגבוהה בעין פרת");
+    await expect(shown).toContainText("*נשמח שתגיעי ללמד שעה ורבע, תסכימי?");
+    await preview.getByRole("radio", { name: "זכר" }).check();
+    await expect(shown).toContainText("*נשמח שתגיע ללמד שעה ורבע, תסכים?");
+    await expect(shown).toContainText("*נבקש שתתחיל להכין דף מקורות");
+    await preview.getByRole("radio", { name: "לא ידוע" }).check();
+    await expect(shown).toContainText("*נשמח שתגיע/י ללמד שעה ורבע, תסכים/י?");
+    await expect(preview.getByRole("list", { name: "מה חסר בנקודות" })).toHaveCount(0); // nothing blocks, nothing missing
+    await noSidewaysScroll(page);
+
+    await text.fill("נקודה לדוגמה: אני {{שמי}}, [[תוכל|תוכלי]] ללמד?");
+    await expect(shown).toHaveText("נקודה לדוגמה: אני מדריך/ה (הדגמה), תוכל/י ללמד?");
+    await form.getByRole("button", { name: "שמירת הנקודות" }).click();
+    await expect(toast(page, "הנקודות לשיחה נשמרו")).toBeVisible();
+    await expect(text).toHaveValue("נקודה לדוגמה: אני {{שמי}}, [[תוכל|תוכלי]] ללמד?");
+
+    // back to the instructor's text: asked first, and «ביטול» from the keyboard gives the focus back
+    await back.click();
+    await form.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(back).toBeFocused();
+    await back.click();
+    await form.getByRole("group", { name: "אישור" }).getByRole("button", { name: "חזרה", exact: true }).click();
+    await expect(toast(page, "הנקודות לשיחה חזרו לנוסח של המדריך/ה")).toBeVisible();
+    await expect(text).toHaveValue(DEFAULT_CALL_TEMPLATE);
+    await expect(back).toBeDisabled();
+    await expect(page.getByLabel("הנוסח", { exact: true })).toHaveValue(""); // the summary message's own panel, untouched
+    await noSidewaysScroll(page);
+  });
 });
 
 const content = {
@@ -335,5 +379,45 @@ test.describe("mock build", () => {
     await expect(page.getByRole("alert").filter({ hasText: "הפעולה הזו שמורה למדריך/ה" })).toBeVisible();
     await expect(toast(page, /הושבת/)).toHaveCount(0);
     expect(sent).toEqual(["DELETE eq.5", "PATCH eq.5"]);
+  });
+
+  test("«נקודות לשיחה» go out as set_call_template: an edit as typed; the instructor's text, or «חזרה», as null", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
+    const sb = new FakeSupabase({ status: 200, body: admin });
+    const custom = "נקודה לדוגמה: אני {{שמי}}";
+    sb.answers.set("editions", [edition]);
+    sb.answers.set("team", [{ id: 1, display_name: "מדריך/ה לדוגמה", gender: null, role: "admin" }]);
+    sb.answers.set("set_call_template", null);
+    await sb.attach(page);
+    const session = await signIn(page, "admin@example.org");
+    sb.token = session.access_token;
+    await page.goto(`${mockUrl()}/settings/templates`);
+    const form = page.getByRole("form", { name: "נקודות לשיחת הטלפון" });
+    const text = form.getByLabel("נקודות לשיחה", { exact: true });
+    await expect(text).toHaveValue(DEFAULT_CALL_TEMPLATE);
+    await expect(page.getByRole("region", { name: "תצוגה מקדימה של הנקודות" })).toContainText("*אני מדריך/ה לדוגמה מהמדרשה");
+
+    // an edit: sent as typed (the database cleans it); from now on the edition holds it
+    await text.fill(custom);
+    sb.answers.set("editions", [{ ...edition, settings: { call_template: custom } }]);
+    await form.getByRole("button", { name: "שמירת הנקודות" }).click();
+    await expect.poll(() => sb.rpc.get("set_call_template")).toEqual([{ p_edition: 7, p_body: custom }]);
+    await expect(text).toHaveValue(custom);
+    // the value above is also what was typed: wait for the panel to start again from the edition read back
+    await expect(page.getByText("נערכו כאן")).toBeVisible();
+    await expect(form.getByRole("button", { name: "חזרה לנוסח של המדריך/ה" })).toBeEnabled();
+
+    // the instructor's own text typed back: nothing to store
+    await text.fill(DEFAULT_CALL_TEMPLATE);
+    await form.getByRole("button", { name: "שמירת הנקודות" }).click();
+    await expect.poll(() => sb.rpc.get("set_call_template")?.length).toBe(2);
+    expect(sb.rpc.get("set_call_template")![1]).toEqual({ p_edition: 7, p_body: null });
+
+    // «חזרה לנוסח של המדריך/ה» (the edition still holds the edit here): null
+    await form.getByRole("button", { name: "חזרה לנוסח של המדריך/ה" }).click();
+    await form.getByRole("group", { name: "אישור" }).getByRole("button", { name: "חזרה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("set_call_template")?.length).toBe(3);
+    expect(sb.rpc.get("set_call_template")![2]).toEqual({ p_edition: 7, p_body: null });
+    for (const c of sb.calls.filter((x) => x.path === "/rest/v1/rpc/set_call_template")) expect(c.auth).toBe(`Bearer ${session.access_token}`);
   });
 });

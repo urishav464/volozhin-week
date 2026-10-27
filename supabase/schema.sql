@@ -38,11 +38,13 @@ create schema if not exists app;
 -- Bump BOTH in the same commit as any structural change. v12: its search_path
 -- pinned too (Security Advisor, lint 0011) — every function here pins one
 -- (tests/sql/schema.test.ts). v13: the grid rethought — a merged cell splits
--- whole (reshape), the two memorial rows are one «זמן זיכרון».
+-- whole (reshape), the two memorial rows are one «זמן זיכרון». v14: the
+-- speakers rethought — the call first (propose leaves «לפני שיחה»), the
+-- instructor's approval only at closing, availability per slot, «נקודות לשיחה».
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 13 $$;
+  as $$ select 14 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -428,16 +430,7 @@ create table if not exists public.approaches (
   unique (edition_id, speaker_id)
 );
 alter table public.approaches add column if not exists offered_to bigint references public.members (id) on delete set null;   -- v6
-
-create table if not exists public.availability (
-  id          bigint generated always as identity primary key,
-  approach_id bigint not null references public.approaches (id) on delete cascade,
-  day         smallint not null check (day between 0 and 4),
-  from_min    integer not null check (from_min between 390 and 1830),
-  to_min      integer not null check (to_min between 390 and 1830 and to_min > from_min),
-  kind        text not null check (kind in ('can', 'cannot')),
-  note        text
-);
+-- A speaker's availability is per slot (v14, public.slot_availability — after app.lesson_rows, below).
 
 create table if not exists public.lessons (
   id               bigint generated always as identity primary key,
@@ -749,7 +742,6 @@ alter table public.speaker_contacts enable row level security;
 alter table public.grid_rows        enable row level security;
 alter table public.rooms            enable row level security;
 alter table public.approaches       enable row level security;
-alter table public.availability     enable row level security;
 alter table public.lessons          enable row level security;
 alter table public.lesson_speakers  enable row level security;
 alter table public.pitches          enable row level security;
@@ -805,9 +797,6 @@ drop policy if exists rooms_read on public.rooms;
 create policy rooms_read on public.rooms for select to authenticated using (app.can_see_edition(edition_id));
 drop policy if exists approaches_read on public.approaches;
 create policy approaches_read on public.approaches for select to authenticated using (app.can_see_edition(edition_id));
-drop policy if exists availability_read on public.availability;
-create policy availability_read on public.availability for select to authenticated using (
-  exists (select 1 from public.approaches a where a.id = availability.approach_id and app.can_see_edition(a.edition_id)));
 drop policy if exists lessons_read on public.lessons;
 create policy lessons_read on public.lessons for select to authenticated using (app.can_see_edition(edition_id));
 drop policy if exists lesson_speakers_read on public.lesson_speakers;
@@ -835,7 +824,6 @@ create or replace function public.propose(
     v_app     public.approaches;
     v_lesson  public.lessons;
     v_room    bigint;
-    v_state   text;
     v_pitch   public.pitches;
     v_new     bigint;
   begin
@@ -873,30 +861,29 @@ create or replace function public.propose(
       end if;
     end if;
 
+    -- v14: the call first. A new approach is «לפני שיחה» (claimed) until the
+    -- call's result is recorded (set_approach_status); one nobody holds is taken
+    -- as claim_speaker takes it; mine (or another's, in 'offer' mode) is left as it is.
     if v_app.id is null then
-      insert into public.approaches (edition_id, speaker_id, owner_member_id, status)
-      values (p_edition, p_speaker, v_me, 'approached') returning * into v_app;
-    elsif v_app.owner_member_id is null or v_app.owner_member_id = v_me then
-      update public.approaches
-         set owner_member_id = v_me,
-             status = case when status = 'claimed' then 'approached' else status end,
-             version = version + case when status = 'claimed' then 1 else 0 end
+      begin
+        insert into public.approaches (edition_id, speaker_id, owner_member_id, status)
+        values (p_edition, p_speaker, v_me, 'claimed') returning * into v_app;
+      exception when unique_violation then
+        perform app.refuse('approach_owned');   -- claimed by someone else a moment ago
+      end;
+    elsif v_app.owner_member_id is null then
+      update public.approaches set owner_member_id = v_me, offered_to = null, version = version + 1
        where id = v_app.id returning * into v_app;
     end if;
 
-    v_state := case when p_mode = 'offer' and v_app.owner_member_id <> v_me then 'candidate' else 'approached' end;
-    if v_speaker.vetted <> 'approved' then v_state := 'candidate'; end if;
-
+    -- The pitch is a candidate, whatever the vetting: the instructor's approval
+    -- is close_lesson's. A live pitch stays as it is; a dead one comes back.
     select * into v_pitch from public.pitches where lesson_id = v_lesson.id and approach_id = v_app.id for update;
     if v_pitch.id is null then
       insert into public.pitches (edition_id, lesson_id, approach_id, state, proposed_by)
-      values (p_edition, v_lesson.id, v_app.id, v_state, v_me) returning * into v_pitch;
-    elsif v_pitch.state in ('candidate', 'approached') then
-      if v_state = 'approached' and v_pitch.state = 'candidate' then
-        update public.pitches set state = 'approached' where id = v_pitch.id;
-      end if;
-    else
-      update public.pitches set state = v_state, proposed_by = v_me, at = now() where id = v_pitch.id;
+      values (p_edition, v_lesson.id, v_app.id, 'candidate', v_me) returning * into v_pitch;
+    elsif v_pitch.state not in ('candidate', 'approached') then
+      update public.pitches set state = 'candidate', proposed_by = v_me, at = now() where id = v_pitch.id;
     end if;
 
     return jsonb_build_object('lesson_id', v_lesson.id, 'pitch_id', v_pitch.id);
@@ -931,20 +918,27 @@ create or replace function public.set_pitch(p_pitch bigint, p_state text) return
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_p  public.pitches;
-    v_a  public.approaches;
-    v_me bigint;
+    v_p   public.pitches;
+    v_a   public.approaches;
+    v_aid bigint;
+    v_me  bigint;
   begin
+    -- the approach before the pitch, as propose and set_approach_status lock them (never the reverse: a deadlock);
+    -- a pitch's approach never changes, so it is read first without a lock
+    select approach_id into v_aid from public.pitches where id = p_pitch;
+    if v_aid is null then perform app.refuse('cell_closed'); end if;
+    select * into v_a from public.approaches where id = v_aid for update;
     select * into v_p from public.pitches where id = p_pitch for update;
     if v_p.id is null then perform app.refuse('cell_closed'); end if;
     v_me := app.require_editor(v_p.edition_id);
     if p_state not in ('candidate', 'approached', 'declined') then perform app.refuse('bad_shape'); end if;
-    select * into v_a from public.approaches where id = v_p.approach_id;
     if not (app.my_role(v_p.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('forbidden'); end if;
     if (select state from public.lessons where id = v_p.lesson_id) <> 'draft' then perform app.refuse('cell_closed'); end if;
     if v_p.state not in ('candidate', 'approached', 'declined') then return; end if;
-    if p_state = 'approached' and (select vetted from public.speakers where id = v_a.speaker_id) <> 'approved' then
-      perform app.refuse('not_vetted');
+    -- v14: no vetting gate here (close_lesson's alone). «החזרה לתהליך»: a declined
+    -- pitch brought back to life brings a declined approach back to «לפני שיחה».
+    if v_p.state = 'declined' and p_state in ('candidate', 'approached') and v_a.status = 'declined' then
+      update public.approaches set status = 'claimed', version = version + 1 where id = v_a.id;
     end if;
     update public.pitches set state = p_state where id = v_p.id;
   end
@@ -970,7 +964,7 @@ create or replace function public.close_lesson(p_pitch bigint) returns void
     if v_l.state <> 'draft' or v_p.state not in ('candidate', 'approached') then perform app.refuse('cell_closed'); end if;
     select * into v_s from public.speakers where id = v_a.speaker_id;
     if v_s.retired then perform app.refuse('speaker_retired'); end if;
-    if v_s.vetted <> 'approved' then perform app.refuse('not_vetted'); end if;
+    if v_s.vetted <> 'approved' then perform app.refuse('not_vetted'); end if;   -- v14: the one vetting gate
     if v_s.gender is null then perform app.refuse('gender_unknown'); end if;
 
     update public.lessons set state = 'closed', version = version + 1, updated_by = v_me where id = v_l.id;
@@ -1254,6 +1248,7 @@ create or replace function public.start_edition(
     -- below; else the newest) carry over. Never a text of ours: the first
     -- edition starts without them. v8: so do its milestones (title and W−n,
     -- none of them done yet) — public.milestones is created further down.
+    -- v14: and «נקודות לשיחה» once edited (absent, the code's built-in text).
     select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
     if coalesce(p_deactivate_team, false) then
       update public.members set active = false
@@ -1264,7 +1259,8 @@ create or replace function public.start_edition(
     insert into public.editions (label, kind, start_date, first_day_from, settings)
     values (p_label, 'real', p_start_date, p_first_day_from,
             '{"lesson_minutes": 75, "row_minutes": 90}'::jsonb
-            || jsonb_strip_nulls(jsonb_build_object('confirm_template', v_prev -> 'confirm_template', 'duty_phrases', v_prev -> 'duty_phrases')))
+            || jsonb_strip_nulls(jsonb_build_object('confirm_template', v_prev -> 'confirm_template', 'duty_phrases', v_prev -> 'duty_phrases',
+                                                    'call_template', v_prev -> 'call_template')))
     returning id into v;
     insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
     select v, start_min, end_min, kind, label, days from public.grid_template;
@@ -1491,7 +1487,7 @@ create policy categories_delete on public.categories for delete to authenticated
 -- Milestone 2 (v6) — the speaker pool. Semantics: docs/CONTRACT.md «The speaker
 -- pool»; the in-memory twin is src/data/engine.ts, and tests/parity holds the
 -- two together. As in the grid, the browser keeps SELECT only on speakers,
--- speaker_contacts, approaches and availability: every write below is a
+-- speaker_contacts, approaches and slot_availability (v14): every write below is a
 -- SECURITY DEFINER function that checks who is asking and refuses with a code
 -- src/errors.ts has the Hebrew for.
 --   create_speaker        search first: the same name key needs a
@@ -1501,9 +1497,10 @@ create policy categories_delete on public.categories for delete to authenticated
 --                         or the speaker's handler there
 --   vet_speakers          a global admin, one or many at once, with a note
 --   get/set_speaker_contacts   app.may_see_contacts — the contacts policy's people
---   claim_speaker, set_approach_status, hand_over, answer_handover,
---   set_availability      one handler per speaker per edition; every change
+--   claim_speaker, set_approach_status, hand_over, answer_handover
+--                         one handler per speaker per edition; every change
 --                         is logged, with an optional short note
+--   set_slot_availability (v14) any editor of the edition, logged too
 --   speaker_matches, speaker_history, speaker_activity   reads, never a contact
 -- =============================================================================
 
@@ -1651,7 +1648,7 @@ create or replace function app.set_note(p_note text) returns void
   language sql set search_path = ''
   as $$ select set_config('app.note', coalesce(p_note, ''), true) $$;
 
--- A pool event the triggers do not see (a speaker's own changes,
+-- A pool event the triggers do not see (a speaker's own changes, a slot's
 -- availability): ids, states and field names — never a contact value.
 create or replace function app.log_event(p_edition bigint, p_entity text, p_id bigint, p_kind text, p_detail jsonb) returns void
   language sql security definer set search_path = ''
@@ -2006,9 +2003,7 @@ create or replace function public.set_approach_status(p_approach bigint, p_versi
     if v_a.version <> p_version then perform app.refuse('stale'); end if;
     if p_status is null or p_status not in ('claimed', 'approached', 'positive', 'declined', 'no_answer') then perform app.refuse('bad_value'); end if;
     v_note := app.clean_line(p_note, 200);
-    if p_status in ('approached', 'positive') and (select vetted from public.speakers where id = v_a.speaker_id) <> 'approved' then
-      perform app.refuse('not_vetted');
-    end if;
+    -- v14: the call's result, whatever the vetting — the instructor's approval is close_lesson's
     if p_status <> 'positive' and exists (select 1 from public.lesson_speakers x
                                            where x.edition_id = v_a.edition_id and x.speaker_id = v_a.speaker_id and x.active) then
       perform app.refuse('lesson_closed');
@@ -2082,49 +2077,103 @@ create or replace function public.answer_handover(p_approach bigint, p_accept bo
   end
   $$;
 
--- Availability chips: a day × a part of it (morning 06:30–13:00, afternoon
--- 13:00–19:00, evening 19:00–24:00, night 00:00–06:30 — DAY_PARTS in
--- src/domain/dayParts.ts) is can / cannot / unknown (NULL), with a note.
--- Rows of that day overlapping the part are cut back to what lies outside it.
-create or replace function public.set_availability(
-  p_edition bigint, p_speaker bigint, p_day integer, p_part text, p_kind text, p_note text default null)
+-- =============================================================================
+-- v14 — availability per slot. For each lesson row of each day (a slot), a
+-- speaker can («יכול/ה»), cannot («לא») or nobody knows yet (no row), with a
+-- short note: one row per edition, speaker, day and grid row. The whole team
+-- reads them (RLS, load_week, Realtime); any editor of the edition writes them
+-- (set_slot_availability) — no approach needed. They replace v6's availability
+-- by part of a day (public.availability and set_availability, per approach):
+-- a run on an older database converts what was marked, then drops both.
+-- =============================================================================
+
+create table if not exists public.slot_availability (
+  id         bigint generated always as identity primary key,
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  speaker_id bigint not null references public.speakers (id) on delete cascade,
+  day        smallint not null check (day between 0 and 4),
+  row_id     bigint not null references public.grid_rows (id) on delete cascade,
+  kind       text not null check (kind in ('can', 'cannot')),
+  note       text,
+  updated_by bigint,
+  updated_at timestamptz not null default now(),
+  unique (edition_id, speaker_id, day, row_id)
+);
+alter table public.slot_availability enable row level security;
+drop policy if exists slot_availability_read on public.slot_availability;
+create policy slot_availability_read on public.slot_availability for select to authenticated using (app.can_see_edition(edition_id));
+
+-- The conversion, once (the old table is gone after it). Each approach's ranges
+-- become marks on the lesson rows its edition's window allows that day
+-- (app.lesson_rows): «לא» wins every row it overlaps; «יכול/ה» marks only a row
+-- it covers whole — part of a row says nothing about the row. The range that
+-- decides a row gives it its note. Dynamic SQL, so a fresh install never parses
+-- a word about the old table. Nobody's act: nothing is logged.
+drop function if exists public.set_availability(bigint, bigint, integer, text, text, text);
+do $$
+begin
+  if to_regclass('public.availability') is null then return; end if;
+  execute $c$
+    insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind, note)
+    select a.edition_id, a.speaker_id, d.day, r.id,
+           case when c.id is not null then 'cannot' else 'can' end,
+           case when c.id is not null then c.note else k.note end
+      from public.approaches a
+      cross join generate_series(0, 4) as d(day)
+      cross join lateral app.lesson_rows(a.edition_id, d.day) r
+      left join lateral (select v.id, v.note from public.availability v
+                          where v.approach_id = a.id and v.day = d.day and v.kind = 'cannot'
+                            and v.from_min < r.end_min and v.to_min > r.start_min
+                          order by v.id limit 1) c on true
+      left join lateral (select v.id, v.note from public.availability v
+                          where v.approach_id = a.id and v.day = d.day and v.kind = 'can'
+                            and v.from_min <= r.start_min and v.to_min >= r.end_min
+                          order by v.id limit 1) k on true
+     where c.id is not null or k.id is not null
+    on conflict (edition_id, speaker_id, day, row_id) do nothing $c$;
+  execute 'drop table public.availability';   -- its policy and its place in Realtime go with it
+end $$;
+
+-- One slot: can / cannot, or NULL — the mark removed. The row must be a lesson
+-- row of that day as the edition's window allows it (app.lesson_rows — another
+-- edition's row, a meal, Sunday before the opening: outside_grid). Logged under
+-- the speaker's approach here, if there is one, as v6's chips were — so
+-- speaker_activity finds it — and only when something changed.
+create or replace function public.set_slot_availability(
+  p_edition bigint, p_speaker bigint, p_day integer, p_row bigint, p_kind text, p_note text default null)
   returns void
   language plpgsql security definer set search_path = ''
   as $$
   declare
     v_me   bigint := app.require_editor(p_edition);
-    v_from integer;
-    v_to   integer;
+    v_row  public.grid_rows;
     v_note text;
-    v_a    public.approaches;
-    r      public.availability;
+    v_old  public.slot_availability;
   begin
+    if not exists (select 1 from public.speakers where id = p_speaker and not retired) then perform app.refuse('speaker_retired'); end if;
     if p_day is null or p_day not between 0 and 4 then perform app.refuse('bad_value'); end if;
-    select x.f, x.t into v_from, v_to
-      from (values ('morning', 390, 780), ('afternoon', 780, 1140), ('evening', 1140, 1440), ('night', 1440, 1830)) as x(p, f, t)
-     where x.p = p_part;
-    if v_from is null then perform app.refuse('bad_value'); end if;
+    select * into v_row from app.lesson_rows(p_edition, p_day) r where r.id = p_row;
+    if v_row.id is null then perform app.refuse('outside_grid'); end if;
     if p_kind is not null and p_kind not in ('can', 'cannot') then perform app.refuse('bad_value'); end if;
     v_note := app.clean_line(p_note, 120);
-    select * into v_a from public.approaches where edition_id = p_edition and speaker_id = p_speaker for update;
-    if v_a.id is null or not (app.my_role(p_edition) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then
-      perform app.refuse('not_handler');
+    if p_kind is null then v_note := null; end if;
+    select * into v_old from public.slot_availability
+     where edition_id = p_edition and speaker_id = p_speaker and day = p_day and row_id = p_row for update;
+    if p_kind is null then
+      if v_old.id is null then return; end if;
+      delete from public.slot_availability where id = v_old.id;
+    elsif v_old.kind = p_kind and v_old.note is not distinct from v_note then
+      return;
+    else
+      insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind, note, updated_by)
+      values (p_edition, p_speaker, p_day, p_row, p_kind, v_note, v_me)
+      on conflict (edition_id, speaker_id, day, row_id) do update
+        set kind = excluded.kind, note = excluded.note, updated_by = excluded.updated_by, updated_at = now();
     end if;
-    for r in select * from public.availability
-              where approach_id = v_a.id and day = p_day and from_min < v_to and to_min > v_from order by id loop
-      if r.from_min < v_from then
-        insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, r.from_min, v_from, r.kind, r.note);
-      end if;
-      if r.to_min > v_to then
-        insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, v_to, r.to_min, r.kind, r.note);
-      end if;
-      delete from public.availability where id = r.id;
-    end loop;
-    if p_kind is not null then
-      insert into public.availability (approach_id, day, from_min, to_min, kind, note) values (v_a.id, p_day, v_from, v_to, p_kind, v_note);
-    end if;
-    perform app.log_event(p_edition, 'approaches', v_a.id, 'availability',
-                          jsonb_build_object('speaker', p_speaker, 'day', p_day, 'part', p_part, 'kind', p_kind));
+    perform app.log_event(p_edition, 'approaches',
+                          (select a.id from public.approaches a where a.edition_id = p_edition and a.speaker_id = p_speaker), 'availability',
+                          -- the fact, never the note: a note emptied in the sheet must not live on in the log
+                          jsonb_build_object('speaker', p_speaker, 'day', p_day, 'start', v_row.start_min, 'end', v_row.end_min, 'kind', p_kind));
   end
   $$;
 
@@ -2144,8 +2193,9 @@ create or replace function public.set_availability(
 --   set_paid              logistics (or an admin): paid_at, once a payment is approved
 --   get/set_transport_details   pickup and driver — personal data: their own
 --                         table, app.may_see_transport, never in load_week or Realtime
---   set_confirm_template, set_duty_phrases   an admin of the edition: the
---                         instructor's own wording, kept in editions.settings
+--   set_confirm_template, set_duty_phrases (and v14's set_call_template)
+--                         an admin of the edition: the instructor's own
+--                         wording, kept in editions.settings
 --   lessons_reconfirm     (trigger) a closed lesson whose confirmed details
 --                         change after the message was sent → needs_reconfirm
 --   editions_reconfirm    (trigger) the week's opening date moved → the same
@@ -2613,6 +2663,24 @@ create or replace function public.set_confirm_template(p_edition bigint, p_body 
     update public.editions
        set settings = case when v is null then settings - 'confirm_template'
                            else settings || jsonb_build_object('confirm_template', v) end
+     where id = p_edition;
+  end
+  $$;
+
+-- v14: «נקודות לשיחה» — what to say when calling a speaker. The instructor's own
+-- text is built into the code (src/domain/callPoints.ts) and used while this
+-- is absent; an edited one is kept here, and NULL (or blank) goes back to it.
+-- Never seeded; start_edition carries it over like the summary's template.
+create or replace function public.set_call_template(p_edition bigint, p_body text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v text;
+  begin
+    perform app.require_edition_admin(p_edition);
+    v := app.clean_block(p_body, 4000);
+    update public.editions
+       set settings = case when v is null then settings - 'call_template'
+                           else settings || jsonb_build_object('call_template', v) end
      where id = p_edition;
   end
   $$;
@@ -4684,7 +4752,8 @@ create or replace function public.set_grid_rules(p_edition bigint, p_gender_tole
 -- edition's roster (names only), for escorts; v9 the escorts' ticks; v10 the
 -- sources' files (their rows — the bytes are in Storage, fetched by signed URL);
 -- v11 the memorial plans and the names of the fallen they are for — never a
--- family's contact (fallen_contacts is read one fallen at a time, by admins).
+-- family's contact (fallen_contacts is read one fallen at a time, by admins);
+-- v14 availability per slot instead of v6's per approach and part of a day.
 create or replace function public.load_week(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
@@ -4703,8 +4772,10 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
           'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
           'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
           from public.approaches a where a.edition_id = p_edition), '[]'),
-      'availability', coalesce((select jsonb_agg(to_jsonb(v) order by v.id) from public.availability v
-          join public.approaches a on a.id = v.approach_id where a.edition_id = p_edition), '[]'),
+      'slotAvailability', coalesce((select jsonb_agg(jsonb_build_object(
+          'id', v.id, 'speaker_id', v.speaker_id, 'day', v.day, 'row_id', v.row_id,
+          'kind', v.kind, 'note', v.note, 'updated_by', v.updated_by) order by v.id)
+          from public.slot_availability v where v.edition_id = p_edition), '[]'),
       'lessons', coalesce((select jsonb_agg(to_jsonb(l) - 'span' - 'edition_id' - 'created_at' order by l.id)
           from public.lessons l where l.edition_id = p_edition), '[]'),
       'lessonSpeakers', coalesce((select jsonb_agg(jsonb_build_object('lesson_id', x.lesson_id, 'speaker_id', x.speaker_id, 'role', x.role))
@@ -5651,6 +5722,7 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
       'grid_rows', (select count(*) from public.grid_template)::integer,
       'milestones', (select count(*) from public.milestones m where m.edition_id = v_from.id)::integer,
       'confirm_template', coalesce(v_from.settings ? 'confirm_template', false),
+      'call_template', coalesce(v_from.settings ? 'call_template', false),   -- v14
       'duty_phrases', coalesce(case when jsonb_typeof(v_from.settings -> 'duty_phrases') = 'array' then jsonb_array_length(v_from.settings -> 'duty_phrases') end, 0),
       'deactivate', case when coalesce(p_deactivate_team, false) then
                       (select count(*) from public.members m
@@ -5703,7 +5775,7 @@ grant execute on function app.my_member_id(bigint) to authenticated;
 -- Phase 1: the grid. Reads are RLS-filtered SELECTs; every write is a
 -- function below (SECURITY DEFINER, checks the caller, enforces the contract).
 grant select on public.grid_template, public.categories, public.speakers, public.speaker_contacts,
-                public.grid_rows, public.rooms, public.approaches, public.availability,
+                public.grid_rows, public.rooms, public.approaches, public.slot_availability,
                 public.lessons, public.lesson_speakers, public.pitches, public.activity
   to authenticated;
 
@@ -5735,7 +5807,7 @@ grant execute on function public.set_default_room(bigint) to authenticated;
 grant execute on function app.name_key(text) to authenticated;
 
 -- The speaker pool (v6): every write a function; speakers, speaker_contacts,
--- approaches and availability stay SELECT-only (above). may_see_contacts is
+-- approaches and slot_availability (v14) stay SELECT-only (above). may_see_contacts is
 -- the contacts policy's predicate, so the browser's role runs it.
 grant execute on function app.may_see_contacts(bigint) to authenticated;
 grant execute on function public.speaker_matches(text) to authenticated;
@@ -5750,7 +5822,7 @@ grant execute on function public.claim_speaker(bigint, bigint) to authenticated;
 grant execute on function public.set_approach_status(bigint, integer, text, text) to authenticated;
 grant execute on function public.hand_over(bigint, bigint, text) to authenticated;
 grant execute on function public.answer_handover(bigint, boolean, text) to authenticated;
-grant execute on function public.set_availability(bigint, bigint, integer, text, text, text) to authenticated;
+grant execute on function public.set_slot_availability(bigint, bigint, integer, bigint, text, text) to authenticated;   -- v14
 
 -- From placement to arrival (v7): lessons stays SELECT-only (above); every
 -- stage write is a function. transport_details is read through its policy,
@@ -5767,6 +5839,7 @@ grant execute on function public.set_sources(bigint, integer, text, text, text, 
 grant execute on function public.set_paid(bigint, boolean) to authenticated;
 grant execute on function public.set_confirm_template(bigint, text) to authenticated;
 grant execute on function public.set_duty_phrases(bigint, jsonb) to authenticated;
+grant execute on function public.set_call_template(bigint, text) to authenticated;   -- v14
 
 -- Outputs and knowledge (v8): direct writes under RLS, by column — a browser
 -- never picks an id, an author, a time or a version (the guard triggers stamp
@@ -5865,7 +5938,8 @@ grant execute on function public.start_edition_preview(boolean) to authenticated
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
 -- are what the grid listens to (src/data/realtime.ts); availability joined in
--- v6, for the pool's chips (days and parts of days — no contact detail). An insert or update
+-- v6, for the pool's chips — since v14 slot_availability, days and lesson rows,
+-- no contact detail (the old table left the publication with its drop). An insert or update
 -- reaches only a subscriber whose RLS lets them SELECT the row; a DELETE goes
 -- to every signed-in subscriber of the table, carrying the primary key only —
 -- so a table with personal data (speaker_contacts, members, activity,
@@ -5903,7 +5977,7 @@ begin
       execute format('alter publication supabase_realtime drop table public.%I', t);
     end if;
   end loop;
-  foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers', 'availability'] loop
+  foreach t in array array['lessons', 'lesson_speakers', 'pitches', 'approaches', 'speakers', 'slot_availability'] loop
     if not exists (select 1 from pg_publication_tables
                     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);

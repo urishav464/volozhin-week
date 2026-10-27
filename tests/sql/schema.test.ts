@@ -44,6 +44,10 @@ const PEER_ADMIN = "peer.admin@example.org";
 // speaker_reviews — the summary's edition_returning, purge_edition_private and
 // start_edition_preview (the dry run); start_edition took a new argument
 // (tests/sql/after.test.ts). No new app.* function is a browser's to run.
+// v14 (the speakers rethought) replaced set_availability (a part of a day, the
+// handler's) with set_slot_availability (one lesson row, any editor), and added
+// set_call_template — «נקודות לשיחה», an edition admin's (tests/sql/speakers.test.ts,
+// tests/sql/stages.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
@@ -52,9 +56,9 @@ const AUTH_PUBLIC_FUNCTIONS = [
   "kk_update_group", "load_kk", "load_reviews", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
   "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
-  "set_availability", "set_book_order", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
+  "set_book_order", "set_call_template", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
   "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
-  "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
+  "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
@@ -128,6 +132,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
           "select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1",
         )
       ).rows.map((r) => r.tablename);
+      // v14: availability per slot, in place of v6's table
+      expect(rows).toEqual(["approaches", "lesson_speakers", "lessons", "pitches", "slot_availability", "speakers"]);
       expect(rows).toEqual([...REALTIME_TABLES].sort());
     });
 
@@ -176,15 +182,15 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
-        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes"]) {
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
         expect(await sqlstate(q("select public.load_kk(1)"))).toBe("42501");
         expect(await sqlstate(q("select app.link_for('x', 'escort')"))).toBe("42501");
-        // v12: nothing of «איך עבר», the purge or the dry run
+        // v12: nothing of «איך עבר», the purge or the dry run; v14: no slot of availability, no call's points
         for (const f of ["public.load_reviews(1)", "public.speaker_reviews(1)", "public.edition_returning(1)", "public.purge_edition_private(1, 'x')", "public.start_edition_preview()",
-                         "public.save_lesson_review(1, 0, 'x', null, null, false, null)"]) {
+                         "public.save_lesson_review(1, 0, 'x', null, null, false, null)", "public.set_slot_availability(1, 1, 0, 1, 'can')", "public.set_call_template(1, 'x')"]) {
           expect(await sqlstate(q(`select ${f}`)), f).toBe("42501");
         }
       });
@@ -220,7 +226,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(13);
+        expect(w.schema_version).toBe(14);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );

@@ -65,6 +65,8 @@ export interface StartPreview {
   grid_rows: number;
   milestones: number;
   confirm_template: boolean;
+  /** v14: the instructor's own «נקודות לשיחה», when saved (absent = the built-in text, nothing to carry). */
+  call_template: boolean;
   duty_phrases: number;
   deactivate: number;
   admins_stay: number;
@@ -134,6 +136,8 @@ export interface SettingsPort {
   setConfirmTemplate(editionId: number, body: string | null): Promise<void>;
   /** The escorts' duty phrases (src/domain/escorts.ts); an empty list removes them. */
   setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void>;
+  /** v14: «נקודות לשיחה» (src/domain/callPoints.ts); empty or null goes back to the instructor's built-in text. */
+  setCallTemplate(editionId: number, body: string | null): Promise<void>;
 }
 
 /** New sort values (1…n) for `ids` in order — only those that change. */

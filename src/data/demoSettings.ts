@@ -92,7 +92,7 @@ export class DemoSettings implements SettingsPort {
     if (!this.isGlobalAdmin()) fail("forbidden");
     const weeks = this.weeks();
     if (weeks.some((w) => w.edition.label === v.label)) fail("edition_exists");
-    // the live real edition's template and duty phrases (else the newest's) carry over (start_edition, v7)
+    // the live real edition's templates and duty phrases (else the newest's) carry over (start_edition, v7; the call points v14)
     const prevEdition = this.carryFrom();
     const prev = prevEdition?.settings;
     // v12: the archived editions' members who are not admins, deactivated (never deleted) — when asked
@@ -113,6 +113,7 @@ export class DemoSettings implements SettingsPort {
         lesson_minutes: 75,
         row_minutes: 90,
         ...(prev?.confirm_template != null ? { confirm_template: prev.confirm_template } : {}),
+        ...(prev?.call_template != null ? { call_template: prev.call_template } : {}),
         ...(prev?.duty_phrases != null ? { duty_phrases: structuredClone(prev.duty_phrases) } : {}),
       },
     };
@@ -140,6 +141,7 @@ export class DemoSettings implements SettingsPort {
       grid_rows: TEMPLATE_2026.length,
       milestones: from ? this.s.milestones.filter((m) => m.edition_id === from.id).length : 0,
       confirm_template: from?.settings.confirm_template != null,
+      call_template: from?.settings.call_template != null,
       duty_phrases: from?.settings.duty_phrases?.length ?? 0,
       deactivate: deactivateTeam ? of(false) : 0,
       admins_stay: of(true),
@@ -435,6 +437,11 @@ export class DemoSettings implements SettingsPort {
 
   async setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void> {
     this.engineOf(editionId).setDutyPhrases(phrases);
+    this.done(null);
+  }
+
+  async setCallTemplate(editionId: number, body: string | null): Promise<void> {
+    this.engineOf(editionId).setCallTemplate(body);
     this.done(null);
   }
 }

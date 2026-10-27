@@ -1,13 +1,17 @@
 // «תבניות» — the instructor's own wording, per edition (an admin of the
-// edition writes it): the summary message's template, and the escorts'
-// «משהו שחשוב לדעת» phrases. Neither is ever seeded: both start empty and the
-// tab asks for last year's wording to be pasted (the bottom of the tracking
-// sheet; the escorts file). The template is checked as it is typed — the
-// variables, the gender forms, the brackets — and previewed on a synthetic
-// lesson (src/domain/message.ts), so what blocks a message shows here first.
+// edition writes it), in the order the year uses it: «נקודות לשיחה» for the
+// phone call (v14: the instructor's text is built in, src/domain/callPoints.ts,
+// and an edit here replaces it), the summary message's template, and the
+// escorts' «משהו שחשוב לדעת» phrases. The last two are never seeded: they
+// start empty and the tab asks for last year's wording to be pasted (the bottom
+// of the tracking sheet; the escorts file). Each is previewed as it is typed;
+// the template is checked too — the variables, the gender forms, the brackets —
+// on a synthetic lesson (src/domain/message.ts), so what blocks a message shows
+// here first.
 import { type FormEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { DUTY_WHENS, STAGE_LIMITS } from "../../data/stageRules";
+import { composeCallPoints, DEFAULT_CALL_TEMPLATE } from "../../domain/callPoints";
 import { DUTY_WHEN_LABEL } from "../../domain/escorts";
 import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable } from "../../domain/message";
 import type { DutyPhrase, DutyWhen, Edition, Gender } from "../../domain/types";
@@ -38,11 +42,155 @@ export function TemplatesTab({ editions, editionId, setEditionId, reload }: Prop
       {e && (
         <>
           {/* keyed by what is saved: after a save (or a change elsewhere) the form starts from it */}
+          <CallPointsPanel key={`call:${e.id}:${e.settings.call_template ?? ""}`} edition={e} onSaved={reload} />
           <TemplatePanel key={`${e.id}:${e.settings.confirm_template ?? ""}`} edition={e} onSaved={reload} />
           <PhrasesPanel key={`phrases:${e.id}`} edition={e} onSaved={reload} />
         </>
       )}
     </>
+  );
+}
+
+// ------------------------------------------------------------------ «נקודות לשיחה»
+
+/** The text as it is compared: line ends as one, no blank edges. */
+const plain = (t: string) => t.replace(/\r\n?/g, "\n").trim();
+
+/**
+ * What a trainee reads before phoning a speaker (the speaker sheet, a candidate in the lesson panel). The instructor's
+ * own text is built in; an edit saved here replaces it in this edition, and the next edition starts with it
+ * (start_edition). Saving the built-in text again, or nothing, goes back to it — the built-in text is never stored.
+ */
+function CallPointsPanel({ edition, onSaved }: { edition: Edition; onSaved: () => Promise<void> }) {
+  const { port, me } = useSettings();
+  const { busy, run } = useAction();
+  const id = useId();
+  const saved = edition.settings.call_template ?? "";
+  const custom = saved.trim() !== "";
+  const start = custom ? saved : DEFAULT_CALL_TEMPLATE;
+  const [text, setText] = useState(start);
+  const [resetting, setResetting] = useState(false);
+  // «ביטול» takes the confirm (and its focus) away: «חזרה לנוסח של המדריך/ה» takes it back
+  const focusBack = useFocusBack();
+  const [problem, setProblem] = useState<string | null>(null);
+  const [speakerGender, setSpeakerGender] = useState<Gender | "unknown">("f");
+  const body = plain(text) === "" || plain(text) === DEFAULT_CALL_TEMPLATE ? null : text;
+  const dirty = text !== start;
+  // Me, as the team list names me: the preview's X, as in my own call (undefined until read).
+  const [caller, setCaller] = useState<{ name: string; gender: Gender | null } | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    const mine = new Set(me.memberships.map((m) => m.member_id));
+    port.team(edition.id).then(
+      (team) => {
+        const t = team.find((x) => mine.has(x.id));
+        if (live) setCaller(t ? { name: t.display_name, gender: t.gender } : null);
+      },
+      () => live && setCaller(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [port, me.memberships, edition.id]);
+  const preview = useMemo(
+    () => composeCallPoints({ template: text, speakerGender: speakerGender === "unknown" ? null : speakerGender, caller: caller ?? null }),
+    [text, speakerGender, caller],
+  );
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setProblem(null);
+    const ok = await run("call-points", () => port.setCallTemplate(edition.id, body), body ? "הנקודות לשיחה נשמרו" : "הנקודות לשיחה חזרו לנוסח של המדריך/ה", (code) => {
+      if (code !== "bad_value") return false;
+      setProblem(errorMessage(code));
+      return true;
+    });
+    if (ok) await onSaved();
+  };
+  const reset = async () => {
+    const ok = await run("call-points-reset", () => port.setCallTemplate(edition.id, null), "הנקודות לשיחה חזרו לנוסח של המדריך/ה");
+    if (ok) {
+      setResetting(false);
+      await onSaved();
+    }
+  };
+
+  return (
+    <Panel title="נקודות לשיחת הטלפון" aside={custom ? <Badge tone="accent">נערכו כאן</Badge> : "הטקסט של המדריך/ה"}>
+      <form onSubmit={(e) => void save(e)} aria-label="נקודות לשיחת הטלפון" className="space-y-3" noValidate>
+        <p className="text-sm text-ink-soft">מי שמתקשר/ת למרצה רואה אותן בכרטיס המרצה ובלוח השיעור. מה שנשמר כאן עובר גם למחזור הבא.</p>
+        <Field
+          id={`${id}-text`}
+          label="נקודות לשיחה"
+          hint={`{{שמי}} הוא ה-X: שם מי שמתקשר/ת, כמו ברשימת הצוות. [[זכר|נקבה]] לפי מגדר המרצה (כשהוא לא ידוע, שתי הצורות: «שתגיע/י»). {{אני:זכר|נקבה}} לפי המגדר של מי שמתקשר/ת. עד ${STAGE_LIMITS.template.toLocaleString("he-IL")} תווים.`}
+        >
+          <textarea
+            id={`${id}-text`}
+            rows={10}
+            value={text}
+            maxLength={STAGE_LIMITS.template}
+            onChange={(e) => setText(e.target.value)}
+            aria-describedby={`${id}-text-hint`}
+            className={`${INPUT} py-2 leading-relaxed`}
+          />
+        </Field>
+        {problem && (
+          <p role="alert" className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
+            {problem}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {/* nothing saved and nothing typed: there is nothing to go back to */}
+          <Button kind="primary" type="submit" disabled={!dirty || (body == null && !custom)} busy={busy === "call-points"} busyLabel="שומר…">
+            שמירת הנקודות
+          </Button>
+          {dirty && <Button onClick={() => setText(start)}>ביטול השינויים</Button>}
+          {!resetting && (
+            <Button ref={focusBack.ref()} kind="quiet" className="ms-auto" disabled={!custom} onClick={() => setResetting(true)}>
+              חזרה לנוסח של המדריך/ה
+            </Button>
+          )}
+        </div>
+        {resetting && (
+          <Confirm
+            text="לחזור לנוסח של המדריך/ה? מה שנערך כאן יימחק, וגם המחזור הבא יתחיל מהטקסט של המדריך/ה."
+            confirm="חזרה"
+            busy={busy === "call-points-reset"}
+            onConfirm={() => void reset()}
+            onCancel={() => {
+              setResetting(false);
+              focusBack.back();
+            }}
+          />
+        )}
+      </form>
+
+      <section aria-label="תצוגה מקדימה של הנקודות" className="mt-4 space-y-2 border-t border-line pt-4">
+        <h4 className="font-display font-semibold">תצוגה מקדימה</h4>
+        <p className="text-xs text-ink-soft">כך יראו אותן בשיחה שלך: ה-X הוא השם שלך. שום דבר מזה לא נשמר.</p>
+        <Choice
+          name={`${id}-sg`}
+          legend="המרצה"
+          value={speakerGender}
+          options={[
+            ["f", "נקבה"],
+            ["m", "זכר"],
+            ["unknown", "לא ידוע"],
+          ]}
+          onChange={setSpeakerGender}
+        />
+        {caller !== undefined && preview.problems.length > 0 && (
+          <ul aria-label="מה חסר בנקודות" className="list-disc space-y-0.5 rounded-lg border border-amber-300 bg-amber-50 py-2 pe-3 ps-8 text-sm text-amber-950">
+            {preview.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        )}
+        <p data-call-preview className="whitespace-pre-line break-words rounded-lg border border-line bg-paper p-3 text-sm leading-relaxed">
+          {preview.text}
+        </p>
+      </section>
+    </Panel>
   );
 }
 

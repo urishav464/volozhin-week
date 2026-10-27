@@ -2,13 +2,12 @@
 // day as a vertical timeline. Tap a cell to propose; tap a card to open it.
 // `readOnly` (the offline snapshot, src/screens/OfflineWeek.tsx): a free cell is
 // only a label, never a button; a card still opens, to read.
-import { byGender } from "../domain/names";
 import { DAYS, DAY_NAMES, type Day, dayRange, fmt, fmtRange, overlaps } from "../domain/time";
 import type { GridRow, Lesson, Speaker } from "../domain/types";
 import { DayHeader } from "./DayHeader";
-import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
+import { type CardOwners, FIT_CELL, type Lens, LessonCard } from "./LessonCard";
 import { rowActive } from "./layout";
-import { GENDER_NEED_LABEL, type GridModel, fitFor, lessonsOfDay, memorialRowFree } from "./model";
+import { GENDER_NEED_LABEL, type GridModel, fitFor, fitText, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
@@ -16,6 +15,8 @@ interface Props {
   day: Day;
   onDay: (d: Day) => void;
   placing: Speaker | null;
+  /** v14: a speaker the day is coloured for without placing them (a mouse drag on a narrow window — GridDesktop's rule). */
+  lookAt?: Speaker | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (id: number) => void;
   /** An edition admin's: a memorial row with no slot yet makes one (v13 — both rows alike). */
@@ -29,7 +30,7 @@ interface Props {
 
 const ROW_PX = 92;
 
-export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false }: Props) {
+export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false }: Props) {
   const { edition } = model.week;
   const lessons = lessonsOfDay(model, day);
   const need = model.days[day].balance.need;
@@ -110,14 +111,41 @@ export function DayView({ model, lens, day, onDay, placing, onCell, onLesson, on
               </li>
             );
           }
-          return <LessonRow key={row.id} model={model} lens={lens} owners={owners} day={day} row={row} lessons={lessons} placing={placing} need={need} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
+          return <LessonRow key={row.id} model={model} lens={lens} owners={owners} day={day} row={row} lessons={lessons} placing={placing} who={placing ?? lookAt} need={need} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
         })}
       </ol>
     </div>
   );
 }
 
-function LessonRow({ model, lens, owners, day, row, lessons, placing, need, onCell, onLesson, readOnly }: { model: GridModel; lens: Lens; owners?: CardOwners; day: Day; row: GridRow; lessons: Lesson[]; placing: Speaker | null; need: "m" | "f" | null; onCell: (d: Day, r: GridRow) => void; onLesson: (id: number) => void; readOnly: boolean }) {
+function LessonRow({
+  model,
+  lens,
+  owners,
+  day,
+  row,
+  lessons,
+  placing,
+  who,
+  need,
+  onCell,
+  onLesson,
+  readOnly,
+}: {
+  model: GridModel;
+  lens: Lens;
+  owners?: CardOwners;
+  day: Day;
+  row: GridRow;
+  lessons: Lesson[];
+  placing: Speaker | null;
+  /** The speaker the cells are coloured for: the one placed, else the one looked at. */
+  who: Speaker | null;
+  need: "m" | "f" | null;
+  onCell: (d: Day, r: GridRow) => void;
+  onLesson: (id: number) => void;
+  readOnly: boolean;
+}) {
   const here = lessons.filter((l) => l.kind === "lesson" && overlaps(l.start_min, l.end_min, row.start_min, row.end_min));
   const starting = here.filter((l) => l.start_min >= row.start_min).sort((a, b) => a.start_min - b.start_min || a.room_id - b.room_id);
   const continuing = here.filter((l) => l.start_min < row.start_min);
@@ -128,8 +156,16 @@ function LessonRow({ model, lens, owners, day, row, lessons, placing, need, onCe
 
   if (here.length === 0) {
     const key = `cell:${day}:${row.start_min}:${row.end_min}`;
-    const fit = placing ? fitFor(model, placing.id, day, row.start_min, row.end_min) : null;
-    const tint = lens === "diversity" && need ? (need === "f" ? "bg-need-f border-pink-200 text-pink-800" : "bg-need-m border-sky-200 text-sky-800") : "bg-card/70 border-line text-ink-faint";
+    const fit = who && !readOnly ? fitFor(model, who.id, day, row.start_min, row.end_min) : null;
+    const said = fit && who ? fitText(fit, who.gender) : null;
+    const tint =
+      fit && fit !== "neutral"
+        ? FIT_CELL[fit]
+        : lens === "diversity" && need
+          ? need === "f"
+            ? "bg-need-f border-pink-200 text-pink-800"
+            : "bg-need-m border-sky-200 text-sky-800"
+          : "bg-card/70 border-line text-ink-faint";
     if (readOnly) {
       return (
         <li className="flex gap-2">
@@ -150,11 +186,12 @@ function LessonRow({ model, lens, owners, day, row, lessons, placing, need, onCe
           type="button"
           data-drop={key}
           data-need={need ?? "even"}
-          disabled={fit === "busy"}
+          data-fit={fit ?? undefined}
+          disabled={!!placing && fit === "busy"}
           onClick={() => onCell(day, row)}
-          className={`min-h-16 flex-1 rounded-md border text-sm ${tint} ${fit === "can" ? "ring-2 ring-ok" : ""} ${fit === "cannot" || fit === "busy" ? "opacity-40" : ""}`}
+          className={`min-h-16 flex-1 rounded-md border text-sm disabled:opacity-40 ${tint}`}
         >
-          {fit === "cannot" ? `⊘ ${byGender(placing?.gender, "לא יכול", "לא יכולה")}` : lens === "diversity" && need ? GENDER_NEED_LABEL[need] : "פנוי"}
+          {said ?? (lens === "diversity" && need ? GENDER_NEED_LABEL[need] : "פנוי")}
           {row.label && <span className="block text-[11px] text-ink-faint">{row.label}</span>}
         </button>
       </li>
@@ -185,7 +222,17 @@ function LessonRow({ model, lens, owners, day, row, lessons, placing, need, onCe
             <div key={g[0].id} className="flex gap-1">
               {g.map((l) => (
                 <div key={l.id} className="relative min-w-0 flex-1" style={{ height: l.end_min > row.end_min ? ROW_PX : h }}>
-                  <LessonCard model={model} lesson={l} lens={lens} owners={owners} height={l.end_min > row.end_min ? ROW_PX : h} placeable={!!placing && l.state === "draft"} onOpen={() => onLesson(l.id)} />
+                  <LessonCard
+                    model={model}
+                    lesson={l}
+                    lens={lens}
+                    owners={owners}
+                    height={l.end_min > row.end_min ? ROW_PX : h}
+                    placeable={!!placing && l.state === "draft"}
+                    fit={who && !readOnly && l.state === "draft" ? fitFor(model, who.id, day, l.start_min, l.end_min) : null}
+                    fitGender={who?.gender ?? null}
+                    onOpen={() => onLesson(l.id)}
+                  />
                 </div>
               ))}
             </div>

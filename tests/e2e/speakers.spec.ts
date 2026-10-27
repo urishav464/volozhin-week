@@ -1,13 +1,13 @@
 // The speaker pool in a real browser. Demo build, every width: create (search
-// first, «ייתכן שזה…», a same-name refusal), the speaker sheet (contacts and
-// their buttons, status, availability), «המרצים שלי», the approvals queue, and
-// a hand-over. Mock build: every new RPC goes out by the contract's parameter
-// names (tests/sql/speakers.test.ts pins them in the database) with the
-// member's own token. Synthetic people only; the phone typed here is not
-// shaped like a real one (scripts/pii-scan.mjs).
+// first, «ייתכן שזה…», a same-name refusal), the speaker sheet in the year's
+// order (v14: the call — its points and result — then availability slot by
+// slot: a tap cycles, the arrows move, a note; contacts and their buttons).
+// Mock build: every pool RPC goes out by the contract's parameter names
+// (tests/sql/speakers.test.ts pins them in the database) with the member's own
+// token. Synthetic people only; the phone typed here is not shaped like a real
+// one (scripts/pii-scan.mjs).
 import { expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
-import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
@@ -73,7 +73,7 @@ test.describe("demo build", () => {
     await expect(card).toContainText("ממתינה לאישור");
     await expect(card.getByRole("list", { name: "נושאים" })).toContainText("שירה");
     await expect(card.getByRole("list", { name: "נושאים" })).toContainText("תפילה");
-    await expect(card.getByRole("region", { name: "הטיפול השנה" })).toContainText("בטיפולך");
+    await expect(card.getByRole("region", { name: "השיחה" })).toContainText("בטיפולך · לפני שיחה");
     await expect(card.getByRole("region", { name: "ציר הפעולות" })).toContainText("נוספה למאגר");
     await noSidewaysScroll(page);
   });
@@ -111,104 +111,77 @@ test.describe("demo build", () => {
     await expect(sheet).toHaveCount(0);
   });
 
-  test("«המרצים שלי»: «פניתי», then «הסכימה» with a note and an availability chip in the sheet, then «שבץ» on the week", async ({ page }) => {
-    await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: "המרצים שלי" }).click();
-    await expect(page).toHaveURL(/\/mine$/);
-    await expect(nav(page).getByRole("link", { name: "המרצים שלי" })).toHaveAttribute("aria-current", "page");
-    const row = (group: string, name: string) => page.getByRole("region", { name: group }).locator("li").filter({ hasText: name });
-    await noSidewaysScroll(page);
-
-    await row("לפנות", "מרצה 32").getByRole("button", { name: "פניתי" }).click();
-    await expect(toast(page, "עודכן: מרצה 32 · פנו")).toBeVisible();
-    await expect(row("מחכה לתשובה", "מרצה 32")).toBeVisible();
-    await expect(row("מחכה לתשובה", "מרצה 32").getByRole("button", { name: "מרצה 32" })).toBeFocused(); // the focus moved with the row
-
-    // waiting for approval: a chip, not a dead button — and the global admin approves right there
-    const waiting = row("מחכה לתשובה", "מרצה 56");
-    await expect(waiting).toContainText("ממתינה לאישור");
-    await expect(waiting.getByRole("button", { name: "הסכימה" })).toHaveCount(0);
-    await waiting.getByRole("button", { name: "אישור מרצה 56" }).click();
-    await expect(toast(page, "מרצה 56 אושרה")).toBeVisible();
-    await expect(row("מחכה לתשובה", "מרצה 56").getByRole("button", { name: "הסכימה" })).toBeEnabled();
-
-    await row("מחכה לתשובה", "מרצה 32").getByRole("button", { name: "מרצה 32" }).click();
+  test("the sheet in the year's order: opened at the call (its points, a result), then availability slot by slot — a tap cycles, the arrows move, a note", async ({ page }) => {
+    await page.goto(`${demoUrl()}/mine`);
+    await page.getByRole("region", { name: "להתקשר", exact: true }).locator("li").filter({ hasText: "מרצה 32" }).getByRole("button", { name: "לשיחה" }).click();
     const sheet = page.getByRole("dialog", { name: "מרצה 32" });
-    const approach = sheet.getByRole("region", { name: "הטיפול השנה" });
-    await approach.getByLabel("הערה (לא חובה)").fill("ענתה בחיוב (נתון לדוגמה)");
-    await approach.getByRole("group", { name: "מצב הפנייה" }).getByRole("button", { name: "הסכימה" }).click();
-    await expect(toast(page, "עודכן: הסכימה")).toBeVisible();
-    await expect(approach.getByRole("button", { name: "הסכימה" })).toHaveAttribute("aria-pressed", "true");
-    await expect(sheet.getByRole("region", { name: "ציר הפעולות" })).toContainText("«ענתה בחיוב (נתון לדוגמה)»");
+    const parts = await sheet.locator("section[aria-label]").evaluateAll((s) => s.map((x) => x.getAttribute("aria-label")));
+    expect(parts.slice(0, 5)).toEqual(["פרטים", "השיחה", "אישור המדריך/ה", "השיעור", "זמינות"]);
+    expect(parts.indexOf("פרטי קשר")).toBeGreaterThan(parts.indexOf("זמינות"));
 
-    const avail = sheet.getByRole("region", { name: "זמינות" });
-    await avail.getByRole("button", { name: /^ראשון בוקר: לא ידוע/ }).click();
-    await avail.getByRole("group", { name: "זמינות ראשון בוקר" }).getByRole("button", { name: "יכולה", exact: true }).click();
-    await expect(toast(page, "הזמינות נשמרה")).toBeVisible();
-    await expect(avail.getByRole("button", { name: /^ראשון בוקר: יכולה/ })).toBeVisible();
+    // at the call: in view, the focus on it, the instructor's points open (X is the caller's name), addressed to her
+    const call = sheet.getByRole("region", { name: "השיחה" });
+    await expect(call).toBeInViewport();
+    await expect(page.locator(":focus").getByRole("region", { name: "השיחה" })).toHaveCount(1);
+    await expect(call).toContainText("בטיפולך · לפני שיחה");
+    await expect(call.locator("[data-call-points]")).toBeVisible();
+    await expect(call.locator("[data-call-points]")).toContainText("*אני מדריך/ה (הדגמה) מהמדרשה הגבוהה בעין פרת");
+    await expect(call.locator("[data-call-points]")).toContainText("*נשמח שתגיעי ללמד שעה ורבע, תסכימי?");
     await noSidewaysScroll(page);
 
-    await sheet.getByRole("button", { name: "סגירה" }).click();
-    await row("לסגור שעה", "מרצה 32").getByRole("button", { name: "שבץ" }).click();
+    // the result, with what was said: the status moves, and the note is the newest one on the approach
+    const result = call.getByRole("group", { name: "תוצאת השיחה" });
+    await expect(result.getByRole("button", { name: "לפני שיחה" })).toHaveCount(0); // not the status it already has
+    await result.getByLabel("מה נאמר בשיחה").fill("נושא לדוגמה (נתון לדוגמה)");
+    await result.getByRole("button", { name: "שוחחנו, מחכים לתשובה", exact: true }).click();
+    await expect(toast(page, "עודכן: שוחחנו, מחכים לתשובה")).toBeVisible();
+    await expect(call).toContainText("בטיפולך · שוחחנו, מחכים לתשובה");
+    await expect(call).toContainText("«נושא לדוגמה (נתון לדוגמה)»");
+    await expect(sheet.getByRole("region", { name: "ציר הפעולות" })).toContainText("«נושא לדוגמה (נתון לדוגמה)»");
+
+    // availability: any slot in play, a tap at a time — — → ✓ → ✗ → —, each saved and said once under the grid
+    const avail = sheet.getByRole("region", { name: "זמינות" });
+    const slot = (name: RegExp) => avail.getByRole("button", { name });
+    const said = avail.locator("[data-slot-said]");
+    await expect(avail.getByRole("cell", { name: "מחוץ לשעות השבוע" })).toHaveCount(6); // Sunday before the opening, Thursday after the close
+    await slot(/^שני 08:30–10:00: לא ידוע$/).click();
+    await expect(said).toHaveText(/^נשמר: שני ‎?08:30–10:00 — יכולה$/);
+    await slot(/^שני 08:30–10:00: יכולה$/).click();
+    await expect(said).toHaveText(/^נשמר: שני ‎?08:30–10:00 — לא יכולה$/);
+    await slot(/^שני 08:30–10:00: לא יכולה$/).click();
+    await expect(said).toHaveText(/^נשמר: שני ‎?08:30–10:00 — לא ידוע$/);
+    await expect(slot(/^שני 08:30–10:00: לא ידוע$/)).toBeVisible();
+    await expect(toast(page, /נשמר:/)).toHaveCount(0); // no toast per tap (the demo banner says «…לא נשמר»)
+    await noSidewaysScroll(page);
+
+    // the keyboard: one tab stop, the arrows (← is the next day, right to left), a slot outside the week skipped
+    await expect(avail.locator('button[tabindex="0"]')).toHaveCount(1);
+    await page.keyboard.press("ArrowLeft");
+    await expect(slot(/^שלישי 08:30–10:00/)).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(slot(/^שלישי 06:30–07:15/)).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(slot(/^שני 06:30–07:15/)).toBeFocused(); // Sunday's 06:30 is before the opening
+    await page.keyboard.press("Space");
+    await expect(slot(/^שני 06:30–07:15: יכולה$/)).toBeFocused();
+    await expect(avail.locator('button[tabindex="0"]')).toHaveCount(1);
+
+    // a note on a marked slot
+    await avail.getByText("+ הערה").click();
+    const note = avail.getByRole("form", { name: "הערה למשבצת" });
+    await expect(note.getByLabel("המשבצת").locator("option")).toHaveCount(2); // «בחירה» and the one marked slot
+    await note.getByLabel("המשבצת").selectOption({ index: 1 });
+    await note.getByLabel("ההערה").fill("רק עד 07:00 (נתון לדוגמה)");
+    await note.getByRole("button", { name: "שמירה" }).click();
+    await expect(avail.getByRole("list", { name: "הערות על הזמינות" }).getByRole("listitem")).toHaveText(["שני 06:30–07:15 · יכולה — רק עד 07:00 (נתון לדוגמה)"]);
+    await expect(slot(/^שני 06:30–07:15: יכולה — רק עד 07:00 \(נתון לדוגמה\)$/)).toBeVisible();
+    await expect(said).toHaveText(/^ההערה נשמרה: שני ‎?06:30–07:15$/);
+    await noSidewaysScroll(page);
+
+    // «השיעור»: from the sheet to the week's own placing
+    await sheet.getByRole("region", { name: "השיעור" }).getByRole("button", { name: "שבץ בשבוע" }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole("status").filter({ hasText: "משבצים את" })).toContainText("מרצה 32");
-  });
-
-  test("the approvals queue: one tap, then the rest as a batch; the badge counts down", async ({ page }) => {
-    await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: /אישורים/ }).click();
-    await expect(page).toHaveURL(/\/approvals$/);
-    // five speakers, and the demo's payment request (tests/e2e/stages.spec.ts)
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 6 ממתינים");
-    const list = page.getByRole("list", { name: "ממתינים לאישור" });
-    await expect(list.getByRole("listitem")).toHaveCount(5);
-    await noSidewaysScroll(page);
-
-    await list.getByRole("button", { name: "אישור מרצה 56" }).click();
-    await expect(toast(page, "מרצה 56 אושרה")).toBeVisible();
-    await expect(list.getByRole("listitem")).toHaveCount(4);
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 5 ממתינים");
-
-    await page.getByLabel("סימון הכול").check();
-    await page.getByRole("button", { name: "אישור 4 מסומנים" }).click();
-    await expect(toast(page, "4 מרצים אושרו")).toBeVisible();
-    await expect(page.getByText("אין מרצים שממתינים לאישור.")).toBeVisible();
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 1 ממתין");
-    await noSidewaysScroll(page);
-  });
-
-  test("«אישור באצווה» of who taught in an archive: «ביטול» gives the focus back to the button that asked", async ({ page }) => {
-    // an archive edition, through the import (tests/e2e/import.spec.ts walks the rest of it): two who taught in it
-    const bytes = toXlsx([
-      {
-        name: "מעקב",
-        headers: ["מרצה", "שיעור ב", "כותרת"],
-        rows: [
-          ["הרבנית ארכיון אלף", "ראשון 8:30", "שיעור ארכיון א"],
-          ["ארכיון בית", "שני 10:00", "שיעור ארכיון ב"],
-        ],
-      },
-    ]);
-    await page.goto(`${demoUrl()}/settings/import`);
-    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
-    await page.locator('input[type="file"]').setInputFiles({ name: "מעקב לדוגמה.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(bytes) });
-    await page.getByLabel("שם המחזור בארכיון").fill("ארכיון לדוגמה");
-    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
-    await page.getByRole("button", { name: "ייבוא", exact: true }).click();
-    await page.getByRole("group", { name: "אישור", exact: true }).getByRole("button", { name: "ייבוא" }).click();
-    await expect(toast(page, "הייבוא נשמר")).toBeVisible();
-
-    await nav(page).getByRole("link", { name: /אישורים/ }).click();
-    const batch = page.getByRole("group", { name: "אישור באצווה: מי שלימד/ה ב-ארכיון לדוגמה" });
-    const ask = batch.getByRole("button", { name: "אישור 2 מרצים שלימדו ב-ארכיון לדוגמה" });
-    await ask.click();
-    const confirm = batch.getByRole("group", { name: "אישור", exact: true });
-    await expect(confirm).toContainText("לאשר 2 מרצים שלימדו ב-ארכיון לדוגמה?");
-    await confirm.getByRole("button", { name: "ביטול" }).press("Enter");
-    await expect(confirm).toHaveCount(0);
-    await expect(ask).toBeFocused(); // not the page: the keyboard is where it was
-    await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveAccessibleName("אישורים, 8 ממתינים"); // nothing approved
-    await noSidewaysScroll(page);
   });
 
   test("the grid's «מטופל ע״י X» still offers a cell to the handler; the sheet agrees on who handles them", async ({ page }, info) => {
@@ -229,35 +202,17 @@ test.describe("demo build", () => {
     await expect(cell.locator("[data-pitch-id]").filter({ hasText: "מרצה 09" })).toContainText("בטיפול: חניך/ה א׳");
     await cell.getByRole("button", { name: "ד״ר מרצה 09" }).click();
     const sheet = page.getByRole("dialog", { name: "ד״ר מרצה 09" });
-    await expect(sheet.getByRole("region", { name: "הטיפול השנה" })).toContainText("בטיפול חניך/ה א׳");
-    await expect(sheet.getByRole("region", { name: "זמינות" }).getByRole("button", { name: /^ראשון בוקר: לא יכול — דוגמה: לא בבקרים/ })).toBeVisible();
+    await expect(sheet.getByRole("region", { name: "השיחה" })).toContainText("בטיפול חניך/ה א׳");
+    await expect(sheet.getByRole("region", { name: "השיעור" })).toContainText("חמישי 08:30–10:00"); // the cell just offered
+    // availability per slot: the seeded Sunday morning, one note said once for the three slots it is on
+    const avail = sheet.getByRole("region", { name: "זמינות" });
+    await expect(avail.getByRole("button", { name: /^ראשון 08:30–10:00: לא יכול — דוגמה: לא בבקרים/ })).toBeVisible();
+    await expect(avail.getByRole("button", { name: /^ראשון 11:30–13:00: לא יכול — דוגמה: לא בבקרים/ })).toBeVisible();
+    await expect(avail.getByRole("button", { name: /^ראשון 14:30–16:00: לא ידוע$/ })).toBeVisible();
+    await expect(avail.getByRole("list", { name: "הערות על הזמינות" }).getByRole("listitem")).toHaveText(["ראשון 08:30–13:00 · לא יכול — דוגמה: לא בבקרים"]);
     await noSidewaysScroll(page);
   });
 
-  test("a hand-over: take the one offered to me, and move one of mine to a teammate", async ({ page }) => {
-    await page.goto(`${demoUrl()}/mine`);
-    const offered = page.getByRole("region", { name: "הוצעו לי" });
-    await expect(offered).toContainText("חניך/ה א׳ מציע/ה להעביר אליך את הטיפול");
-    await offered.getByRole("button", { name: "קבלת הטיפול" }).click();
-    await expect(toast(page, "הטיפול עבר אליך")).toBeVisible();
-    await expect(page.getByRole("region", { name: "הוצעו לי" })).toHaveCount(0);
-    await expect(page.getByRole("region", { name: "מחכה לתשובה" })).toContainText("הרב מרצה 13");
-
-    await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "מרצה 32" }).click();
-    const sheet = page.getByRole("dialog", { name: "מרצה 32" });
-    await sheet.getByRole("button", { name: "העברה לחבר/ת צוות" }).click();
-    const form = sheet.getByRole("group", { name: "העברת הטיפול" });
-    await form.getByLabel("להעביר ל…").selectOption({ label: "חניך/ה ב׳" });
-    await form.getByLabel("הערה להעברה (לא חובה)").fill("יש לה קשר עם המרצה (נתון לדוגמה)");
-    await form.getByRole("button", { name: "העברה" }).click();
-    await expect(toast(page, "הטיפול עבר לחניך/ה ב׳")).toBeVisible();
-    await expect(sheet.getByRole("region", { name: "הטיפול השנה" })).toContainText("בטיפול חניך/ה ב׳");
-    await expect(sheet.getByRole("region", { name: "ציר הפעולות" })).toContainText("בטיפול חניך/ה ב׳");
-    await expect(sheet.getByRole("region", { name: "ציר הפעולות" })).toContainText("«יש לה קשר עם המרצה (נתון לדוגמה)»");
-    await noSidewaysScroll(page);
-    await sheet.getByRole("button", { name: "סגירה" }).click();
-    await expect(page.getByRole("region", { name: "לפנות" })).toHaveCount(0);
-  });
 });
 
 test.describe("mock build", () => {
@@ -277,7 +232,7 @@ test.describe("mock build", () => {
     sb.answers.set("get_speaker_contacts", { phone: null, email: null, secretary_note: null, notes: null });
     sb.answers.set("speaker_history", []);
     sb.answers.set("speaker_activity", []);
-    for (const fn of ["set_speaker_contacts", "update_speaker", "vet_speakers", "set_approach_status", "hand_over", "answer_handover", "set_availability"]) sb.answers.set(fn, null);
+    for (const fn of ["set_speaker_contacts", "update_speaker", "vet_speakers", "set_approach_status", "hand_over", "answer_handover", "set_slot_availability"]) sb.answers.set(fn, null);
     sb.answers.set("claim_speaker", 91);
     await sb.attach(page);
     const session = await signIn(page, "admin@example.org");
@@ -316,16 +271,18 @@ test.describe("mock build", () => {
     await expect.poll(() => sb.rpc.get("claim_speaker")).toEqual([{ p_edition: 7, p_speaker: 15 }]);
     await page.keyboard.press("Escape");
 
-    // «המרצים שלי»: take the hand-over offered to me, «פניתי»
+    // «המרצים שלי»: take the hand-over offered to me; then a call — its result, with what was said, in the sheet
     await nav(page).getByRole("link", { name: "המרצים שלי" }).click();
     await page.getByRole("region", { name: "הוצעו לי" }).getByRole("button", { name: "קבלת הטיפול" }).click();
     await expect.poll(() => sb.rpc.get("answer_handover")).toEqual([{ p_approach: mine(13).id, p_accept: true, p_note: null }]);
-    await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "פניתי" }).click();
-    await expect.poll(() => sb.rpc.get("set_approach_status")).toEqual([{ p_approach: mine(32).id, p_version: 1, p_status: "approached", p_note: null }]);
-
-    // the sheet of one of mine: profile, contacts, availability, vetting, hand-over
-    await page.getByRole("region", { name: "לפנות" }).getByRole("button", { name: "מרצה 32" }).click();
+    await page.getByRole("region", { name: "להתקשר", exact: true }).locator("li").filter({ hasText: "מרצה 32" }).getByRole("button", { name: "לשיחה" }).click();
     sheet = page.getByRole("dialog", { name: "מרצה 32" });
+    const result = sheet.getByRole("group", { name: "תוצאת השיחה" });
+    await result.getByLabel("מה נאמר בשיחה").fill("נושא לדוגמה");
+    await result.getByRole("button", { name: "שוחחנו, מחכים לתשובה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("set_approach_status")).toEqual([{ p_approach: mine(32).id, p_version: 1, p_status: "approached", p_note: "נושא לדוגמה" }]);
+
+    // the same sheet: profile, contacts, a slot of availability, vetting, hand-over
     await sheet.getByRole("region", { name: "פרטים" }).getByRole("button", { name: "עריכה", exact: true }).click();
     await sheet.getByLabel("תיאור קצר").fill("תיאור לדוגמה");
     await sheet.getByRole("form", { name: "עריכת הפרטים" }).getByRole("button", { name: "שמירה" }).click();
@@ -336,9 +293,10 @@ test.describe("mock build", () => {
     await sheet.getByRole("form", { name: "עריכת פרטי הקשר" }).getByRole("button", { name: "שמירה" }).click();
     await expect.poll(() => sb.rpc.get("set_speaker_contacts")).toEqual([{ p_speaker: 32, p_phone: "123 456 789", p_email: null, p_secretary_note: null, p_notes: null }]);
 
-    await sheet.getByRole("button", { name: /^שני ערב: לא ידוע/ }).click();
-    await sheet.getByRole("group", { name: "זמינות שני ערב" }).getByRole("button", { name: "לא יכולה" }).click();
-    await expect.poll(() => sb.rpc.get("set_availability")).toEqual([{ p_edition: 7, p_speaker: 32, p_day: 1, p_part: "evening", p_kind: "cannot", p_note: null }]);
+    // one tap on Monday 08:30: «יכולה», by the row's id in this edition's grid
+    await sheet.getByRole("region", { name: "זמינות" }).getByRole("button", { name: /^שני 08:30–10:00: לא ידוע$/ }).click();
+    const row0830 = week.rows.find((r) => r.kind === "lesson" && r.start_min === 510)!.id;
+    await expect.poll(() => sb.rpc.get("set_slot_availability")).toEqual([{ p_edition: 7, p_speaker: 32, p_day: 1, p_row: row0830, p_kind: "can", p_note: null }]);
 
     await sheet.getByRole("region", { name: "אישור המדריך/ה" }).getByRole("button", { name: "שינוי האישור" }).click();
     await sheet.getByRole("region", { name: "אישור המדריך/ה" }).getByRole("button", { name: "דחייה" }).click();
@@ -350,12 +308,64 @@ test.describe("mock build", () => {
     await expect.poll(() => sb.rpc.get("hand_over")).toEqual([{ p_approach: mine(32).id, p_to: 3, p_note: null }]);
 
     // every one of them carried the member's own token
-    const pool_rpcs = ["speaker_matches", "create_speaker", "get_speaker_contacts", "speaker_history", "speaker_activity", "claim_speaker", "answer_handover", "set_approach_status", "update_speaker", "set_speaker_contacts", "set_availability", "vet_speakers", "hand_over"];
+    const pool_rpcs = ["speaker_matches", "create_speaker", "get_speaker_contacts", "speaker_history", "speaker_activity", "claim_speaker", "answer_handover", "set_approach_status", "update_speaker", "set_speaker_contacts", "set_slot_availability", "vet_speakers", "hand_over"];
     for (const fn of pool_rpcs) {
       const calls = sb.calls.filter((c) => c.path === `/rest/v1/rpc/${fn}`);
       expect(calls.length, fn).toBeGreaterThan(0);
       for (const c of calls) expect(c.auth, fn).toBe(`Bearer ${session.access_token}`);
     }
+  });
+
+  test("a slot a content member marks: shown at once, put back when the database refuses it — the refusal in Hebrew; logistics only reads", async ({ page, context }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
+    const week = demoWeek();
+    week.edition.id = 7;
+    const member = (role: "content" | "logistics", id: number) => ({
+      status: "ok",
+      schema_version: EXPECTED_SCHEMA_VERSION,
+      email: "member@example.org",
+      display_name: "חבר/ת צוות",
+      global_admin: false,
+      memberships: [{ edition_id: 7, role, member_id: id }],
+    });
+    /** A teammate's speaker's sheet, opened from the pool, as this member. */
+    const open = async (p: Page, role: "content" | "logistics", id: number) => {
+      const sb = new FakeSupabase({ status: 200, body: member(role, id) });
+      sb.answers.set("editions", [week.edition]);
+      sb.answers.set("load_week", week);
+      sb.answers.set("speaker_history", []);
+      sb.answers.set("speaker_activity", []);
+      sb.answers.set("get_speaker_contacts", null);
+      await sb.attach(p);
+      await signIn(p);
+      await p.goto(mockUrl());
+      const pool = p.getByRole("region", { name: "מאגר המרצים" });
+      await pool.getByRole("tab", { name: /בטיפול אחרים/ }).click();
+      await pool.getByRole("button", { name: "כרטיס ד״ר מרצה 09" }).click();
+      return p.getByRole("dialog", { name: "ד״ר מרצה 09" }).getByRole("region", { name: "זמינות" });
+    };
+
+    // a content member, no approach of theirs: the tap shows while the answer waits, and goes back when it is a refusal
+    const avail = await open(page, "content", 3); // ד״ר מרצה 09 is חניך/ה א׳'s
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    await page.route("**/rest/v1/rpc/set_slot_availability", async (route) => {
+      await held;
+      await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ code: "P0001", message: "outside_grid", details: null, hint: null }) });
+    });
+    await avail.getByRole("button", { name: /^שני 10:00–11:30: לא ידוע$/ }).click();
+    await expect(avail.getByRole("button", { name: /^שני 10:00–11:30: יכול$/ })).toBeVisible();
+    release();
+    await expect(page.getByRole("alert").filter({ hasText: "השעה הזו מחוץ לשורות של הרשת." })).toBeVisible();
+    await expect(avail.getByRole("button", { name: /^שני 10:00–11:30: לא ידוע$/ })).toBeVisible();
+    await expect(avail.locator("[data-slot-said]")).toHaveText("");
+    await expect(page.getByText("outside_grid")).toHaveCount(0);
+
+    // logistics: the same grid, read-only
+    const read = await open(await context.newPage(), "logistics", 5);
+    await expect(read.getByRole("img", { name: /^ראשון 08:30–10:00: לא יכול — דוגמה: לא בבקרים$/ })).toBeVisible();
+    await expect(read.getByRole("button")).toHaveCount(0);
+    await expect(read).toContainText("צפייה בלבד");
   });
 
   test("a refusal from a pool RPC reads in Hebrew beside the form", async ({ page }, info) => {

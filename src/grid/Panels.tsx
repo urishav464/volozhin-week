@@ -1,16 +1,19 @@
 // The side panel (a bottom sheet on a phone): what a lesson or an empty cell
-// offers — candidates and closing, the lesson's details, its stages after it
+// offers — candidates, the call and closing, the lesson's details, its stages after it
 // closed (payment, the message, the escort, sources: src/screens/stages/,
 // handed in by the week as `stages`), and reshaping the cell.
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { byGender, displayName } from "../domain/names";
-import { DAY_NAMES, type Day, fmtRange, overlaps } from "../domain/time";
-import type { Category, Gender, GridRow, Lesson, Pitch, Speaker } from "../domain/types";
+import { DAY_NAMES, type Day, fmt, fmtRange, overlaps } from "../domain/time";
+import { type Approach, type ApproachStatus, type Category, type Gender, type GridRow, LIVE_PITCH, type Lesson, type Pitch, type Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
 import { type Span, cellSpan, sticksOut, timeSplitOk } from "../domain/shape";
 import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
+import { errorMessage } from "../errors";
+import { statusLabel, vettingLabel } from "../lib/labels";
 import { DEFAULT_MAX_CATEGORY_PER_DAY } from "../rules/warnings";
 import { Button, Confirm, Fold, INPUT, useFocusBack } from "../screens/settings/kit";
+import { CallPoints, CallResults } from "../screens/speakers/call";
 import { Chip, GenderDot, STAGE_DOT } from "./bits";
 import { needText } from "./DayHeader";
 import { rowActive } from "./layout";
@@ -19,8 +22,14 @@ import { type Fit, type GridModel, POOL_SECTION_LABEL, type PoolSection, fitFor,
 export interface PanelActions {
   propose: (speakerId: number, target: CellTarget, mode?: "self" | "offer") => void;
   unpropose: (pitchId: number) => void;
-  setPitch: (pitchId: number, state: "candidate" | "approached" | "declined") => void;
-  close: (pitchId: number) => void;
+  /** «החזרה לתהליך» of a declined pitch — set_pitch(candidate): a declined approach comes back «לפני שיחה» with it (v14). */
+  revive: (pitchId: number) => void;
+  /** The call's result on the approach (set_approach_status), with what was said; the toast names the speaker and the result. */
+  /** Resolves false when refused (the card keeps what was typed). */
+  callResult: (approach: Approach, status: ApproachStatus, note: string | null) => Promise<boolean>;
+  /** A global admin's «אישור» of a speaker who agreed (vet): closing waits for it. */
+  approveSpeaker: (speakerId: number) => Promise<boolean>;
+  close: (pitchId: number) => Promise<boolean>;
   reopen: (lessonId: number) => void;
   update: (lessonId: number, version: number, patch: LessonPatch) => void;
   reshape: (day: Day, rowStart: number, op: ReshapeOp) => void;
@@ -168,6 +177,8 @@ export interface LessonPanelProps {
   lesson: Lesson;
   me: number;
   isAdmin: boolean;
+  /** A global admin: approves a speaker who agreed, on the card. */
+  global: boolean;
   canEdit: boolean;
   actions: PanelActions;
   onClose: () => void;
@@ -183,9 +194,12 @@ export function LessonPanel(props: LessonPanelProps) {
   const room = model.week.rooms.find((r) => r.id === l.room_id);
   const row = rowOf(model, l);
   const pitches = model.pitchesByLesson.get(l.id) ?? [];
+  const live = pitches.filter((p) => LIVE_PITCH.has(p.state));
+  const declined = pitches.filter((p) => p.state === "declined");
   const recruiting = l.state === "draft" && l.kind === "lesson";
-  // a shaped draft nobody was proposed for is still a free cell: it reads, and works, as one
-  const free = recruiting && pitches.length === 0;
+  // a draft with no live pitch — shaped and never proposed for, or every speaker in it declined — is still a free
+  // cell: it reads, and works, as one (who declined here waits in «סירבו כאן»)
+  const free = recruiting && live.length === 0;
   const name = l.kind === "memorial" ? "זמן זיכרון" : l.state === "closed" ? "שיעור סגור" : free ? "משבצת פנויה" : "משבצת בתהליך";
   const lead = l.state === "closed" ? model.leadOf.get(l.id) : undefined;
   const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
@@ -193,16 +207,15 @@ export function LessonPanel(props: LessonPanelProps) {
   const merged = l.kind === "lesson" && row != null && cellOf(model, l.day, row).merged;
   const { need, deficit } = model.days[l.day].balance;
   const warnings = model.warnings.filter((w) => w.lessonIds.includes(l.id));
-  // a free draft's first proposal swaps the chooser for the candidates: the focus follows to the new candidate
-  const proposed = useRef(false);
-  const propose = (id: number, mode: "self" | "offer") => {
-    if (free) proposed.current = true;
-    actions.propose(id, { lesson_id: l.id }, mode);
-  };
+  const propose = (id: number, mode: "self" | "offer") => actions.propose(id, { lesson_id: l.id }, mode);
+  // A first proposal swaps the chooser for the candidates, a «סירב/ה» swaps them back: the focus that fell with the
+  // part it was in goes to the new candidate, or to the chooser's search.
+  const shaped = useRef(free);
   useEffect(() => {
-    if (free || !proposed.current) return;
-    proposed.current = false;
-    document.querySelector<HTMLElement>('[role="dialog"] [data-pitch-id] button')?.focus();
+    if (shaped.current === free) return;
+    shaped.current = free;
+    if (document.activeElement !== document.body) return;
+    document.querySelector<HTMLElement>(free ? '[role="dialog"] input[type="search"]' : '[role="dialog"] [data-pitch-id] button')?.focus();
   }, [free]);
 
   return (
@@ -231,11 +244,15 @@ export function LessonPanel(props: LessonPanelProps) {
 
       {recruiting &&
         (free && canEdit ? (
-          <ProposeSection model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={propose} />
+          <>
+            <ProposeSection model={model} me={props.me} day={l.day} start={l.start_min} end={l.end_min} onPick={propose} />
+            {declined.length > 0 && <Declined {...props} pitches={declined} />}
+          </>
         ) : (
-          <Section title="מועמדים" count={pitches.length || undefined}>
+          <Section title="מועמדים" count={live.length || undefined}>
             <DayTopics model={model} day={l.day} />
-            <Candidates {...props} />
+            <Candidates {...props} pitches={live} />
+            {declined.length > 0 && <Declined {...props} pitches={declined} small />}
             {canEdit && <AddSpeaker key={l.id} model={model} me={props.me} lesson={l} onPick={propose} />}
           </Section>
         ))}
@@ -338,77 +355,150 @@ function AddSpeaker({ model, me, lesson: l, onPick }: { model: GridModel; me: nu
   );
 }
 
-function Candidates({ model, lesson: l, me, isAdmin, canEdit, actions }: { model: GridModel; lesson: Lesson; me: number; isAdmin: boolean; canEdit: boolean; actions: PanelActions }) {
-  const pitches = model.pitchesByLesson.get(l.id) ?? [];
+type CardProps = Pick<LessonPanelProps, "model" | "me" | "isAdmin" | "global" | "canEdit" | "actions">;
+
+function Candidates({ pitches, ...props }: CardProps & { pitches: Pitch[] }) {
   if (pitches.length === 0) return <p className="text-sm text-ink-soft">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
   return (
     <ul className="space-y-2">
-      {pitches.map((p: Pitch) => {
-        const s = pitchSpeaker(model, p);
-        const a = model.approachById.get(p.approach_id);
-        const mine = isAdmin || a?.owner_member_id === me;
-        const owner = a?.owner_member_id != null ? model.memberName.get(a.owner_member_id) : undefined;
-        const proposer = p.proposed_by != null && p.proposed_by !== a?.owner_member_id ? model.memberName.get(p.proposed_by) : undefined;
-        const live = p.state === "approached" || p.state === "candidate";
-        return (
-          <li key={p.id} className="rounded-xl border border-line bg-card px-3 py-2.5" data-pitch-id={p.id}>
-            <div className="flex items-center gap-2">
-              <GenderDot gender={s?.gender ?? null} />
-              {s ? (
-                <button
-                  type="button"
-                  onClick={() => actions.openSpeaker(s.id)}
-                  className={`inline-flex min-h-9 min-w-0 items-center truncate text-start text-[15px] font-semibold hover:underline hover:underline-offset-4 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
-                >
-                  {displayName(s)}
-                </button>
-              ) : (
-                <span className="font-semibold">?</span>
-              )}
-              <span className="ms-auto shrink-0">
-                <Chip tone={p.state === "approached" ? "info" : p.state === "declined" ? "bad" : "plain"}>
-                  {p.state === "approached" ? "פנו" : p.state === "candidate" ? "מועמד/ת" : byGender(s?.gender, "סירב", "סירבה")}
-                </Chip>
-              </span>
-            </div>
-            <p className="ms-4 text-[13px] text-ink-soft">
-              {owner ? `בטיפול: ${owner}` : "ללא אחראי/ת"}
-              {proposer && ` · הוצע ע״י ${proposer}`}
-              {s?.vetted !== "approved" && <span className="text-amber-800"> · ממתין/ה לאישור מדריך/ה</span>}
-            </p>
-            {canEdit && (mine || (live && p.proposed_by === me)) && (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                {mine && live && (
-                  <Button kind="primary" onClick={() => actions.close(p.id)}>
-                    סגרנו
-                  </Button>
-                )}
-                {mine && p.state === "candidate" && s?.vetted === "approved" && (
-                  <Button onClick={() => actions.setPitch(p.id, "approached")}>
-                    פנינו
-                  </Button>
-                )}
-                {mine && live && (
-                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "declined")}>
-                    {byGender(s?.gender, "סירב", "סירבה")}
-                  </Button>
-                )}
-                {mine && p.state === "declined" && (
-                  <Button kind="quiet" onClick={() => actions.setPitch(p.id, "approached")}>
-                    החזרה לתהליך
-                  </Button>
-                )}
-                {live && (mine || p.proposed_by === me) && (
-                  <Button kind="quiet" className="ms-auto" onClick={() => actions.unpropose(p.id)}>
-                    הסרה מהמשבצת
-                  </Button>
-                )}
-              </div>
-            )}
-          </li>
-        );
-      })}
+      {pitches.map((p) => (
+        <CandidateCard key={p.id} {...props} pitch={p} />
+      ))}
     </ul>
+  );
+}
+
+/** Who declined this cell (folded): a free draft's chooser comes first, and «החזרה לתהליך» is here. */
+function Declined({ pitches, small, ...props }: CardProps & { pitches: Pitch[]; small?: boolean }) {
+  return (
+    <Fold size={small ? "sm" : "md"} title="סירבו כאן" hint={pitches.length} className={small ? "mt-3" : undefined}>
+      <Candidates {...props} pitches={pitches} />
+    </Fold>
+  );
+}
+
+/** A status chip's tone: agreed, talked and waiting, no answer, before the call, declined. */
+const STATUS_TONE: Record<ApproachStatus, "ok" | "info" | "warn" | "plain" | "bad"> = { positive: "ok", approached: "info", no_answer: "warn", claimed: "plain", declined: "bad" };
+
+/**
+ * One speaker pitched for the cell, by where the call stands (v14: the approach's status — a pitch is a candidate until
+ * the lesson closes). Before the call, no answer, talked and waiting: the points to say, folded, and the call's results.
+ * Agreed: closing once the instructor approved — before that, the instructor's «אישור» right here. Declined: back to the process.
+ */
+function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions }: CardProps & { pitch: Pitch }) {
+  const s = pitchSpeaker(model, p);
+  const a = model.approachById.get(p.approach_id);
+  const g = s?.gender ?? null;
+  const live = LIVE_PITCH.has(p.state);
+  // a pitch declined on its own (before v14, the per-pitch «סירב/ה») reads as declined whatever the approach says
+  const status: ApproachStatus = p.state === "declined" ? "declined" : (a?.status ?? "claimed");
+  const mine = isAdmin || a?.owner_member_id === me;
+  const owner = a?.owner_member_id != null ? model.memberName.get(a.owner_member_id) : undefined;
+  const proposer = p.proposed_by != null && p.proposed_by !== a?.owner_member_id ? model.memberName.get(p.proposed_by) : undefined;
+  const calling = live && (status === "claimed" || status === "no_answer" || status === "approached");
+  const agreed = live && status === "positive";
+  const elsewhere = model.week.pitches
+    .filter((q) => q.approach_id === p.approach_id && q.id !== p.id && LIVE_PITCH.has(q.state))
+    .flatMap((q) => model.week.lessons.filter((x) => x.id === q.lesson_id && x.state === "draft"))
+    .sort((x, y) => x.day - y.day || x.start_min - y.start_min);
+  const [busy, setBusy] = useState<string | null>(null);
+  const act = async <T,>(key: string, fn: () => Promise<T>) => {
+    setBusy(key);
+    const done = await fn();
+    setBusy(null);
+    return done;
+  };
+  // a result swaps the card's buttons under the hand that pressed one: the focus goes to the card's next control
+  const card = useRef<HTMLLIElement>(null);
+  const shape = `${status}:${s?.vetted}`;
+  const seen = useRef(shape);
+  useEffect(() => {
+    if (seen.current === shape) return;
+    seen.current = shape;
+    if (document.activeElement === document.body) card.current?.querySelector<HTMLElement>("[data-card-actions] button:not(:disabled)")?.focus();
+  }, [shape]);
+
+  return (
+    <li ref={card} className="rounded-xl border border-line bg-card px-3 py-2.5" data-pitch-id={p.id} data-status={status}>
+      <div className="flex items-center gap-2">
+        <GenderDot gender={g} />
+        {s ? (
+          <button
+            type="button"
+            onClick={() => actions.openSpeaker(s.id)}
+            className={`inline-flex min-h-11 min-w-0 items-center truncate text-start text-[15px] font-semibold hover:underline hover:underline-offset-4 lg:min-h-9 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
+          >
+            {displayName(s)}
+          </button>
+        ) : (
+          <span className="font-semibold">?</span>
+        )}
+        <span className="ms-auto shrink-0">
+          <Chip tone={STATUS_TONE[status]}>{statusLabel(status, g)}</Chip>
+        </span>
+      </div>
+      <p className="ms-4 flex flex-wrap items-center gap-x-1 text-[13px] text-ink-soft">
+        {s && s.vetted !== "approved" && (
+          <Chip tone={s.vetted === "rejected" ? "bad" : "warn"}>{s.vetted === "pending" ? `${byGender(g, "ממתין", "ממתינה")} לאישור המדריך/ה` : vettingLabel(s.vetted, g)}</Chip>
+        )}
+        <span>
+          {owner ? `בטיפול: ${owner}` : "ללא אחראי/ת"}
+          {proposer && ` · הוצע ע״י ${proposer}`}
+        </span>
+      </p>
+      {elsewhere.length > 0 && (
+        <p className="ms-4 text-[13px] text-ink-soft">
+          {byGender(g, "מוצע", "מוצעת")} גם ב:{" "}
+          {elsewhere.map((x, i) => (
+            <Fragment key={x.id}>
+              {i > 0 && ", "}
+              {DAY_NAMES[x.day]} <bdi dir="ltr">{fmt(x.start_min)}</bdi>
+            </Fragment>
+          ))}
+        </p>
+      )}
+      {canEdit && a && s && (mine || (live && p.proposed_by === me)) && (
+        <div data-card-actions className="mt-2 space-y-2">
+          {mine && calling && (
+            <>
+              <Fold size="sm" title="📞 נקודות לשיחה">
+                <CallPoints week={model.week} speakerGender={g} memberId={me} />
+              </Fold>
+              <CallResults status={status} gender={g} busy={busy === "call"} onResult={(st, note) => act("call", () => actions.callResult(a, st, note))} />
+            </>
+          )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {mine && agreed && s.vetted === "approved" && (
+              <Button kind="primary" disabled={g == null} busy={busy === "close"} onClick={() => void act("close", () => actions.close(p.id))}>
+                {byGender(g, "המרצה אישר", "המרצה אישרה", "המרצה אישר/ה")} את השעה — סגירה
+              </Button>
+            )}
+            {mine && agreed && s.vetted === "pending" && global && (
+              <Button kind="primary" busy={busy === "vet"} onClick={() => void act("vet", () => actions.approveSpeaker(s.id))}>
+                אישור
+              </Button>
+            )}
+            {mine && p.state === "declined" && (
+              <Button kind="quiet" onClick={() => actions.revive(p.id)}>
+                החזרה לתהליך
+              </Button>
+            )}
+            {mine && live && a.status === "declined" && (
+              <Button kind="quiet" busy={busy === "revive"} onClick={() => void act("revive", () => actions.callResult(a, "claimed", null))}>
+                החזרה לתהליך
+              </Button>
+            )}
+            {live && (
+              <Button kind="quiet" className="ms-auto" onClick={() => actions.unpropose(p.id)}>
+                הסרה מהמשבצת
+              </Button>
+            )}
+          </div>
+          {mine && agreed && s.vetted === "approved" && g == null && <p className="text-[13px] text-bad">{errorMessage("gender_unknown")}</p>}
+          {mine && agreed && s.vetted !== "approved" && !(global && s.vetted === "pending") && <p className="text-[13px] text-ink-soft">{errorMessage("not_vetted")}</p>}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -769,7 +859,7 @@ function ChooserRow({
   const notes: ReactNode[] = [];
   if (fit === "cannot") notes.push(`${byGender(s.gender, "אמר", "אמרה")} שלא ${byGender(s.gender, "יכול", "יכולה")}`);
   if (fit === "can") notes.push("זמין/ה");
-  if (s.vetted !== "approved") notes.push(<span className="text-amber-800">ממתין/ה לאישור</span>);
+  if (s.vetted !== "approved") notes.push(<span className={s.vetted === "rejected" ? "text-bad" : "text-amber-800"}>{vettingLabel(s.vetted, s.gender)}</span>);
   if (others) notes.push(`בטיפול: ${owner ?? "?"}`);
   if (shown)
     notes.push(

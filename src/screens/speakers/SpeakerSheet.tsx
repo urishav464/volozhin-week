@@ -1,17 +1,20 @@
-// The speaker sheet («פרופיל מרצה»): who they are, who handles them this
-// edition and where that stands, their contacts (only for the people the
-// contacts policy names — a global admin, or the handler in the current real
-// edition), the availability chips, the admin's vetting, what they taught in
-// past editions and how it went (SpeakerReviews.tsx), and the timeline, folded;
-// each closed lesson with its five stage dots
-// and the summary message (the same composer as the lesson panel, with the
-// contacts this sheet already holds). Opened from the pool, from a lesson, from
-// «המרצים שלי» and from the approvals queue; the same grid sheet (Panels.tsx)
-// at the side on a wide screen, from the bottom on a phone.
+// The speaker sheet («פרופיל מרצה»), in the order a speaker's year goes (v14):
+// who they are; «השיחה» — who handles them and where that stands, the
+// instructor's points for the call and its result, a hand-over; the
+// instructor's approval (closing a lesson waits for it); «השיעור» — the slots
+// they are proposed for, «שבץ בשבוע», each closed lesson with its five stage
+// dots and the summary message (the same composer as the lesson panel, with the
+// contacts this sheet already holds); their availability slot by slot (any
+// content member marks it); their contacts (only for the people the contacts
+// policy names — a global admin, or the handler in the current real edition);
+// what they taught in past editions and how it went (SpeakerReviews.tsx); and
+// the timeline, folded. Opened from the pool, from a lesson, from «המרצים שלי»
+// (at the call, `focus`) and from the approvals queue; the same grid sheet
+// (Panels.tsx) at the side on a wide screen, from the bottom on a phone.
 //
 // Every change is a port command (docs/CONTRACT.md «The speaker pool"), so the
 // demo refuses exactly what the database refuses; a refusal reads in Hebrew.
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { DataPort } from "../../data/port";
 import { LIMITS, titlesOf } from "../../data/speakerRules";
 import type { ActivityEntry, HistoryLesson, SpeakerPatch } from "../../data/speakers";
@@ -20,7 +23,7 @@ import { timeline } from "../../domain/activityText";
 import { mailHref, telHref, waHref } from "../../domain/contactLinks";
 import { byGender, displayName } from "../../domain/names";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
-import type { Approach, ApproachStatus, ContactPref, Lesson, Speaker, SpeakerContacts, TeamMember, Week } from "../../domain/types";
+import { type Approach, type ApproachStatus, type ContactPref, LIVE_PITCH, type Lesson, type Speaker, type SpeakerContacts, type TeamMember, type Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { GenderDot, ReconfirmDot, StageDots, TopicChip, topicsOf } from "../../grid/bits";
 import { Meta, Section, Sheet } from "../../grid/Panels";
@@ -28,7 +31,8 @@ import { CONTACT_PREF_LABEL, statusLabel, vettingLabel } from "../../lib/labels"
 import { Button, Field, Fold, INPUT, useRunner } from "../settings/kit";
 import { type Actor, actorIn } from "../weekStore";
 import { MessageComposer } from "../stages/MessageComposer";
-import { AvailabilityGrid, formOf, type Notify, patchOf, type ProfileForm, ProfileFields } from "./parts";
+import { CallPoints, CallResults } from "./call";
+import { formOf, type Notify, patchOf, type ProfileForm, ProfileFields, SlotGrid } from "./parts";
 import { TaughtHere } from "./SpeakerReviews";
 
 export interface SpeakerSheetProps {
@@ -49,6 +53,8 @@ export interface SpeakerSheetProps {
   onPlace?: (speakerId: number) => void;
   /** Open one of their lessons on the week. */
   onLesson?: (lessonId: number) => void;
+  /** «לשיחה» in «המרצים שלי»: the sheet opens at the call — scrolled to it, its points open, the focus on it. */
+  focus?: "call";
 }
 
 export function SpeakerSheet(props: SpeakerSheetProps) {
@@ -67,13 +73,8 @@ const LINK_BUTTON = "inline-flex min-h-11 items-center rounded-lg border border-
 /** The speaker's preferred channel: its button is the primary one. */
 const LINK_PREFERRED = "inline-flex min-h-11 items-center rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90";
 
-const STATUS_ORDER: ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
-
-/** The status as a short button. */
-function statusButton(st: ApproachStatus, s: Speaker): string {
-  if (st === "approached") return "פנו";
-  return statusLabel(st, s.gender);
-}
+/** Before the speaker's answer: the call is still to be made (or made again). */
+const CALLING: ReadonlySet<ApproachStatus> = new Set(["claimed", "no_answer", "approached"]);
 
 const WHEN = new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jerusalem" });
 const DAY = new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "numeric", timeZone: "Asia/Jerusalem" });
@@ -82,10 +83,24 @@ const when = (at: string, f = WHEN) => {
   return Number.isNaN(d.getTime()) ? "" : f.format(d);
 };
 
-function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, clear, reload, onPlace, onLesson }: SpeakerSheetProps & { s: Speaker }) {
+function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, clear, reload, onPlace, onLesson, focus }: SpeakerSheetProps & { s: Speaker }) {
   const edition = week.edition;
+  // Opened for the call: there at once, and the focus on it — before the sheet would take it (a child's effect runs first).
+  const callRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus !== "call") return;
+    callRef.current?.scrollIntoView({ block: "start" });
+    callRef.current?.focus({ preventScroll: true });
+  }, [focus]);
   const actor = actorIn(me, edition);
   const a = week.approaches.find((x) => x.speaker_id === s.id) ?? null;
+  // a call's result takes the pressed button away (the current status is not offered again): the focus stays in «השיחה»
+  const seenStatus = useRef(a?.status);
+  useEffect(() => {
+    if (seenStatus.current === a?.status) return;
+    seenStatus.current = a?.status;
+    if (document.activeElement === document.body) callRef.current?.focus({ preventScroll: true });
+  }, [a?.status]);
   const names = useMemo(() => new Map(week.team.map((t) => [t.id, t.display_name])), [week.team]);
   const nameOf = (id: number | null | undefined) => (id == null ? "—" : (names.get(id) ?? "חבר/ת צוות"));
   const { busy, run } = useRunner(notify, clear);
@@ -121,6 +136,20 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
   const mayManage = actor.canEdit && !!a && (actor.isAdmin || handler);
   const mayClaim = actor.canEdit && !s.retired && (!a || a.owner_member_id == null);
   const closedHere = week.lessons.filter((l) => l.state === "closed" && week.lessonSpeakers.some((x) => x.lesson_id === l.id && x.speaker_id === s.id));
+  // the slots they are proposed for, still open
+  const pitched = (a ? week.pitches.filter((p) => p.approach_id === a.id && LIVE_PITCH.has(p.state)) : [])
+    .map((p) => week.lessons.find((l) => l.id === p.lesson_id))
+    .filter((l): l is Lesson => !!l)
+    .sort((x, y) => x.day - y.day || x.start_min - y.start_min);
+  // «שבץ»: the grid's own flow (it offers a teammate's speaker to their handler); not once they declined, or taught here
+  const mayPlace = !!onPlace && actor.canEdit && !s.retired && closedHere.length === 0 && a?.status !== "declined" && (mayManage || mayClaim);
+  const calling = !!a && CALLING.has(a.status);
+  const mySlots = useMemo(() => week.slotAvailability.filter((v) => v.speaker_id === s.id), [week.slotAvailability, s.id]);
+  const mayMark = actor.canEdit && !s.retired;
+  // what was last said with the approach (a call's result, a hand-over): the timeline holds the rest
+  const lastNote = a && log?.find((e) => e.entity === "approaches" && e.entity_id === a.id && e.kind !== "availability" && typeof e.detail?.note === "string" && e.detail.note !== "");
+  const tel = mayManage && calling ? telHref(contacts?.phone) : null;
+  const wa = mayManage && calling ? waHref(contacts?.phone) : null;
 
   const lines = useMemo(
     () =>
@@ -172,77 +201,140 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
     >
       <Details port={port} s={s} week={week} actor={actor} handler={handler} busy={busy} act={act} />
 
-      <Section title="הטיפול השנה">
-        <div className="space-y-2">
-          <ApproachView s={s} a={a} actor={actor} handler={handler} nameOf={nameOf} />
-          {a?.offered_to != null && a.offered_to === actor.memberId && actor.canEdit && (
-            <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
-              <p className="text-sm">{nameOf(a.owner_member_id)} מציע/ה להעביר אליך את הטיפול.</p>
-              <div className="flex flex-wrap gap-2">
-                <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
-                  קבלת הטיפול
-                </Button>
-                <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה נדחתה")}>
-                  דחיית ההצעה
-                </Button>
+      <div ref={callRef} tabIndex={-1} className="scroll-mt-2 outline-none">
+        <Section title="השיחה">
+          <div className="space-y-2">
+            <ApproachView s={s} a={a} actor={actor} handler={handler} nameOf={nameOf} />
+            {lastNote && (
+              <p className="break-words text-sm">
+                <span className="text-ink-soft">
+                  הערה אחרונה{lastNote.actor != null && ` (${nameOf(lastNote.actor)}, ${when(lastNote.at, DAY)})`}:
+                </span>{" "}
+                «{String(lastNote.detail.note)}»
+              </p>
+            )}
+            {a?.offered_to != null && a.offered_to === actor.memberId && actor.canEdit && (
+              <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
+                <p className="text-sm">{nameOf(a.owner_member_id)} מציע/ה להעביר אליך את הטיפול.</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
+                    קבלת הטיפול
+                  </Button>
+                  <Button busy={busy === "decline"} onClick={() => void act("decline", () => port.speakers.answerHandOver(edition.id, a.id, false), "ההצעה נדחתה")}>
+                    דחיית ההצעה
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
-          {a?.offered_to != null && a.offered_to !== actor.memberId && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span>
-                הוצע להעביר את הטיפול ל{nameOf(a.offered_to)}. עד שתתקבל תשובה, הטיפול לא עובר.
-              </span>
-              {(handler || actor.isAdmin) && actor.canEdit && (
-                // The handler withdraws with «to nobody»; for an admin that would send the speaker back to the
-                // pool (an admin reassigns at once), so an admin "reassigns" to the same handler, which clears the offer.
-                <Button
-                  kind="quiet"
-                  busy={busy === "withdraw"}
-                  onClick={() => void act("withdraw", () => port.speakers.handOver(edition.id, a.id, actor.isAdmin ? a.owner_member_id : null), "ההצעה בוטלה")}
-                >
-                  ביטול ההצעה
-                </Button>
-              )}
-            </div>
-          )}
-          {mayClaim && (
-            <Button kind="primary" busy={busy === "claim"} onClick={() => void act("claim", () => port.speakers.claim(edition.id, s.id), "המרצה בטיפולך")}>
-              אני מטפל/ת
-            </Button>
-          )}
-          {mayManage && a && (
-            <StatusControls
-              key={a.id}
-              s={s}
-              a={a}
-              closedHere={closedHere.length > 0}
-              busy={busy}
-              onSet={(st, note) =>
-                act(`status:${st}`, () => port.speakers.setStatus(edition.id, a.id, a.version, st, note), st === a.status ? "ההערה נשמרה" : `עודכן: ${statusLabel(st, s.gender)}`)
-              }
-            />
-          )}
-          {a?.status === "positive" && closedHere.length === 0 && mayManage && onPlace && (
-            <Button kind="primary" onClick={() => onPlace(s.id)}>
-              שבץ בשבוע
-            </Button>
-          )}
-          {closedHere.length > 0 && (
-            <ClosedLessons
-              week={week}
-              s={s}
-              lessons={closedHere}
-              actor={actor}
-              contacts={contacts}
-              busy={busy}
-              notify={notify}
-              onSent={(l) => void act(`sent:${l.id}`, () => port.commands(edition.id).markConfirmSent(l.id, l.version), "סומן שההודעה נשלחה")}
-              onLesson={onLesson}
-            />
-          )}
-          {mayManage && a && <HandOver key={`${a.id}:${a.owner_member_id}`} team={week.team} a={a} actor={actor} busy={busy} onGo={(to, note) => act("handover", () => port.speakers.handOver(edition.id, a.id, to, note), handOverText(s, to, actor, nameOf))} />}
-        </div>
+            )}
+            {a?.offered_to != null && a.offered_to !== actor.memberId && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span>
+                  הוצע להעביר את הטיפול ל{nameOf(a.offered_to)}. עד שתתקבל תשובה, הטיפול לא עובר.
+                </span>
+                {(handler || actor.isAdmin) && actor.canEdit && (
+                  // The handler withdraws with «to nobody»; for an admin that would send the speaker back to the
+                  // pool (an admin reassigns at once), so an admin "reassigns" to the same handler, which clears the offer.
+                  <Button
+                    kind="quiet"
+                    busy={busy === "withdraw"}
+                    onClick={() => void act("withdraw", () => port.speakers.handOver(edition.id, a.id, actor.isAdmin ? a.owner_member_id : null), "ההצעה בוטלה")}
+                  >
+                    ביטול ההצעה
+                  </Button>
+                )}
+              </div>
+            )}
+            {mayClaim && (
+              <Button kind="primary" busy={busy === "claim"} onClick={() => void act("claim", () => port.speakers.claim(edition.id, s.id), "המרצה בטיפולך")}>
+                אני מטפל/ת
+              </Button>
+            )}
+            {(tel || wa) && (
+              <div className="flex flex-wrap gap-1.5">
+                {tel && (
+                  <a href={tel} className={s.contact_pref === "phone" ? LINK_PREFERRED : LINK_BUTTON}>
+                    חיוג
+                  </a>
+                )}
+                {wa && (
+                  <a href={wa} target="_blank" rel="noopener noreferrer" className={s.contact_pref === "whatsapp" ? LINK_PREFERRED : LINK_BUTTON}>
+                    WhatsApp
+                  </a>
+                )}
+              </div>
+            )}
+            {mayManage && a && calling && (
+              <Fold title="📞 נקודות לשיחה" defaultOpen={focus === "call"} className="rounded-lg border border-line bg-paper px-3 py-0.5">
+                <CallPoints week={week} speakerGender={s.gender} memberId={actor.memberId} />
+              </Fold>
+            )}
+            {mayManage && a && closedHere.length === 0 && (
+              <CallResultFrame calling={calling}>
+                <CallResults
+                  status={a.status}
+                  gender={s.gender}
+                  busy={busy === "call"}
+                  onResult={(st, note) => act("call", () => port.speakers.setStatus(edition.id, a.id, a.version, st, note), `עודכן: ${statusLabel(st, s.gender)}`)}
+                />
+              </CallResultFrame>
+            )}
+            {mayManage && closedHere.length > 0 && <p className="text-xs text-ink-soft">יש שיעור סגור במחזור. כדי לשנות את המצב, קודם פותחים אותו מחדש.</p>}
+            {mayManage && a && <HandOver key={`${a.id}:${a.owner_member_id}`} team={week.team} a={a} actor={actor} busy={busy} onGo={(to, note) => act("handover", () => port.speakers.handOver(edition.id, a.id, to, note), handOverText(s, to, actor, nameOf))} />}
+          </div>
+        </Section>
+      </div>
+
+      <Vetting s={s} actor={actor} nameOf={nameOf} busy={busy} onVet={(state, note) => act(`vet:${state}`, () => port.speakers.vet([s.id], state, note), vetText(state, s))} />
+
+      {(pitched.length > 0 || mayPlace || closedHere.length > 0) && (
+        <Section title="השיעור">
+          <div className="space-y-2">
+            {pitched.length > 0 && (
+              <ul aria-label={`${byGender(s.gender, "מוצע", "מוצעת")} במשבצות`} className="space-y-1.5">
+                {pitched.map((l) => (
+                  <li key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-sm">
+                    <span className="min-w-0 flex-1">
+                      <span className="font-semibold">
+                        {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
+                      </span>
+                      {l.title && ` · ${l.title}`}
+                    </span>
+                    {onLesson && <Button onClick={() => onLesson(l.id)}>לשיעור</Button>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {mayPlace && onPlace && (
+              <Button kind={a?.status === "positive" && pitched.length === 0 ? "primary" : "secondary"} onClick={() => onPlace(s.id)}>
+                שבץ בשבוע
+              </Button>
+            )}
+            {closedHere.length > 0 && (
+              <ClosedLessons
+                week={week}
+                s={s}
+                lessons={closedHere}
+                actor={actor}
+                contacts={contacts}
+                busy={busy}
+                notify={notify}
+                onSent={(l) => void act(`sent:${l.id}`, () => port.commands(edition.id).markConfirmSent(l.id, l.version), "סומן שההודעה נשלחה")}
+                onLesson={onLesson}
+              />
+            )}
+          </div>
+        </Section>
+      )}
+
+      <Section title="זמינות">
+        <SlotGrid
+          rows={week.rows}
+          edition={edition}
+          slots={mySlots}
+          gender={s.gender}
+          onSet={mayMark ? (day, rowId, kind, note) => act("slot", () => port.speakers.setSlotAvailability(edition.id, s.id, day, rowId, kind, note), null) : undefined}
+        />
+        {!actor.canEdit && <p className="mt-2 text-xs text-ink-soft">צפייה בלבד: את הזמינות מסמנים צוות התוכן והמדריך/ה.</p>}
       </Section>
 
       <Section title="פרטי קשר">
@@ -262,19 +354,6 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
           <Contacts key={`${s.id}`} s={s} c={contacts} busy={busy} onSave={(c, onRefused) => act("contacts", () => port.speakers.setContacts(s.id, c), "פרטי הקשר נשמרו", onRefused)} />
         )}
       </Section>
-
-      <Section title="זמינות">
-        {!a && <p className="mb-2 text-xs text-ink-soft">נשמרת אצל מי שמטפל/ת השנה.</p>}
-        <AvailabilityGrid
-          rows={a ? week.availability.filter((v) => v.approach_id === a.id) : []}
-          gender={s.gender}
-          busy={busy === "avail"}
-          onSet={mayManage ? (day, part, kind, note) => act("avail", () => port.speakers.setAvailability(edition.id, s.id, day, part, kind, note), "הזמינות נשמרה") : undefined}
-        />
-        {a && !mayManage && <p className="mt-2 text-xs text-ink-soft">את הזמינות מעדכנים מי שמטפל/ת במרצה והמדריך/ה.</p>}
-      </Section>
-
-      <Vetting s={s} actor={actor} nameOf={nameOf} busy={busy} onVet={(state, note) => act(`vet:${state}`, () => port.speakers.vet([s.id], state, note), vetText(state, s))} />
 
       <TaughtHere port={port} s={s} actor={actor} edition={edition} categories={week.categories} history={history} failed={sideFailed} />
 
@@ -451,51 +530,14 @@ function ApproachView({ s, a, actor, handler, nameOf }: { s: Speaker; a: Approac
   );
 }
 
-function StatusControls({
-  s,
-  a,
-  closedHere,
-  busy,
-  onSet,
-}: {
-  s: Speaker;
-  a: Approach;
-  closedHere: boolean;
-  busy: string | null;
-  onSet: (st: ApproachStatus, note: string | null) => Promise<boolean>;
-}) {
-  const id = useId();
-  const [note, setNote] = useState("");
-  const vetted = s.vetted === "approved";
-  return (
-    <div className="space-y-2 rounded-lg border border-line bg-paper p-3">
-      <div role="group" aria-label="מצב הפנייה" className="flex flex-wrap gap-1.5">
-        {STATUS_ORDER.map((st) => {
-          const current = st === a.status;
-          const disabled = !current && (((st === "approached" || st === "positive") && !vetted) || (closedHere && st !== "positive"));
-          return (
-            <Button
-              key={st}
-              kind={current ? "primary" : "secondary"}
-              aria-pressed={current}
-              disabled={disabled}
-              busy={busy === `status:${st}`}
-              onClick={async () => {
-                if (current && !note.trim()) return; // already so: tapping it again only adds a note
-                if (await onSet(st, note.trim() || null)) setNote("");
-              }}
-            >
-              {statusButton(st, s)}
-            </Button>
-          );
-        })}
-      </div>
-      <Field id={`${id}-note`} label="הערה (לא חובה)" hint="נשמרת עם השינוי (או עם המצב הנוכחי), וגלויה לצוות המחזור. בלי מספרי טלפון: אלה נכנסים לפרטי הקשר.">
-        <input id={`${id}-note`} value={note} maxLength={LIMITS.note} onChange={(e) => setNote(e.target.value)} className={INPUT} placeholder="למשל: שלחתי הודעה, מחכים לתשובה" />
-      </Field>
-      {!vetted && <p className="text-xs text-ink-soft">«פנו» ו«{byGender(s.gender, "הסכים", "הסכימה")}» אחרי אישור המדריך/ה.</p>}
-      {closedHere && <p className="text-xs text-ink-soft">יש שיעור סגור במחזור. כדי לשנות את המצב, קודם פותחים אותו מחדש.</p>}
-    </div>
+/** The call's result: in sight while the call is to be made; after the answer the next step is elsewhere, and a change of mind waits behind a fold. */
+function CallResultFrame({ calling, children }: { calling: boolean; children: ReactNode }) {
+  return calling ? (
+    <div className="rounded-lg border border-line bg-paper p-3">{children}</div>
+  ) : (
+    <Fold title="שינוי תוצאת השיחה" size="sm">
+      {children}
+    </Fold>
   );
 }
 

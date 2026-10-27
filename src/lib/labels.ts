@@ -20,19 +20,22 @@ export function topRole(me: Me): Role {
 // Words about a speaker take the speaker's gender (byGender: the slashed form
 // while it is unknown); words to the team stay gender-neutral.
 
-/** Where the approach stands — the sheet's buttons and «המרצים שלי». */
+/**
+ * Where the approach stands (v14: the call is the first step) — the one source of these words: the lesson panel's card,
+ * the speaker sheet, «המרצים שלי», the team's board, the pool.
+ */
 export function statusLabel(s: ApproachStatus, g: Gender | null): string {
   switch (s) {
     case "claimed":
-      return "עוד לא פנו";
+      return "לפני שיחה";
+    case "no_answer":
+      return byGender(g, "לא ענה", "לא ענתה", "לא ענה/תה");
     case "approached":
-      return "פנו, מחכים לתשובה";
+      return "שוחחנו, מחכים לתשובה";
     case "positive":
       return byGender(g, "הסכים", "הסכימה");
     case "declined":
       return byGender(g, "סירב", "סירבה");
-    case "no_answer":
-      return "אין תשובה";
   }
 }
 

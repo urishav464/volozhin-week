@@ -80,17 +80,21 @@ describe("the stage commands on the wire", () => {
     expect(errorMessage("approval_pending")).toMatch(/^התשלום או ההסעה עוד ממתינים/);
   });
 
-  it("settings: the template and duty phrases are functions; a trainee's escorted lessons a read of lessons", async () => {
-    const { sb, sent } = client([[204, null], [204, null], [200, [{ id: 5, day: 0, start_min: 600, end_min: 690, title: null }]]]);
+  it("settings: the templates and duty phrases are functions; a trainee's escorted lessons a read of lessons", async () => {
+    const { sb, sent } = client([[204, null], [204, null], [204, null], [204, null], [200, [{ id: 5, day: 0, start_min: 600, end_min: 690, title: null }]]]);
     const s = new SupabaseSettings(sb);
     await s.setConfirmTemplate(7, "נוסח לדוגמה {{פנייה}}");
     await s.setDutyPhrases(7, [{ when: "self_intro", text: "ניסוח לדוגמה" }]);
+    await s.setCallTemplate(7, "נקודות לדוגמה {{שמי}}");
+    await s.setCallTemplate(7, null); // back to the instructor's built-in text
     expect(await s.rosterEscorts(7, 2)).toEqual([{ id: 5, day: 0, start_min: 600, end_min: 690, title: null }]);
     expect(sent.map((r) => [r.path, r.body])).toEqual([
       ["/rest/v1/rpc/set_confirm_template", { p_edition: 7, p_body: "נוסח לדוגמה {{פנייה}}" }],
       ["/rest/v1/rpc/set_duty_phrases", { p_edition: 7, p_phrases: [{ when: "self_intro", text: "ניסוח לדוגמה" }] }],
+      ["/rest/v1/rpc/set_call_template", { p_edition: 7, p_body: "נקודות לדוגמה {{שמי}}" }],
+      ["/rest/v1/rpc/set_call_template", { p_edition: 7, p_body: null }],
       ["/rest/v1/lessons", null],
     ]);
-    expect(decodeURIComponent(sent[2].query)).toBe("?select=id,day,start_min,end_min,title&edition_id=eq.7&escort_roster_id=eq.2&order=day.asc,start_min.asc,id.asc");
+    expect(decodeURIComponent(sent[4].query)).toBe("?select=id,day,start_min,end_min,title&edition_id=eq.7&escort_roster_id=eq.2&order=day.asc,start_min.asc,id.asc");
   });
 });

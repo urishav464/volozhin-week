@@ -125,7 +125,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       categories: structuredClone(this.categories),
       speakers: first.speakers, // one pool across the years
       approaches: [],
-      availability: [],
+      slotAvailability: [],
       lessons: [],
       lessonSpeakers: [],
       pitches: [],

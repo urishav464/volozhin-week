@@ -79,6 +79,7 @@ export class SupabaseSettings implements SettingsPort {
       grid_rows: n(p.grid_rows),
       milestones: n(p.milestones),
       confirm_template: p.confirm_template === true,
+      call_template: p.call_template === true,
       duty_phrases: n(p.duty_phrases),
       deactivate: n(p.deactivate),
       admins_stay: n(p.admins_stay),
@@ -235,6 +236,10 @@ export class SupabaseSettings implements SettingsPort {
 
   async setDutyPhrases(editionId: number, phrases: DutyPhrase[]): Promise<void> {
     await this.rpc("set_duty_phrases", { p_edition: editionId, p_phrases: phrases });
+  }
+
+  async setCallTemplate(editionId: number, body: string | null): Promise<void> {
+    await this.rpc("set_call_template", { p_edition: editionId, p_body: body });
   }
 }
 

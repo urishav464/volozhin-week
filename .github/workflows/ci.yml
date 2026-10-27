@@ -20,7 +20,8 @@ jobs:
   app:
     # pinned: ubuntu-latest became 26.04, where Playwright 1.56.1 cannot install Chromium
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # room for a slow apt mirror (the browser install has taken 12 minutes); the steps below carry the hang guards
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,7 +37,10 @@ jobs:
       - name: No personal data or secrets in the bundle
         run: node scripts/pii-scan.mjs --dir dist
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 15
+      # about 5 minutes when well: a test that hangs fails here, not at the job's limit
       - run: npm run test:e2e
+        timeout-minutes: 10
 
   sql:
     runs-on: ubuntu-latest

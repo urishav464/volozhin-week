@@ -16,7 +16,7 @@
 //   {{תאריך}}   «15.2.2027 (ח׳ באדר א׳ תשפ״ז)» — Gregorian, then Hebrew (Intl he-IL-u-ca-hebrew); TBD while the week's date is
 //   {{מקום}}    the room
 //   {{כותרת}}   the lesson's title
-//   {{שעה}}     the teaching time, start–end («20:00–21:15»)
+//   {{שעה}}     the teaching time, start–end («20:00–21:15», an LRM before it so it reads left to right — v14)
 //   {{משך}}     the teaching time in words: 60 «שעה», 75 «שעה ורבע», 90 «שעה וחצי», 45 «שלושת רבעי שעה», else «N דקות»
 //   {{תשלום}}   the amount asked, digits only («1,500») — the template writes ₪ or ש״ח itself
 //   [[זכר|נקבה]]                 by the speaker's gender
@@ -24,7 +24,9 @@
 //   [[תשלום:כשיש תשלום|בהתנדבות]]  the first text when an amount was asked, else the second —
 //                                   the only way a volunteer's wording enters: the template's own
 // Brackets nest ([[תשלום:…[[זכר|נקבה]]…|…]]); a variable does not.
-import { dateOf, fmtRange } from "./time";
+import { LRM, dateOf, fmtRange } from "./time";
+
+const RLM = "\u200F";
 import { displayName } from "./names";
 import type { Approval, Gender, Lesson } from "./types";
 import { hebrewNumeral } from "../settings/hebrewYear";
@@ -151,25 +153,25 @@ export function amountText(n: number): string {
 
 // ------------------------------------------------------------------ the template's grammar
 
-type Node =
+export type TemplateNode =
   | { t: "text"; v: string }
   | { t: "var"; name: string }
   | { t: "me"; m: string; f: string }
-  | { t: "gender"; m: Node[]; f: Node[] }
-  | { t: "pay"; paid: Node[]; free: Node[] };
+  | { t: "gender"; m: TemplateNode[]; f: TemplateNode[] }
+  | { t: "pay"; paid: TemplateNode[]; free: TemplateNode[] };
 
 /** «[[תשלום:» and «{{אני:» — spaces around the word and the colon are forgiven, so a payment switch is never read as a gender pair. */
 const PAY_PREFIX = /^[ \t]*תשלום[ \t]*:[ \t]*/;
 const ME_PREFIX = /^אני[ \t]*:/;
 
 /** The template as a tree, and what is wrong with its brackets (Hebrew). */
-export function parseTemplate(src: string): { nodes: Node[]; errors: string[] } {
+export function parseTemplate(src: string): { nodes: TemplateNode[]; errors: string[] } {
   const s = src;
   let i = 0;
   const errors: string[] = [];
 
-  const seq = (inBracket: boolean): Node[] => {
-    const out: Node[] = [];
+  const seq = (inBracket: boolean): TemplateNode[] => {
+    const out: TemplateNode[] = [];
     let text = "";
     const flush = () => {
       if (text) out.push({ t: "text", v: text });
@@ -196,7 +198,7 @@ export function parseTemplate(src: string): { nodes: Node[]; errors: string[] } 
     return out;
   };
 
-  const variable = (): Node => {
+  const variable = (): TemplateNode => {
     const from = i;
     i += 2;
     const end = s.indexOf("}}", i);
@@ -220,12 +222,12 @@ export function parseTemplate(src: string): { nodes: Node[]; errors: string[] } 
     return { t: "var", name };
   };
 
-  const bracket = (): Node => {
+  const bracket = (): TemplateNode => {
     const from = i;
     i += 2;
     const pay = PAY_PREFIX.exec(s.slice(i));
     if (pay) i += pay[0].length;
-    const alts: Node[][] = [];
+    const alts: TemplateNode[][] = [];
     for (;;) {
       alts.push(seq(true));
       if (s.startsWith("]]", i)) {
@@ -271,7 +273,7 @@ const tbd = (label: string) => `«TBD: ${label}»`;
 const unknownText = (name: string) => `משתנה לא מוכר בנוסח: {{${name}}}. המשתנים שאפשר: ${MESSAGE_VARIABLES.map((v) => `{{${v}}}`).join(" ")}.`;
 
 /** Every {{variable}} the template names, in every branch (taken or not), in order, once each. */
-function templateVariables(list: Node[], out: string[] = []): string[] {
+function templateVariables(list: TemplateNode[], out: string[] = []): string[] {
   for (const n of list) {
     if (n.t === "var" && !out.includes(n.name)) out.push(n.name);
     else if (n.t === "gender") templateVariables([...n.m, ...n.f], out);
@@ -326,7 +328,9 @@ export function composeConfirmation(input: MessageInput): Composed {
         add("title_tbd");
         return tbd("כותרת");
       case "שעה":
-        return fmtRange(l.start_min, l.start_min + teach);
+        // left to right inside the Hebrew text, as the app writes every range (dayRange): «20:00–21:15», not «21:15–20:00»
+        // an RLM first: a line that starts with the time stays right to left (an LRM is itself a strong left-to-right mark)
+        return RLM + LRM + fmtRange(l.start_min, l.start_min + teach);
       case "משך":
         return durationWords(teach);
       case "תשלום":
@@ -339,7 +343,7 @@ export function composeConfirmation(input: MessageInput): Composed {
     }
   };
 
-  const render = (list: Node[]): string =>
+  const render = (list: TemplateNode[]): string =>
     list
       .map((n) => {
         switch (n.t) {
