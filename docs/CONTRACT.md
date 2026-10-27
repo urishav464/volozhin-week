@@ -579,7 +579,7 @@ policies** — the grants were already SELECT; what comes back is exactly what t
 |---|---|---|
 | `get_contacts_for` | `p_lessons bigint[]` (invoker) | `jsonb` |
 
-# Links and מכריכה לכריכה (milestone 5a, schema v9)
+# Links and מכריכה לכריכה (milestone 5a, schema v9; מכריכה לכריכה week-long since v15)
 
 Links without an account (DESIGN «גישה בלי חשבון»): an escort's link, the class's sign-up link for
 מכריכה לכריכה, the schedule link. The same two implementations: the SQL functions of
@@ -669,29 +669,42 @@ escort_link}`, actor null) — never the value.
 ### `kkForm(token)` — `kk_form` → `jsonb`
 
 `{edition: {label, start_date}, window: {opens_at, closes_at}, open, roster: [{id, full_name}],
-tracks: [{id, day, date, start_min, end_min, groups: [{id, title, author, room, leaders: [{kind,
-name}], full}]}]}`. `open`: `opens_at ≤ now < closes_at`. `roster`: the edition's trainees, names
-only — nothing about who signed up. `tracks`: those still on the grid (their kk row active that
-day — `app.kk_track_on_grid`; the first or last day's hours may move after groups exist) with a
-group **on offer** (`open` and a `capacity` entered); `groups`: those on offer; `full`: the sign-ups
-≥ the capacity (a count, never who). Lists the SQL orders by collation (trainees, groups by title)
-are compared sorted.
+sessions: [{day, date, start_min, end_min}], groups: [{id, title, author, place, leaders: [{kind,
+name}], full}]}` (schema v15: a group is the whole week's).
+- `open`: `opens_at ≤ now < closes_at`.
+- `roster`: the edition's trainees **who lead no group** (a trainee leader of any group of the
+  edition, offered or not, is left out — the page says why), names only, by name — nothing about who
+  signed up.
+- `sessions`: the week's kk sessions, `app.kk_rows(edition, day)` for days 0–4 (≡ `kkSessions`,
+  `src/domain/kk.ts`), by day, start, end; `date` = `start_date + day` or null. Information only:
+  every group meets in each.
+- `groups`: those **on offer** — a book (`title` set), a `capacity` entered, `open` — by title, then
+  id; `leaders` in their order, a trainee's name from the roster, anyone else's as typed; `full`: the
+  sign-ups ≥ the capacity (a count, never who).
 
-**The one residual** (accepted, `tests/sql/kk.test.ts` «RESIDUAL»): `full` together with a sign-up
-can tell whether a named trainee already had a sign-up in a track — sign them up for a group with
-exactly one place left and read the form again: still not full means they had one. One bit per
-probe, and the probe is itself a sign-up (`via 'link'`) the staff see. The link never *answers* who
-signed up.
+Lists the SQL orders by collation (trainees, groups by title) are compared sorted.
+
+**The residuals** (accepted, `tests/sql/kk.test.ts` «RESIDUAL»):
+1. `full` together with a sign-up can tell whether a named trainee already has a sign-up this week
+   (for any book) — sign them up for a group with exactly one place left and read the form again:
+   still not full means they had one. One bit per probe. For a trainee with no sign-up yet the
+   probe is itself a sign-up (`via 'link'`) the staff see; for one who has a sign-up it records
+   nothing, and leaves no trace.
+2. A trainee missing from `roster` leads a group — perhaps one not on offer yet, whose leaders the
+   form does not otherwise show. A leader's name is no secret from the class.
+
+The link never *answers* who signed up.
 
 ### `kkSignup(token, roster, group)` — `kk_signup` → `{status: 'received'}`, always
 
-Records `kk_signups(track of the group, group, roster, via 'link')` only when **all** hold: the
-group is of the link's edition, `open`, with a capacity, its track on the grid, the window open
-now, the trainee of the edition, fewer sign-ups than the capacity — counted under the group's row
-lock, which `kk_place` takes too — and no sign-up of
-that trainee for that track yet (**an existing sign-up is never changed through the link**; only
-`kk_place` moves one). Otherwise nothing. The answer is the same in every case: the link is no
-oracle of who signed up.
+Records `kk_signups(edition, group, roster, via 'link')` only when **all** hold: the group is of the
+link's edition and on offer (a title, a capacity, `open`); the window open now; the trainee of the
+edition and leading no group; fewer sign-ups than the capacity; and no sign-up of that trainee this
+week yet (**one book a week, and an existing sign-up is never changed through the link**; only
+`kk_place` moves one). Counted under the edition's kk lock, which every kk write takes
+(`pg_advisory_xact_lock(hashtext('kk'), edition)`; one queue per edition — the engine runs one command
+at a time). Otherwise nothing. The answer is the same in every case: the link is no oracle of who
+signed up.
 
 ### `scheduleView(token)` — `schedule_view` → `jsonb`
 
@@ -712,48 +725,70 @@ but through a link.
 
 ## מכריכה לכריכה
 
-`kk_tracks(edition, day, start_min, end_min)` — one per kk occurrence of the grid (a kk `grid_rows`
-row active that day, as `rowActive`), made by the first group on it; `kk_groups(edition, track,
-title, author, room_id, capacity, open)`; `kk_leaders(group, kind staff|trainee|ein_prat, roster_id
-| label, sort)`; `kk_signups(edition, track, group, roster, via link|staff, created_at)`, unique
-`(track, roster)`, the group inside its track and the trainee inside the edition by composite keys;
-`book_orders(group, copies, ordered_at)`. The window: `editions.settings.kk_window = {opens_at,
-closes_at}` (instants as `toISOString` writes them). Nothing is seeded: books, leaders and
-capacities are what an admin typed. Every member of the edition reads them (`load_kk`, RLS); a
-browser writes none directly.
+Week-long since schema v15 (DECISIONS «מכריכה לכריכה לפי שבוע — גרסה 15»): a group reads one book
+across **every** kk session of the week, in one place of the campus, led by its leaders; a trainee
+signs up for one book for the week. The sessions are never stored: they are the grid's kk rows active
+each day (`app.kk_rows` ≡ `kkSessions`).
+
+`kk_groups(edition, title | null, author, place | null, place_key, capacity, open)` — `title` null
+while the leaders have not chosen the book; `place_key` = `app.name_key(place)` (≡ `nameKey`),
+null when that is empty (no place yet, or marks alone such as `״` or `-`: `nullif(…, '')`), and
+unique per edition: two groups never share a place, and a place with no key never clashes. `kk_leaders(group, kind staff|trainee|ein_prat,
+roster_id | label, sort)`; a trainee leads one group (unique `roster_id`). `kk_signups(edition, group,
+roster, via link|staff, created_at)`, unique `(edition, roster)` — one book a week; the group and the
+trainee inside the edition by composite keys. `book_orders(group, copies, ordered_at)`. The window:
+`editions.settings.kk_window = {opens_at, closes_at}` (instants as `toISOString` writes them). Nothing
+is seeded: books, leaders, places and capacities are what an admin typed. Every member of the edition
+reads them (`load_kk`, RLS); a browser writes none directly. Deleting a trainee deletes their leader
+rows and their sign-up (cascade). **A leader is part of their group**: never signed up as a
+participant, never «עוד לא נרשמו», not offered the link.
 
 ### Fields (what both sides accept — `app.kk_clean_group` / `cleanGroupFields`, in this order)
 
 | Key | Rule | Code |
 |---|---|---|
-| `title` | one line ≤ 200, required (on a new group; on an update when present) | `title_required` / `bad_value` |
+| `title` | null or blank (no book yet), or one line ≤ 200 | `bad_value` |
 | `author` | null, or one line ≤ 120 | `bad_value` |
-| `room_id` | null, or a room of the edition | `bad_value` |
+| `place` | null, or one line ≤ 80 — where the group meets all week | `bad_value` |
 | `capacity` | null (not offered through the link yet — never a default), or a whole number 1–1000 | `bad_value` |
 | `open` | a boolean (a new group: true) | `bad_value` |
 | `leaders` | an array of `{kind: 'trainee', roster_id}` (a trainee of the edition, else `bad_trainee`) or `{kind: 'staff'\|'ein_prat', label}` (one line ≤ 80); repeats dropped, the first kept; at most 6 («הצעה») | `bad_value` / `bad_trainee` |
 
-Unknown keys are ignored; a patch writes only the keys present (`leaders` replaces them all).
+Unknown keys are ignored; a patch writes only the keys present (`leaders` replaces them all). A name
+picked from the team list, or typed, that is one trainee's (`nameKey`) is sent as that trainee
+(`leaderInput`, `src/domain/kk.ts`) — the screen's rule; the functions see only what is sent.
 
 ### Commands — an admin of the edition (`app.require_edition_admin`), except book orders
 
-- `addGroup(edition, day, start, fields)` — `kk_add_group` → group id: the kk row of that day
-  starting at `start` (else `outside_grid`); fields; the track made on first use.
-- `updateGroup(group, patch)` — `kk_update_group`: the group (`stale`), then the admin.
-- `deleteGroup(group)` — `kk_delete_group`: `stale`; signed-up trainees → `group_has_signups`; a
-  track left with no group goes too.
-- `place(group, roster)` — `kk_place`: `stale`; a trainee of the edition (`bad_trainee`); a new
-  sign-up `via staff`, or the trainee's sign-up for that track moved here. Not bound by the window
-  or the capacity: the staff decide.
-- `unplace(track, roster)` — `kk_unplace`: the track (`stale`); the sign-up deleted, if any.
+Every command below but `setWindow` takes the edition's kk lock once it has found its edition and
+checked the caller (the admin; for book orders, logistics), before any other rule; a command on a
+group reads the group again under the lock (`stale` if it was deleted while waiting).
+
+- `addGroup(edition, fields)` — `kk_add_group` → group id. The admin (`not_member`, then
+  `forbidden`); the fields; then, between groups: a place another group of the edition has
+  (`place_taken`); a trainee leader who leads another group (`leader_elsewhere`); a trainee leader
+  signed up for a book (`leader_signed_up`).
+- `updateGroup(group, patch)` — `kk_update_group`: the group (`stale`), the admin, the fields; a
+  title the group has, cleared (null or blank) while anyone is signed up for it
+  (`group_has_signups` — a group with no book yet takes `title: null` whoever is placed in it); then `place_taken`,
+  `leader_elsewhere`, `leader_signed_up` as above (the group itself not counted as «another»; a
+  trainee signed up for this very group is `leader_signed_up` too).
+- `deleteGroup(group)` — `kk_delete_group`: `stale`, the admin; signed-up trainees →
+  `group_has_signups`. Its leaders and its order go with it.
+- `place(group, roster)` — `kk_place`: `stale`, the admin; a trainee of the edition (`bad_trainee`);
+  not a leader of any group (`is_leader`); a new sign-up `via staff`, or the trainee's sign-up for the
+  week moved here (`via staff`); already here → nothing. Not bound by the window, the capacity or the
+  offer: the staff decide.
+- `unplace(edition, roster)` — `kk_unplace`: the admin of the edition; the trainee's sign-up for the
+  week deleted, if any.
 - `setWindow(edition, opens, closes)` — `kk_set_window`: both or neither (`bad_value`), `opens <
   closes` (`bad_value`); neither removes the window (closed). The sign-up link's expiry follows.
 - `setBookOrder(group, copies, ordered)` — `set_book_order`: `stale`; `app.require_logistics`
   (logistics or an admin; content `forbidden`); `ordered` a boolean, `copies` 0–1000 or null —
-  null removes the line (and may not be `ordered`) (`bad_value`); `ordered_at` := the first time
-  it was ordered, or null.
+  null removes the line (and may not be `ordered`) (`bad_value`); copies for a group with no book
+  yet → `no_book` (removing a line never is); `ordered_at` := the first time it was ordered, or null.
 
-`load(edition)` — `load_kk(p_edition)`, invoker: `{tracks, groups, leaders, signups, orders}`
+`load(edition)` — `load_kk(p_edition)`, invoker: `{groups, leaders, signups, orders}`
 (`signups[].created_at`, `orders[].ordered_at` as `toISOString` writes them); null for an edition
 the caller does not see.
 
@@ -763,7 +798,8 @@ Realtime (the never-publish list of `schema.sql`).
 ## Errors (milestone 5a)
 
 `link_invalid link_past bad_trainee group_has_signups` — plus `not_member forbidden archived stale
-bad_value bad_escort title_required outside_grid no_transport`.
+bad_value bad_escort no_transport`. Since v15 also `place_taken leader_elsewhere leader_signed_up
+is_leader no_book`; the kk functions no longer raise `title_required` or `outside_grid`.
 
 ## RPC signatures (milestone 5a)
 
@@ -778,11 +814,11 @@ bad_value bad_escort title_required outside_grid no_transport`.
 | `issue_link` | `p_edition bigint, p_scope text, p_subject bigint` (default null) | `jsonb` | authenticated |
 | `revoke_link` | `p_link bigint` | `void` | authenticated |
 | `load_kk` | `p_edition bigint` (invoker) | `jsonb` | authenticated |
-| `kk_add_group` | `p_edition bigint, p_day integer, p_start integer, p_fields jsonb` | `bigint` | authenticated |
+| `kk_add_group` | `p_edition bigint, p_fields jsonb` (v15) | `bigint` | authenticated |
 | `kk_update_group` | `p_group bigint, p_patch jsonb` | `void` | authenticated |
 | `kk_delete_group` | `p_group bigint` | `void` | authenticated |
 | `kk_place` | `p_group bigint, p_roster bigint` | `void` | authenticated |
-| `kk_unplace` | `p_track bigint, p_roster bigint` | `void` | authenticated |
+| `kk_unplace` | `p_edition bigint, p_roster bigint` (v15) | `void` | authenticated |
 | `kk_set_window` | `p_edition bigint, p_opens timestamptz, p_closes timestamptz` | `void` | authenticated |
 | `set_book_order` | `p_group bigint, p_copies integer, p_ordered boolean` | `void` | authenticated |
 

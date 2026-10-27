@@ -22,6 +22,7 @@
 // the purge after the week (CONTRACT.md «After the week», milestone 6): the
 // reviews are kept in `shared`, never in a Week, as the database keeps them apart.
 import { dutyNotes } from "../domain/escorts";
+import { kkSessions, offered } from "../domain/kk";
 import { addDays, israelDate } from "../domain/israelTime";
 import { earlierEdition, purgeAllowed, reviewWindow } from "../domain/reviews";
 import { teachMinutes } from "../domain/message";
@@ -46,7 +47,7 @@ import { cleanFallen, cleanFallenContacts, cleanPlanPatch, cleanPolicy, EMPTY_FA
 import {
   cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
-import { type BookOrder, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup, type KkTrack } from "./kk";
+import { type BookOrder, type CleanGroup, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup } from "./kk";
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
 import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
@@ -73,16 +74,15 @@ export interface Actor {
 /** share_links as the demo keeps them: with the token itself (synthetic; the database keeps only its sha256). */
 export type DemoLink = ShareLink & { edition_id: number; token: string };
 
-/** מכריכה לכריכה's tables, across editions as in the database. */
+/** מכריכה לכריכה's tables, across editions as in the database (v15: a group is the whole week's). */
 export interface KkStore {
-  tracks: (KkTrack & { edition_id: number })[];
   groups: (KkGroup & { edition_id: number })[];
   leaders: (KkLeader & { sort: number })[];
   signups: (KkSignup & { edition_id: number })[];
   orders: BookOrder[];
 }
 
-export const emptyKk = (): KkStore => ({ tracks: [], groups: [], leaders: [], signups: [], orders: [] });
+export const emptyKk = (): KkStore => ({ groups: [], leaders: [], signups: [], orders: [] });
 
 /** What the database keeps outside a Week, shared by every edition's engine in the demo. */
 export interface PoolShared {
@@ -96,7 +96,7 @@ export interface PoolShared {
   links: DemoLink[];
   /** share_link_hits: the rate limit, by token and caller (`${token} ${linkClient(…)}`). */
   linkHits: Record<string, { window_start: string; hits: number }>;
-  /** kk_tracks, kk_groups, kk_leaders, kk_signups, book_orders (v9). */
+  /** kk_groups, kk_leaders, kk_signups, book_orders (v9; week-long since v15). */
   kk: KkStore;
   /** The «sources» bucket (v10), by object path: what Storage keeps of each — its type, size and uploader. The bytes are DemoPort's. */
   objects: Record<string, StoredObject>;
@@ -1516,55 +1516,54 @@ export class Engine {
     });
   }
 
-  /** public.kk_form: the window, the trainees (names only), and the groups on offer — whether each is full, never who is in it. */
+  /**
+   * public.kk_form: the window, the trainees who lead no group (names only), the week's sessions from the grid, and the
+   * groups on offer — whether each is full, never who is in it.
+   */
   kkForm(token: unknown): KkForm {
     return this.tx(() => {
       this.linkFor(token, "kk_signup");
       const e = this.week.edition;
       const k = this.shared.kk;
-      const offered = (g: KkGroup) => g.open && g.capacity != null;
-      const rooms = new Map(this.week.rooms.map((x) => [x.id, x.name]));
+      const leading = this.kkLeading();
       const names = new Map(this.week.roster.map((x) => [x.id, x.full_name]));
       return {
         edition: { label: e.label, start_date: e.start_date },
         window: { opens_at: e.settings?.kk_window?.opens_at ?? null, closes_at: e.settings?.kk_window?.closes_at ?? null },
         open: this.kkOpen(),
-        roster: [...this.week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id).map(({ id, full_name }) => ({ id, full_name })),
-        tracks: k.tracks
-          .filter((t) => t.edition_id === e.id && this.kkTrackOnGrid(t) && k.groups.some((g) => g.track_id === t.id && offered(g)))
-          .sort((a, b) => a.day - b.day || a.start_min - b.start_min)
-          .map((t) => ({
-            id: t.id, day: t.day, date: e.start_date ? addDays(e.start_date, t.day) : null, start_min: t.start_min, end_min: t.end_min,
-            groups: k.groups
-              .filter((g) => g.track_id === t.id && offered(g))
-              .sort((a, b) => a.title.localeCompare(b.title, "he") || a.id - b.id)
-              .map((g) => ({
-                id: g.id, title: g.title, author: g.author, room: g.room_id == null ? null : (rooms.get(g.room_id) ?? null),
-                leaders: k.leaders
-                  .filter((x) => x.group_id === g.id)
-                  .sort((a, b) => a.sort - b.sort || a.id - b.id)
-                  .map((x) => ({ kind: x.kind, name: (x.roster_id != null ? names.get(x.roster_id) : x.label) ?? "" })),
-                full: k.signups.filter((x) => x.group_id === g.id).length >= g.capacity!,
-              })),
+        roster: this.week.roster
+          .filter((r) => !leading.has(r.id))
+          .sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id)
+          .map(({ id, full_name }) => ({ id, full_name })),
+        sessions: kkSessions(this.week.rows, e).map((x) => ({ ...x, date: e.start_date ? addDays(e.start_date, x.day) : null })),
+        groups: this.kkGroups()
+          .filter(offered)
+          .sort((a, b) => a.title!.localeCompare(b.title!, "he") || a.id - b.id)
+          .map((g) => ({
+            id: g.id, title: g.title!, author: g.author, place: g.place,
+            leaders: k.leaders
+              .filter((x) => x.group_id === g.id)
+              .sort((a, b) => a.sort - b.sort || a.id - b.id)
+              .map((x) => ({ kind: x.kind, name: (x.roster_id != null ? names.get(x.roster_id) : x.label) ?? "" })),
+            full: k.signups.filter((x) => x.group_id === g.id).length >= g.capacity!,
           })),
       };
     });
   }
 
-  /** public.kk_signup: recorded only when everything allows it; an existing sign-up is never changed; the same answer always. */
+  /** public.kk_signup: recorded only when everything allows it — one book a week, never a leader; an existing sign-up is never changed; the same answer always. */
   kkSignup(token: unknown, rosterId: number, groupId: number): void {
     this.tx(() => {
       this.linkFor(token, "kk_signup");
-      const e = this.week.edition;
       const k = this.shared.kk;
-      const g = k.groups.find((x) => x.id === groupId && x.edition_id === e.id);
+      const g = this.kkGroups().find((x) => x.id === groupId);
       if (
-        g && g.open && g.capacity != null && this.kkOpen() && this.kkTrackOnGrid(k.tracks.find((t) => t.id === g.track_id)!) &&
-        this.week.roster.some((r) => r.id === rosterId) &&
-        k.signups.filter((x) => x.group_id === g.id).length < g.capacity &&
-        !k.signups.some((x) => x.track_id === g.track_id && x.roster_id === rosterId)
+        g && offered(g) && this.kkOpen() &&
+        this.week.roster.some((r) => r.id === rosterId) && !this.kkLeading().has(rosterId) &&
+        k.signups.filter((x) => x.group_id === g.id).length < g.capacity! &&
+        !this.kkSignupOf(rosterId)
       ) {
-        k.signups.push({ id: this.nextId(k.signups), edition_id: e.id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "link", created_at: this.now() });
+        k.signups.push({ id: this.nextId(k.signups), edition_id: g.edition_id, group_id: g.id, roster_id: rosterId, via: "link", created_at: this.now() });
       }
     });
   }
@@ -1584,10 +1583,9 @@ export class Engine {
   loadKk(): KkData {
     const ed = this.week.edition.id;
     const k = this.shared.kk;
-    const groups = k.groups.filter((g) => g.edition_id === ed);
+    const groups = this.kkGroups();
     const ids = new Set(groups.map((g) => g.id));
     return structuredClone({
-      tracks: k.tracks.filter((t) => t.edition_id === ed).sort((a, b) => a.day - b.day || a.start_min - b.start_min).map(({ edition_id: _e, ...t }) => t),
       groups: [...groups].sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...g }) => g),
       leaders: k.leaders.filter((x) => ids.has(x.group_id)).sort((a, b) => a.group_id - b.group_id || a.sort - b.sort || a.id - b.id).map(({ sort: _s, ...x }) => x),
       signups: k.signups.filter((x) => x.edition_id === ed).sort((a, b) => a.id - b.id).map(({ edition_id: _e, ...x }) => x),
@@ -1595,25 +1593,15 @@ export class Engine {
     });
   }
 
-  /** public.kk_add_group: on a kk occurrence of the grid (`outside_grid`); its track made on first use. */
-  kkAddGroup(day: number, startMin: number, fields: KkGroupFields): number {
+  /** public.kk_add_group: a group for the whole week — its leaders may come first, the book when they have chosen one. */
+  kkAddGroup(fields: KkGroupFields): number {
     return this.tx(() => {
       this.requireEditionAdmin();
-      const e = this.week.edition;
-      const row = this.week.rows
-        .filter((r) => r.kind === "kk" && rowActive(r, day as Day, e) && r.start_min === startMin)
-        .sort((a, b) => a.start_min - b.start_min || a.end_min - b.end_min)[0];
-      if (!row) fail("outside_grid");
       const f = this.cleanGroup(fields);
-      if (f.title === undefined) fail("title_required");
+      this.kkBetween(null, f);
       const k = this.shared.kk;
-      let track = k.tracks.find((t) => t.edition_id === e.id && t.day === day && t.start_min === startMin);
-      if (!track) {
-        track = { id: this.nextId(k.tracks), edition_id: e.id, day: day as Day, start_min: startMin, end_min: row!.end_min };
-        k.tracks.push(track);
-      }
       const g = {
-        id: this.nextId(k.groups), edition_id: e.id, track_id: track.id, title: f.title!, author: f.author ?? null, room_id: f.room_id ?? null,
+        id: this.nextId(k.groups), edition_id: this.week.edition.id, title: f.title ?? null, author: f.author ?? null, place: f.place ?? null,
         capacity: f.capacity ?? null, open: f.open ?? true,
       };
       k.groups.push(g);
@@ -1622,19 +1610,21 @@ export class Engine {
     });
   }
 
-  /** public.kk_update_group: the keys present. */
+  /** public.kk_update_group: the keys present; the book not cleared while anyone is signed up (`group_has_signups`). */
   kkUpdateGroup(groupId: number, patch: KkGroupFields): void {
     this.tx(() => {
       const g = this.kkGroup(groupId);
       this.requireEditionAdmin();
       const f = this.cleanGroup(patch);
+      if (f.title === null && g.title != null && this.shared.kk.signups.some((x) => x.group_id === g.id)) fail("group_has_signups");
+      this.kkBetween(g.id, f);
       const { leaders, ...rest } = f;
       Object.assign(g, rest);
       if (leaders !== undefined) this.writeLeaders(g.id, leaders);
     });
   }
 
-  /** public.kk_delete_group: nobody signed up (`group_has_signups`); a track left empty goes too. */
+  /** public.kk_delete_group: nobody signed up (`group_has_signups`); its leaders and its order go with it. */
   kkDeleteGroup(groupId: number): void {
     this.tx(() => {
       const g = this.kkGroup(groupId);
@@ -1644,30 +1634,29 @@ export class Engine {
       k.groups = k.groups.filter((x) => x.id !== g.id);
       k.leaders = k.leaders.filter((x) => x.group_id !== g.id);
       k.orders = k.orders.filter((x) => x.group_id !== g.id);
-      if (!k.groups.some((x) => x.track_id === g.track_id)) k.tracks = k.tracks.filter((t) => t.id !== g.track_id);
     });
   }
 
-  /** public.kk_place: the staff put a trainee in a group — new, or moved within the track; no capacity, no window. */
+  /** public.kk_place: the staff put a trainee in a group — new, or their week's sign-up moved here; never a leader (`is_leader`); no capacity, no window, no offer. */
   kkPlace(groupId: number, rosterId: number): void {
     this.tx(() => {
       const g = this.kkGroup(groupId);
       this.requireEditionAdmin();
       if (rosterId == null || !this.week.roster.some((r) => r.id === rosterId)) fail("bad_trainee");
+      if (this.kkLeading().has(rosterId)) fail("is_leader");
       const k = this.shared.kk;
-      const s = k.signups.find((x) => x.track_id === g.track_id && x.roster_id === rosterId);
-      if (!s) k.signups.push({ id: this.nextId(k.signups), edition_id: g.edition_id, track_id: g.track_id, group_id: g.id, roster_id: rosterId, via: "staff", created_at: this.now() });
+      const s = this.kkSignupOf(rosterId);
+      if (!s) k.signups.push({ id: this.nextId(k.signups), edition_id: g.edition_id, group_id: g.id, roster_id: rosterId, via: "staff", created_at: this.now() });
       else if (s.group_id !== g.id) Object.assign(s, { group_id: g.id, via: "staff" });
     });
   }
 
-  /** public.kk_unplace. */
-  kkUnplace(trackId: number, rosterId: number): void {
+  /** public.kk_unplace: the trainee's sign-up for the week, if any, deleted. */
+  kkUnplace(rosterId: number): void {
     this.tx(() => {
-      const k = this.shared.kk;
-      if (!k.tracks.some((t) => t.id === trackId && t.edition_id === this.week.edition.id)) fail("stale");
       this.requireEditionAdmin();
-      k.signups = k.signups.filter((x) => !(x.track_id === trackId && x.roster_id === rosterId));
+      const ed = this.week.edition.id;
+      this.shared.kk.signups = this.shared.kk.signups.filter((x) => !(x.edition_id === ed && x.roster_id === rosterId));
     });
   }
 
@@ -1688,12 +1677,13 @@ export class Engine {
     });
   }
 
-  /** public.set_book_order: logistics or an admin; copies 0–1000 (null removes it); ordered — the first time kept. */
+  /** public.set_book_order: logistics or an admin; copies 0–1000 (null removes it) for a group with a book (`no_book`); ordered — the first time kept. */
   setBookOrder(groupId: number, copies: number | null, ordered: boolean): void {
     this.tx(() => {
       const g = this.kkGroup(groupId);
       this.requireLogistics();
       if (typeof ordered !== "boolean" || (copies == null && ordered) || (copies != null && (!Number.isInteger(copies) || copies < 0 || copies > 1000))) fail("bad_value");
+      if (copies != null && g.title == null) fail("no_book");
       const k = this.shared.kk;
       const o = k.orders.find((x) => x.group_id === g.id);
       if (copies == null) {
@@ -1748,11 +1738,6 @@ export class Engine {
     return l.kind === "memorial" ? l.end_min : l.start_min + teachMinutes(l, this.week.edition.settings?.lesson_minutes);
   }
 
-  /** app.kk_track_on_grid: the track's kk row is still active that day (the first or last day's hours may have moved). */
-  private kkTrackOnGrid(t: { day: Day; start_min: number }): boolean {
-    return this.week.rows.some((r) => r.kind === "kk" && rowActive(r, t.day, this.week.edition) && r.start_min === t.start_min);
-  }
-
   /** app.kk_open: inside the sign-up window now. */
   private kkOpen(): boolean {
     const w = this.week.edition.settings?.kk_window;
@@ -1764,8 +1749,40 @@ export class Engine {
     return this.shared.kk.groups.find((g) => g.id === id && g.edition_id === this.week.edition.id) ?? fail("stale");
   }
 
-  private cleanGroup(fields: unknown) {
-    return cleanGroupFields(fields, (id) => this.week.rooms.some((r) => r.id === id), (id) => this.week.roster.some((r) => r.id === id));
+  private cleanGroup(fields: unknown): CleanGroup {
+    return cleanGroupFields(fields, (id) => this.week.roster.some((r) => r.id === id));
+  }
+
+  /** The edition's groups. */
+  private kkGroups(): (KkGroup & { edition_id: number })[] {
+    return this.shared.kk.groups.filter((g) => g.edition_id === this.week.edition.id);
+  }
+
+  /** The trainees who lead one of the edition's groups, offered or not. */
+  private kkLeading(): Set<number> {
+    const ids = new Set(this.kkGroups().map((g) => g.id));
+    return new Set(this.shared.kk.leaders.flatMap((l) => (ids.has(l.group_id) && l.roster_id != null ? [l.roster_id] : [])));
+  }
+
+  /** The trainee's sign-up for the week — one book a week (unique (edition, roster)). */
+  private kkSignupOf(rosterId: number): (KkSignup & { edition_id: number }) | undefined {
+    return this.shared.kk.signups.find((x) => x.edition_id === this.week.edition.id && x.roster_id === rosterId);
+  }
+
+  /**
+   * app.kk_between_groups: the rules between the edition's groups, after the cleaning, in this order — a place
+   * another group has (`place_taken`, by app.name_key: kk_groups.place_key; a place with no key never clashes), a
+   * trainee leader who leads another group (`leader_elsewhere`), a trainee leader signed up for a book — this
+   * group's too (`leader_signed_up`).
+   */
+  private kkBetween(selfId: number | null, f: CleanGroup) {
+    const others = this.kkGroups().filter((g) => g.id !== selfId);
+    const place = nameKey(f.place);
+    if (place !== "" && others.some((g) => nameKey(g.place) === place)) fail("place_taken");
+    const trainees = (f.leaders ?? []).flatMap((l) => (l.roster_id == null ? [] : [l.roster_id]));
+    const elsewhere = new Set(others.map((g) => g.id));
+    if (this.shared.kk.leaders.some((l) => elsewhere.has(l.group_id) && l.roster_id != null && trainees.includes(l.roster_id))) fail("leader_elsewhere");
+    if (trainees.some((r) => this.kkSignupOf(r))) fail("leader_signed_up");
   }
 
   /** app.kk_write_leaders: replace the group's leaders, in order. */

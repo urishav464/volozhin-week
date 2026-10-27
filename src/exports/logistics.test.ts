@@ -80,38 +80,47 @@ describe("the payments", () => {
 });
 
 describe("the book orders", () => {
-  it("list every group by its occurrence, its leaders and sign-ups — the copies only as logistics entered them", () => {
+  it("list every group with a book or an order line — the week's, by title: its place, leaders and sign-ups; the copies only as logistics entered them", () => {
     const w = emptyWeek();
-    const leader = addTrainee(w, "חניך/ה מוביל/ה");
+    const leader = addTrainee(w, "חניך/ה מעביר/ה");
     const kk: KkData = {
-      tracks: [
-        { id: 2, day: 3, start_min: 1260, end_min: 1350 },
-        { id: 1, day: 1, start_min: 1260, end_min: 1350 },
-      ],
       groups: [
-        { id: 5, track_id: 2, title: "ספר ב", author: null, room_id: null, capacity: 10, open: true },
-        { id: 4, track_id: 1, title: "ספר א", author: "מחבר/ת לדוגמה", room_id: null, capacity: null, open: false },
+        { id: 5, title: "ספר ב", author: null, place: "הספרייה", capacity: 10, open: true },
+        { id: 4, title: "ספר א", author: "מחבר/ת לדוגמה", place: "הדשא", capacity: null, open: false },
+        { id: 6, title: null, author: null, place: null, capacity: null, open: true }, // leaders only, no book and no line: not a book row
+        { id: 7, title: null, author: null, place: null, capacity: null, open: true }, // its book taken off after the line was written
       ],
       leaders: [
-        { id: 1, group_id: 4, kind: "trainee", roster_id: leader.id, label: null },
         { id: 2, group_id: 4, kind: "staff", roster_id: null, label: "מדריך/ה לדוגמה" },
+        { id: 1, group_id: 4, kind: "trainee", roster_id: leader.id, label: null },
+        { id: 3, group_id: 7, kind: "ein_prat", roster_id: null, label: "מעביר/ה לדוגמה" },
       ],
       signups: [
-        { id: 1, track_id: 2, group_id: 5, roster_id: 7, via: "link", created_at: "2026-11-01T00:00:00Z" },
-        { id: 2, track_id: 2, group_id: 5, roster_id: 8, via: "staff", created_at: "2026-11-01T00:00:00Z" },
+        { id: 1, group_id: 5, roster_id: 7, via: "link", created_at: "2026-11-01T00:00:00Z" },
+        { id: 2, group_id: 5, roster_id: 8, via: "staff", created_at: "2026-11-01T00:00:00Z" },
       ],
-      orders: [{ group_id: 4, copies: 12, ordered_at: "2026-11-03T08:00:00Z" }],
+      orders: [
+        { group_id: 4, copies: 12, ordered_at: "2026-11-03T08:00:00Z" },
+        { group_id: 7, copies: 3, ordered_at: null },
+      ],
     };
     const rows = bookRows(w, kk);
-    expect(rows.map((r) => [r.group.id, r.dayLabel, r.signups, r.copies, r.orderedAt])).toEqual([
-      [4, "שני", 0, 12, "2026-11-03T08:00:00Z"],
-      [5, "רביעי", 2, null, null], // 2 signed up — and still no copies until someone writes them
+    expect(rows.map((r) => [r.group.id, r.title, r.place, r.signups, r.copies, r.orderedAt])).toEqual([
+      [4, "ספר א", "הדשא", 0, 12, "2026-11-03T08:00:00Z"],
+      [5, "ספר ב", "הספרייה", 2, null, null], // 2 signed up — and still no copies until someone writes them
+      [7, "עוד לא נבחר ספר · מעביר/ה לדוגמה", "", 0, 3, null],
     ]);
-    expect(rows[0].leaders).toBe("חניך/ה מוביל/ה (חניך/ה), מדריך/ה לדוגמה (מהצוות)");
+    expect(rows[0].leaders).toBe("מדריך/ה לדוגמה (מהצוות), חניך/ה מעביר/ה (חניך/ה)"); // in their order
+    expect(rows[0].leaderCount).toBe(2);
+    expect(rows[2].leaders).toBe("מעביר/ה לדוגמה (מעין פרת)");
     const t = bookTable(rows, "הדגמה", () => "3.11.2026");
+    expect(t.headers).toEqual(["ספר", "מחבר/ת", "מרחב", "מעבירים", "נרשמו", "עותקים להזמנה", "הוזמן"]);
+    expect(t.widths).toHaveLength(t.headers.length);
+    expect(t.rows[0].slice(0, 3)).toEqual(["ספר א", "מחבר/ת לדוגמה", "הדשא"]);
     expect(t.rows.map((r) => r.slice(4))).toEqual([
       ["0", "12", "הוזמן · 3.11.2026"],
       ["2", "", ""],
+      ["0", "3", "טרם הוזמן"],
     ]);
   });
 });

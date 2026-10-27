@@ -6,8 +6,9 @@
 // The signed-in ports call their functions by name and read share_links by
 // column, never the hash. In the demo: seeded links open their pages, a token
 // issued elsewhere still opens (it says what it opens), a revoked one does not,
-// the class signs up through its link, ticks reach the team's Week, and
-// deleting a trainee takes their link, sign-ups and ticks along.
+// the class signs up through its link — one book for the week, never a leader —
+// ticks reach the team's Week, and deleting a trainee takes their link, sign-up,
+// leader rows and ticks along.
 import { createClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
@@ -54,7 +55,7 @@ const KEY = "sb_publishable_stub";
 describe("the public pages on the wire", () => {
   it("send the publishable key alone — no Authorization — the token in the body, to the six anon functions only", async () => {
     const ticks = { reminded: null, met: "2027-02-15T08:00:00.000Z", introduced: null, gift: null };
-    const { fetch, sent } = wire([[200, { lessons: [] }], [200, ticks], [204, null], [200, { tracks: [] }], [200, { status: "received" }], [200, { rows: [] }]]);
+    const { fetch, sent } = wire([[200, { lessons: [] }], [200, ticks], [204, null], [200, { sessions: [], groups: [] }], [200, { status: "received" }], [200, { rows: [] }]]);
     const p = new SupabasePublic("https://stub.supabase.co", KEY, fetch);
     await p.escortView(TOKEN);
     expect(await p.escortTick(TOKEN, 41, "met", true)).toEqual(ticks);
@@ -121,26 +122,28 @@ describe("the links and מכריכה לכריכה on the wire (signed in)", () =
     expect(select.split(",")).toEqual(["id", "scope", "subject_id", "created_by", "created_at", "expires_at", "revoked_at"]);
   });
 
-  it("call every kk function by its parameter names", async () => {
-    const { sb, sent } = client([[200, { tracks: [], groups: [], leaders: [], signups: [], orders: [] }], [200, 12], [204, null], [204, null], [204, null], [204, null], [204, null], [204, null]]);
+  it("call every kk function by its parameter names (v15: a group for the week, a sign-up by the edition)", async () => {
+    const { sb, sent } = client([[200, { groups: [], leaders: [], signups: [], orders: [] }], [200, 12], [204, null], [204, null], [204, null], [204, null], [204, null], [204, null], [200, null]]);
     const k = new SupabaseKk(sb);
     await k.load(7);
-    expect(await k.addGroup(7, 1, 1290, { title: "ספר לדוגמה", capacity: 8, leaders: [{ kind: "trainee", roster_id: 3 }] })).toBe(12);
-    await k.updateGroup(12, { open: false });
+    expect(await k.addGroup(7, { title: null, place: "מרחב לדוגמה", leaders: [{ kind: "trainee", roster_id: 3 }, { kind: "ein_prat", label: "מעביר/ה לדוגמה" }] })).toBe(12);
+    await k.updateGroup(12, { title: "ספר לדוגמה", capacity: 8 });
     await k.deleteGroup(12);
-    await k.place(12, 3);
-    await k.unplace(4, 3);
+    await k.place(12, 4);
+    await k.unplace(7, 4);
     await k.setWindow(7, "2027-01-01T08:00:00.000Z", "2027-01-15T20:00:00.000Z");
     await k.setBookOrder(12, 8, true);
+    expect(await k.load(8)).toEqual({ groups: [], leaders: [], signups: [], orders: [] }); // an edition the caller does not see
     expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
       ["load_kk", { p_edition: 7 }],
-      ["kk_add_group", { p_edition: 7, p_day: 1, p_start: 1290, p_fields: { title: "ספר לדוגמה", capacity: 8, leaders: [{ kind: "trainee", roster_id: 3 }] } }],
-      ["kk_update_group", { p_group: 12, p_patch: { open: false } }],
+      ["kk_add_group", { p_edition: 7, p_fields: { title: null, place: "מרחב לדוגמה", leaders: [{ kind: "trainee", roster_id: 3 }, { kind: "ein_prat", label: "מעביר/ה לדוגמה" }] } }],
+      ["kk_update_group", { p_group: 12, p_patch: { title: "ספר לדוגמה", capacity: 8 } }],
       ["kk_delete_group", { p_group: 12 }],
-      ["kk_place", { p_group: 12, p_roster: 3 }],
-      ["kk_unplace", { p_track: 4, p_roster: 3 }],
+      ["kk_place", { p_group: 12, p_roster: 4 }],
+      ["kk_unplace", { p_edition: 7, p_roster: 4 }],
       ["kk_set_window", { p_edition: 7, p_opens: "2027-01-01T08:00:00.000Z", p_closes: "2027-01-15T20:00:00.000Z" }],
       ["set_book_order", { p_group: 12, p_copies: 8, p_ordered: true }],
+      ["load_kk", { p_edition: 8 }],
     ]);
   });
 });
@@ -171,21 +174,30 @@ describe("the links' rules", () => {
 
   it("clean a group's fields as the database does", () => {
     const yes = () => true;
-    expect(cleanGroupFields({ title: " ספר  א ", author: "", capacity: 3, ignored: 1 }, yes, yes)).toEqual({ title: "ספר א", author: null, capacity: 3 });
-    const fails = (f: unknown, room = yes, trainee = yes) => {
+    expect(cleanGroupFields({ title: " ספר  א ", author: "", place: " הדשא  הגדול ", capacity: 3, ignored: 1, room_id: 4 }, yes)).toEqual({
+      title: "ספר א", author: null, place: "הדשא הגדול", capacity: 3,
+    });
+    // no book yet: a group may start with its leaders
+    expect(cleanGroupFields({ title: null, place: null }, yes)).toEqual({ title: null, place: null });
+    expect(cleanGroupFields({ title: "  ", leaders: [{ kind: "staff", label: "מעביר/ה לדוגמה" }] }, yes)).toEqual({ title: null, leaders: [{ kind: "staff", roster_id: null, label: "מעביר/ה לדוגמה" }] });
+    expect(cleanGroupFields({ place: "א".repeat(80) }, yes).place).toHaveLength(80);
+    expect(cleanGroupFields({ place: "ליד\nהבאר" }, yes).place).toBe("ליד הבאר"); // one line
+    const fails = (f: unknown, trainee = yes) => {
       try {
-        cleanGroupFields(f, room, trainee);
+        cleanGroupFields(f, trainee);
         return "ok";
       } catch (e) {
         return (e as CommandError).code;
       }
     };
-    expect(fails({ title: " " })).toBe("title_required");
-    expect(fails({ title: 5 })).toBe("title_required");
+    expect(fails({ title: 5 })).toBe("bad_value");
+    expect(fails({ title: "א".repeat(201) })).toBe("bad_value");
+    expect(fails({ place: "א".repeat(81) })).toBe("bad_value");
+    expect(fails({ place: 3 })).toBe("bad_value");
     expect(fails({ capacity: 0 })).toBe("bad_value");
-    expect(fails({ room_id: 4 }, () => false)).toBe("bad_value");
-    expect(fails({ leaders: [{ kind: "trainee", roster_id: 3 }] }, yes, () => false)).toBe("bad_trainee");
+    expect(fails({ leaders: [{ kind: "trainee", roster_id: 3 }] }, () => false)).toBe("bad_trainee");
     expect(fails({ leaders: [{ kind: "staff", label: "א".repeat(81) }] })).toBe("bad_value");
+    expect(fails({ leaders: Array.from({ length: 7 }, (_, i) => ({ kind: "staff", label: `מעביר/ה ${i}` })) })).toBe("bad_value");
     expect(fails([])).toBe("bad_value");
   });
 });
@@ -214,17 +226,33 @@ describe("the demo's links, sign-ups and public pages", () => {
     expect(await code(elsewhere.public.escortView("garbage-garbage-garbage"))).toBe("link_invalid");
   });
 
-  it("let the class sign up once through its link, and reach the team's Week with the ticks", async () => {
+  it("let the class sign up once for the week through its link — never a leader — and reach the team's Week with the ticks", async () => {
     const p = new DemoPort();
     const k = demoToken("kk_signup", 1, null, true);
     const f = await p.public.kkForm(k);
     expect(f.open).toBe(true);
-    const free = f.roster.find((r) => !(p.shared.kk.signups.some((s) => s.roster_id === r.id)))!;
-    const [first, second] = f.tracks[0].groups;
-    await p.public.kkSignup(k, free.id, first.id);
-    await p.public.kkSignup(k, free.id, second.id); // never changed through the link
-    expect(p.shared.kk.signups.filter((s) => s.roster_id === free.id).map((s) => s.group_id)).toEqual([first.id]);
-    expect((await p.kk.load(1)).signups.some((s) => s.roster_id === free.id && s.via === "link")).toBe(true);
+    const kk = await p.kk.load(1);
+    const leaders = new Set(kk.leaders.flatMap((l) => (l.roster_id == null ? [] : [l.roster_id])));
+    expect(leaders.size).toBe(2);
+    expect(f.roster.some((r) => leaders.has(r.id))).toBe(false); // a leader is not offered the link
+    expect(kk.signups.some((s) => leaders.has(s.roster_id))).toBe(false);
+    expect(f.groups.map((g) => g.title)).toEqual(["ספר לדוגמה א׳", "ספר לדוגמה ב׳", "ספר לדוגמה ג׳"]); // the group with no book is not on offer
+    expect(new Set(f.groups.map((g) => g.place)).size).toBe(3);
+    expect(f.sessions.length).toBeGreaterThan(0);
+    const free = f.roster.filter((r) => !kk.signups.some((s) => s.roster_id === r.id));
+    expect(free).toHaveLength(1);
+    const [first, second] = f.groups;
+    await p.public.kkSignup(k, free[0].id, first.id);
+    await p.public.kkSignup(k, free[0].id, second.id); // one book a week, never changed through the link
+    await p.public.kkSignup(k, [...leaders][0], second.id); // a leader: nothing recorded
+    expect(p.shared.kk.signups.filter((s) => s.roster_id === free[0].id).map((s) => s.group_id)).toEqual([first.id]);
+    expect(p.shared.kk.signups.some((s) => leaders.has(s.roster_id))).toBe(false);
+    expect((await p.kk.load(1)).signups.some((s) => s.roster_id === free[0].id && s.via === "link")).toBe(true);
+    expect(await code(p.kk.place(second.id, [...leaders][0]))).toBe("is_leader");
+    expect(await code(p.kk.unplace(99, free[0].id))).toBe("not_member"); // no such edition: never the first one's
+    expect(p.shared.kk.signups.some((s) => s.roster_id === free[0].id)).toBe(true);
+    await p.kk.unplace(1, free[0].id);
+    expect(p.shared.kk.signups.some((s) => s.roster_id === free[0].id)).toBe(false);
     const w = await p.loadWeek(1);
     const l = w.lessons.find((x) => x.state === "closed" && x.escort_roster_id != null)!;
     await p.public.escortTick(demoToken("escort", 1, l.escort_roster_id, true), l.id, "introduced", true);
@@ -238,12 +266,18 @@ describe("the demo's links, sign-ups and public pages", () => {
     const w = await p.loadWeek(1);
     const r = w.escortTicks[0] ? w.lessons.find((l) => l.id === w.escortTicks[0].lesson_id)!.escort_roster_id! : 1;
     expect(p.shared.links.some((l) => l.subject_id === r && l.revoked_at == null)).toBe(true);
+    expect(p.shared.kk.signups.some((s) => s.roster_id === r)).toBe(true);
     await p.settings.deleteRoster(r);
     const after = await p.loadWeek(1);
     expect(after.escortTicks.filter((t) => w.lessons.find((l) => l.id === t.lesson_id)?.escort_roster_id === r)).toEqual([]);
     expect(p.shared.links.some((l) => l.subject_id === r)).toBe(false);
     expect(p.shared.kk.signups.some((s) => s.roster_id === r)).toBe(false);
     expect(await code(p.public.escortView(demoToken("escort", 1, r, true)))).toBe("link_invalid");
+    // a leader deleted: their leader rows go, the group stays
+    const leader = p.shared.kk.leaders.find((l) => l.roster_id != null)!;
+    await p.settings.deleteRoster(leader.roster_id!);
+    expect(p.shared.kk.leaders.some((l) => l.roster_id === leader.roster_id)).toBe(false);
+    expect(p.shared.kk.groups.some((g) => g.id === leader.group_id)).toBe(true);
     // the demo edition is a demo: its date may change only through a real edition's tab — start one and date it
     const id = await p.settings.startEdition({ label: "תשפ״ח לדוגמה", start_date: null, first_day_from: null });
     await p.settings.addRoster(id, [{ full_name: "חניך/ה לדוגמה", gender: null }]);

@@ -745,81 +745,129 @@ export const SCENARIOS: Record<string, Step[]> = {
     { anon: "escortView", token: "e1" },
   ],
 
-  "מכריכה לכריכה: groups on the grid's kk rows, the window, a link that never overwrites, the staff place": [
-    { as: "A", kkAdd: [1, 1290], fields: { title: "ספר א" } },
-    { as: "L", kkAdd: [1, 1290], fields: { title: "ספר א" } },
-    { as: "E", kkAdd: [4, 1290], fields: { title: "ספר א" } }, // Thursday ends at 19:00
-    { as: "E", kkAdd: [1, 510], fields: { title: "ספר א" } }, // a lesson row
-    { as: "E", kkAdd: [1, 1290], fields: {} },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", room: FOREIGN_ROOM } },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 0 } },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", capacity: 1.5 } },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", open: "yes" } },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "trainee", trainee: FOREIGN_TRAINEE }] } },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר א", leaders: [{ kind: "staff", label: " " }] } },
+  // v15: a group is the whole week's — its leaders first, then the book; one place each; a leader is part of the
+  // group; one book a week per trainee; the sessions are the grid's kk rows
+  "מכריכה לכריכה for the week: leaders before a book, a place each, a leader is part of the group, one book a week, the staff place": [
+    { as: "A", kkAdd: "א", fields: { leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }] } }, // content: not theirs
+    { as: "L", kkAdd: "א", fields: {} },
+    { as: "E", kkAdd: "א", fields: { title: 5 } },
+    { as: "E", kkAdd: "א", fields: { place: "א".repeat(81) } },
+    { as: "E", kkAdd: "א", fields: { capacity: 0 } },
+    { as: "E", kkAdd: "א", fields: { capacity: 1.5 } },
+    { as: "E", kkAdd: "א", fields: { open: "yes" } },
+    { as: "E", kkAdd: "א", fields: { leaders: [{ kind: "trainee", trainee: FOREIGN_TRAINEE }] } },
+    { as: "E", kkAdd: "א", fields: { leaders: [{ kind: "staff", label: " " }] } },
+    { as: "E", kkAdd: "א", fields: { leaders: Array.from({ length: 7 }, (_, i) => ({ kind: "staff", label: `צוות ${i + 1}` })) } }, // more than six
     {
       as: "E",
-      kkAdd: [1, 1290],
+      kkAdd: "א",
       fields: {
-        title: " ספר  א ", author: "מחבר/ת לדוגמה", room: "כיתה", capacity: 1,
-        leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }, { kind: "staff", label: "צוות לדוגמה" }, { kind: "staff", label: " צוות  לדוגמה " }],
+        title: "  ", place: " הדשא ", capacity: 2, // the leaders first: no book yet (a capacity, so the book alone keeps it off the form)
+        leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }, { kind: "staff", label: "צוות לדוגמה" }, { kind: "staff", label: " צוות  לדוגמה " }],
       },
     },
-    { as: "E", kkAdd: [1, 1290], fields: { title: "ספר ב", capacity: 5, ignored: true } },
-    { as: "E", kkAdd: [2, 1740], fields: { title: "ספר ג" } }, // no capacity yet: not offered
+    {
+      as: "E",
+      kkAdd: "ב",
+      fields: { title: "ספר ב", author: "מחבר/ת לדוגמה", place: "הספרייה", capacity: 1, ignored: true, leaders: [{ kind: "ein_prat", label: "מעין פרת לדוגמה" }] },
+    },
+    { as: "E", kkAdd: "ג", fields: { title: "ספר ג", place: "הדשא", capacity: 3 } }, // place_taken
+    { as: "E", kkAdd: "ג", fields: { title: "ספר ג", place: "Hall A", capacity: 3, leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }] } }, // she leads א
+    { as: "E", kkAdd: "ג", fields: { title: "ספר ג", place: "Hall A", capacity: 3, leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }] } },
+    { as: "E", kkAdd: "ד", fields: { title: "ספר ד", place: " hall  a " } }, // the same place: spaces and case
+    { as: "E", kkAdd: "ד", fields: { title: "ספר ד" } }, // no place yet…
+    { as: "E", kkAdd: "ה", fields: { title: "ספר ה", capacity: 5, open: false } }, // …and none never clashes
     { as: "E", issue: "kk_signup", name: "k" }, // no window yet: 30 days
-    { anon: "kkForm", token: "k" },
-    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" }, // closed: nothing recorded
+    { anon: "kkForm", token: "k" }, // the leaders are not in the roster; ב and ג on offer (א: no book, ד: no capacity, ה: closed)
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה שלישי/ת לדוגמה", group: "ב" }, // the window closed: nothing recorded
     { as: "E", kkWindow: [isoIn(-1), isoIn(3)] },
     { anon: "kkForm", token: "k" },
-    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר א" },
-    { anon: "kkSignup", token: "k", trainee: "חניכה לדוגמה", group: "ספר ב" }, // never changed through the link
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר א" }, // full
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" }, // not offered
-    { anon: "kkSignup", token: "k", trainee: FOREIGN_TRAINEE, group: "ספר ב" },
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "אין כזה" },
-    { anon: "kkForm", token: "k" }, // ספר א is full
-    { as: "E", kkPlace: "ספר א", trainee: "חניך לדוגמה" }, // the staff decide: over capacity
-    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // moved within the track
-    { as: "E", kkPlace: "ספר ב", trainee: "חניכה לדוגמה" }, // already there
-    { as: "A", kkPlace: "ספר ב", trainee: "חניך לדוגמה" },
-    { as: "E", kkPlace: "ספר ב", trainee: FOREIGN_TRAINEE },
-    { as: "E", kkPlace: "ספר ד", trainee: "חניך לדוגמה" },
-    { as: "E", kkDelete: "ספר ב" },
-    { as: "E", kkUnplace: [1, 1290], trainee: "חניכה לדוגמה" },
-    { as: "E", kkUnplace: [3, 1290], trainee: "חניכה לדוגמה" },
-    { as: "E", kkDelete: "ספר ב" },
-    { as: "E", kkUpdate: "ספר א", patch: { title: "  " } },
-    { as: "E", kkUpdate: "ספר א", patch: { title: "ספר א מתוקן", author: null, capacity: 3, open: false, leaders: [] } },
-    { as: "A", kkUpdate: "ספר ג", patch: { capacity: 2 } },
-    { as: "E", kkUpdate: "ספר ג", patch: { capacity: 2, room: "ספרייה" } },
-    { anon: "kkForm", token: "k" }, // ספר א closed, ספר ג offered now
-    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ה", capacity: 3 } },
-    { anon: "kkForm", token: "k" }, // Sunday's track on offer
-    { firstDayFrom: 1350 }, // Sunday opens at 22:30: its kk row is off the grid
-    { anon: "kkForm", token: "k" }, // the track is not offered any more…
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // …nor signed up for
-    { as: "E", kkAdd: [0, 1290], fields: { title: "ספר ו", capacity: 3 } }, // outside_grid
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה שלישי/ת לדוגמה", group: "ב" },
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה שלישי/ת לדוגמה", group: "ג" }, // one book a week: never changed through the link
+    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ג" }, // a leader: not even in his own group
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ב" }, // full
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "א" }, // no book: not offered
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ד" }, // no capacity
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ה" }, // not open
+    { anon: "kkSignup", token: "k", trainee: FOREIGN_TRAINEE, group: "ג" },
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "אין כזו" },
+    { anon: "kkForm", token: "k" }, // ב is full
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ג" },
+    // the staff: not bound by the window, the capacity or the offer — but never a leader
+    { as: "E", kkPlace: "ג", trainee: "חניך/ה רביעי/ת לדוגמה" }, // already there through the link: nothing — via stays «link»
+    { as: "E", kkPlace: "ב", trainee: "חניך/ה רביעי/ת לדוגמה" }, // moved from ג, over the capacity
+    { as: "E", kkPlace: "ב", trainee: "חניך/ה רביעי/ת לדוגמה" }, // already there: nothing
+    { as: "E", kkPlace: "א", trainee: "חניך/ה שלישי/ת לדוגמה" }, // moved from ב to a group with no book yet
+    { as: "A", kkPlace: "ב", trainee: "חניך/ה שלישי/ת לדוגמה" },
+    { as: "E", kkPlace: "ב", trainee: FOREIGN_TRAINEE },
+    { as: "E", kkPlace: "ב", trainee: "חניכה לדוגמה" }, // is_leader (of א)
+    { as: "E", kkPlace: "א", trainee: "חניכה לדוגמה" }, // her own group neither
+    { as: "E", kkPlace: "אין כזו", trainee: "חניך/ה שלישי/ת לדוגמה" },
+    // the rules between groups, in their order
+    { as: "E", kkAdd: "ו", fields: { place: "הספרייה", leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }] } }, // place_taken first
+    {
+      as: "E",
+      kkAdd: "ו",
+      fields: { leaders: [{ kind: "trainee", trainee: "חניך/ה שלישי/ת לדוגמה" }, { kind: "trainee", trainee: "חניכה לדוגמה" }] }, // leader_elsewhere before leader_signed_up
+    },
+    { as: "E", kkAdd: "ו", fields: { title: "ספר ו", leaders: [{ kind: "trainee", trainee: "חניך/ה שלישי/ת לדוגמה" }] } }, // signed up for א
+    { as: "E", kkUpdate: "ד", patch: { leaders: [{ kind: "trainee", trainee: "חניך/ה רביעי/ת לדוגמה" }] } }, // signed up for ב
+    { as: "E", kkUpdate: "א", patch: { leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }, { kind: "trainee", trainee: "חניך/ה שלישי/ת לדוגמה" }] } }, // signed up for this very group
+    { as: "E", kkUpdate: "ד", patch: { leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }] } }, // he leads ג
+    { as: "E", kkUpdate: "ג", patch: { leaders: [{ kind: "trainee", trainee: "חניך לדוגמה" }, { kind: "ein_prat", label: "מעין פרת לדוגמה" }] } }, // his own group
+    { as: "E", kkUpdate: "ג", patch: { place: "הספרייה" } }, // place_taken
+    { as: "E", kkUpdate: "ג", patch: { place: " hall A " } }, // its own place, written again
+    { as: "E", kkUpdate: "ד", patch: { place: "״" } }, // a place with no key (app.name_key) never clashes either
+    { as: "E", kkUpdate: "ה", patch: { place: "׳" } },
+    { as: "E", kkUpdate: "ב", patch: { title: null, place: "הדשא" } }, // the book taken from a group with a sign-up — before place_taken
+    { as: "E", kkUpdate: "ב", patch: { title: " ", leaders: [] } }, // a blank title clears it too
+    { as: "E", kkUpdate: "א", patch: { title: null, place: "הדשא הגדול" } }, // no book to clear: a staff placement there is no reason to refuse
+    { as: "A", kkUpdate: "ד", patch: { capacity: 2 } },
+    { as: "E", kkUpdate: "אין כזו", patch: { capacity: 2 } },
+    // the book orders: logistics or an admin, a group with a book
+    { as: "L", bookOrder: "א", copies: 4, ordered: false }, // no_book
+    { as: "E", bookOrder: "א", copies: 1001, ordered: false }, // bad_value first
+    { as: "L", bookOrder: "א", copies: null, ordered: false }, // removing a line never is no_book
+    { as: "A", bookOrder: "ב", copies: 4, ordered: false },
+    { as: "L", bookOrder: "ב", copies: 4, ordered: false },
+    { as: "L", bookOrder: "ב", copies: 4, ordered: true },
+    { as: "E", bookOrder: "ב", copies: 5, ordered: true }, // the first time kept
+    { as: "E", bookOrder: "ב", copies: null, ordered: true },
+    { as: "E", bookOrder: "ב", copies: 3, ordered: null },
+    { as: "E", bookOrder: "ג", copies: 2, ordered: false },
+    { as: "E", bookOrder: "ג", copies: null, ordered: false },
+    { as: "E", bookOrder: "אין כזו", copies: 2, ordered: false },
+    { as: "E", kkUpdate: "א", patch: { title: "ספר א", capacity: 4 } }, // the book chosen: on offer now
+    { anon: "kkForm", token: "k" },
+    // deleting, and the staff taking a sign-up away
+    { as: "E", kkDelete: "ב" }, // group_has_signups
+    { as: "A", kkDelete: "ה" },
+    { as: "E", kkDelete: "ה" },
+    { as: "E", kkDelete: "ה" }, // stale
+    { as: "A", kkUnplace: "חניך/ה רביעי/ת לדוגמה" },
+    { as: "E", kkUnplace: "חניך/ה רביעי/ת לדוגמה" },
+    { as: "E", kkUnplace: "חניך/ה רביעי/ת לדוגמה" }, // none left: nothing
+    { as: "E", kkUnplace: FOREIGN_TRAINEE }, // another edition's trainee: «ok», nothing taken here (that edition's own sign-ups: tests/sql/kk.test.ts)
+    { as: "E", kkDelete: "ב" }, // nobody there now: its order goes with it
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ג" }, // no sign-up this week now: recorded
+    // the sessions are the grid's
+    { firstDayFrom: 1350 }, // Sunday opens at 22:30: its 21:30 session is off the grid
+    { anon: "kkForm", token: "k" },
     { firstDayFrom: 510 },
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ה" }, // on the grid again
-    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
-    { as: "A", bookOrder: "ספר א מתוקן", copies: 4, ordered: false },
-    { as: "L", bookOrder: "ספר א מתוקן", copies: 4, ordered: true },
-    { as: "E", bookOrder: "ספר א מתוקן", copies: 5, ordered: true }, // the first time kept
-    { as: "E", bookOrder: "ספר א מתוקן", copies: null, ordered: true },
-    { as: "E", bookOrder: "ספר א מתוקן", copies: 1001, ordered: false },
-    { as: "E", bookOrder: "ספר ג", copies: 2, ordered: false },
-    { as: "E", bookOrder: "ספר ג", copies: null, ordered: false },
+    // the window and the link
     { as: "E", kkWindow: [isoIn(1), null] },
     { as: "E", kkWindow: [isoIn(3), isoIn(1)] },
     { as: "A", kkWindow: [isoIn(-1), isoIn(3)] },
     { as: "E", kkWindow: [isoIn(-3), isoIn(-1)] }, // closed: the link has expired with it
     { anon: "kkForm", token: "k" },
-    { anon: "kkSignup", token: "k", trainee: "חניך לדוגמה", group: "ספר ג" },
+    { anon: "kkSignup", token: "k", trainee: "חניך/ה שלישי/ת לדוגמה", group: "ג" },
     { as: "E", kkWindow: [null, null] }, // no window: 30 days after issue again
     { anon: "kkForm", token: "k" },
     { as: "E", issue: "kk_signup", name: "k2" },
     { anon: "kkForm", token: "k" }, // replaced
+    { anon: "kkForm", token: "k2" },
+    { expire: "k2" },
+    { anon: "kkForm", token: "k2" },
   ],
 
   // the sources' files (milestone 5ב-1): the bucket's limits and policies, register and remove, the reader's settings

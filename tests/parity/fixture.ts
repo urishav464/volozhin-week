@@ -23,6 +23,9 @@ export const FOREIGN_ROOM = "חדר של מחזור אחר";
 export const ROSTER: { name: string; gender: "m" | "f" | null }[] = [
   { name: "חניכה לדוגמה", gender: "f" },
   { name: "חניך לדוגמה", gender: "m" },
+  // two more, for מכריכה לכריכה (v15): leaders, and trainees who sign up
+  { name: "חניך/ה שלישי/ת לדוגמה", gender: null },
+  { name: "חניך/ה רביעי/ת לדוגמה", gender: null },
 ];
 
 /** Another edition's label (a practice week): the SQL driver makes it; the engine's import host knows it by name. */
@@ -124,7 +127,7 @@ export type Step =
   /** set_call_template (v14): «נקודות לשיחה». */
   | { as: ActorKey; callTemplate: string | null }
   | { as: ActorKey; duty: unknown }
-  // links and מכריכה לכריכה (milestone 5a) — tokens by the name a step gave them, groups by title, tracks by [day, start]
+  // links and מכריכה לכריכה (milestone 5a; week-long since v15) — tokens and groups by the name a step gave them, trainees by name
   | { as: ActorKey; issue: string; trainee?: string | null; name: string }
   | { as: ActorKey; revoke: string }
   /** `from`: the caller's address as the API would report it (a class link's rate limit is per address); `times`: the call made that many times, the last answer kept. */
@@ -132,11 +135,13 @@ export type Step =
   | { anon: "escortTick"; token: string; at: At; item: string; on: boolean | null }
   | { anon: "escortPickup"; token: string; at: At; address: string | null }
   | { anon: "kkSignup"; token: string; trainee: string; group: string }
-  | { as: ActorKey; kkAdd: [number, number]; fields: KkStepFields }
+  /** A group for the week, known from now on by this name (its id in each driver). */
+  | { as: ActorKey; kkAdd: string; fields: KkStepFields }
   | { as: ActorKey; kkUpdate: string; patch: KkStepFields }
   | { as: ActorKey; kkDelete: string }
   | { as: ActorKey; kkPlace: string; trainee: string }
-  | { as: ActorKey; kkUnplace: [number, number]; trainee: string }
+  /** The trainee's sign-up for the week, in the scenario's edition. */
+  | { as: ActorKey; kkUnplace: string }
   | { as: ActorKey; kkWindow: [string | null, string | null] }
   | { as: ActorKey; bookOrder: string; copies: number | null; ordered: boolean | null }
   /** The week's opening Sunday, set by hand (the «מחזור» tab writes the row directly): a yyyy-mm-dd or TBD. */
@@ -281,8 +286,13 @@ export function archiveLessonLine(edition: string, l: {
     `sk=${l.sources_kind}`, `pw=${l.print_when}`, `sn=${d(l.sources_note)}`, `pay=${d(l.pay_amount)}`, `n=${d(l.import_note)}`, `v=${l.version}`, `sp=${speakers}`].join("|");
 }
 
-/** A group's fields as steps write them: a room by name, a trainee leader by name. */
-export type KkStepFields = Record<string, unknown> & { room?: string; leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
+/** A group's fields as steps write them: a trainee leader by name. */
+export type KkStepFields = Record<string, unknown> & { leaders?: ({ kind: string; trainee?: string; label?: string } | Record<string, unknown>)[] };
+
+/** A group as the state compares it: by the name its step gave it, the leaders in their order (`kind:name`). */
+export function kkGroupLine(name: string, g: { title: string | null; author: string | null; place: string | null; capacity: number | null; open: boolean }, leaders: string): string {
+  return `group|${name}|t=${d(g.title)}|a=${d(g.author)}|place=${d(g.place)}|cap=${d(g.capacity)}|open=${g.open}|lead=${leaders || "-"}`;
+}
 
 /** An unknown token name: a well-formed token that opens nothing. */
 export const NO_SUCH_TOKEN = "AAAAAAAAAAAAAAAAAAAAAA";
@@ -305,7 +315,7 @@ export interface Normal {
   edition: string[];
   /** share_links: scope, subject, revoked, expiry (by rule), who issued */
   links: string[];
-  /** kk_tracks, kk_groups (with leaders), kk_signups, book_orders */
+  /** kk_groups (with leaders), kk_signups, book_orders — groups by name */
   kk: string[];
   /** escort_ticks */
   ticks: string[];
@@ -472,7 +482,7 @@ const byText = <T>(key: (x: T) => string) => (a: T, b: T) => (key(a) < key(b) ? 
 export function publicRead(
   kind: "escortView" | "escortTick" | "kkForm" | "scheduleView",
   v: unknown,
-  names: { lesson: (id: number) => string; track: (id: number) => string; group: (id: number) => string; trainee: (id: number) => string },
+  names: { lesson: (id: number) => string; group: (id: number) => string; trainee: (id: number) => string },
 ): string {
   const ticks = (t: Record<string, string | null>) => Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x == null ? "-" : "y"]));
   if (kind === "escortTick") return stable(ticks(v as Record<string, string | null>));
@@ -482,14 +492,10 @@ export function publicRead(
     for (const l of x.lessons) Object.assign(l, { lesson_id: names.lesson(Number(l.lesson_id)), ticks: ticks(l.ticks) });
     return stable(x);
   }
-  const f = structuredClone(v) as {
-    roster: { id: number | string; full_name: string }[];
-    tracks: { id: number | string; groups: { id: number | string; title: string }[] }[];
-  };
+  // kkForm (v15): the sessions in the grid's order as both give them; the trainees and the groups by name
+  const f = structuredClone(v) as { roster: { id: number | string; full_name: string }[]; groups: { id: number | string; title: string }[] };
   f.roster = f.roster.map((r) => ({ ...r, id: names.trainee(Number(r.id)) })).sort(byText((r) => r.full_name));
-  f.tracks = f.tracks
-    .map((t) => ({ ...t, id: names.track(Number(t.id)), groups: t.groups.map((g) => ({ ...g, id: names.group(Number(g.id)) })).sort(byText((g) => g.title)) }))
-    .sort(byText((t) => String(t.id)));
+  f.groups = f.groups.map((g) => ({ ...g, id: names.group(Number(g.id)) })).sort((a, b) => byText<typeof a>((g) => g.title)(a, b) || byText<typeof a>((g) => String(g.id))(a, b));
   return stable(f);
 }
 

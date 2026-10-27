@@ -47,23 +47,24 @@ export interface EscortView {
   lessons: EscortLesson[];
 }
 
+/** A group on offer: a book, a capacity entered, open to the link. */
 export interface KkFormGroup {
   id: number;
   title: string;
   author: string | null;
-  room: string | null;
+  /** Where it meets, all week. */
+  place: string | null;
   leaders: { kind: "staff" | "trainee" | "ein_prat"; name: string }[];
   /** No place left — a count, never who. */
   full: boolean;
 }
 
-export interface KkFormTrack {
-  id: number;
+/** One kk session of the week, from the grid (app.kk_rows): every group meets in each. */
+export interface KkFormSession {
   day: Day;
   date: string | null;
   start_min: number;
   end_min: number;
-  groups: KkFormGroup[];
 }
 
 export interface KkForm {
@@ -71,10 +72,11 @@ export interface KkForm {
   window: { opens_at: string | null; closes_at: string | null };
   /** Inside the window right now. */
   open: boolean;
-  /** The edition's trainees, names only — nothing about who signed up. */
+  /** The edition's trainees who lead no group, names only — nothing about who signed up. */
   roster: { id: number; full_name: string }[];
-  /** Tracks with a group on offer (open, with a capacity entered). */
-  tracks: KkFormTrack[];
+  sessions: KkFormSession[];
+  /** The groups on offer, by title. */
+  groups: KkFormGroup[];
 }
 
 export interface ScheduleView {

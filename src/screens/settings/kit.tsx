@@ -109,6 +109,8 @@ export function Button({
   kind = "secondary",
   busy = false,
   busyLabel = "רגע…",
+  keepFocus = false,
+  disabled,
   className = "",
   children,
   ref,
@@ -118,17 +120,24 @@ export function Button({
   kind?: keyof typeof BUTTON;
   busy?: boolean;
   busyLabel?: string;
+  /**
+   * `disabled` drawn as `busy` is (aria-disabled, a click that does nothing) — for a button its own success disables (a save
+   * with nothing left to save, a placement whose name left the field): the focus stays on it, not on the page.
+   */
+  keepFocus?: boolean;
   ref?: Ref<HTMLButtonElement>;
 }) {
+  const inert = busy || (keepFocus && !!disabled);
   return (
     <button
       ref={ref}
       type="button"
       {...rest}
+      disabled={keepFocus ? undefined : disabled}
       // busy, it keeps the focus (a disabled button loses it, and the keyboard its place): aria-disabled, and a click — or a
       // form's Enter — does nothing until the work ends
-      aria-disabled={busy || undefined}
-      onClick={busy ? (e) => e.preventDefault() : onClick}
+      aria-disabled={inert || undefined}
+      onClick={inert ? (e) => e.preventDefault() : onClick}
       aria-busy={busy || undefined}
       className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2.5 font-semibold sm:px-3 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${BUTTON[kind]} ${className}`}
     >

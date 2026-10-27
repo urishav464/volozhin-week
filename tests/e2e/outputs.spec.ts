@@ -433,7 +433,7 @@ test.describe("mock build", () => {
     sb.tables.set("activity", []);
     sb.tables.set("speaker_contacts", [{ speaker_id: 1, phone: "טלפון לדוגמה", email: null, secretary_note: null, notes: null }]);
     sb.tables.set("transport_details", []);
-    sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
+    sb.answers.set("load_kk", { groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
     sb.answers.set("get_fallen_contacts", null); // asked for the fallen this edition planned for (the demo's: 1, 2, 3) — none stored
     sb.answers.set("load_reviews", []); // v12: «איך עבר», as the caller reads it
     await nav(page).getByRole("link", { name: "הגדרות" }).click();

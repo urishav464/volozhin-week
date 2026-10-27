@@ -7,17 +7,19 @@
 //              «כולל כתובות וטלפונים» is on;
 //   תשלומים    the closed lessons with an approved amount, «שולם» or not, and
 //              the totals;
-//   ספרים      מכריכה לכריכה's groups, the copies to order and «הוזמן»;
+//   ספרים      מכריכה לכריכה's groups — one book each for the whole week, its
+//              place and leaders — the copies to order and «הוזמן»;
 //   הדפסות     the lessons whose sources are printed ahead or on the day, by
 //              that and by day: «מרצה – כותרת», the files and their pages.
 // Nothing here fills in a number nobody entered: no copies to print, no
 // amounts, no books.
 import type { LessonTransport } from "../data/commands";
-import type { KkData, KkGroup, KkTrack, LeaderKind } from "../data/kk";
+import type { KkData, KkGroup } from "../data/kk";
 import { fromPreviousSpeaker } from "../data/sourceRules";
+import { groupName, LEADER_KIND_LABEL, leaderName, leadersOf } from "../domain/kk";
 import { displayName } from "../domain/names";
 import { PRINT_WHEN_LABEL, TRANSPORT_LABEL } from "../domain/stages";
-import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
+import { type Day, DAYS } from "../domain/time";
 import type { Lesson, SourceFile, TransportDetails, Week } from "../domain/types";
 import type { Table } from "./table";
 import { gridOrder, phoneCell, teachingWhen, whenCell } from "./tracking";
@@ -165,14 +167,14 @@ export function paymentTable(rows: PaymentRow[], editionLabel: string, paidText:
 
 // ------------------------------------------------------------------ ספרים
 
-const LEADER_KIND: Record<LeaderKind, string> = { trainee: "חניך/ה", staff: "מהצוות", ein_prat: "מעין פרת" };
-
-export interface BookRow extends When {
+export interface BookRow {
   group: KkGroup;
-  track: KkTrack;
-  day: Day;
+  /** The book; a group that has an order line but no book (yet, or any more) by its name on screen. */
   title: string;
   author: string;
+  /** Where the group meets all week; "" while not set. */
+  place: string;
+  /** «name (kind)», in their order. */
   leaders: string;
   leaderCount: number;
   signups: number;
@@ -181,42 +183,37 @@ export interface BookRow extends When {
   orderedAt: string | null;
 }
 
+/** One row per group with a book or an order line — the whole week's (schema v15: no day, no time), by title then id. */
 export function bookRows(week: Pick<Week, "roster">, kk: KkData): BookRow[] {
-  const tracks = new Map(kk.tracks.map((t) => [t.id, t]));
-  const roster = new Map(week.roster.map((r) => [r.id, r.full_name]));
   return kk.groups
-    .filter((g) => tracks.has(g.track_id))
-    .map((g) => {
-      const track = tracks.get(g.track_id)!;
-      const leaders = kk.leaders.filter((x) => x.group_id === g.id).sort((a, b) => a.id - b.id);
-      const order = kk.orders.find((o) => o.group_id === g.id) ?? null;
+    .map((g) => ({ g, order: kk.orders.find((o) => o.group_id === g.id) ?? null }))
+    .filter(({ g, order }) => g.title != null || order != null)
+    .map(({ g, order }) => {
+      const leaders = leadersOf(kk, g.id);
       return {
         group: g,
-        track,
-        day: track.day,
-        dayLabel: DAY_NAMES[track.day],
-        time: fmtRange(track.start_min, track.end_min),
-        title: g.title,
+        title: groupName(g, kk, week.roster),
         author: g.author ?? "",
-        leaders: leaders.map((x) => `${(x.roster_id != null ? roster.get(x.roster_id) : x.label) ?? "—"} (${LEADER_KIND[x.kind]})`).join(", "),
+        place: g.place ?? "",
+        leaders: leaders.map((x) => `${leaderName(x, week.roster) || "—"} (${LEADER_KIND_LABEL[x.kind]})`).join(", "),
         leaderCount: leaders.length,
         signups: kk.signups.filter((s) => s.group_id === g.id).length,
         copies: order?.copies ?? null,
         orderedAt: order?.ordered_at ?? null,
       };
     })
-    .sort((a, b) => a.day - b.day || a.track.start_min - b.track.start_min || a.group.id - b.group.id);
+    .sort((a, b) => a.title.localeCompare(b.title, "he") || a.group.id - b.group.id);
 }
 
 export function bookTable(rows: BookRow[], editionLabel: string, orderedText: (iso: string) => string): Table {
   return {
     name: `ספרים ${editionLabel}`,
-    headers: ["יום ושעה", "ספר", "מחבר/ת", "מובילים", "נרשמו", "עותקים להזמנה", "הוזמן"],
-    widths: [20, 28, 18, 30, 8, 14, 20],
+    headers: ["ספר", "מחבר/ת", "מרחב", "מעבירים", "נרשמו", "עותקים להזמנה", "הוזמן"],
+    widths: [28, 18, 16, 30, 8, 14, 20],
     rows: rows.map((r) => [
-      whenCell(r),
       r.title,
       r.author,
+      r.place,
       r.leaders,
       String(r.signups),
       r.copies == null ? "" : String(r.copies),

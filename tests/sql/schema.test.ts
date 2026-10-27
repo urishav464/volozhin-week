@@ -48,6 +48,9 @@ const PEER_ADMIN = "peer.admin@example.org";
 // handler's) with set_slot_availability (one lesson row, any editor), and added
 // set_call_template — «נקודות לשיחה», an edition admin's (tests/sql/speakers.test.ts,
 // tests/sql/stages.test.ts).
+// v15 (מכריכה לכריכה by the week) gave kk_add_group (p_edition, p_fields) and
+// kk_unplace (p_edition, p_roster) new signatures; the old ones are dropped, so
+// each name is still one function here — an overload left over would show twice.
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
@@ -140,7 +143,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     it("takes personal-data tables back out of Realtime if someone published them by hand", async () => {
       await db.query(
         "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones, " +
-          "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files, " +
+          "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files, " +
           "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes",
       );
       await db.query(SCHEMA);
@@ -182,7 +185,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
-        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_tracks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability"]) {
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
@@ -226,7 +229,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(14);
+        expect(w.schema_version).toBe(15);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
