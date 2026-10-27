@@ -344,8 +344,14 @@ select v.* from (values
 where not exists (select 1 from public.categories);
 
 -- A name's comparison key: no title words, no gershayim/geresh differences, no
--- vowel points, one space. IMMUTABLE (it feeds a stored column); if this
--- function ever changes, re-key: update public.speakers set name = name;
+-- vowel points, one space. IMMUTABLE (it feeds three stored columns:
+-- speakers.name_key, roster.name_key, kk_groups.place_key); if this function
+-- ever changes, re-key all three: update public.speakers set name = name;
+-- update public.roster set full_name = full_name; update public.kk_groups set
+-- place = place; — a new key may itself collide with their unique indexes
+-- (speakers (name_key, disambiguator), roster (edition_id, name_key),
+-- kk_groups (edition_id, place_key)), so find those rows first. Its browser
+-- twin is src/domain/nameKey.ts.
 create or replace function app.name_key(p text) returns text
   language sql immutable set search_path = ''
   as $$

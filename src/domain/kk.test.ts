@@ -57,6 +57,7 @@ describe("מכריכה לכריכה for the screens (v15)", () => {
 
   it("offered = a book, a capacity, open", () => {
     expect(kk.groups.map(offered)).toEqual([true, false, false]);
+    expect(offered({ title: null, capacity: 5, open: true })).toBe(false); // no book: a capacity and open are not enough
   });
 
   it("a name from the team list or typed by hand that is one trainee's is stored as that trainee", () => {

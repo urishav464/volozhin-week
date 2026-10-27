@@ -1,6 +1,7 @@
 // One group's card on /kk: its name (the book, or — before the book — its leaders), the author, the place, the leaders,
 // the sign-ups against the capacity (behind their count; an admin moves one to another group or removes it), the books
-// to order (a group with a book), and the admin's «עריכה» and «מחיקה».
+// to order (a group with a book — or an order line its book left, to be seen and removed), and the admin's «עריכה» and
+// «מחיקה».
 import { useId, useMemo, useState } from "react";
 import type { KkData, KkGroup } from "../../data/kk";
 import type { DataPort } from "../../data/port";
@@ -92,7 +93,8 @@ export function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }
           </ul>
         </Fold>
       )}
-      {g.title != null && <BookOrder g={g} kk={kk} signed={signups.length} leaders={leaders.length} editable={books} folded busy={busy} act={act} port={port} />}
+      {/* a book cleared after its order keeps the order (as «לוגיסטיקה ← ספרים» lists it): shown, to remove — new copies wait for a book (`no_book`) */}
+      {(g.title != null || kk.orders.some((o) => o.group_id === g.id)) && <BookOrder g={g} kk={kk} signed={signups.length} leaders={leaders.length} editable={books} folded busy={busy} act={act} port={port} />}
       {problem && (
         <p role="alert" className="text-sm text-bad">
           {problem}
@@ -152,7 +154,10 @@ export function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }
   );
 }
 
-/** One sign-up: the name and how it came; for an admin, a move to another group and «הסרה» (asked first). */
+/**
+ * One sign-up: the name and how it came; for an admin, a move to another group and «הסרה» (asked first). The select only
+ * picks the group (a closed select changes on an arrow key): «העברה» moves.
+ */
 function SignupItem({
   name,
   via,
@@ -177,7 +182,10 @@ function SignupItem({
 }) {
   const id = useId();
   const [removing, setRemoving] = useState(false);
-  // «ביטול» (or a refusal) takes the confirm away: «הסרה» takes the focus back
+  // the group picked to move to, while it is still one of the others
+  const [to, setTo] = useState("");
+  const target = others.some((x) => String(x.id) === to) ? to : "";
+  // «ביטול» (or a refusal) takes the confirm away: «הסרה» takes the focus back; a move refused, «העברה» has it back
   const focusBack = useFocusBack();
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1">
@@ -216,9 +224,9 @@ function SignupItem({
                 </label>
                 <select
                   id={`${id}-m`}
-                  value=""
+                  value={target}
                   disabled={moveBusy}
-                  onChange={(e) => e.target.value && void onMove(Number(e.target.value))}
+                  onChange={(e) => setTo(e.target.value)}
                   className="min-h-11 max-w-48 rounded-lg border border-line bg-card px-2 text-sm"
                 >
                   <option value="">{`בקבוצה: ${group}`}</option>
@@ -228,6 +236,16 @@ function SignupItem({
                     </option>
                   ))}
                 </select>
+                <Button
+                  ref={focusBack.ref("move")}
+                  disabled={target === ""}
+                  keepFocus
+                  busy={moveBusy}
+                  onClick={() => void onMove(Number(target)).then((ok) => !ok && focusBack.back("move"))}
+                  aria-label={`העברה: ${name}`}
+                >
+                  העברה
+                </Button>
               </>
             )}
             <Button ref={focusBack.ref()} kind="danger" onClick={() => setRemoving(true)} aria-label={`הסרה: ${name}`}>

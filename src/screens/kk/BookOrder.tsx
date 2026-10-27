@@ -51,7 +51,8 @@ export function BookOrder({ g, kk, signed, leaders, editable, folded = false, bu
         הוזמן
         {order?.ordered_at && <span className="text-xs text-ink-soft">({israelMoment(order.ordered_at)})</span>}
       </label>
-      <Button type="submit" disabled={!dirty} busy={busy === `books-${g.id}`} busyLabel="שומר…">
+      {/* saved, nothing is left to save: inactive, and still where the keyboard is (logistics saves one row after another) */}
+      <Button type="submit" disabled={!dirty} keepFocus busy={busy === `books-${g.id}`} busyLabel="שומר…">
         שמירה
       </Button>
       {problem && (

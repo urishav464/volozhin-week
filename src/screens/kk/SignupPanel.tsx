@@ -206,7 +206,8 @@ function NotYet({ week, kk, admin, busy, act, port }: { week: Week; kk: KkData; 
                 ))}
               </select>
             </Field>
-            <Button kind="primary" type="submit" disabled={who == null || to == null} busy={busy === "place"}>
+            {/* placed, the name leaves the field: inactive, and the focus stays here for the next one */}
+            <Button kind="primary" type="submit" disabled={who == null || to == null} keepFocus busy={busy === "place"}>
               שיבוץ
             </Button>
           </div>

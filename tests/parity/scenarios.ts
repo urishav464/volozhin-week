@@ -762,7 +762,7 @@ export const SCENARIOS: Record<string, Step[]> = {
       as: "E",
       kkAdd: "א",
       fields: {
-        title: "  ", place: " הדשא ", // the leaders first: no book yet
+        title: "  ", place: " הדשא ", capacity: 2, // the leaders first: no book yet (a capacity, so the book alone keeps it off the form)
         leaders: [{ kind: "trainee", trainee: "חניכה לדוגמה" }, { kind: "staff", label: "צוות לדוגמה" }, { kind: "staff", label: " צוות  לדוגמה " }],
       },
     },
@@ -847,7 +847,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", kkUnplace: "חניך/ה רביעי/ת לדוגמה" },
     { as: "E", kkUnplace: "חניך/ה רביעי/ת לדוגמה" },
     { as: "E", kkUnplace: "חניך/ה רביעי/ת לדוגמה" }, // none left: nothing
-    { as: "E", kkUnplace: FOREIGN_TRAINEE }, // another edition's trainee: nothing of this edition's
+    { as: "E", kkUnplace: FOREIGN_TRAINEE }, // another edition's trainee: «ok», nothing taken here (that edition's own sign-ups: tests/sql/kk.test.ts)
     { as: "E", kkDelete: "ב" }, // nobody there now: its order goes with it
     { anon: "kkSignup", token: "k", trainee: "חניך/ה רביעי/ת לדוגמה", group: "ג" }, // no sign-up this week now: recorded
     // the sessions are the grid's

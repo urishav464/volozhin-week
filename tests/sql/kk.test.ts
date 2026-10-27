@@ -358,6 +358,7 @@ describe("מכריכה לכריכה", () => {
         expect(await update(run, g.nobook, { title: null, capacity: 4 })).toBe("ok");
         // the place: another group's refused, its own kept as typed again
         expect(await update(run, g.b, { place: " הַדֶּשֶׁא " })).toBe("place_taken");
+        expect(await update(run, otherGroup, { place: "הדשא" }, OTHER_ADMIN)).toBe("ok"); // unique per edition: another edition's group may meet there
         expect(await update(run, g.a, { place: "הדשא " })).toBe("ok");
         expect(await update(run, g.a, { place: null })).toBe("ok");
         expect(await update(run, g.b, { place: "הדשא" })).toBe("ok"); // free now
@@ -401,6 +402,12 @@ describe("מכריכה לכריכה", () => {
         expect(await code(run(A, "select public.kk_unplace($1, $2)", [ed, r[1]]))).toBe("forbidden");
         expect(await code(run(ED_ADMIN, "select public.kk_unplace($1, $2)", [other, rOther]))).toBe("not_member");
         expect(await code(run(ED_ADMIN, "select public.kk_unplace(-1, $1)", [r[1]]))).toBe("not_member");
+        // this edition's unplace takes nothing of another's: that edition's trainee keeps their sign-up there
+        expect(await place(run, otherGroup, rOther, OTHER_ADMIN)).toBe("ok");
+        expect(await code(run(ED_ADMIN, "select public.kk_unplace($1, $2)", [ed, rOther]))).toBe("ok");
+        expect((await run("owner", "select group_id from public.kk_signups where roster_id = $1", [rOther])).rows.map((x) => Number(x.group_id))).toEqual([otherGroup]);
+        expect(await code(run(OTHER_ADMIN, "select public.kk_unplace($1, $2)", [other, rOther]))).toBe("ok"); // by its own edition's admin: gone
+        expect((await run("owner", "select count(*)::int as n from public.kk_signups where roster_id = $1", [rOther])).rows[0].n).toBe(0);
         expect(await code(run(ED_ADMIN, "select public.kk_delete_group($1)", [g.b]))).toBe("group_has_signups");
         expect(await code(run(ED_ADMIN, "select public.kk_unplace($1, $2)", [ed, r[1]]))).toBe("ok");
         expect(await code(run(ED_ADMIN, "select public.kk_unplace($1, $2)", [ed, r[1]]))).toBe("ok"); // none left: nothing
@@ -545,6 +552,8 @@ describe("מכריכה לכריכה", () => {
     const outcome = (p: Promise<pg.QueryResult>) => p.then((x) => x.rows[0].v ?? "ok", (e: { code?: string; message: string }) => (e.code === "P0001" ? e.message : e.code));
     const leadersOf = async (roster: number) => (await db.query("select group_id from public.kk_leaders where roster_id = $1", [roster])).rows.map((x) => Number(x.group_id));
     const signedUp = async (roster: number) => (await db.query("select group_id from public.kk_signups where roster_id = $1", [roster])).rows.map((x) => Number(x.group_id));
+    /** An empty group on offer, of its own, for a race that changes or deletes it: the fixture's stay as they are. */
+    const raceGroup = () => commitAs(ED_ADMIN, "select public.kk_add_group($1, $2)", [ed, JSON.stringify({ title: "ספר למרוץ", capacity: 3 })]).then(Number);
 
     it("two trainees at once for the last place: exactly one gets it", async () => {
       await twoConnections(async (c1, c2) => {
@@ -657,6 +666,52 @@ describe("מכריכה לכריכה", () => {
         await c2.query("rollback");
         expect((await db.query("select id from public.kk_groups where place_key = 'חדר העיון'")).rows.map((x) => Number(x.id))).toEqual([g.none]);
       });
+    });
+
+    // kk_signup reads the group only under the lock: what it waited on decides, never what it saw before
+    it("a group's book cleared, its sign-up closed or the group deleted while a trainee signs up through the link: the link waits, then records nothing", async () => {
+      const changes: [string, string][] = [
+        ["the book cleared", "select public.kk_update_group($1, '{\"title\": null}')"],
+        ["closed", "select public.kk_update_group($1, '{\"open\": false}')"],
+        ["deleted", "select public.kk_delete_group($1)"],
+      ];
+      for (const [i, [change, sql]] of changes.entries()) {
+        await twoConnections(async (c1, c2) => {
+          const group = await raceGroup();
+          await asMember(c1, ED_ADMIN);
+          await c1.query(sql, [group]); // not committed yet
+          await asAnon(c2, `198.51.100.${8 + i}`);
+          const link = outcome(c2.query("select public.kk_signup($1, $2, $3) as v", [token, r[0], group]));
+          await waiting();
+          await c1.query("commit");
+          expect(await link, change).toEqual({ status: "received" }); // the same answer — never a key error for a group gone
+          await c2.query("commit");
+          expect(await signedUp(r[0]), change).toEqual([]);
+        });
+      }
+    });
+
+    // app.kk_locked_group reads the group again under the lock
+    it("a group deleted while another member's command on it waits: stale — never «saved» for a group that is gone, nor a raw key error", async () => {
+      const commands: [string, string, unknown[]][] = [
+        [ADMIN, "select public.kk_update_group($1, $2)", [JSON.stringify({ capacity: 3 })]],
+        [ADMIN, "select public.kk_update_group($1, $2)", [JSON.stringify({ leaders: [trainee(r[0])] })]],
+        [ADMIN, "select public.kk_place($1, $2)", [r[0]]],
+        [L, "select public.set_book_order($1, 4, false)", []],
+      ];
+      for (const [who, sql, rest] of commands) {
+        await twoConnections(async (c1, c2) => {
+          const group = await raceGroup();
+          await asMember(c1, ED_ADMIN);
+          await c1.query("select public.kk_delete_group($1)", [group]); // not committed yet
+          await asMember(c2, who);
+          const second = outcome(c2.query(sql, [group, ...rest]));
+          await waiting();
+          await c1.query("commit");
+          expect(await second, `${sql} ${JSON.stringify(rest)}`).toBe("stale");
+          await c2.query("rollback");
+        });
+      }
     });
   });
 

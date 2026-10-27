@@ -22,6 +22,9 @@ const OTHER = "other";
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** `group_has_signups` in this form: the book taken away from a group someone signed up for (errors.ts says deleting's). */
+const KEEP_BOOK = "יש נרשמים לקבוצה הזו, ולכן אי אפשר להסיר ממנה את הספר. אפשר להחליף אותו בספר אחר, או קודם להעביר או להסיר את הנרשמים.";
+
 /** A leader as the database tells repeats apart. */
 const leaderKey = (l: LeaderInput) => (l.kind === "trainee" ? `trainee:${l.roster_id}` : `${l.kind}:${l.label}`);
 
@@ -111,10 +114,13 @@ export function GroupForm({
       setLeaders(list);
       clearPending();
     }
-    await onSave({ title: name.trim() || null, author: author.trim() || null, place: place.trim() || null, capacity: cap, open, leaders: list }, (code) => {
+    // one line each, every space as a space (a no-break space pasted from WhatsApp or Word too): the demo and the database
+    // key the same text (`nameKey` ≡ `app.name_key`)
+    await onSave({ title: oneLine(name) || null, author: oneLine(author) || null, place: oneLine(place) || null, capacity: cap, open, leaders: list }, (code) => {
       if (!FORM_CODES.includes(code ?? "")) return false;
-      setProblem(errorMessage(code));
+      setProblem(code === "group_has_signups" ? KEEP_BOOK : errorMessage(code));
       if (code === "place_taken") document.getElementById(`${id}-p`)?.focus();
+      if (code === "group_has_signups") document.getElementById(`${id}-t`)?.focus();
       return true;
     });
   };
