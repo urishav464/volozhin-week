@@ -687,8 +687,9 @@ Lists the SQL orders by collation (trainees, groups by title) are compared sorte
 **The residuals** (accepted, `tests/sql/kk.test.ts` «RESIDUAL»):
 1. `full` together with a sign-up can tell whether a named trainee already has a sign-up this week
    (for any book) — sign them up for a group with exactly one place left and read the form again:
-   still not full means they had one. One bit per probe, and the probe is itself a sign-up
-   (`via 'link'`) the staff see.
+   still not full means they had one. One bit per probe. For a trainee with no sign-up yet the
+   probe is itself a sign-up (`via 'link'`) the staff see; for one who has a sign-up it records
+   nothing, and leaves no trace.
 2. A trainee missing from `roster` leads a group — perhaps one not on offer yet, whose leaders the
    form does not otherwise show. A leader's name is no secret from the class.
 
