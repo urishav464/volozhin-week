@@ -177,7 +177,7 @@ describe("after the week", () => {
     }
     await commitAs("anon", "select public.kk_form($1)", [token.kk]);
     await commitAs("anon", "select public.escort_tick($1, $2, 'met', true)", [token.escort, lesson.mon]);
-    const group = Number(await commitAs(ED_ADMIN, "select public.kk_add_group($1, 0, 1290, '{\"title\": \"ספר לבדיקה\", \"capacity\": 5}')", [ed]));
+    const group = Number(await commitAs(ED_ADMIN, "select public.kk_add_group($1, '{\"title\": \"ספר לבדיקה\", \"capacity\": 5}')", [ed]));
     await commitAs(ED_ADMIN, "select public.kk_place($1, $2)", [group, trainee]);
     // another live real edition: a transport and a link of its own (a purge of ed never touches them)
     lesson.other = await closedLesson(OTHER, other, speaker.s5, 1, 510, 600);

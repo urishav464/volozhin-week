@@ -368,8 +368,14 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
 
     await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "ספרים" }).click();
+    // v15: one list of the week's books (the group still without a book is not one), by title — its place and leaders, no day
     await expect(page.locator("[data-book-row]")).toHaveCount(3);
+    await expect(page.getByRole("region", { name: /^יום / })).toHaveCount(0);
     const book = page.locator("[data-book-row]").first();
+    await expect(book).toContainText("ספר לדוגמה א׳");
+    await expect(book).toContainText("הדשא · מעבירים:");
+    const books = await downloaded(page, () => page.getByRole("button", { name: "הורדת CSV" }).click());
+    expect(books.bytes.toString("utf8")).toContain("ספר,מחבר/ת,מרחב,מעבירים,נרשמו,עותקים להזמנה,הוזמן");
     await book.getByLabel("עותקים להזמנה").fill("7");
     await book.getByRole("checkbox", { name: "הוזמן" }).check();
     await book.getByRole("button", { name: "שמירה" }).click();
@@ -398,8 +404,11 @@ test.describe("demo build", () => {
     const files = unzipSync(new Uint8Array(zip.bytes));
     for (const f of ["kk.json", "memorial.json", "sources.json", "edition.json", "PERSONAL-DATA_contacts_and_transport.json"]) expect(Object.keys(files)).toContain(f);
     const kk = JSON.parse(strFromU8(files["kk.json"]));
-    expect(kk.groups.map((g: { title: string }) => g.title)).toContain("ספר לדוגמה א׳");
+    expect(kk).not.toHaveProperty("tracks"); // v15: a group is the week's
+    expect(kk.groups.map((g: { title: string | null; place: string | null }) => [g.title, g.place])).toContainEqual(["ספר לדוגמה א׳", "הדשא"]);
+    expect(kk.leaders.every((x: { name: string | null }) => typeof x.name === "string")).toBe(true);
     expect(kk.signups.every((s: { name: string | null }) => typeof s.name === "string")).toBe(true);
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(4);
     const memorial = JSON.parse(strFromU8(files["memorial.json"]));
     expect(memorial.fallen).toHaveLength(9);
     expect(strFromU8(files["memorial.json"])).not.toContain("טלפון לדוגמה");
@@ -482,7 +491,7 @@ test.describe("mock build", () => {
       { id: 2, lesson_id: lesson.id, cover: false, speaker_id: null, fallen_id: null, storage_path: "7/1/00000000-0000-4000-8000-000000000002-b.pdf", display_name: "קובץ ב.pdf", mime: "application/pdf", size_bytes: 9, page_count: 1, uploaded_by: 1, uploaded_at: "2026-11-01T00:00:00Z" },
     ];
     sb.storageFiles.set(week.sourceFiles[0].storage_path, Buffer.from("%PDF-1.7 synthetic", "latin1"));
-    sb.answers.set("load_kk", { tracks: [], groups: [], leaders: [], signups: [], orders: [] });
+    sb.answers.set("load_kk", { groups: [], leaders: [], signups: [], orders: [] });
     // the cross-year list: fallen 3 (planned here) and fallen 9 (another year's — no plan in this edition)
     sb.tables.set("fallen", [{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }, { id: 9, name: "חלל/ה לדוגמה 9", gender: null, note: null, active: false }]);
     sb.answers.set("get_fallen_contacts", null);

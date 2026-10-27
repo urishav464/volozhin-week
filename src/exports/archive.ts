@@ -7,8 +7,9 @@
 //                    notes, milestones and the designer's export snapshots
 //   speakers.json    the pool's records of the speakers the edition touched
 //                    (no contact detail)
-//   kk.json          מכריכה לכריכה: tracks, groups, leaders and sign-ups (with the
-//                    trainees' names), the book orders (5ב-2)
+//   kk.json          מכריכה לכריכה: the week's groups (book, place), leaders and
+//                    sign-ups (with the trainees' names), the book orders (5ב-2;
+//                    no tracks since v15)
 //   memorial.json    the edition's memorial plans and the fallen the caller reads
 //                    (an admin: the whole cross-year list) — never a contact (5ב-2)
 //   sources.json     the sources' files: what each is, whose, where in the zip
@@ -127,7 +128,7 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     "הקבצים:",
     "- edition.json: המחזור, ההגדרות, שורות הרשת, החדרים, הקטגוריות, שמות הצוות (בלי מיילים), שמות החניכים, השיעורים, הפניות, ההצעות, הזמינות, הסימונים של המלווים, יומן הפעולות, הערות הידע, אבני הדרך והייצואים למעצבת.",
     "- speakers.json: המרצים שהמחזור נגע בהם (בלי פרטי קשר).",
-    more.kk ? "- kk.json: מכריכה לכריכה — המשבצות, הקבוצות והספרים, המובילים, ההרשמות (עם שמות החניכים) והזמנות הספרים." : "- מכריכה לכריכה לא נקרא בייצוא הזה.",
+    more.kk ? "- kk.json: מכריכה לכריכה — הקבוצות של השבוע (הספר והמרחב), המעבירים, ההרשמות (עם שמות החניכים) והזמנות הספרים." : "- מכריכה לכריכה לא נקרא בייצוא הזה.",
     "- memorial.json: תוכניות זמני הזיכרון של המחזור ורשימת החללים של כל השנים (בלי פרטי קשר).",
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
     more.reviews ? "- reviews.json: «איך עבר» לכל שיעור שנכתב לו — דעות על המרצים. לשמור במקום מוגן, כמו כל הארכיון." : "- «איך עבר» לא נקרא בייצוא הזה.",
@@ -156,7 +157,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const edition = {
     format: ARCHIVE_FORMAT,
-    format_version: 3, // v14: slot_availability in place of availability
+    format_version: 4, // v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
     schema_version: input.schemaVersion,
     exported_at: input.exportedAt,
     edition: week.edition,
@@ -187,7 +188,6 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
       format: ARCHIVE_FORMAT,
       exported_at: input.exportedAt,
       window: week.edition.settings?.kk_window ?? null,
-      tracks: kk.tracks,
       groups: kk.groups,
       leaders: kk.leaders.map((x) => ({ ...x, name: x.roster_id != null ? (rosterName.get(x.roster_id) ?? null) : x.label })),
       signups: kk.signups.map((x) => ({ ...x, name: rosterName.get(x.roster_id) ?? null })),

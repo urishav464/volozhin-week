@@ -381,7 +381,7 @@ describe("links without an account", () => {
     it("ATTACK, closed: one holder's loop through the class's links does not lock the class out", async () => {
       await inTx(async (run) => {
         await run(ED_ADMIN, "select public.kk_set_window($1, now() - interval '1 day', now() + interval '3 days')", [ed]);
-        const group = Number(await run(ED_ADMIN, "select public.kk_add_group($1, 1, 1290, '{\"title\": \"ספר לבדיקה\", \"capacity\": 5}') as id", [ed]).then((x) => x.rows[0].id));
+        const group = Number(await run(ED_ADMIN, "select public.kk_add_group($1, '{\"title\": \"ספר לבדיקה\", \"capacity\": 5}') as id", [ed]).then((x) => x.rows[0].id));
         await from(run, "198.51.100.66"); // the attacker
         for (let i = 0; i < 1200; i++) await run("anon", "select public.kk_form($1)", [token.k]);
         expect(await failure(run("anon", "select public.kk_form($1)", [token.k]))).toEqual(LINK_INVALID); // their own count is used up

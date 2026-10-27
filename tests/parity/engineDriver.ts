@@ -13,7 +13,7 @@ import { linkClient, type LinkScope } from "../../src/data/links";
 import {
   answers, APPROACHES, type At, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
-  type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
+  kkGroupLine, type KkStepFields, lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel,
   prefsRow, slotLine, SLOTS, type Step, transportLine, transportRead,
 } from "./fixture";
 
@@ -103,14 +103,11 @@ export function engineDriver(): Driver {
   // ---- links and מכריכה לכריכה
   const tokens: Record<string, string> = {};
   const tokenOf = (name: string) => tokens[name] ?? NO_SUCH_TOKEN;
-  const groupId = (title: string) => shared.kk.groups.find((g) => g.title === title)?.id ?? -1;
-  const trackId = ([day, start]: [number, number]) => shared.kk.tracks.find((t) => t.day === day && t.start_min === start)?.id ?? -1;
+  /** The groups by the names their kkAdd steps gave them. */
+  const groups: Record<string, number> = {};
+  const groupId = (name: string) => groups[name] ?? -1;
   const kkFields = (f: KkStepFields): KkGroupFields => {
     const out: Record<string, unknown> = { ...f };
-    if ("room" in out) {
-      out.room_id = roomId(out.room as string);
-      delete out.room;
-    }
     if (Array.isArray(out.leaders)) {
       out.leaders = (out.leaders as Record<string, unknown>[]).map((x) => ("trainee" in x ? { kind: x.kind, roster_id: traineeId(x.trainee as string) } : x));
     }
@@ -121,11 +118,7 @@ export function engineDriver(): Driver {
       const l = week.lessons.find((x) => x.id === id);
       return l ? lessonKey({ ...l, room: week.rooms.find((r) => r.id === l.room_id)!.name }) : `#${id}`;
     },
-    track: (id: number) => {
-      const t = shared.kk.tracks.find((x) => x.id === id);
-      return t ? `${t.day}|${t.start_min}` : `#${id}`;
-    },
-    group: (id: number) => shared.kk.groups.find((x) => x.id === id)?.title ?? `#${id}`,
+    group: (id: number) => Object.entries(groups).find(([, x]) => x === id)?.[0] ?? `#${id}`,
     trainee: (id: number) => week.roster.find((r) => r.id === id)?.full_name ?? `#${id}`,
   };
 
@@ -297,11 +290,11 @@ export function engineDriver(): Driver {
         // ---- links and מכריכה לכריכה
         else if ("issue" in step) tokens[step.name] = e.issueLink(step.issue as LinkScope, traineeId(step.trainee ?? null)).token;
         else if ("revoke" in step) e.revokeLink(shared.links.find((x) => x.token === tokenOf(step.revoke))?.id ?? -1);
-        else if ("kkAdd" in step) e.kkAddGroup(step.kkAdd[0], step.kkAdd[1], kkFields(step.fields));
+        else if ("kkAdd" in step) groups[step.kkAdd] = e.kkAddGroup(kkFields(step.fields));
         else if ("kkUpdate" in step) e.kkUpdateGroup(groupId(step.kkUpdate), kkFields(step.patch));
         else if ("kkDelete" in step) e.kkDeleteGroup(groupId(step.kkDelete));
         else if ("kkPlace" in step) e.kkPlace(groupId(step.kkPlace), traineeId(step.trainee) ?? -1);
-        else if ("kkUnplace" in step) e.kkUnplace(trackId(step.kkUnplace), traineeId(step.trainee) ?? -1);
+        else if ("kkUnplace" in step) e.kkUnplace(traineeId(step.kkUnplace) ?? -1);
         else if ("kkWindow" in step) e.kkSetWindow(step.kkWindow[0], step.kkWindow[1]);
         else if ("bookOrder" in step) e.setBookOrder(groupId(step.bookOrder), step.copies, step.ordered as boolean);
         // ---- the sources' files
@@ -413,17 +406,15 @@ export function engineDriver(): Driver {
           .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
         kk: [
-          ...shared.kk.tracks.map((t) => `track|${t.day}|${t.start_min}-${t.end_min}`),
           ...shared.kk.groups.map((g) => {
             const leaders = shared.kk.leaders
               .filter((x) => x.group_id === g.id)
               .sort((a, b) => a.sort - b.sort)
               .map((x) => `${x.kind}:${x.roster_id != null ? trainee(x.roster_id) : x.label}`)
               .join(",");
-            const room = g.room_id == null ? "-" : week.rooms.find((r) => r.id === g.room_id)!.name;
-            return `group|${names.track(g.track_id)}|${g.title}|a=${g.author ?? "-"}|room=${room}|cap=${g.capacity ?? "-"}|open=${g.open}|lead=${leaders || "-"}`;
+            return kkGroupLine(names.group(g.id), g, leaders);
           }),
-          ...shared.kk.signups.map((x) => `signup|${names.track(x.track_id)}|${trainee(x.roster_id)}|${names.group(x.group_id)}|${x.via}`),
+          ...shared.kk.signups.map((x) => `signup|${names.group(x.group_id)}|${trainee(x.roster_id)}|${x.via}`),
           ...shared.kk.orders.map((o) => `order|${names.group(o.group_id)}|${o.copies}|ord=${o.ordered_at == null ? "-" : "y"}`),
         ].sort(),
         ticks: week.escortTicks.map((t) => `${key(t.lesson_id)}|${t.item}`).sort(),

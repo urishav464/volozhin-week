@@ -123,8 +123,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   ticks (`escortTicks` in the Week) and the kk tables (`port.kk`, `src/data/kk.ts`: all writes are functions).
   **anon's whole reach is `ping` (invoker since v12) and six SECURITY DEFINER functions** (`escort_view escort_tick escort_pickup
   kk_form kk_signup schedule_view`), keyed by a token alone; every link problem is the one refusal
-  `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its one accepted
-  residual: «full» after a sign-up — CONTRACT). The rate limit: an escort's link one count; a class link one per
+  `link_invalid` (no oracle); a sign-up answers the same in every case and never overwrites (its two accepted
+  residuals: «full» after a sign-up, and a leader missing from the names — CONTRACT «kkForm»). The rate limit: an escort's link one count; a class link one per
   caller's address (`app.link_client` / `linkClient`, the sha256 of cf-connecting-ip or X-Forwarded-For's first
   entry) — never a count the whole class shares. `src/lib/schema.test.ts` holds `EXPECTED_SCHEMA_VERSION` to the file. The public
   pages read through `PublicPort` (`src/data/publicPort.ts`, `makePublicPort()`): `SupabasePublic` is a plain
@@ -266,7 +266,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` now starts from v13 (c6d6012, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on two bases, v13 (c6d6012) and v14 (fe55f7c, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -296,6 +296,18 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `slot_availability` (edition, speaker, day, lesson row; can/cannot; any content member; `set_slot_availability`),
   converted from v6's table in the schema run; every reader goes through `src/domain/availability.ts`. «המרצים שלי»
   has a «כל הצוות» tab (`/mine/:tab?`, `TeamBoard.tsx`, `teamBoard` in `src/domain/mine.ts`). DECISIONS «המרצים מחדש — גרסה 14».
+- **מכריכה לכריכה לפי שבוע (schema v15):** a group is the whole week's — its leaders, ONE book (`title` null until
+  chosen), one place as typed (`place_key` = `app.name_key`, unique per edition: `place_taken`; the rooms only suggested) —
+  and meets at every kk session, which is never stored: `app.kk_rows` ≡ `kkSessions` (`src/domain/kk.ts`, with
+  `groupName`, `notYet`, `leaderInput`, `offered`, `kkStatus`, `LEADER_KIND_LABEL`). One sign-up per trainee for the week
+  (unique `(edition, roster)`); offered = a book + a capacity + open; copies need a book (`no_book`). A leader is part of
+  the group: a trainee leads one (`leader_elsewhere`), is never signed up (`leader_signed_up`, `is_leader`) and is left
+  out of `kk_form.roster`; a team or typed name that is one trainee's is sent as the trainee (`leaderInput`). Every kk write
+  but `kk_set_window` takes the edition's kk lock (`app.kk_lock`) before any rule between groups; a unique index hit is
+  a refusal. `kk_add_group(p_edition, p_fields)`, `kk_unplace(p_edition, p_roster)`; the per-session tables
+  (`kk_tracks` …) are dropped by the schema run, never converted. Screens: `src/screens/kk/` (`BookOrder.tsx` also in
+  «לוגיסטיקה ← ספרים»: one row per group with a book, `bookRows`), `/k` one «הספר שלי». kk.json has no tracks (archive
+  `format_version` 4). DECISIONS «מכריכה לכריכה לפי שבוע — גרסה 15».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
@@ -307,8 +319,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   Supabase endpoints by route interception.
 - `tests/sql/links.test.ts`, `tests/sql/kk.test.ts` — the anon surface: every bad token refused alike, the
   escort's page by date (W−7) and by key, the rate limit per address (and the review's lock-out attack, closed), the
-  sign-up races on two connections (each from its own address, so the group's row lock is what is tested), the
-  «full» residual pinned.
+  kk races on two connections (each from its own address, so the edition's kk lock is what is tested: the last place,
+  a leader of two groups, a sign-up against a leader, one place for two groups), the residuals pinned.
 - `tests/sql/sources.test.ts` — the bucket on the Storage stub of `tests/sql/bootstrap.sql` (its assumptions cite
   Storage's migrations): uploads per role/edition/archive/anon as the Storage API makes them (INSERT as the caller),
   the restrictive caps against a wide-open policy someone adds, direct SQL deletes refused, register/remove rules

@@ -1,29 +1,22 @@
-// מכריכה לכריכה (DESIGN «מכריכה לכריכה», schema v9) — reached as `port.kk`:
-// a track per kk occurrence of the grid (a day and a kk row), its groups (a
-// book as the admin typed it — nothing seeded — a room, a capacity the admin
-// entered, open or not), their leaders, the sign-ups (one per trainee per
-// track: through the class's link, or placed by the staff), and the book
-// orders. Writes are the edition admins' functions (book orders logistics'
-// too); the cleaning below is the database's own (app.kk_clean_group,
+// מכריכה לכריכה (DESIGN «מכריכה לכריכה»; week-long since schema v15) — reached as `port.kk`:
+// the edition's groups, each one book read across every kk session of the week (the sessions come
+// from the grid: src/domain/kk.ts kkSessions ≡ app.kk_rows), in one place of the campus for the whole
+// week; their leaders (a trainee of the roster, or a name as typed); the sign-ups (ONE book per
+// trainee for the week: through the class's link, or placed by the staff); and the book orders.
+// A group may start with its leaders only — the book comes later, and only a group with a book, a
+// capacity and «פתוחה להרשמה» is offered through the link. Writes are the edition admins' functions
+// (book orders logistics' too); the cleaning below is the database's own (app.kk_clean_group,
 // app.kk_clean_leaders), so the demo refuses exactly what production refuses.
-import type { Day } from "../domain/time";
 import { CommandError } from "./commands";
 import { cleanLine } from "./speakerRules";
 
-export interface KkTrack {
-  id: number;
-  day: Day;
-  start_min: number;
-  end_min: number;
-}
-
 export interface KkGroup {
   id: number;
-  track_id: number;
-  /** The book's title, as typed. */
-  title: string;
+  /** The book's title, as typed; null while the leaders have not chosen one yet. */
+  title: string | null;
   author: string | null;
-  room_id: number | null;
+  /** Where on the campus the group meets, all week, as typed; null = not set yet. */
+  place: string | null;
   /** What the admin entered; null = not offered through the link yet. Never a default. */
   capacity: number | null;
   open: boolean;
@@ -44,7 +37,6 @@ export interface KkLeader {
 
 export interface KkSignup {
   id: number;
-  track_id: number;
   group_id: number;
   roster_id: number;
   /** Through the class's link, or placed by the staff. */
@@ -60,7 +52,6 @@ export interface BookOrder {
 
 /** public.load_kk — the edition's מכריכה לכריכה. The window is in the edition's settings (`kk_window`). */
 export interface KkData {
-  tracks: KkTrack[];
   groups: KkGroup[];
   leaders: KkLeader[];
   signups: KkSignup[];
@@ -70,11 +61,12 @@ export interface KkData {
 /** A leader as a form sends it. */
 export type LeaderInput = { kind: "trainee"; roster_id: number } | { kind: "staff" | "ein_prat"; label: string };
 
-/** A group's fields — every key optional on an update; `title` required on a new one. */
+/** A group's fields — every key optional, on a new group as on an update. */
 export interface KkGroupFields {
-  title?: string;
+  /** null (or blank) = no book yet. */
+  title?: string | null;
   author?: string | null;
-  room_id?: number | null;
+  place?: string | null;
   capacity?: number | null;
   open?: boolean;
   leaders?: LeaderInput[];
@@ -82,22 +74,23 @@ export interface KkGroupFields {
 
 export interface KkPort {
   load(editionId: number): Promise<KkData>;
-  /** A group on the kk occurrence (day, the kk row starting at `start_min`); its track is made on first use. Returns the group's id. */
-  addGroup(editionId: number, day: Day, startMin: number, fields: KkGroupFields): Promise<number>;
+  /** A group for the whole week. Returns its id. */
+  addGroup(editionId: number, fields: KkGroupFields): Promise<number>;
   updateGroup(groupId: number, patch: KkGroupFields): Promise<void>;
   /** Refused with `group_has_signups` while anyone is signed up. */
   deleteGroup(groupId: number): Promise<void>;
-  /** The staff put a trainee in a group: a new sign-up, or a move within its track. */
+  /** The staff put a trainee in a group: a new sign-up, or a move from another book. Never a leader (`is_leader`). */
   place(groupId: number, rosterId: number): Promise<void>;
-  unplace(trackId: number, rosterId: number): Promise<void>;
+  /** The trainee's sign-up for the week, if any, is removed. */
+  unplace(editionId: number, rosterId: number): Promise<void>;
   /** Both bounds (ISO instants), or both null: closed. */
   setWindow(editionId: number, opensAt: string | null, closesAt: string | null): Promise<void>;
-  /** Copies to order (0–1000; null removes the line), and ordered or not (the first time kept). Logistics or an admin. */
+  /** Copies to order (0–1000; null removes the line), and ordered or not (the first time kept). Logistics or an admin; a group with a book (`no_book`). */
   setBookOrder(groupId: number, copies: number | null, ordered: boolean): Promise<void>;
 }
 
 /** Characters, and the leaders' count — as the database checks them. */
-export const KK_LIMITS = { title: 200, author: 120, leader: 80, leaders: 6, capacity: 1000, copies: 1000 } as const;
+export const KK_LIMITS = { title: 200, author: 120, place: 80, leader: 80, leaders: 6, capacity: 1000, copies: 1000 } as const;
 
 const fail = (code: string): never => {
   throw new CommandError(code);
@@ -110,6 +103,12 @@ function wholeOrNull(v: unknown, lo: number, hi: number): number | null {
   if (v == null) return null;
   if (!isWhole(v) || v < lo || v > hi) fail("bad_value");
   return v as number;
+}
+
+/** A string or null, cleaned to one line ≤ max (blank → null); anything else is `bad_value`. */
+function lineOrNull(v: unknown, max: number): string | null {
+  if (v != null && typeof v !== "string") fail("bad_value");
+  return cleanLine(v as string | null, max);
 }
 
 /** A leader as stored: kind, and a roster id or a label. */
@@ -145,36 +144,27 @@ export function cleanLeaders(v: unknown, isTrainee: (rosterId: number) => boolea
 
 /** What a group's fields clean to: only the keys present (app.kk_clean_group). */
 export interface CleanGroup {
-  title?: string;
+  title?: string | null;
   author?: string | null;
-  room_id?: number | null;
+  place?: string | null;
   capacity?: number | null;
   open?: boolean;
   leaders?: CleanLeader[];
 }
 
 /**
- * app.kk_clean_group, key by key in this order: title (one line ≤ 200, required — `title_required`), author (≤ 120),
- * room_id (a room of the edition), capacity (1–1000 or none), open (a boolean), leaders. Unknown keys are ignored.
+ * app.kk_clean_group, key by key in this order: title (one line ≤ 200, or none: a group may wait for
+ * its book), author (≤ 120), place (≤ 80), capacity (1–1000 or none), open (a boolean), leaders.
+ * Unknown keys are ignored. The rules between groups (a place, a leader, a sign-up) are the
+ * functions' own, after the cleaning (CONTRACT «מכריכה לכריכה»).
  */
-export function cleanGroupFields(p: unknown, isRoom: (roomId: number) => boolean, isTrainee: (rosterId: number) => boolean): CleanGroup {
+export function cleanGroupFields(p: unknown, isTrainee: (rosterId: number) => boolean): CleanGroup {
   if (typeof p !== "object" || p === null || Array.isArray(p)) fail("bad_value");
   const f = p as Record<string, unknown>;
   const out: CleanGroup = {};
-  if ("title" in f) {
-    const t = typeof f.title === "string" ? cleanLine(f.title, KK_LIMITS.title) : null;
-    if (t == null) fail("title_required");
-    out.title = t!;
-  }
-  if ("author" in f) {
-    if (f.author != null && typeof f.author !== "string") fail("bad_value");
-    out.author = cleanLine(f.author as string | null, KK_LIMITS.author);
-  }
-  if ("room_id" in f) {
-    const r = wholeOrNull(f.room_id, 1, 2147483647);
-    if (r != null && !isRoom(r)) fail("bad_value");
-    out.room_id = r;
-  }
+  if ("title" in f) out.title = lineOrNull(f.title, KK_LIMITS.title);
+  if ("author" in f) out.author = lineOrNull(f.author, KK_LIMITS.author);
+  if ("place" in f) out.place = lineOrNull(f.place, KK_LIMITS.place);
   if ("capacity" in f) out.capacity = wholeOrNull(f.capacity, 1, KK_LIMITS.capacity);
   if ("open" in f) {
     if (typeof f.open !== "boolean") fail("bad_value");

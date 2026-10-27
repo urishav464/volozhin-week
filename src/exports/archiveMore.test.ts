@@ -28,10 +28,9 @@ function file(w: Week, o: Partial<SourceFile>): SourceFile {
 
 function kk(): KkData {
   return {
-    tracks: [{ id: 1, day: 1, start_min: 1260, end_min: 1350 }],
-    groups: [{ id: 3, track_id: 1, title: "ספר לדוגמה", author: null, room_id: null, capacity: 5, open: true }],
-    leaders: [{ id: 1, group_id: 3, kind: "trainee", roster_id: 2, label: null }],
-    signups: [{ id: 9, track_id: 1, group_id: 3, roster_id: 1, via: "link", created_at: "2026-11-01T00:00:00Z" }],
+    groups: [{ id: 3, title: "ספר לדוגמה", author: null, place: "מרחב לדוגמה", capacity: 5, open: true }],
+    leaders: [{ id: 1, group_id: 3, kind: "trainee", roster_id: 2, label: null }, { id: 2, group_id: 3, kind: "staff", roster_id: null, label: "מדריך/ה לדוגמה" }],
+    signups: [{ id: 9, group_id: 3, roster_id: 1, via: "link", created_at: "2026-11-01T00:00:00Z" }],
     orders: [{ group_id: 3, copies: 6, ordered_at: null }],
   };
 }
@@ -50,16 +49,24 @@ describe("the archive's 5ב-2 files", () => {
     const files = archiveFiles({ week: w, extras, more, schemaVersion: 11, exportedAt: AT });
     expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", "kk.json", "memorial.json", PERSONAL_FILE, "sources.json", "speakers.json", "tracking.xlsx"].sort());
     const json = (k: string) => JSON.parse(strFromU8(files[k]));
-    expect(json("edition.json")).toMatchObject({ format_version: 3, escort_ticks: [{ lesson_id: 1, item: "met" }] });
+    expect(json("edition.json")).toMatchObject({ format_version: 4, escort_ticks: [{ lesson_id: 1, item: "met" }] });
     // v14: availability per slot, as the Week holds it
     expect(json("edition.json").slot_availability).toEqual(w.slotAvailability);
     expect(json("edition.json")).not.toHaveProperty("availability");
-    expect(json("kk.json")).toMatchObject({
-      groups: [{ id: 3, title: "ספר לדוגמה" }],
-      leaders: [{ roster_id: 2, name: "מלווה לדוגמה ב׳" }],
-      signups: [{ roster_id: 1, name: "מלווה לדוגמה א׳", via: "link" }],
+    // v15: the week's groups, each in its place — no tracks
+    expect(json("kk.json")).toEqual({
+      format: "volozhin-week-archive",
+      exported_at: AT,
+      window: w.edition.settings?.kk_window ?? null,
+      groups: [{ id: 3, title: "ספר לדוגמה", author: null, place: "מרחב לדוגמה", capacity: 5, open: true }],
+      leaders: [
+        { id: 1, group_id: 3, kind: "trainee", roster_id: 2, label: null, name: "מלווה לדוגמה ב׳" },
+        { id: 2, group_id: 3, kind: "staff", roster_id: null, label: "מדריך/ה לדוגמה", name: "מדריך/ה לדוגמה" },
+      ],
+      signups: [{ id: 9, group_id: 3, roster_id: 1, via: "link", created_at: "2026-11-01T00:00:00Z", name: "מלווה לדוגמה א׳" }],
       book_orders: [{ group_id: 3, copies: 6, ordered_at: null }],
     });
+    expect(strFromU8(files["README.txt"])).toContain("kk.json: מכריכה לכריכה — הקבוצות של השבוע (הספר והמרחב), המעבירים");
     const memorial = json("memorial.json");
     expect(memorial.plans.map((p: { fallen: string }) => p.fallen)).toEqual(["חלל/ה לדוגמה 1", "חלל/ה לדוגמה 2", "חלל/ה לדוגמה 3"].map((x, i) => (i === 0 ? x : "חלל/ה")));
     expect(memorial.fallen).toEqual(more.fallen); // the whole list the caller reads, the inactive too

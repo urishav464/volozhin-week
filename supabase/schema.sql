@@ -41,10 +41,12 @@ create schema if not exists app;
 -- whole (reshape), the two memorial rows are one «זמן זיכרון». v14: the
 -- speakers rethought — the call first (propose leaves «לפני שיחה»), the
 -- instructor's approval only at closing, availability per slot, «נקודות לשיחה».
+-- v15: מכריכה לכריכה by the week — a group is one book, its leaders and one
+-- place for every session; one sign-up per trainee for the week.
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 14 $$;
+  as $$ select 15 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -2945,13 +2947,18 @@ create or replace function public.get_contacts_for(p_lessons bigint[]) returns j
 --                    the escort's link, read by the team in load_week. A lesson
 --                    whose escort changes (set_escort, reopen_lesson, a trainee
 --                    deleted) loses its ticks: they were the last escort's.
---   kk_tracks …      מכריכה לכריכה: a track per kk grid row occurrence (a day
---                    and a kk row), groups (a book — title and author as typed,
---                    nothing seeded — a room, a capacity the admin entered,
---                    open), their leaders, the sign-ups (one per trainee per
---                    track) and the book orders. Written by the edition's
---                    admins through the functions below (book orders logistics
---                    too); read by its members.
+--   kk_groups …      מכריכה לכריכה, by the week since v15: a group reads ONE
+--                    book across every kk session of the week (the grid's kk
+--                    rows, app.kk_rows — never stored), in one place of the
+--                    campus all week (two groups never share one: app.name_key),
+--                    led by its leaders; the book (title and author as typed,
+--                    nothing seeded) may come after the leaders. A trainee
+--                    leads one group, and a leader is never signed up as a
+--                    participant. The sign-ups: one book per trainee for the
+--                    week. The book orders. Written by the edition's admins
+--                    through the functions below (book orders logistics too),
+--                    one write at a time per edition (app.kk_lock); read by its
+--                    members.
 -- None of these tables is ever published to Realtime.
 -- =============================================================================
 
@@ -3002,31 +3009,48 @@ create table if not exists public.escort_ticks (
 );
 alter table public.escort_ticks enable row level security;
 
-create table if not exists public.kk_tracks (
-  id         bigint generated always as identity primary key,
-  edition_id bigint not null references public.editions (id) on delete cascade,
-  day        smallint not null check (day between 0 and 4),
-  start_min  integer not null check (start_min between 390 and 1830),
-  end_min    integer not null check (end_min between 390 and 1830 and end_min > start_min),
-  unique (edition_id, day, start_min),
-  unique (id, edition_id)
-);
-alter table public.kk_tracks enable row level security;
+-- v15 — the week-long shape replaces v9's groups per session (a track per kk
+-- row and day, its own groups and sign-ups). Nothing is converted: no edition
+-- held any (the instructor confirmed it; the archive kept what there was), so a
+-- run on an older database drops the old tables with their policies, grants
+-- and place in the never-publish list, and the create-if-not-exists below
+-- builds the new ones. kk_unplace's parameter is renamed (p_track → p_edition),
+-- which create or replace cannot do. Dynamic SQL, so a fresh install never
+-- parses a word about the old table.
+drop function if exists public.kk_add_group(bigint, integer, integer, jsonb);
+do $$
+declare
+  v_n bigint[];
+begin
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'public' and p.proname = 'kk_unplace' and 'p_track' = any (p.proargnames)) then
+    drop function public.kk_unplace(bigint, bigint);
+  end if;
+  if to_regclass('public.kk_tracks') is null then return; end if;
+  execute 'drop function if exists app.kk_track_on_grid(public.kk_tracks)';   -- it takes the old table's row type
+  execute 'select array[(select count(*) from public.kk_tracks), (select count(*) from public.kk_groups), (select count(*) from public.kk_leaders),
+                        (select count(*) from public.kk_signups), (select count(*) from public.book_orders)]' into v_n;
+  raise notice 'מכריכה לכריכה by the week (v15): dropping the per-session tables — % tracks, % groups, % leaders, % sign-ups, % book orders',
+               v_n[1], v_n[2], v_n[3], v_n[4], v_n[5];
+  execute 'drop table public.book_orders, public.kk_leaders, public.kk_signups, public.kk_groups, public.kk_tracks';
+end $$;
 
+-- A group for the whole week. `title` NULL while the leaders have not chosen
+-- the book; `place` NULL until it is set — two groups of an edition never share
+-- one (place_key, as names are compared; a place with no key never clashes).
 create table if not exists public.kk_groups (
   id         bigint generated always as identity primary key,
-  edition_id bigint not null,
-  track_id   bigint not null,
-  title      text not null check (btrim(title) <> '' and char_length(title) <= 200),
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  title      text check (btrim(title) <> '' and char_length(title) <= 200 and title !~ '[\r\n]'),
   author     text check (char_length(author) <= 120),
-  room_id    bigint references public.rooms (id) on delete set null,
+  place      text check (btrim(place) <> '' and char_length(place) <= 80 and place !~ '[\r\n]'),
+  place_key  text generated always as (nullif(app.name_key(place), '')) stored,
   capacity   integer check (capacity between 1 and 1000),   -- what the admin entered; NULL = not offered yet
   open       boolean not null default true,
   created_at timestamptz not null default now(),
-  foreign key (track_id, edition_id) references public.kk_tracks (id, edition_id) on delete cascade,
-  unique (id, track_id)
+  unique (id, edition_id),
+  unique (edition_id, place_key)
 );
-create index if not exists kk_groups_track on public.kk_groups (track_id);
 alter table public.kk_groups enable row level security;
 
 create table if not exists public.kk_leaders (
@@ -3040,19 +3064,20 @@ create table if not exists public.kk_leaders (
   check (kind = 'trainee' or btrim(coalesce(label, '')) <> '')
 );
 create index if not exists kk_leaders_group on public.kk_leaders (group_id);
+-- A trainee leads one group (`leader_elsewhere` — the functions check it first, under the kk lock).
+create unique index if not exists kk_leaders_trainee on public.kk_leaders (roster_id) where roster_id is not null;
 alter table public.kk_leaders enable row level security;
 
+-- One book a week: one sign-up per trainee per edition.
 create table if not exists public.kk_signups (
   id         bigint generated always as identity primary key,
   edition_id bigint not null,
-  track_id   bigint not null,
   group_id   bigint not null,
   roster_id  bigint not null,
   via        text not null check (via in ('link', 'staff')),
   created_at timestamptz not null default now(),
-  unique (track_id, roster_id),
-  foreign key (track_id, edition_id) references public.kk_tracks (id, edition_id) on delete cascade,
-  foreign key (group_id, track_id) references public.kk_groups (id, track_id) on delete cascade,
+  unique (edition_id, roster_id),
+  foreign key (group_id, edition_id) references public.kk_groups (id, edition_id) on delete cascade,
   foreign key (roster_id, edition_id) references public.roster (id, edition_id) on delete cascade
 );
 create index if not exists kk_signups_group on public.kk_signups (group_id);
@@ -3073,8 +3098,6 @@ create policy share_links_read on public.share_links for select to authenticated
 drop policy if exists escort_ticks_read on public.escort_ticks;
 create policy escort_ticks_read on public.escort_ticks for select to authenticated using (
   exists (select 1 from public.lessons l where l.id = escort_ticks.lesson_id and app.can_see_edition(l.edition_id)));
-drop policy if exists kk_tracks_read on public.kk_tracks;
-create policy kk_tracks_read on public.kk_tracks for select to authenticated using (app.can_see_edition(edition_id));
 drop policy if exists kk_groups_read on public.kk_groups;
 create policy kk_groups_read on public.kk_groups for select to authenticated using (app.can_see_edition(edition_id));
 drop policy if exists kk_leaders_read on public.kk_leaders;
@@ -3298,13 +3321,15 @@ create or replace function app.kk_rows(p_edition bigint, p_day integer)
      order by r.start_min, r.end_min
   $$;
 
--- A track whose kk row is still active that day — the edition's first or last
--- day's hours can move after groups exist (src/screens/kk «מחוץ לרשת»). A track
--- off the grid keeps its groups and sign-ups for the staff, but the link
--- neither offers it nor records a sign-up on it.
-create or replace function app.kk_track_on_grid(p public.kk_tracks) returns boolean
-  language sql stable security definer set search_path = ''
-  as $$ select exists (select 1 from app.kk_rows(p.edition_id, p.day) r where r.start_min = p.start_min) $$;
+-- One kk write at a time per edition: every kk function but kk_set_window takes
+-- it once it knows the edition, before it reads anything between groups — so
+-- two admins making one trainee a leader of two groups, a sign-up through the
+-- link while the staff make that trainee a leader, or two groups taking one
+-- place, queue up instead of both passing the check. The two-key form: its own
+-- space, apart from app.lock_day's one key.
+create or replace function app.kk_lock(p_edition bigint) returns void
+  language sql set search_path = ''
+  as $$ select pg_advisory_xact_lock(hashtext('kk'), p_edition::integer) $$;
 
 -- A whole number from a JSON value in [lo, hi]; absent or JSON null → NULL.
 create or replace function app.json_int(p jsonb, p_lo integer, p_hi integer) returns integer
@@ -3320,7 +3345,7 @@ create or replace function app.json_int(p jsonb, p_lo integer, p_hi integer) ret
   end
   $$;
 
--- A group's leaders as both sides accept them (src/data/kkRules.ts
+-- A group's leaders as both sides accept them (src/data/kk.ts
 -- cleanLeaders): a JSON array of {kind, roster_id | label} — a trainee of the
 -- edition's roster (`bad_trainee`), or a name as typed, one line ≤ 80; repeats
 -- (the first kept) dropped; at most 6 («הצעה»).
@@ -3342,7 +3367,10 @@ create or replace function app.kk_clean_leaders(p jsonb, p_edition bigint) retur
       end if;
       if e ->> 'kind' = 'trainee' then
         if jsonb_typeof(e -> 'roster_id') is distinct from 'number' then perform app.refuse('bad_trainee'); end if;
-        if (e ->> 'roster_id')::numeric <> trunc((e ->> 'roster_id')::numeric) then perform app.refuse('bad_trainee'); end if;
+        if (e ->> 'roster_id')::numeric <> trunc((e ->> 'roster_id')::numeric)
+           or abs((e ->> 'roster_id')::numeric) > 9223372036854775807 then   -- no roster id, never a cast error
+          perform app.refuse('bad_trainee');
+        end if;
         v_r := (e ->> 'roster_id')::numeric::bigint;
         if not exists (select 1 from public.roster r where r.id = v_r and r.edition_id = p_edition) then perform app.refuse('bad_trainee'); end if;
         v_one := jsonb_build_object('kind', 'trainee', 'roster_id', v_r, 'label', null);
@@ -3359,31 +3387,30 @@ create or replace function app.kk_clean_leaders(p jsonb, p_edition bigint) retur
   $$;
 
 -- A group's fields from a JSON object (kk_add_group, kk_update_group): only the
--- keys present, cleaned and checked in this order — title (one line ≤ 200,
--- required: `title_required`), author (≤ 120), room_id (a room of the edition),
--- capacity (1–1000 or none), open (a boolean), leaders. Unknown keys ignored.
+-- keys present, cleaned and checked in this order — title (one line ≤ 200, or
+-- none: the book may come after the leaders), author (≤ 120), place (≤ 80),
+-- capacity (1–1000 or none), open (a boolean), leaders. A text is a string or
+-- null (blank → null), anything else `bad_value`. Unknown keys ignored. The
+-- rules between groups are the functions' own (place_taken, leader_elsewhere,
+-- leader_signed_up), after this.
 create or replace function app.kk_clean_group(p jsonb, p_edition bigint) returns jsonb
   language plpgsql stable security definer set search_path = ''
   as $$
   declare
-    v_out  jsonb := '{}'::jsonb;
-    v_room bigint;
+    v_out jsonb := '{}'::jsonb;
   begin
     if p is null or jsonb_typeof(p) <> 'object' then perform app.refuse('bad_value'); end if;
     if p ? 'title' then
-      if jsonb_typeof(p -> 'title') not in ('string', 'null') or app.clean_line(p ->> 'title', 200) is null then perform app.refuse('title_required'); end if;
+      if jsonb_typeof(p -> 'title') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
       v_out := v_out || jsonb_build_object('title', app.clean_line(p ->> 'title', 200));
     end if;
     if p ? 'author' then
       if jsonb_typeof(p -> 'author') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
       v_out := v_out || jsonb_build_object('author', app.clean_line(p ->> 'author', 120));
     end if;
-    if p ? 'room_id' then
-      v_room := app.json_int(p -> 'room_id', 1, 2147483647);
-      if v_room is not null and not exists (select 1 from public.rooms where id = v_room and edition_id = p_edition) then
-        perform app.refuse('bad_value');
-      end if;
-      v_out := v_out || jsonb_build_object('room_id', v_room);
+    if p ? 'place' then
+      if jsonb_typeof(p -> 'place') not in ('string', 'null') then perform app.refuse('bad_value'); end if;
+      v_out := v_out || jsonb_build_object('place', app.clean_line(p ->> 'place', 80));
     end if;
     if p ? 'capacity' then
       v_out := v_out || jsonb_build_object('capacity', app.json_int(p -> 'capacity', 1, 1000));
@@ -3399,13 +3426,47 @@ create or replace function app.kk_clean_group(p jsonb, p_edition bigint) returns
   end
   $$;
 
-create or replace function app.kk_write_leaders(p_group bigint, p_leaders jsonb) returns void
-  language sql security definer set search_path = ''
+-- The rules between groups, for a new group's cleaned fields (p_group NULL) or a
+-- patch of p_group, in this order: a place another group of the edition has
+-- (`place_taken`); a trainee leader who leads another group (`leader_elsewhere`);
+-- a trainee leader signed up for a book — this group's too (`leader_signed_up`):
+-- a leader is part of the group, never a participant. Under the edition's kk lock.
+create or replace function app.kk_between_groups(p_edition bigint, p_group bigint, p_f jsonb) returns void
+  language plpgsql stable security definer set search_path = ''
   as $$
+  declare
+    v_key     text := nullif(app.name_key(p_f ->> 'place'), '');
+    v_leaders bigint[];
+  begin
+    if v_key is not null
+       and exists (select 1 from public.kk_groups g where g.edition_id = p_edition and g.place_key = v_key and g.id is distinct from p_group) then
+      perform app.refuse('place_taken');
+    end if;
+    select coalesce(array_agg((x ->> 'roster_id')::bigint), '{}') into v_leaders
+      from jsonb_array_elements(coalesce(p_f -> 'leaders', '[]'::jsonb)) as t(x)
+     where x ->> 'kind' = 'trainee';
+    if exists (select 1 from public.kk_leaders k where k.roster_id = any (v_leaders) and k.group_id is distinct from p_group) then
+      perform app.refuse('leader_elsewhere');
+    end if;
+    if exists (select 1 from public.kk_signups s where s.edition_id = p_edition and s.roster_id = any (v_leaders)) then
+      perform app.refuse('leader_signed_up');
+    end if;
+  end
+  $$;
+
+-- A group's leaders, all replaced. The unique trainee index is the backstop of
+-- `leader_elsewhere`, which app.kk_between_groups has checked under the lock.
+create or replace function app.kk_write_leaders(p_group bigint, p_leaders jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
     delete from public.kk_leaders where group_id = p_group;
     insert into public.kk_leaders (group_id, kind, roster_id, label, sort)
     select p_group, x ->> 'kind', (x ->> 'roster_id')::bigint, x ->> 'label', o::integer
       from jsonb_array_elements(p_leaders) with ordinality as t(x, o);
+  exception when unique_violation then
+    perform app.refuse('leader_elsewhere');   -- made a leader of another group a moment ago
+  end
   $$;
 
 -- ------------------------------------------------------------- the anon functions
@@ -3513,11 +3574,12 @@ create or replace function public.escort_pickup(p_token text, p_lesson bigint, p
   end
   $$;
 
--- The sign-up page: the window and whether it is open now, the edition's
--- trainees (names only — nothing about who signed up), and the tracks still on
--- the grid (app.kk_track_on_grid) with the groups on offer (open, with a
--- capacity entered): the book, its author, the room, the leaders' names, and
--- whether the group is full.
+-- The sign-up page: the window and whether it is open now; the edition's
+-- trainees who lead no group (names only — nothing about who signed up; a
+-- leader is part of a group, offered or not); the week's kk sessions, from the
+-- grid (app.kk_rows, days 0–4 — every group meets in each); and the groups on
+-- offer (a book, a capacity entered, open): the book, its author, the place,
+-- the leaders' names, and whether the group is full.
 create or replace function public.kk_form(p_token text) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -3531,32 +3593,34 @@ create or replace function public.kk_form(p_token text) returns jsonb
       'window', jsonb_build_object('opens_at', v_ed.settings #>> '{kk_window,opens_at}', 'closes_at', v_ed.settings #>> '{kk_window,closes_at}'),
       'open', app.kk_open(v_ed.settings),
       'roster', coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'full_name', r.full_name) order by r.full_name, r.id)
-                            from public.roster r where r.edition_id = v.edition_id), '[]'::jsonb),
-      'tracks', coalesce((
+                            from public.roster r
+                           where r.edition_id = v.edition_id
+                             and not exists (select 1 from public.kk_leaders k where k.roster_id = r.id)), '[]'::jsonb),
+      'sessions', coalesce((select jsonb_agg(jsonb_build_object('day', d.day, 'date', v_ed.start_date + d.day, 'start_min', r.start_min, 'end_min', r.end_min)
+                                             order by d.day, r.start_min, r.end_min)
+                              from generate_series(0, 4) as d(day) cross join lateral app.kk_rows(v.edition_id, d.day) r), '[]'::jsonb),
+      'groups', coalesce((
         select jsonb_agg(jsonb_build_object(
-                 'id', t.id, 'day', t.day, 'date', v_ed.start_date + t.day::integer, 'start_min', t.start_min, 'end_min', t.end_min,
-                 'groups', (select jsonb_agg(jsonb_build_object(
-                                     'id', g.id, 'title', g.title, 'author', g.author, 'room', rm.name,
-                                     'leaders', coalesce((select jsonb_agg(jsonb_build_object('kind', k.kind, 'name', coalesce(ro.full_name, k.label)) order by k.sort, k.id)
-                                                            from public.kk_leaders k left join public.roster ro on ro.id = k.roster_id
-                                                           where k.group_id = g.id), '[]'::jsonb),
-                                     'full', (select count(*) from public.kk_signups s where s.group_id = g.id) >= g.capacity)
-                                   order by g.title, g.id)
-                              from public.kk_groups g left join public.rooms rm on rm.id = g.room_id
-                             where g.track_id = t.id and g.open and g.capacity is not null))
-               order by t.day, t.start_min)
-          from public.kk_tracks t
-         where t.edition_id = v.edition_id and app.kk_track_on_grid(t)
-           and exists (select 1 from public.kk_groups g where g.track_id = t.id and g.open and g.capacity is not null)), '[]'::jsonb));
+                 'id', g.id, 'title', g.title, 'author', g.author, 'place', g.place,
+                 'leaders', coalesce((select jsonb_agg(jsonb_build_object('kind', k.kind, 'name', coalesce(ro.full_name, k.label)) order by k.sort, k.id)
+                                        from public.kk_leaders k left join public.roster ro on ro.id = k.roster_id
+                                       where k.group_id = g.id), '[]'::jsonb),
+                 'full', (select count(*) from public.kk_signups s where s.group_id = g.id) >= g.capacity)
+               order by g.title, g.id)
+          from public.kk_groups g
+         where g.edition_id = v.edition_id and g.title is not null and g.capacity is not null and g.open), '[]'::jsonb));
   end
   $$;
 
--- A trainee signs up for a group: recorded only inside the window, for a
--- trainee of the edition, in an open group with a capacity entered, on a track
--- still on the grid, and with a place left (counted under the group's row lock,
--- so two at once — or one while the staff place someone — never overfill it). An existing sign-up for that track is NEVER changed through the link —
--- only the staff move one (kk_place). The answer is the same in every case:
--- the link is no oracle of who signed up.
+-- A trainee signs up for a book for the week: recorded only inside the window,
+-- for a trainee of the edition who leads no group, in a group on offer (a book,
+-- a capacity entered, open) with a place left, and only if they have no sign-up
+-- this week yet — one book a week, and an existing sign-up is NEVER changed
+-- through the link (only the staff move one: kk_place). Counted under the
+-- edition's kk lock, so two at once — or one while the staff place someone, or
+-- make the trainee a leader — never overfill a group or make a leader a
+-- participant. The answer is the same in every case: the link is no oracle of
+-- who signed up.
 create or replace function public.kk_signup(p_token text, p_roster bigint, p_group bigint) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -3565,15 +3629,16 @@ create or replace function public.kk_signup(p_token text, p_roster bigint, p_gro
     v_ed public.editions;
     v_g  public.kk_groups;
   begin
+    perform app.kk_lock(v.edition_id);
     select * into v_ed from public.editions where id = v.edition_id;
-    select * into v_g from public.kk_groups where id = p_group and edition_id = v.edition_id for update;
-    if v_g.id is not null and v_g.open and v_g.capacity is not null and app.kk_open(v_ed.settings)
-       and (select app.kk_track_on_grid(t) from public.kk_tracks t where t.id = v_g.track_id)
+    select * into v_g from public.kk_groups where id = p_group and edition_id = v.edition_id;
+    if v_g.id is not null and v_g.title is not null and v_g.capacity is not null and v_g.open and app.kk_open(v_ed.settings)
        and exists (select 1 from public.roster r where r.id = p_roster and r.edition_id = v.edition_id)
+       and not exists (select 1 from public.kk_leaders k where k.roster_id = p_roster)
        and (select count(*) from public.kk_signups s where s.group_id = v_g.id) < v_g.capacity then
-      insert into public.kk_signups (edition_id, track_id, group_id, roster_id, via)
-      values (v.edition_id, v_g.track_id, v_g.id, p_roster, 'link')
-      on conflict (track_id, roster_id) do nothing;
+      insert into public.kk_signups (edition_id, group_id, roster_id, via)
+      values (v.edition_id, v_g.id, p_roster, 'link')
+      on conflict (edition_id, roster_id) do nothing;
     end if;
     return jsonb_build_object('status', 'received');
   end
@@ -3675,15 +3740,13 @@ create or replace function public.load_kk(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
     select jsonb_build_object(
-      'tracks', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'day', t.day, 'start_min', t.start_min, 'end_min', t.end_min) order by t.day, t.start_min)
-                            from public.kk_tracks t where t.edition_id = p_edition), '[]'::jsonb),
-      'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'track_id', g.track_id, 'title', g.title, 'author', g.author,
-                                                              'room_id', g.room_id, 'capacity', g.capacity, 'open', g.open) order by g.id)
+      'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'title', g.title, 'author', g.author,
+                                                              'place', g.place, 'capacity', g.capacity, 'open', g.open) order by g.id)
                             from public.kk_groups g where g.edition_id = p_edition), '[]'::jsonb),
       'leaders', coalesce((select jsonb_agg(jsonb_build_object('id', k.id, 'group_id', k.group_id, 'kind', k.kind, 'roster_id', k.roster_id, 'label', k.label)
                                             order by k.group_id, k.sort, k.id)
                              from public.kk_leaders k join public.kk_groups g on g.id = k.group_id where g.edition_id = p_edition), '[]'::jsonb),
-      'signups', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'track_id', s.track_id, 'group_id', s.group_id, 'roster_id', s.roster_id,
+      'signups', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'group_id', s.group_id, 'roster_id', s.roster_id,
                                                                'via', s.via, 'created_at', to_char(s.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by s.id)
                              from public.kk_signups s where s.edition_id = p_edition), '[]'::jsonb),
       'orders', coalesce((select jsonb_agg(jsonb_build_object('group_id', o.group_id, 'copies', o.copies, 'ordered_at', to_char(o.ordered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by o.group_id)
@@ -3692,107 +3755,127 @@ create or replace function public.load_kk(p_edition bigint) returns jsonb
     where app.can_see_edition(p_edition)
   $$;
 
--- A group on a kk occurrence of the grid (a kk row active that day,
--- `outside_grid` otherwise); its track is made on first use.
-create or replace function public.kk_add_group(p_edition bigint, p_day integer, p_start integer, p_fields jsonb) returns bigint
+-- The group a kk write is about: `stale` if there is none; the caller an admin
+-- of its edition (a book order: logistics, or an admin); then the edition's kk
+-- lock, and the group read again under it — `stale` if it went while we waited.
+create or replace function app.kk_locked_group(p_group bigint, p_logistics boolean default false) returns public.kk_groups
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v public.kk_groups;
+  begin
+    select * into v from public.kk_groups where id = p_group;
+    if v.id is null then perform app.refuse('stale'); end if;
+    if p_logistics then perform app.require_logistics(v.edition_id); else perform app.require_edition_admin(v.edition_id); end if;
+    perform app.kk_lock(v.edition_id);
+    select * into v from public.kk_groups where id = p_group;
+    if v.id is null then perform app.refuse('stale'); end if;
+    return v;
+  end
+  $$;
+
+-- A group for the whole week: its leaders may come first, the book later. The
+-- admin, the fields (app.kk_clean_group), then the rules between groups
+-- (app.kk_between_groups) — under the edition's kk lock.
+create or replace function public.kk_add_group(p_edition bigint, p_fields jsonb) returns bigint
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_end   integer;
-    v_f     jsonb;
-    v_track bigint;
-    v_id    bigint;
+    v_f  jsonb;
+    v_id bigint;
   begin
     perform app.require_edition_admin(p_edition);
-    select r.end_min into v_end from app.kk_rows(p_edition, p_day) r where r.start_min = p_start limit 1;
-    if v_end is null then perform app.refuse('outside_grid'); end if;
+    perform app.kk_lock(p_edition);
     v_f := app.kk_clean_group(p_fields, p_edition);
-    if not v_f ? 'title' then perform app.refuse('title_required'); end if;
-    insert into public.kk_tracks (edition_id, day, start_min, end_min) values (p_edition, p_day, p_start, v_end)
-    on conflict (edition_id, day, start_min) do nothing;
-    select id into v_track from public.kk_tracks where edition_id = p_edition and day = p_day and start_min = p_start;
-    insert into public.kk_groups (edition_id, track_id, title, author, room_id, capacity, open)
-    values (p_edition, v_track, v_f ->> 'title', v_f ->> 'author', (v_f ->> 'room_id')::bigint, (v_f ->> 'capacity')::integer,
-            coalesce((v_f ->> 'open')::boolean, true))
-    returning id into v_id;
+    perform app.kk_between_groups(p_edition, null, v_f);
+    begin
+      insert into public.kk_groups (edition_id, title, author, place, capacity, open)
+      values (p_edition, v_f ->> 'title', v_f ->> 'author', v_f ->> 'place', (v_f ->> 'capacity')::integer,
+              coalesce((v_f ->> 'open')::boolean, true))
+      returning id into v_id;
+    exception when unique_violation then
+      perform app.refuse('place_taken');   -- another group took the place a moment ago
+    end;
     perform app.kk_write_leaders(v_id, coalesce(v_f -> 'leaders', '[]'::jsonb));
     return v_id;
   end
   $$;
 
--- The keys present in the patch, as kk_add_group cleans them.
+-- The keys present in the patch, as kk_add_group cleans them. A book is not
+-- taken away from a group someone signed up for (`group_has_signups`: the title
+-- set, then cleared); then the rules between groups, the group itself not
+-- «another» — and a trainee signed up for this very group no leader of it.
 create or replace function public.kk_update_group(p_group bigint, p_patch jsonb) returns void
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_g public.kk_groups;
+    v_g public.kk_groups := app.kk_locked_group(p_group);
     v_f jsonb;
   begin
-    select * into v_g from public.kk_groups where id = p_group for update;
-    if v_g.id is null then perform app.refuse('stale'); end if;
-    perform app.require_edition_admin(v_g.edition_id);
     v_f := app.kk_clean_group(p_patch, v_g.edition_id);
-    update public.kk_groups
-       set title    = case when v_f ? 'title' then v_f ->> 'title' else title end,
-           author   = case when v_f ? 'author' then v_f ->> 'author' else author end,
-           room_id  = case when v_f ? 'room_id' then (v_f ->> 'room_id')::bigint else room_id end,
-           capacity = case when v_f ? 'capacity' then (v_f ->> 'capacity')::integer else capacity end,
-           open     = case when v_f ? 'open' then (v_f ->> 'open')::boolean else open end
-     where id = v_g.id;
+    if v_f ? 'title' and v_f ->> 'title' is null and v_g.title is not null
+       and exists (select 1 from public.kk_signups where group_id = v_g.id) then
+      perform app.refuse('group_has_signups');
+    end if;
+    perform app.kk_between_groups(v_g.edition_id, v_g.id, v_f);
+    begin
+      update public.kk_groups
+         set title    = case when v_f ? 'title' then v_f ->> 'title' else title end,
+             author   = case when v_f ? 'author' then v_f ->> 'author' else author end,
+             place    = case when v_f ? 'place' then v_f ->> 'place' else place end,
+             capacity = case when v_f ? 'capacity' then (v_f ->> 'capacity')::integer else capacity end,
+             open     = case when v_f ? 'open' then (v_f ->> 'open')::boolean else open end
+       where id = v_g.id;
+    exception when unique_violation then
+      perform app.refuse('place_taken');   -- another group took the place a moment ago
+    end;
     if v_f ? 'leaders' then perform app.kk_write_leaders(v_g.id, v_f -> 'leaders'); end if;
   end
   $$;
 
 -- A group nobody signed up for (else `group_has_signups`: move or remove them
--- first); a track left without groups goes with it.
+-- first); its leaders and its book order go with it.
 create or replace function public.kk_delete_group(p_group bigint) returns void
   language plpgsql security definer set search_path = ''
   as $$
-  declare v_g public.kk_groups;
+  declare v_g public.kk_groups := app.kk_locked_group(p_group);
   begin
-    select * into v_g from public.kk_groups where id = p_group for update;
-    if v_g.id is null then perform app.refuse('stale'); end if;
-    perform app.require_edition_admin(v_g.edition_id);
     if exists (select 1 from public.kk_signups where group_id = v_g.id) then perform app.refuse('group_has_signups'); end if;
     delete from public.kk_groups where id = v_g.id;
-    delete from public.kk_tracks t where t.id = v_g.track_id and not exists (select 1 from public.kk_groups g where g.track_id = t.id);
   end
   $$;
 
--- The staff put a trainee in a group — a new sign-up, or a move within the
--- track. Not bound by the capacity or the window: the staff decide.
+-- The staff put a trainee in a group: a new sign-up, or the trainee's sign-up
+-- for the week moved here. Never a leader (`is_leader`: a leader is part of
+-- their group). Not bound by the window, the capacity or the offer: the staff
+-- decide.
 create or replace function public.kk_place(p_group bigint, p_roster bigint) returns void
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_g public.kk_groups;
+    v_g public.kk_groups := app.kk_locked_group(p_group);
     v_s public.kk_signups;
   begin
-    select * into v_g from public.kk_groups where id = p_group for update;
-    if v_g.id is null then perform app.refuse('stale'); end if;
-    perform app.require_edition_admin(v_g.edition_id);
     if p_roster is null or not exists (select 1 from public.roster where id = p_roster and edition_id = v_g.edition_id) then
       perform app.refuse('bad_trainee');
     end if;
-    select * into v_s from public.kk_signups where track_id = v_g.track_id and roster_id = p_roster for update;
+    if exists (select 1 from public.kk_leaders where roster_id = p_roster) then perform app.refuse('is_leader'); end if;
+    select * into v_s from public.kk_signups where edition_id = v_g.edition_id and roster_id = p_roster;
     if v_s.id is null then
-      insert into public.kk_signups (edition_id, track_id, group_id, roster_id, via) values (v_g.edition_id, v_g.track_id, v_g.id, p_roster, 'staff');
+      insert into public.kk_signups (edition_id, group_id, roster_id, via) values (v_g.edition_id, v_g.id, p_roster, 'staff');
     elsif v_s.group_id <> v_g.id then
       update public.kk_signups set group_id = v_g.id, via = 'staff' where id = v_s.id;
     end if;
   end
   $$;
 
--- The staff take a trainee's sign-up for a track away.
-create or replace function public.kk_unplace(p_track bigint, p_roster bigint) returns void
+-- The staff take a trainee's sign-up for the week away, if there is one.
+create or replace function public.kk_unplace(p_edition bigint, p_roster bigint) returns void
   language plpgsql security definer set search_path = ''
   as $$
-  declare v_ed bigint;
   begin
-    select edition_id into v_ed from public.kk_tracks where id = p_track;
-    if v_ed is null then perform app.refuse('stale'); end if;
-    perform app.require_edition_admin(v_ed);
-    delete from public.kk_signups where track_id = p_track and roster_id = p_roster;
+    perform app.require_edition_admin(p_edition);
+    perform app.kk_lock(p_edition);
+    delete from public.kk_signups where edition_id = p_edition and roster_id = p_roster;
   end
   $$;
 
@@ -3814,19 +3897,19 @@ create or replace function public.kk_set_window(p_edition bigint, p_opens timest
 
 -- How many copies of a group's book to order (0–1000; null removes the line),
 -- and whether they were ordered (the first time kept). Logistics or an admin.
+-- A group with no book yet has nothing to order (`no_book`); a line is always
+-- removable.
 create or replace function public.set_book_order(p_group bigint, p_copies integer, p_ordered boolean) returns void
   language plpgsql security definer set search_path = ''
   as $$
-  declare v_g public.kk_groups;
+  declare v_g public.kk_groups := app.kk_locked_group(p_group, true);
   begin
-    select * into v_g from public.kk_groups where id = p_group;
-    if v_g.id is null then perform app.refuse('stale'); end if;
-    perform app.require_logistics(v_g.edition_id);
     if p_ordered is null or (p_copies is null and p_ordered) or p_copies not between 0 and 1000 then perform app.refuse('bad_value'); end if;
     if p_copies is null then
       delete from public.book_orders where group_id = v_g.id;
       return;
     end if;
+    if v_g.title is null then perform app.refuse('no_book'); end if;
     insert into public.book_orders as o (group_id, copies, ordered_at) values (v_g.id, p_copies, case when p_ordered then now() end)
     on conflict (group_id) do update
       set copies = excluded.copies,
@@ -5864,11 +5947,11 @@ grant execute on function public.kk_form(text) to anon;
 grant execute on function public.kk_signup(text, bigint, bigint) to anon;
 grant execute on function public.schedule_view(text) to anon;
 grant select (id, edition_id, scope, subject_id, created_by, created_at, expires_at, revoked_at) on public.share_links to authenticated;
-grant select on public.escort_ticks, public.kk_tracks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders to authenticated;
+grant select on public.escort_ticks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders to authenticated;
 grant execute on function public.issue_link(bigint, text, bigint) to authenticated;
 grant execute on function public.revoke_link(bigint) to authenticated;
 grant execute on function public.load_kk(bigint) to authenticated;
-grant execute on function public.kk_add_group(bigint, integer, integer, jsonb) to authenticated;
+grant execute on function public.kk_add_group(bigint, jsonb) to authenticated;
 grant execute on function public.kk_update_group(bigint, jsonb) to authenticated;
 grant execute on function public.kk_delete_group(bigint) to authenticated;
 grant execute on function public.kk_place(bigint, bigint) to authenticated;
@@ -5970,7 +6053,7 @@ begin
     return;
   end if;
   foreach t in array array['speaker_contacts', 'members', 'activity', 'editions', 'roster', 'transport_details', 'export_snapshots', 'notes', 'milestones',
-                           'share_links', 'share_link_hits', 'escort_ticks', 'kk_tracks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
+                           'share_links', 'share_link_hits', 'escort_ticks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
                            'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then

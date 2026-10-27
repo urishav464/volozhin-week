@@ -1,17 +1,20 @@
-// Links without an account and מכריכה לכריכה (milestone 5a) in a real browser.
-// Demo build, every width: an escort's page (their lessons only, no phone in a
-// demo week, the four ticks, the pickup address sent and never shown back), a
-// bad, a cross-scope and a cut-short link, the token out of the address bar;
-// an admin issuing a link in «קישורים» — copied, on WhatsApp, opened in a new
-// tab — and the replaced or revoked link refused; the sign-up (a name, a group,
-// the same answer every time, never an overwrite) seen and moved by the staff
-// in «מכריכה לכריכה»; a group added there with its leaders, a placement and
-// the books; the schedule by day, printed; the ticks in the lesson panel and the
-// escorts' list. Mock build: the public pages send the publishable key alone —
-// never a session, even with a member signed in in the same browser — call only
-// the six anon functions, the token in the body and never in a URL; a refusal
-// from the server is the one page; «קישורים» and /kk go out by the contract
-// with the member's token. Synthetic data only.
+// Links without an account and מכריכה לכריכה (milestone 5a; week-long since
+// schema v15) in a real browser. Demo build, every width: an escort's page
+// (their lessons only, no phone in a demo week, the four ticks, the pickup
+// address sent and never shown back), a bad, a cross-scope and a cut-short
+// link, the token out of the address bar; an admin issuing a link in
+// «קישורים» — copied, on WhatsApp, opened in a new tab — and the replaced or
+// revoked link refused; the sign-up (a name — never a leader's — and ONE book
+// for the week, the same answer every time, never an overwrite) seen, moved and
+// removed by the staff in «מכריכה לכריכה»; there, where the week stands, the
+// sessions, a group's leaders before its book (not offered until it has one),
+// one place per group, a leader never placed, the books, a group with sign-ups
+// not deleted, the window; the schedule by day, printed; the ticks in the lesson
+// panel and the escorts' list. Mock build: the public pages send the
+// publishable key alone — never a session, even with a member signed in in the
+// same browser — call only the six anon functions, the token in the body and
+// never in a URL; a refusal from the server is the one page; «קישורים» and /kk
+// go out by the contract with the member's token. Synthetic data only.
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { KkData } from "../../src/data/kk";
@@ -207,40 +210,60 @@ test.describe("demo build", () => {
     await expect(invalid(page)).toBeVisible();
   });
 
-  test("the sign-up: a name and a group, the same answer every time, never an overwrite; the staff see it, move it, remove it", async ({ page }) => {
+  test("the sign-up: a name — never a leader's — and one book for the week, the same answer every time, never an overwrite; the staff see it, move it, remove it", async ({ page }) => {
     await page.goto(`${demoUrl()}/settings/links`);
     await page.getByRole("link", { name: "טופס ההרשמה למכריכה לכריכה" }).click();
     await expect(page.getByRole("heading", { name: "הרשמה למכריכה לכריכה" })).toBeVisible();
     expect(hashOf(page)).toBe("");
     await expect(page.getByText(/^ההרשמה פתוחה עד \d{1,2}\.\d{1,2}\.\d{4} \d{2}:\d{2}\.$/)).toBeVisible();
-    await expect(page.getByText("ספר לדוגמה ג׳")).toHaveCount(0); // no capacity entered: not on offer
+    // the sessions are information: every group meets in each
+    await page.getByText("נפגשים בכל מפגשי מכריכה לכריכה", { exact: true }).click();
+    const sessions = page.getByRole("list", { name: "המפגשים" }).getByRole("listitem");
+    await expect(sessions).toHaveCount(8);
+    await expect(sessions.first()).toHaveText("ראשון 21:30–22:30");
+    await expect(sessions.nth(1)).toHaveText("ליל ראשון–שני 05:00–06:30");
+    await expect(sessions.first().locator("bdi")).toHaveText("21:30–22:30");
     await noSidewaysScroll(page);
 
+    // the names: the trainees who lead a group are not among them, and the page says why
     const form = page.getByRole("form", { name: "הרשמה" });
-    await expect(form.getByRole("group", { name: "ראשון 21:30–22:30" })).toBeVisible();
+    const names = form.getByLabel("השם שלי");
+    await expect(names.locator("option")).toHaveText(["בחירה מהרשימה", "מלווה לדוגמה א׳", "מלווה לדוגמה ב׳", "מלווה לדוגמה ג׳", "מלווה לדוגמה ד׳"]);
+    await expect(form.getByText("מי שמעביר/ה קבוצה לא מופיע/ה ברשימה: הם כבר בקבוצה שלהם.")).toBeVisible();
+    // one choice: the books on offer — the group still without a book is not one
+    const book = form.getByRole("group", { name: "הספר שלי" });
+    await expect(book.getByRole("radio")).toHaveCount(3);
+    await expect(page.getByText(/עוד לא נבחר ספר/)).toHaveCount(0);
+    await expect(book).toContainText("ספר לדוגמה א׳ — מחבר/ת לדוגמה");
+    await expect(book).toContainText("הדשא · מעבירים: מלווה לדוגמה ה׳ (חניך/ה), מעביר/ה מהצוות (לדוגמה) (מהצוות)");
+    await expect(book).toContainText("הספרייה · מעבירים: מעביר/ה מעין פרת (לדוגמה) (מעין פרת)");
+
     await form.getByRole("button", { name: "הרשמה" }).click();
     await expect(form.getByRole("alert")).toHaveText("צריך לבחור את השם שלך מהרשימה.");
-    await form.getByLabel("השם שלי").selectOption({ label: "מלווה לדוגמה ד׳" });
-    await form.getByRole("radio", { name: /^ספר לדוגמה ב׳/ }).check();
+    await names.selectOption({ label: "מלווה לדוגמה ד׳" });
+    await form.getByRole("button", { name: "הרשמה" }).click();
+    await expect(form.getByRole("alert")).toHaveText("צריך לבחור ספר.");
+    await book.getByRole("radio", { name: /^ספר לדוגמה ב׳/ }).check();
     await expect(form.getByText("מי שכבר נרשם/ה לא יכול/ה לשנות את ההרשמה כאן.")).toBeVisible(); // said before sending
+    await expect(form.getByText("בהרשמה נשמרים השם שבחרת והספר. מי נרשם/ה לאיזה ספר רואה רק הצוות.")).toBeVisible();
     await form.getByRole("button", { name: "הרשמה" }).click();
     const done = page.getByRole("status", { name: "הבקשה נשלחה" });
     await expect(done).toContainText("הבקשה נשלחה.");
-    await expect(done).toContainText("מה ששלחת: מלווה לדוגמה ד׳: ראשון 21:30–22:30 — ספר לדוגמה ב׳");
-    await expect(done).toContainText("ההרשמה נקלטת רק אם עוד לא נרשמת למשבצת הזו ויש מקום בקבוצה. כדי לבדוק או לשנות — פונים לצוות.");
+    await expect(done).toContainText("מה ששלחת: מלווה לדוגמה ד׳ — ספר לדוגמה ב׳");
+    await expect(done).toContainText("ההרשמה נקלטת רק אם עוד לא נרשמת לספר השבוע ויש מקום בקבוצה. כדי לבדוק או לשנות — פונים לצוות.");
     await expect(done).not.toContainText("נקלט —"); // never a promise that it was recorded
     const answer = await done.locator("p").first().textContent();
 
-    // the same name again, another group: the very same answer — and nothing changes (the staff decide)
+    // the same name again, another book: the very same answer — and nothing changes (one book a week; the staff decide)
     await done.getByRole("button", { name: "הרשמה של שם נוסף" }).click();
-    await form.getByLabel("השם שלי").selectOption({ label: "מלווה לדוגמה ד׳" });
-    await form.getByRole("radio", { name: /^ספר לדוגמה א׳/ }).check();
+    await names.selectOption({ label: "מלווה לדוגמה ד׳" });
+    await book.getByRole("radio", { name: /^ספר לדוגמה א׳/ }).check();
     await form.getByRole("button", { name: "הרשמה" }).click();
     await expect(done.locator("p").first()).toHaveText(answer!);
     // a name the staff placed already: the same answer again
     await done.getByRole("button", { name: "הרשמה של שם נוסף" }).click();
-    await form.getByLabel("השם שלי").selectOption({ label: "מלווה לדוגמה ג׳" });
-    await form.getByRole("radio", { name: /^ספר לדוגמה ב׳/ }).check();
+    await names.selectOption({ label: "מלווה לדוגמה ג׳" });
+    await book.getByRole("radio", { name: /^ספר לדוגמה ב׳/ }).check();
     await form.getByRole("button", { name: "הרשמה" }).click();
     await expect(done.locator("p").first()).toHaveText(answer!);
 
@@ -248,106 +271,225 @@ test.describe("demo build", () => {
     await page.goBack();
     await nav(page).getByRole("link", { name: "מכריכה לכריכה" }).click();
     await expect(page.getByRole("heading", { name: "מכריכה לכריכה" })).toBeVisible();
-    const sunday = page.getByRole("region", { name: "ראשון 21:30–22:30" });
-    const a = sunday.getByRole("article", { name: "ספר לדוגמה א׳" });
-    const b = sunday.getByRole("article", { name: "ספר לדוגמה ב׳" });
+    await expect(page.locator('[data-kk-status="signups"]')).toHaveText("נרשמו 4 מתוך 4"); // of those who may: the two leaders are not counted
+    const groups = page.getByRole("region", { name: "הקבוצות" });
+    const a = groups.getByRole("article", { name: "ספר לדוגמה א׳" });
+    const b = groups.getByRole("article", { name: "ספר לדוגמה ב׳" });
     await expect(b.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 4");
+    await b.locator("[data-kk-count]").click(); // the names behind their count
     await expect(b.getByRole("list", { name: "הנרשמים · ספר לדוגמה ב׳" })).toContainText("מלווה לדוגמה ד׳ · בקישור");
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 6"); // ד׳ is not here, ג׳ stayed where the staff put them
+    await a.locator("[data-kk-count]").click();
     await expect(a.getByRole("list", { name: "הנרשמים · ספר לדוגמה א׳" })).toContainText("מלווה לדוגמה ג׳ · שובץ/ה בידי הצוות");
     await noSidewaysScroll(page);
 
-    // the staff move ד׳, then remove them
+    // the staff move ד׳ to another book, then remove them
     await b.getByLabel("העברה של מלווה לדוגמה ד׳ לקבוצה אחרת").selectOption({ label: "העברה ל: ספר לדוגמה א׳" });
     await expect(toast(page, "ההרשמה הועברה")).toBeVisible();
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 3 מתוך 6");
     await expect(b.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 4");
     await expect(a.getByRole("list", { name: "הנרשמים · ספר לדוגמה א׳" })).toContainText("מלווה לדוגמה ד׳ · שובץ/ה בידי הצוות");
-    await a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" }).click();
-    await a.getByRole("button", { name: "ביטול", exact: true }).press("Enter"); // cancelled: the focus back at its «הסרה»
-    await expect(a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" })).toBeFocused();
-    await a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" }).click();
-    await a.getByRole("button", { name: "הסרה", exact: true }).click();
+    const remove = a.getByRole("button", { name: "הסרה: מלווה לדוגמה ד׳" });
+    await remove.click();
+    await a.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter"); // cancelled: the focus back at its «הסרה»
+    await expect(remove).toBeFocused();
+    await remove.click();
+    await a.getByRole("group", { name: "אישור" }).getByRole("button", { name: "הסרה", exact: true }).click();
     await expect(toast(page, "ההרשמה הוסרה")).toBeVisible();
     await expect(a.locator("[data-kk-count]")).toHaveText("נרשמו 2 מתוך 6");
-    await expect(sunday.locator("[data-kk-missing]")).toHaveText("2"); // ה׳ leads ספר א׳: not someone who still needs a group
-    await sunday.getByText("עוד לא נרשמו", { exact: true }).click();
-    const notYet = sunday.getByRole("list", { name: "עוד לא נרשמו · ראשון 21:30–22:30" });
-    await expect(notYet).toContainText("מלווה לדוגמה ד׳");
-    await expect(notYet).not.toContainText("מלווה לדוגמה ה׳");
-    await expect(sunday.getByText("מובילים קבוצה במשבצת הזו: מלווה לדוגמה ה׳")).toBeVisible();
-    const placeWho = sunday.getByRole("form", { name: "שיבוץ · ראשון 21:30–22:30" }).getByLabel("חניך/ה");
-    await expect(placeWho.locator("option", { hasText: "מלווה לדוגמה ה׳" })).toHaveCount(0);
+    await expect(page.locator('[data-kk-status="signups"]')).toHaveText("נרשמו 3 מתוך 4");
+
+    // ד׳ is «עוד לא נרשמו» again; the trainees who lead are not, and are named apart
+    const signup = page.getByRole("region", { name: "ההרשמה", exact: true });
+    await expect(signup.locator("[data-kk-missing]")).toHaveText("1");
+    await signup.getByText("עוד לא נרשמו", { exact: true }).click();
+    await expect(signup.getByRole("list", { name: "עוד לא נרשמו" })).toHaveText("מלווה לדוגמה ד׳");
+    await expect(signup.getByText("מעבירים קבוצה (הם כבר בקבוצה שלהם): מלווה לדוגמה ה׳ · מלווה לדוגמה ו׳")).toBeVisible();
+    await expect(signup.getByRole("form", { name: "שיבוץ" }).getByLabel("חניך/ה").locator("option")).toHaveText(["בחירה", "מלווה לדוגמה ד׳"]);
   });
 
-  test("«מכריכה לכריכה»: a group as the admin types it — leaders, a capacity — a placement, the books; a group with sign-ups is not deleted", async ({ page }) => {
+  test("«מכריכה לכריכה»: where the week stands; a group's leaders before its book — not offered until it has one; one place per group; a leader is never placed", async ({ page }) => {
     await page.goto(`${demoUrl()}/kk`);
-    await expect(page.getByRole("region", { name: "חלון ההרשמה" })).toContainText("פתוחה עכשיו");
-    const monday = page.getByRole("region", { name: "שני 21:30–22:30" });
-    await expect(monday).toContainText("אין קבוצות");
-    await monday.getByRole("button", { name: "קבוצה חדשה: שני 21:30–22:30" }).click();
-    const form = monday.getByRole("form", { name: "קבוצה חדשה · שני 21:30–22:30" });
-    await expect(form.locator("h4 bdi")).toHaveText("21:30–22:30"); // the range isolated: never drawn «22:30–21:30»
+    // where it stands, in the order of the work
+    const strip = page.getByRole("list", { name: "איפה זה עומד" }).getByRole("listitem");
+    await expect(strip).toHaveText([
+      "מעבירים: 4 קבוצות, 3 עם שני מעבירים",
+      "ספרים: 3 מתוך 4",
+      /^ההרשמה פתוחה עד \d{1,2}\.\d{1,2}\.\d{4} \d{2}:\d{2}$/,
+      "נרשמו 3 מתוך 4",
+      "ספרים: הוזמנו 0 מתוך 4",
+    ]);
+    // the sessions, from the grid: every group in each
+    const sessions = page.getByRole("region", { name: "המפגשים" });
+    await expect(sessions).toContainText("8 מפגשים · כל הקבוצות בכל מפגש");
+    await sessions.getByText("הימים והשעות", { exact: true }).click();
+    await expect(sessions.getByRole("listitem")).toHaveCount(8);
+    await expect(sessions.getByRole("listitem").nth(1)).toHaveText("ליל ראשון–שני 05:00–06:30");
+    await expect(sessions.locator("bdi").first()).toHaveText("21:30–22:30"); // the range isolated: never drawn «22:30–21:30»
+    // the demo's group still without a book: named by its leaders, not offered, nothing to order
+    const groups = page.getByRole("region", { name: "הקבוצות" });
+    const waiting = groups.getByRole("article", { name: "עוד לא נבחר ספר · מלווה לדוגמה ו׳ ו-מעביר/ה נוסף/ת מהצוות (לדוגמה)" });
+    await expect(waiting).toContainText("עוד אין מרחב · מעבירים: מלווה לדוגמה ו׳ (חניך/ה), מעביר/ה נוסף/ת מהצוות (לדוגמה) (מהצוות)");
+    await expect(waiting).toContainText("עוד לא מוצעת בקישור");
+    await expect(waiting.getByText(/^ספרים:/)).toHaveCount(0);
+    await noSidewaysScroll(page);
+
+    // the one trainee still to sign up, picked to be placed (not sent yet)
+    const signup = page.getByRole("region", { name: "ההרשמה", exact: true });
+    await expect(signup.locator("[data-kk-missing]")).toHaveText("1");
+    await signup.getByText("עוד לא נרשמו", { exact: true }).click();
+    const place = signup.getByRole("form", { name: "שיבוץ" });
+    await place.getByLabel("חניך/ה").selectOption({ label: "מלווה לדוגמה ד׳" });
+    await place.getByLabel("לקבוצה").selectOption({ label: "ספר לדוגמה ג׳" });
+
+    // a new group: its leaders first, no book — a trainee who leads elsewhere is not offered
+    const add = groups.getByRole("button", { name: "+ קבוצה" });
+    await add.click();
+    const form = groups.getByRole("form", { name: "קבוצה חדשה" });
+    await expect(form.getByLabel("מרשימת החניכים").locator("option")).toHaveText(["בחירה", "מלווה לדוגמה א׳", "מלווה לדוגמה ב׳", "מלווה לדוגמה ג׳", "מלווה לדוגמה ד׳"]);
+    await expect(form.locator("datalist option")).toHaveCount(3); // the edition's rooms, only suggested
+    await form.getByLabel("מרשימת החניכים").selectOption({ label: "מלווה לדוגמה ד׳" });
+    await form.getByRole("button", { name: "הוספת מעביר/ה" }).click();
+    // a name typed by hand that is a trainee's is that trainee — who leads another group already
+    await form.getByLabel("מעביר/ה", { exact: true }).selectOption({ label: "מעין פרת" });
+    await form.getByLabel("שם", { exact: true }).fill("מלווה  לדוגמה ה׳");
     await form.getByRole("button", { name: "שמירה" }).click();
-    await expect(form.getByRole("alert")).toHaveText("צריך לכתוב את שם הספר.");
-    await expect(form.getByLabel("שם הספר")).toBeFocused();
-    await form.getByLabel("שם הספר").fill("ספר חדש לדוגמה");
-    await form.getByLabel("מחבר/ת (לא חובה)").fill("מחבר/ת לדוגמה");
-    await form.getByLabel("חדר (לא חובה)").selectOption({ label: "כיתה ג׳" });
-    await form.getByLabel("תפוסה").fill("2");
-    await form.getByLabel("מרשימת החניכים").selectOption({ label: "מלווה לדוגמה ה׳" });
-    await form.getByRole("button", { name: "הוספת מוביל/ה" }).click();
-    await expect(form.getByRole("list", { name: "המובילים" }).getByRole("listitem")).toHaveCount(1);
-    // typed but not added with «הוספת מוביל/ה»: still saved with the group
-    await form.getByLabel("מוביל/ה", { exact: true }).selectOption({ label: "מעין פרת" });
-    await form.getByLabel("שם", { exact: true }).fill("מוביל/ה לדוגמה");
+    await expect(form.getByRole("alert")).toHaveText("החניך/ה כבר מעביר/ה קבוצה אחרת. כל חניך/ה מעביר/ה קבוצה אחת.");
+    const chips = form.getByRole("list", { name: "המעבירים" }).getByRole("listitem");
+    await expect(chips).toHaveText([/^מלווה לדוגמה ד׳ \(חניך\/ה\)/, /^מלווה לדוגמה ה׳ \(חניך\/ה\)/]);
+    await form.getByRole("button", { name: "הסרת מלווה לדוגמה ה׳ מהמעבירים" }).click();
+    // someone of the team not on its list: «שם אחר…», typed — and saved without «הוספת מעביר/ה»
+    await form.getByLabel("מעביר/ה", { exact: true }).selectOption({ label: "מהצוות" });
+    await expect(form.getByLabel("מרשימת הצוות").locator("option")).toContainText(["מדריך/ה (הדגמה)", "שם אחר…"]);
+    await form.getByLabel("מרשימת הצוות").selectOption({ label: "שם אחר…" });
+    await form.getByLabel("שם", { exact: true }).fill("מעביר/ה חדש/ה (לדוגמה)");
     await noSidewaysScroll(page);
     await form.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "הקבוצה נוספה")).toBeVisible();
-    const g = monday.getByRole("article", { name: "ספר חדש לדוגמה" });
-    await expect(g).toContainText("ספר חדש לדוגמה — מחבר/ת לדוגמה");
-    await expect(g).toContainText("כיתה ג׳ · מובילים: מלווה לדוגמה ה׳ (חניך/ה), מוביל/ה לדוגמה (מעין פרת)");
-    await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 0 מתוך 2");
+    await expect(add).toBeFocused(); // the form closed: «+ קבוצה» has the focus back
+    const fresh = groups.getByRole("article", { name: "עוד לא נבחר ספר · מלווה לדוגמה ד׳ ו-מעביר/ה חדש/ה (לדוגמה)" });
+    await expect(fresh).toContainText("עוד אין מרחב · מעבירים: מלווה לדוגמה ד׳ (חניך/ה), מעביר/ה חדש/ה (לדוגמה) (מהצוות)");
+    await expect(fresh).toContainText("עוד לא מוצעת בקישור");
+    await expect(strip.first()).toHaveText("מעבירים: 5 קבוצות, 4 עם שני מעבירים");
+    await expect(strip.nth(1)).toHaveText("ספרים: 3 מתוך 5");
+    await expect(strip.nth(3)).toHaveText("נרשמו 3 מתוך 3"); // ד׳ leads now: not someone who still needs a book
 
-    // a placement by the staff, from «עוד לא נרשמו» (ה׳ leads the new group: not among them)
-    await expect(monday.locator("[data-kk-missing]")).toHaveText("5");
-    await monday.getByText("עוד לא נרשמו", { exact: true }).click();
-    const place = monday.getByRole("form", { name: "שיבוץ · שני 21:30–22:30" });
-    await place.getByLabel("חניך/ה").selectOption({ label: "מלווה לדוגמה א׳" });
-    await place.getByLabel("לקבוצה").selectOption({ label: "ספר חדש לדוגמה" });
+    // the placement picked before: ד׳ leads now, and a leader is never placed
+    await expect(signup.locator("[data-kk-missing]")).toHaveText("0");
     await place.getByRole("button", { name: "שיבוץ" }).click();
-    await expect(toast(page, "שובץ/ה")).toBeVisible();
-    await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 2");
-    await expect(monday.locator("[data-kk-missing]")).toHaveText("4");
+    await expect(signup.getByRole("alert")).toHaveText("החניך/ה מעביר/ה קבוצה, ולכן לא נרשם/ת לקבוצה אחרת.");
+    await expect(groups.getByRole("article", { name: "ספר לדוגמה ג׳" }).locator("[data-kk-count]")).toHaveText("נרשמו 0 מתוך 5");
 
-    // the books to order (folded under their line on this screen): nothing filled in for the admin; the count they type, ordered
-    await g.getByText("ספרים: עוד לא נקבע כמה להזמין").click();
-    const books = g.getByRole("form", { name: "ספרים · ספר חדש לדוגמה" });
+    // not on the link: no book yet — and ד׳ is no longer among the names
+    await signup.getByRole("link", { name: "בהגדרות ← «קישורים»" }).click();
+    await page.getByRole("link", { name: "טופס ההרשמה למכריכה לכריכה" }).click();
+    const signupForm = page.getByRole("form", { name: "הרשמה" });
+    await expect(signupForm.getByRole("group", { name: "הספר שלי" }).getByRole("radio")).toHaveCount(3);
+    await expect(signupForm.getByLabel("השם שלי").locator("option")).toHaveText(["בחירה מהרשימה", "מלווה לדוגמה א׳", "מלווה לדוגמה ב׳", "מלווה לדוגמה ג׳"]);
+    await page.goBack();
+    await nav(page).getByRole("link", { name: "מכריכה לכריכה" }).click();
+
+    // the book, its place and a capacity: a place another group has is refused, in the form
+    await groups.getByRole("button", { name: "עריכה: עוד לא נבחר ספר · מלווה לדוגמה ד׳ ו-מעביר/ה חדש/ה (לדוגמה)" }).click();
+    const edit = groups.getByRole("form", { name: "עריכה · עוד לא נבחר ספר · מלווה לדוגמה ד׳ ו-מעביר/ה חדש/ה (לדוגמה)" });
+    await edit.getByLabel("שם הספר (לא חובה: אפשר גם אחר כך)").fill("ספר חדש לדוגמה");
+    await edit.getByLabel("מחבר/ת (לא חובה)").fill("מחבר/ת לדוגמה");
+    await edit.getByLabel("מרחב (לא חובה)").fill(" הדשא ");
+    await edit.getByLabel("תפוסה").fill("2");
+    await noSidewaysScroll(page);
+    await edit.getByRole("button", { name: "שמירה" }).click();
+    await expect(edit.getByRole("alert")).toHaveText("המרחב הזה כבר של קבוצה אחרת. כל קבוצה נפגשת במרחב משלה.");
+    await expect(edit.getByLabel("מרחב (לא חובה)")).toBeFocused();
+    await edit.getByLabel("מרחב (לא חובה)").fill("כיתה ג׳");
+    await edit.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "הקבוצה נשמרה")).toBeVisible();
+    const g = groups.getByRole("article", { name: "ספר חדש לדוגמה" });
+    await expect(g).toContainText("ספר חדש לדוגמה — מחבר/ת לדוגמה");
+    await expect(g).toContainText("כיתה ג׳ · מעבירים: מלווה לדוגמה ד׳ (חניך/ה), מעביר/ה חדש/ה (לדוגמה) (מהצוות)");
+    await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 0 מתוך 2");
+    await expect(g.getByText("עוד לא מוצעת בקישור")).toHaveCount(0);
+    await expect(g.getByRole("button", { name: "עריכה: ספר חדש לדוגמה" })).toBeFocused(); // closed: «עריכה» has the focus back
+    await expect(strip.nth(1)).toHaveText("ספרים: 4 מתוך 5");
+
+    // on the link now, with its place and its leaders
+    await signup.getByRole("link", { name: "בהגדרות ← «קישורים»" }).click();
+    await page.getByRole("link", { name: "טופס ההרשמה למכריכה לכריכה" }).click();
+    const offered = signupForm.getByRole("group", { name: "הספר שלי" });
+    await expect(offered.getByRole("radio")).toHaveCount(4);
+    await expect(offered).toContainText("ספר חדש לדוגמה — מחבר/ת לדוגמה");
+    await expect(offered).toContainText("כיתה ג׳ · מעבירים: מלווה לדוגמה ד׳ (חניך/ה), מעביר/ה חדש/ה (לדוגמה) (מהצוות)");
+    await noSidewaysScroll(page);
+  });
+
+  test("«מכריכה לכריכה»: the books to order, a book changed after its order, a group with sign-ups not deleted, the window", async ({ page }) => {
+    await page.goto(`${demoUrl()}/kk`);
+    const groups = page.getByRole("region", { name: "הקבוצות" });
+    const strip = page.getByRole("list", { name: "איפה זה עומד" }).getByRole("listitem");
+
+    // the books (folded under their line on this screen): nothing filled in for the admin; the count they type, ordered
+    const b = groups.getByRole("article", { name: "ספר לדוגמה ב׳" });
+    await b.getByText("ספרים: עוד לא נקבע כמה להזמין").click();
+    const books = b.getByRole("form", { name: "ספרים · ספר לדוגמה ב׳" });
     await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("");
-    await expect(books).toContainText("מובילים 2");
+    await expect(books).toContainText("נרשמו 1 · מעבירים 1");
     await books.getByLabel("עותקים להזמנה").fill("3");
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();
     await books.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "הזמנת הספרים נשמרה")).toBeVisible();
     await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("3");
     await expect(books.getByRole("checkbox", { name: /^הוזמן/ })).toBeChecked();
+    await expect(strip.nth(4)).toHaveText("ספרים: הוזמנו 1 מתוך 4");
+    await noSidewaysScroll(page);
+
+    // a book whose copies are in an order: changing its title says to check the order; cancelled, nothing changed
+    const a = groups.getByRole("article", { name: "ספר לדוגמה א׳" });
+    await expect(a.getByText("ספרים: 6 עותקים · עוד לא הוזמנו")).toBeVisible();
+    const editA = a.getByRole("button", { name: "עריכה: ספר לדוגמה א׳" });
+    await editA.click();
+    const form = groups.getByRole("form", { name: "עריכה · ספר לדוגמה א׳" });
+    await expect(form.getByLabel("שם הספר (לא חובה: אפשר גם אחר כך)")).toHaveValue("ספר לדוגמה א׳");
+    await expect(form.getByText("לספר הזה כבר יש הזמנת ספרים — כדאי לבדוק אותה.")).toHaveCount(0);
+    await form.getByLabel("שם הספר (לא חובה: אפשר גם אחר כך)").fill("ספר אחר לדוגמה");
+    await expect(form.getByText("לספר הזה כבר יש הזמנת ספרים — כדאי לבדוק אותה.")).toBeVisible();
+    await form.getByRole("button", { name: "ביטול" }).click();
+    await expect(editA).toBeFocused();
 
     // a group with someone in it is not deleted; the confirm cancelled first: the focus back at «מחיקה»
-    const del = g.getByRole("button", { name: "מחיקה: ספר חדש לדוגמה" });
+    const del = a.getByRole("button", { name: "מחיקה: ספר לדוגמה א׳" });
     await del.click();
-    await g.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await expect(a.getByRole("group", { name: "אישור" })).toContainText("יש בה נרשמים");
+    await a.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
     await expect(del).toBeFocused();
     await del.click();
-    await g.getByRole("button", { name: "מחיקה", exact: true }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "יש נרשמים לקבוצה הזו" })).toBeVisible();
-    await expect(g).toBeVisible();
+    await a.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await expect(a.getByRole("alert")).toHaveText("יש נרשמים לקבוצה הזו. קודם מעבירים אותם לקבוצה אחרת או מסירים אותם, ואז מוחקים.");
+    await expect(del).toBeFocused();
+    await expect(a).toBeVisible();
+    // one with nobody in it is
+    const c = groups.getByRole("article", { name: "ספר לדוגמה ג׳" });
+    await c.getByRole("button", { name: "מחיקה: ספר לדוגמה ג׳" }).click();
+    await c.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await expect(toast(page, "הקבוצה נמחקה")).toBeVisible();
+    await expect(c).toHaveCount(0);
+    await expect(strip.first()).toHaveText("מעבירים: 3 קבוצות, 2 עם שני מעבירים");
 
-    // the window: closed by the admin, then the public form says so
-    await page.getByRole("button", { name: "עריכת החלון" }).click();
-    await page.getByRole("button", { name: "בלי חלון (ההרשמה סגורה)" }).click();
+    // the window: closed by the admin — the screen and the public form say so, and the form sends nothing
+    const signup = page.getByRole("region", { name: "ההרשמה", exact: true });
+    await expect(signup).toContainText("פתוחה עכשיו");
+    await signup.getByRole("button", { name: "עריכת החלון" }).click();
+    await signup.getByRole("button", { name: "בלי חלון (ההרשמה סגורה)" }).click();
     await expect(toast(page, "ההרשמה סגורה: אין חלון")).toBeVisible();
-    await expect(page.getByRole("region", { name: "חלון ההרשמה" })).toContainText("ההרשמה עוד לא נפתחה.");
+    await expect(signup).toContainText("סגורה עכשיו");
+    await expect(signup).toContainText("ההרשמה עוד לא נפתחה.");
+    await expect(strip.nth(2)).toHaveText("ההרשמה עוד לא נפתחה");
+    await expect(signup.getByRole("button", { name: "עריכת החלון" })).toBeFocused();
     await noSidewaysScroll(page);
+    await signup.getByRole("link", { name: "בהגדרות ← «קישורים»" }).click();
+    await page.getByRole("link", { name: "טופס ההרשמה למכריכה לכריכה" }).click();
+    await expect(page.getByText("ההרשמה עוד לא נפתחה.", { exact: true })).toBeVisible();
+    const closed = page.getByRole("form", { name: "הרשמה" });
+    await expect(closed.getByRole("radio").first()).toBeDisabled();
+    await expect(closed.getByRole("button", { name: "הרשמה" })).toHaveCount(0);
   });
 
   test("the schedule to view: by day, the public facts only, printable on A4", async ({ page }, info) => {
@@ -439,16 +581,17 @@ test.describe("mock build", () => {
       { id: 11, full_name: "חניך/ה לדוגמה א׳" },
       { id: 12, full_name: "חניך/ה לדוגמה ב׳" },
     ],
-    tracks: [
-      {
-        id: 3, day: 0, date: start, start_min: 1290, end_min: 1350,
-        groups: [
-          { id: 21, title: "ספר לדוגמה", author: null, room: "חדר לדוגמה", leaders: [{ kind: "staff", name: "מוביל/ה לדוגמה" }], full: false },
-          { id: 22, title: "ספר מלא לדוגמה", author: "מחבר/ת לדוגמה", room: null, leaders: [], full: true },
-        ],
-      },
+    sessions: [
+      { day: 0, date: start, start_min: 1290, end_min: 1350 },
+      { day: 0, date: start, start_min: 1740, end_min: 1830 }, // the night's: the calendar's date is the next morning's
+    ],
+    groups: [
+      { id: 21, title: "ספר לדוגמה", author: null, place: "מרחב לדוגמה", leaders: [{ kind: "staff", name: "מעביר/ה לדוגמה" }], full: false },
+      { id: 22, title: "ספר מלא לדוגמה", author: "מחבר/ת לדוגמה", place: null, leaders: [], full: true },
     ],
   };
+  /** «30.10.2026», as the page writes a date (before the Hebrew date beside it). */
+  const dmy = (iso: string) => iso.split("-").reverse().map(Number).join(".");
   const scheduleView: ScheduleView = {
     edition,
     rows: [
@@ -514,15 +657,20 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("escort_tick")).toEqual([{ p_token: TOKEN, p_lesson: 41, p_item: "reminded", p_on: true }]);
     expect(sb.rpc.get("escort_pickup")).toEqual([{ p_token: TOKEN, p_lesson: 41, p_address: "  כתובת לדוגמה  " }]);
 
-    // the sign-up: one call per track chosen, the same answer
+    // the sign-up: the sessions with their dates, one book, one call, the same answer
     await page.goto(`${mockUrl()}/k#${TOKEN}`);
+    await page.getByText("נפגשים בכל מפגשי מכריכה לכריכה", { exact: true }).click();
+    const sessions = page.getByRole("list", { name: "המפגשים" }).getByRole("listitem");
+    await expect(sessions.first()).toContainText(`ראשון 21:30–22:30 · ${dmy(start)}`);
+    await expect(sessions.nth(1)).toContainText(`ליל ראשון–שני 05:00–06:30 · ${dmy(addDays(start, 1))}`);
     const form = page.getByRole("form", { name: "הרשמה" });
     await expect(form.getByRole("radio", { name: /^ספר מלא לדוגמה/ })).toBeDisabled();
     await expect(form).toContainText("מלאה");
+    await expect(form).toContainText("מרחב לדוגמה · מעבירים: מעביר/ה לדוגמה (מהצוות)");
     await form.getByLabel("השם שלי").selectOption({ label: "חניך/ה לדוגמה ב׳" });
     await form.getByRole("radio", { name: /^ספר לדוגמה/ }).first().check();
     await form.getByRole("button", { name: "הרשמה" }).click();
-    await expect(page.getByRole("status", { name: "הבקשה נשלחה" })).toContainText("הבקשה נשלחה.");
+    await expect(page.getByRole("status", { name: "הבקשה נשלחה" })).toContainText("מה ששלחת: חניך/ה לדוגמה ב׳ — ספר לדוגמה");
     expect(sb.rpc.get("kk_signup")).toEqual([{ p_token: TOKEN, p_roster: 12, p_group: 21 }]);
 
     // the schedule
@@ -634,20 +782,26 @@ test.describe("mock build", () => {
   test("«מכריכה לכריכה» on the wire: every staff write is its function, by the contract's parameter names, with the member's token", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the wire");
     const { sb, week, session } = await signedIn(page);
+    // a member of the team whose name is a trainee's: picked from the team's list, sent as that trainee
+    week.team[1].display_name = week.roster[2].full_name;
     const kk: KkData = {
-      tracks: [{ id: 3, day: 0, start_min: 1290, end_min: 1350 }],
-      groups: [{ id: 21, track_id: 3, title: "ספר לדוגמה", author: null, room_id: null, capacity: 5, open: true }],
-      leaders: [],
-      signups: [{ id: 1, track_id: 3, group_id: 21, roster_id: week.roster[0].id, via: "link", created_at: new Date().toISOString() }],
+      groups: [
+        { id: 21, title: "ספר לדוגמה", author: null, place: "מרחב לדוגמה", capacity: 5, open: true },
+        { id: 22, title: null, author: null, place: null, capacity: null, open: true },
+      ],
+      leaders: [{ id: 1, group_id: 22, kind: "staff", roster_id: null, label: "מעביר/ה לדוגמה" }],
+      signups: [{ id: 1, group_id: 21, roster_id: week.roster[0].id, via: "link", created_at: new Date().toISOString() }],
       orders: [],
     };
     sb.answers.set("load_kk", kk);
-    for (const f of ["kk_update_group", "kk_place", "kk_unplace", "kk_set_window", "set_book_order"]) sb.answers.set(f, null);
-    sb.answers.set("kk_add_group", 22);
+    for (const f of ["kk_update_group", "kk_delete_group", "kk_place", "kk_unplace", "kk_set_window", "set_book_order"]) sb.answers.set(f, null);
+    sb.answers.set("kk_add_group", 23);
 
     await page.goto(`${mockUrl()}/kk`);
-    const sunday = page.getByRole("region", { name: "ראשון 21:30–22:30" });
-    await expect(sunday.getByRole("article", { name: "ספר לדוגמה" }).locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 5");
+    const groups = page.getByRole("region", { name: "הקבוצות" });
+    const g = groups.getByRole("article", { name: "ספר לדוגמה", exact: true });
+    await expect(g.locator("[data-kk-count]")).toHaveText("נרשמו 1 מתוך 5");
+    await expect(groups.getByRole("article", { name: "עוד לא נבחר ספר · מעביר/ה לדוגמה" })).toBeVisible();
     expect(sb.rpc.get("load_kk")?.[0]).toEqual({ p_edition: 7 });
 
     // the window, in Israel's time (its form behind «עריכת החלון»)
@@ -658,37 +812,58 @@ test.describe("mock build", () => {
     await win.getByRole("button", { name: "שמירת החלון" }).click();
     await expect.poll(() => sb.rpc.get("kk_set_window")).toEqual([{ p_edition: 7, p_opens: "2027-01-10T18:00:00.000Z", p_closes: "2027-01-17T18:00:00.000Z" }]);
 
-    // a new group: the fields as typed, nothing added
-    await sunday.getByRole("button", { name: "קבוצה חדשה: ראשון 21:30–22:30" }).click();
-    const form = sunday.getByRole("form", { name: "קבוצה חדשה · ראשון 21:30–22:30" });
-    await form.getByLabel("שם הספר").fill("ספר חדש לדוגמה");
-    await form.getByLabel("מוביל/ה", { exact: true }).selectOption({ label: "מהצוות" });
-    await form.getByLabel("שם", { exact: true }).fill("מוביל/ה לדוגמה");
-    await form.getByRole("button", { name: "הוספת מוביל/ה" }).click();
+    // a new group for the week: no book yet, the fields as typed, nothing added — a leader typed, and one from the team's list
+    await groups.getByRole("button", { name: "+ קבוצה" }).click();
+    const form = groups.getByRole("form", { name: "קבוצה חדשה" });
+    await form.getByLabel("מרחב (לא חובה)").fill("מרחב חדש לדוגמה");
+    await form.getByLabel("מעביר/ה", { exact: true }).selectOption({ label: "מהצוות" });
+    await form.getByLabel("מרשימת הצוות").selectOption({ label: "שם אחר…" });
+    await form.getByLabel("שם", { exact: true }).fill("מעביר/ה חדש/ה לדוגמה");
+    await form.getByRole("button", { name: "הוספת מעביר/ה" }).click();
+    await form.getByLabel("מרשימת הצוות").selectOption({ label: week.roster[2].full_name });
     await form.getByRole("button", { name: "שמירה" }).click();
     await expect.poll(() => sb.rpc.get("kk_add_group")).toEqual([
-      { p_edition: 7, p_day: 0, p_start: 1290, p_fields: { title: "ספר חדש לדוגמה", author: null, room_id: null, capacity: null, open: true, leaders: [{ kind: "staff", label: "מוביל/ה לדוגמה" }] } },
+      {
+        p_edition: 7,
+        p_fields: { title: null, author: null, place: "מרחב חדש לדוגמה", capacity: null, open: true, leaders: [{ kind: "staff", label: "מעביר/ה חדש/ה לדוגמה" }, { kind: "trainee", roster_id: week.roster[2].id }] },
+      },
     ]);
 
-    // place, books, remove
-    await sunday.getByText(/^עוד לא נרשמו/).click();
-    const place = sunday.getByRole("form", { name: "שיבוץ · ראשון 21:30–22:30" });
+    // the group's fields: every key, the leaders replaced as listed
+    await g.getByRole("button", { name: "עריכה: ספר לדוגמה" }).click();
+    const edit = groups.getByRole("form", { name: "עריכה · ספר לדוגמה" });
+    await edit.getByLabel("תפוסה").fill("6");
+    await edit.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("kk_update_group")).toEqual([{ p_group: 21, p_patch: { title: "ספר לדוגמה", author: null, place: "מרחב לדוגמה", capacity: 6, open: true, leaders: [] } }]);
+
+    // place, move, books, remove, delete
+    const signup = page.getByRole("region", { name: "ההרשמה", exact: true });
+    await signup.getByText("עוד לא נרשמו", { exact: true }).click();
+    const place = signup.getByRole("form", { name: "שיבוץ" });
     await place.getByLabel("חניך/ה").selectOption({ label: week.roster[1].full_name });
     await place.getByLabel("לקבוצה").selectOption({ label: "ספר לדוגמה" });
     await place.getByRole("button", { name: "שיבוץ" }).click();
     await expect.poll(() => sb.rpc.get("kk_place")).toEqual([{ p_group: 21, p_roster: week.roster[1].id }]);
-    await sunday.getByRole("article", { name: "ספר לדוגמה" }).getByText(/^ספרים:/).click();
-    const books = sunday.getByRole("form", { name: "ספרים · ספר לדוגמה" });
+    await g.locator("[data-kk-count]").click();
+    await g.getByLabel(`העברה של ${week.roster[0].full_name} לקבוצה אחרת`).selectOption({ label: "העברה ל: עוד לא נבחר ספר · מעביר/ה לדוגמה" });
+    await expect.poll(() => sb.rpc.get("kk_place")).toEqual([
+      { p_group: 21, p_roster: week.roster[1].id },
+      { p_group: 22, p_roster: week.roster[0].id },
+    ]);
+    await g.getByText(/^ספרים:/).click();
+    const books = g.getByRole("form", { name: "ספרים · ספר לדוגמה" });
     await books.getByLabel("עותקים להזמנה").fill("5");
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();
     await books.getByRole("button", { name: "שמירה" }).click();
     await expect.poll(() => sb.rpc.get("set_book_order")).toEqual([{ p_group: 21, p_copies: 5, p_ordered: true }]);
-    const g = sunday.getByRole("article", { name: "ספר לדוגמה" });
     await g.getByRole("button", { name: `הסרה: ${week.roster[0].full_name}` }).click();
-    await g.getByRole("button", { name: "הסרה", exact: true }).click();
-    await expect.poll(() => sb.rpc.get("kk_unplace")).toEqual([{ p_track: 3, p_roster: week.roster[0].id }]);
+    await g.getByRole("group", { name: "אישור" }).getByRole("button", { name: "הסרה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("kk_unplace")).toEqual([{ p_edition: 7, p_roster: week.roster[0].id }]);
+    await g.getByRole("button", { name: "מחיקה: ספר לדוגמה" }).click();
+    await g.getByRole("group", { name: "אישור" }).getByRole("button", { name: "מחיקה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("kk_delete_group")).toEqual([{ p_group: 21 }]);
 
-    for (const f of ["load_kk", "kk_set_window", "kk_add_group", "kk_place", "set_book_order", "kk_unplace"]) {
+    for (const f of ["load_kk", "kk_set_window", "kk_add_group", "kk_update_group", "kk_place", "set_book_order", "kk_unplace", "kk_delete_group"]) {
       const calls = sb.calls.filter((c) => c.path === `/rest/v1/rpc/${f}`);
       expect(calls.length, f).toBeGreaterThan(0);
       for (const c of calls) expect(c.auth, f).toBe(`Bearer ${session.access_token}`);

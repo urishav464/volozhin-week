@@ -304,7 +304,7 @@ export class DemoSettings implements SettingsPort {
       l.escort_roster_id = null;
       w!.escortTicks = w!.escortTicks.filter((t) => t.lesson_id !== l.id);
     }
-    // on delete cascade: their escort's link, their sign-ups, a group they led (v9)
+    // on delete cascade: their escort's link, their sign-up for the week, their leader rows (v9; v15) — the group stays
     const sh = this.s.shared;
     sh.links = sh.links.filter((l) => l.subject_id !== id);
     sh.kk.signups = sh.kk.signups.filter((x) => x.roster_id !== id);

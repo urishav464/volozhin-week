@@ -31,7 +31,7 @@ import { israelDate } from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { PRINT_WHEN_LABEL } from "../../domain/stages";
 import { Chip } from "../../grid/bits";
-import { BookOrder } from "../kk/KkScreen";
+import { BookOrder } from "../kk/BookOrder";
 import { Button, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { TransportForm } from "../stages/PaymentStage";
@@ -419,34 +419,30 @@ function Books({ port, week, actor, notify, clear, label }: TabProps) {
   return (
     <>
       <PaperTable table={table()} title={`${label} · מכריכה לכריכה · שבוע וולוז'ין ${week.edition.label}`} landscape />
-      <Bar week={week} tab="books" table={table} notify={notify} summary={kk == null ? "טוען…" : rows.length === 0 ? "עוד אין קבוצות במכריכה לכריכה." : `${rows.length === 1 ? "קבוצה אחת" : `${rows.length} קבוצות`} · הוזמנו ${ordered}`} />
+      <Bar week={week} tab="books" table={table} notify={notify} summary={kk == null ? "טוען…" : rows.length === 0 ? "עוד אין ספרים במכריכה לכריכה." : `${rows.length === 1 ? "קבוצה אחת" : `${rows.length} קבוצות`} · הוזמנו ${ordered}`} />
       {failed && (
         <div role="alert" className="rounded-lg border border-bad/30 bg-bad/5 p-3 text-sm print:hidden">
           <p className="mb-2">לא הצלחנו לטעון את הקבוצות.</p>
           <Button onClick={() => void load()}>לנסות שוב</Button>
         </div>
       )}
-      <p className="text-sm text-ink-soft print:hidden">כמה עותקים להזמין כותבים כאן.</p>
-      {kk &&
-        DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
-          const ofDay = rows.filter((r) => r.day === d);
-          return (
-            <DayList key={d} day={d} count={ofDay.length}>
-              {ofDay.map((r) => (
-                <li key={r.group.id} data-book-row={r.group.id} className="space-y-1 rounded-xl border border-line bg-card p-3">
-                  <p className="font-semibold">
-                    {r.title}
-                    {r.author && <span className="font-normal text-ink-soft"> · {r.author}</span>}
-                  </p>
-                  <p className="text-sm text-ink-soft">
-                    <bdi dir="ltr">{r.time}</bdi> · {r.leaders ? `מובילים: ${r.leaders}` : "בלי מובילים"}
-                  </p>
-                  <BookOrder g={r.group} kk={kk} signed={r.signups} leaders={r.leaderCount} editable={mayLogistics(actor) && (actor.isAdmin || !archivedEdition(week))} busy={busy} act={act} port={port} />
-                </li>
-              ))}
-            </DayList>
-          );
-        })}
+      <p className="text-sm text-ink-soft print:hidden">ספר אחד לכל קבוצה, לכל השבוע. כמה עותקים להזמין כותבים כאן.</p>
+      {kk && rows.length > 0 && (
+        <ul aria-label="הספרים" className="grid items-start gap-2 md:grid-cols-2 print:hidden">
+          {rows.map((r) => (
+            <li key={r.group.id} data-book-row={r.group.id} className="space-y-1 rounded-xl border border-line bg-card p-3">
+              <p className="font-semibold">
+                {r.title}
+                {r.author && <span className="font-normal text-ink-soft"> · {r.author}</span>}
+              </p>
+              <p className="text-sm text-ink-soft">
+                {r.place || "עוד אין מרחב"} · {r.leaders ? `מעבירים: ${r.leaders}` : "בלי מעבירים"}
+              </p>
+              <BookOrder g={r.group} kk={kk} signed={r.signups} leaders={r.leaderCount} editable={mayLogistics(actor) && (actor.isAdmin || !archivedEdition(week))} busy={busy} act={act} port={port} />
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }

@@ -14,7 +14,6 @@
 // The token goes in the body, never in the URL. It calls the six anon functions
 // and nothing else.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Day } from "../domain/time";
 import type { TickItem } from "../domain/types";
 import { CommandError } from "./commands";
 import type { KkData, KkGroupFields, KkPort } from "./kk";
@@ -52,11 +51,11 @@ export class SupabaseKk implements KkPort {
 
   async load(editionId: number): Promise<KkData> {
     const d = (await callRpc(this.sb, "load_kk", { p_edition: editionId })) as KkData | null;
-    return d ?? { tracks: [], groups: [], leaders: [], signups: [], orders: [] };
+    return d ?? { groups: [], leaders: [], signups: [], orders: [] };
   }
 
-  async addGroup(editionId: number, day: Day, startMin: number, fields: KkGroupFields): Promise<number> {
-    return num(await callRpc(this.sb, "kk_add_group", { p_edition: editionId, p_day: day, p_start: startMin, p_fields: fields }));
+  async addGroup(editionId: number, fields: KkGroupFields): Promise<number> {
+    return num(await callRpc(this.sb, "kk_add_group", { p_edition: editionId, p_fields: fields }));
   }
 
   async updateGroup(groupId: number, patch: KkGroupFields): Promise<void> {
@@ -71,8 +70,8 @@ export class SupabaseKk implements KkPort {
     await callRpc(this.sb, "kk_place", { p_group: groupId, p_roster: rosterId });
   }
 
-  async unplace(trackId: number, rosterId: number): Promise<void> {
-    await callRpc(this.sb, "kk_unplace", { p_track: trackId, p_roster: rosterId });
+  async unplace(editionId: number, rosterId: number): Promise<void> {
+    await callRpc(this.sb, "kk_unplace", { p_edition: editionId, p_roster: rosterId });
   }
 
   async setWindow(editionId: number, opensAt: string | null, closesAt: string | null): Promise<void> {
