@@ -119,7 +119,7 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
       <Row
         cells={cells}
         editing={
-          <form onSubmit={rename} className="flex flex-wrap items-end gap-2 rounded-lg border border-line bg-paper p-3" noValidate>
+          <form onSubmit={rename} className="flex flex-wrap items-end gap-2 rounded-xl bg-sand-soft p-3" noValidate>
             <div className="min-w-0 basis-full sm:flex-1 sm:basis-48">
               <Field id={`${id}-name`} label="שם החדר">
                 <input id={`${id}-name`} className={INPUT} value={name} maxLength={60} autoFocus onChange={(e) => setName(e.target.value)} />
@@ -152,7 +152,7 @@ function RoomItem({ r, first, last, moving, onMove, onChanged }: { r: Room; firs
       <Row
         cells={cells}
         editing={
-          <div role="group" aria-label="אי אפשר למחוק" className="rounded-lg border border-line bg-paper p-3 text-sm">
+          <div role="group" aria-label="אי אפשר למחוק" className="rounded-xl border border-sand bg-sand-soft p-3 text-sm">
             <p className="mb-2">
               <b>{r.name}</b>: {errorMessage("room_in_use")}
             </p>

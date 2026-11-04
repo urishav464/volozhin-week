@@ -31,6 +31,7 @@ import { CONTACT_PREF_LABEL, statusLabel, vettingLabel } from "../../lib/labels"
 import { Button, Field, Fold, INPUT, useRunner } from "../settings/kit";
 import { type Actor, actorIn } from "../weekStore";
 import { MessageComposer } from "../stages/MessageComposer";
+import { LINK_BUTTON, LINK_PRIMARY } from "../stages/parts";
 import { CallPoints, CallResults } from "./call";
 import { formOf, type Notify, patchOf, type ProfileForm, ProfileFields, SlotGrid } from "./parts";
 import { TaughtHere } from "./SpeakerReviews";
@@ -69,9 +70,8 @@ export function SpeakerSheet(props: SpeakerSheetProps) {
   return <Body {...props} s={s} />;
 }
 
-const LINK_BUTTON = "inline-flex min-h-11 items-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold hover:bg-line/50";
 /** The speaker's preferred channel: its button is the primary one. */
-const LINK_PREFERRED = "inline-flex min-h-11 items-center rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90";
+const LINK_PREFERRED = LINK_PRIMARY;
 
 /** Before the speaker's answer: the call is still to be made (or made again). */
 const CALLING: ReadonlySet<ApproachStatus> = new Set(["claimed", "no_answer", "approached"]);
@@ -214,7 +214,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
               </p>
             )}
             {a?.offered_to != null && a.offered_to === actor.memberId && actor.canEdit && (
-              <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
+              <div role="group" aria-label="העברה שמחכה לך" className="space-y-2 rounded-xl border border-navy/30 bg-accent-soft p-3">
                 <p className="text-sm">{nameOf(a.owner_member_id)} מציע/ה להעביר אליך את הטיפול.</p>
                 <div className="flex flex-wrap gap-2">
                   <Button kind="primary" busy={busy === "accept"} onClick={() => void act("accept", () => port.speakers.answerHandOver(edition.id, a.id, true), "הטיפול עבר אליך")}>
@@ -264,7 +264,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
               </div>
             )}
             {mayManage && a && calling && (
-              <Fold title="📞 נקודות לשיחה" defaultOpen={focus === "call"} className="rounded-lg border border-line bg-paper px-3 py-0.5">
+              <Fold title="📞 נקודות לשיחה" defaultOpen={focus === "call"} className="rounded-xl border border-line bg-card px-3 py-0.5 shadow-sm">
                 <CallPoints week={week} speakerGender={s.gender} memberId={actor.memberId} />
               </Fold>
             )}
@@ -292,9 +292,9 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
             {pitched.length > 0 && (
               <ul aria-label={`${byGender(s.gender, "מוצע", "מוצעת")} במשבצות`} className="space-y-1.5">
                 {pitched.map((l) => (
-                  <li key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-sm">
+                  <li key={l.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-card px-3 py-1.5 text-sm shadow-sm">
                     <span className="min-w-0 flex-1">
-                      <span className="font-semibold">
+                      <span className="font-bold text-navy">
                         {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
                       </span>
                       {l.title && ` · ${l.title}`}
@@ -340,7 +340,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
       <Section title="פרטי קשר">
         {sideFailed && contacts === undefined ? (
           <p role="alert" className="text-sm text-bad">
-            לא הצלחנו לטעון. <button type="button" className="underline" onClick={() => void loadSide()}>לנסות שוב</button>
+            לא הצלחנו לטעון. <button type="button" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4" onClick={() => void loadSide()}>לנסות שוב</button>
           </p>
         ) : contacts === undefined ? (
           <p className="text-sm text-ink-soft">טוען…</p>
@@ -377,7 +377,7 @@ function Timeline({ lines, failed }: { lines: ReturnType<typeof timeline> | null
       <Fold title="מה קרה" hint={`${lines.length === 1 ? "פעולה אחת" : `${lines.length} פעולות`} · אחרונה ${when(latest, DAY)}`}>
         <ol className="space-y-1.5 text-sm">
           {lines.map((l) => (
-            <li key={l.id} className="border-s-2 border-line ps-2">
+            <li key={l.id} className="border-s-2 border-sage ps-2">
               <span className="text-xs text-ink-soft tabular-nums">
                 <bdi>{when(l.at)}</bdi>
               </span>{" "}
@@ -445,7 +445,7 @@ function Details({ port, s, week, actor, handler, busy, act }: { port: DataPort;
           </Button>
         )}
       </div>
-      {!s.gender && <p className="text-sm font-semibold text-amber-900">מגדר לא ידוע: צריך להשלים לפני סגירת שיעור</p>}
+      {!s.gender && <p className="text-sm font-bold text-warn">מגדר לא ידוע: צריך להשלים לפני סגירת שיעור</p>}
       {topics.length > 0 && (
         <ul aria-label="נושאים" className="flex flex-wrap gap-1">
           {topics.map((t) => (
@@ -494,11 +494,11 @@ function ProfileEdit({
     if (ok) onDone();
   };
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="עריכת הפרטים" className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void submit(e)} aria-label="עריכת הפרטים" className="space-y-3 rounded-xl bg-sand-soft p-3" noValidate>
       <ProfileFields id={id} form={form} set={(p) => setForm((f) => ({ ...f, ...p }))} titles={titlesOf(week.edition.settings)} categories={week.categories} withName invalid={problem?.field ?? null} problem={problem?.text} />
       {actor.global && (
         <label className="flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" checked={retired} onChange={(e) => setRetired(e.target.checked)} className="size-5 accent-ink" />
+          <input type="checkbox" checked={retired} onChange={(e) => setRetired(e.target.checked)} className="size-5 accent-navy" />
           {byGender(s.gender, "לא פעיל", "לא פעילה")}: לא {byGender(s.gender, "מוצע", "מוצעת")} יותר מהמאגר
         </label>
       )}
@@ -533,7 +533,7 @@ function ApproachView({ s, a, actor, handler, nameOf }: { s: Speaker; a: Approac
 /** The call's result: in sight while the call is to be made; after the answer the next step is elsewhere, and a change of mind waits behind a fold. */
 function CallResultFrame({ calling, children }: { calling: boolean; children: ReactNode }) {
   return calling ? (
-    <div className="rounded-lg border border-line bg-paper p-3">{children}</div>
+    <div className="rounded-xl bg-sand-soft p-3">{children}</div>
   ) : (
     <Fold title="שינוי תוצאת השיחה" size="sm">
       {children}
@@ -571,9 +571,9 @@ function ClosedLessons({
         const handler = week.approaches.find((x) => x.speaker_id === s.id)?.owner_member_id ?? null;
         const mine = lead && actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
         return (
-          <li key={l.id} className="space-y-1 rounded-lg border border-line bg-card px-3 pb-1 pt-2 text-sm">
+          <li key={l.id} className="space-y-1 rounded-xl border border-line bg-card px-3 pb-1 pt-2 text-sm shadow-sm">
             <p className="min-w-0">
-              <span className="font-semibold">
+              <span className="font-bold text-navy">
                 {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
               </span>{" "}
               · {l.title ?? "כותרת: TBD"}
@@ -637,7 +637,7 @@ function HandOver({ team, a, actor, busy, onGo }: { team: TeamMember[]; a: Appro
     if (await onGo(to === "pool" ? null : Number(to), note.trim() || null)) setOpen(false);
   };
   return (
-    <div role="group" aria-label="העברת הטיפול" className="space-y-2 rounded-lg border border-line bg-paper p-3">
+    <div role="group" aria-label="העברת הטיפול" className="space-y-2 rounded-xl bg-sand-soft p-3">
       <Field id={`${id}-to`} label={actor.isAdmin ? "להעביר ל…" : "להציע ל…"}>
         <select id={`${id}-to`} value={to} onChange={(e) => setTo(e.target.value)} className={INPUT}>
           <option value="">בחירה</option>
@@ -694,7 +694,7 @@ function Contacts({ s, c, busy, onSave }: { s: Speaker; c: SpeakerContacts; busy
       if (ok) setEditing(false);
     };
     return (
-      <form onSubmit={(e) => void submit(e)} aria-label="עריכת פרטי הקשר" className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
+      <form onSubmit={(e) => void submit(e)} aria-label="עריכת פרטי הקשר" className="space-y-3 rounded-xl bg-sand-soft p-3" noValidate>
         <Field id={`${id}-phone`} label="טלפון">
           <input id={`${id}-phone`} type="tel" inputMode="tel" dir="ltr" value={draft.phone ?? ""} maxLength={LIMITS.phone} onChange={(e) => set({ phone: e.target.value })} className={INPUT} autoComplete="off" {...err("phone")} />
         </Field>
@@ -838,7 +838,7 @@ function Vetting({ s, actor, nameOf, busy, onVet }: { s: Speaker; actor: Actor; 
           </Button>
         )}
         {actor.global && (s.vetted === "pending" || open) && (
-          <div className="space-y-2 rounded-lg border border-line bg-paper p-3">
+          <div className="space-y-2 rounded-xl bg-sand-soft p-3">
             <Field id={`${id}-note`} label="הערה על האישור (לא חובה, גלויה לכל הצוות)">
               <input id={`${id}-note`} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
             </Field>

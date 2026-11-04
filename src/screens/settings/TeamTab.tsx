@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ROLE_LABEL } from "../../lib/labels";
-import { Badge, Button, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -140,7 +140,7 @@ function NoEdition() {
     <Panel title="עוד לא נפתח מחזור">
       <p className="mb-3 text-ink-soft">חברי צוות מוסיפים למחזור. קודם פותחים את המחזור של השנה.</p>
       {me.global_admin && (
-        <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
+        <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-full bg-navy px-5 font-bold text-white transition-colors duration-150 hover:bg-navy-800">
           לפתיחת מחזור
         </Link>
       )}
@@ -232,11 +232,11 @@ function RoleField({ name, value, onChange }: { name: string; value: Role; onCha
   ];
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1 text-sm font-semibold">תפקיד</legend>
+      <legend className="mb-1 text-sm font-bold text-ink">תפקיד</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map(([r, label]) => (
-          <label key={r} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${value === r ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={name} checked={value === r} onChange={() => onChange(r)} className="accent-ink" />
+          <label key={r} className={`${CHOICE} ${value === r ? CHOICE_ON : CHOICE_OFF}`}>
+            <input type="radio" name={name} checked={value === r} onChange={() => onChange(r)} className="accent-navy" />
             {label}
           </label>
         ))}
@@ -417,7 +417,7 @@ function MemberItem({ m, onChanged }: { m: MemberRow; onChanged: () => Promise<v
               onCancel={backToDelete}
             />
           ) : (
-            <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
+            <div role="group" aria-label="אישור" className="rounded-xl border border-sand bg-sand-soft p-3 text-sm">
               <p className="mb-2">
                 <b>{shown}</b> כבר מושבת/ת, וההיסטוריה נשמרת. אי אפשר למחוק.
               </p>
@@ -481,7 +481,7 @@ function EditMember({ m, onDone, onDelete }: { m: MemberRow; onDone: (saved: boo
   };
 
   return (
-    <form onSubmit={save} className="grid gap-3 rounded-lg border border-line bg-paper p-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={save} className="grid gap-3 rounded-xl bg-sand-soft p-3 sm:grid-cols-2" noValidate>
       <p className="text-sm text-ink-soft sm:col-span-2">
         עריכת <bdi dir="ltr">{m.email}</bdi>
       </p>

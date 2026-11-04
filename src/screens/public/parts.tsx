@@ -5,6 +5,7 @@
 // least 44px tall.
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import seal from "../../assets/brand/ein-prat-blue.png";
 import { CommandError } from "../../data/commands";
 import type { LinkScope } from "../../data/links";
 import { publicDemo } from "../../data/publicEntry";
@@ -19,15 +20,17 @@ export function PublicFrame({ children }: { children: ReactNode }) {
   return (
     <Shell demo={publicDemo}>
       <div className="mx-auto max-w-2xl space-y-4 pb-16 print:max-w-none print:pb-0">
+        {/* the seal on the parchment, above the page's title (on paper too, small, at the top corner) */}
+        <img src={seal} alt="עין פרת" width={64} height={64} className="size-16 print:size-12" />
         {children}
         <footer className="space-y-1 border-t border-line pt-3 text-center text-sm text-ink-soft print:hidden">
           {/* a plain link: the host serves the static page */}
-          <a href="/privacy.html" className="inline-flex min-h-11 items-center underline hover:text-ink">
+          <a href="/privacy.html" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-navy">
             מדיניות פרטיות
           </a>
           {publicDemo && (
             <p>
-              <Link to="/settings/links" className="inline-flex min-h-11 items-center underline hover:text-ink">
+              <Link to="/settings/links" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-navy">
                 חזרה לקישורים של ההדגמה
               </Link>
             </p>
@@ -78,7 +81,7 @@ export function useLinkLoad<T>(read: () => Promise<T>) {
 export function LinkInvalid({ scope }: { scope: LinkScope }) {
   return (
     <Card>
-      <h2 className="mb-2 font-display text-lg font-semibold">הקישור לא בתוקף</h2>
+      <h2 className="mb-2 font-display text-xl font-extrabold text-navy">הקישור לא בתוקף</h2>
       <div className="space-y-2 text-ink-soft">
         <p>{errorMessage("link_invalid")}</p>
         <p>
@@ -99,7 +102,7 @@ export function LinkInvalid({ scope }: { scope: LinkScope }) {
 export function LinkMissing() {
   return (
     <Card>
-      <h2 className="mb-2 font-display text-lg font-semibold">הקישור לא שלם</h2>
+      <h2 className="mb-2 font-display text-xl font-extrabold text-navy">הקישור לא שלם</h2>
       <div className="space-y-2 text-ink-soft">
         <p>חסר בכתובת הקוד שאחרי הסימן #. פותחים שוב את הקישור מההודעה שקיבלת.</p>
         <p>
@@ -132,7 +135,7 @@ export function LoadFailed({ onRetry }: { onRetry: () => void }) {
   if (!online) {
     return (
       <div role="alert" data-needs-connection className="rounded-xl border border-bad/30 bg-bad/5 p-4 text-sm">
-        <p className="mb-1 font-semibold">הקישור הזה צריך חיבור לאינטרנט.</p>
+        <p className="mb-1 font-bold">הקישור הזה צריך חיבור לאינטרנט.</p>
         <p className="mb-2">הדף שלו לא נשמר במכשיר, ולכן בלי רשת הוא לא נפתח. כשהחיבור חוזר הוא נטען לבד, ואפשר גם ללחוץ «לנסות שוב».</p>
         <Button onClick={onRetry}>לנסות שוב</Button>
       </div>

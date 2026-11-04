@@ -13,7 +13,7 @@ import {
   DESIGNER_FIELD_LABEL, DESIGNER_FIELDS, type DesignerRow, designerCell, designerRows, designerTable, diffCount, diffSchedules, type ScheduleDiff,
 } from "../../exports/designer";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
-import { Button, Panel, useRunner } from "../settings/kit";
+import { Button, Panel, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH, useRunner } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
 import { OutputsTabs } from "./parts";
@@ -57,7 +57,7 @@ export function DesignerScreen({ port, me }: { port: DataPort; me: Me }) {
 
   const header = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <h2 className="font-display text-2xl font-extrabold">ייצוא למעצבת</h2>
+      <h2 className="font-display text-2xl font-extrabold text-navy">ייצוא למעצבת</h2>
       <EditionSelect />
       <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
     </div>
@@ -66,7 +66,7 @@ export function DesignerScreen({ port, me }: { port: DataPort; me: Me }) {
     return (
       <div className="mx-auto max-w-5xl space-y-4">
         {header}
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">הייצוא למעצבת שמור למדריך/ה של המחזור הזה.</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">הייצוא למעצבת שמור למדריך/ה של המחזור הזה.</p>
       </div>
     );
   }
@@ -147,19 +147,19 @@ function ScheduleTable({ rows, label }: { rows: DesignerRow[]; label: string }) 
   return (
     <table aria-label={label} className="w-full min-w-[44rem] border-collapse text-start text-sm">
       <thead>
-        <tr className="border-b border-line text-ink-soft">
+        <tr className={TABLE_HEAD}>
           {DESIGNER_FIELDS.map((f) => (
-            <th key={f} scope="col" className="px-2 py-1.5 text-start font-semibold">
+            <th key={f} scope="col" className={`${TABLE_TH} px-2 py-1.5`}>
               {DESIGNER_FIELD_LABEL[f]}
             </th>
           ))}
         </tr>
       </thead>
-      <tbody className="divide-y divide-line">
+      <tbody>
         {rows.map((r) => (
-          <tr key={r.lesson_id} className={r.kind === "memorial" ? "bg-amber-50" : ""}>
-            {DESIGNER_FIELDS.map((f) => (
-              <td key={f} className={`px-2 py-1.5 ${f === "title" || f === "speaker" || f === "category" ? "" : "whitespace-nowrap"}`}>
+          <tr key={r.lesson_id} className={`${TABLE_ROW} ${r.kind === "memorial" ? "bg-amber-50" : ""}`}>
+            {DESIGNER_FIELDS.map((f, i) => (
+              <td key={f} className={`px-2 py-1.5 ${f === "title" || f === "speaker" || f === "category" ? "" : "whitespace-nowrap"} ${i === 0 ? TABLE_KEY : ""}`}>
                 <bdi dir={f === "time" ? "ltr" : undefined}>{designerCell(r, f)}</bdi>
               </td>
             ))}
@@ -205,11 +205,11 @@ function Diff({ diff }: { diff: ScheduleDiff }) {
       )}
       {diff.changed.length > 0 && (
         <section aria-label="השתנו">
-          <h4 className="font-semibold">השתנו ({diff.changed.length})</h4>
+          <h4 className="font-bold text-navy">השתנו ({diff.changed.length})</h4>
           <ul className="space-y-2 text-sm">
             {diff.changed.map((c) => (
-              <li key={c.after.lesson_id} className="rounded-lg border border-line p-2">
-                <p className="font-semibold">{line(c.after)}</p>
+              <li key={c.after.lesson_id} className="rounded-lg border border-line bg-paper-light p-2">
+                <p className="font-bold text-navy">{line(c.after)}</p>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-2">
                   {c.fields.map((f) => (
                     <div key={f} className="contents" data-changed={f}>

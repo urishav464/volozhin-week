@@ -16,12 +16,12 @@ export function TopicMatrix({ model }: { model: GridModel }) {
         <tr>
           <td />
           {DAYS.map((d) => (
-            <th key={d} scope="col" className="w-9 font-semibold text-ink-soft">
+            <th key={d} scope="col" className="h-6 w-9 rounded bg-sage font-bold text-ink">
               <span aria-hidden>{DAY_LETTERS[d]}</span>
               <span className="sr-only">{DAY_NAMES[d]}</span>
             </th>
           ))}
-          <th scope="col" className="ps-2 font-semibold text-ink-soft">
+          <th scope="col" className="h-6 rounded bg-sage px-2 font-bold text-ink">
             בשבוע
           </th>
         </tr>
@@ -29,7 +29,7 @@ export function TopicMatrix({ model }: { model: GridModel }) {
       <tbody>
         {weekTopics(model).map(({ category: c, count }) => (
           <tr key={c.id}>
-            <th scope="row" className="max-w-[8.5rem] pe-2 text-start font-normal leading-tight text-ink-soft">
+            <th scope="row" className="max-w-[8.5rem] pe-2 text-start font-bold leading-tight text-navy">
               <span aria-hidden className="me-1 inline-block h-3 w-1.5 rounded-sm align-[-1px]" style={{ backgroundColor: c.color }} />
               {c.name}
             </th>
@@ -46,7 +46,7 @@ export function TopicMatrix({ model }: { model: GridModel }) {
                 </td>
               );
             })}
-            <td className="ps-2 text-center font-semibold tabular-nums text-ink">{count}</td>
+            <td className="px-2 text-center font-bold tabular-nums text-navy">{count}</td>
           </tr>
         ))}
       </tbody>

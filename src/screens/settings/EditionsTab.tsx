@@ -166,8 +166,8 @@ function EditDates({ e, onDone }: { e: Edition; onDone: (saved: boolean) => void
     if (ok) onDone(true);
   };
   return (
-    <form onSubmit={save} className="grid gap-3 rounded-lg border border-line bg-paper p-3 sm:grid-cols-2" noValidate>
-      <p className="font-semibold sm:col-span-2">{e.label}</p>
+    <form onSubmit={save} className="grid gap-3 rounded-xl bg-sand-soft p-3 sm:grid-cols-2" noValidate>
+      <p className="font-bold text-navy sm:col-span-2">{e.label}</p>
       <DateFields id={id} date={date} setDate={setDate} time={time} setTime={setTime} />
       {problem && (
         <p role="alert" className="text-sm text-bad sm:col-span-2">
@@ -261,7 +261,7 @@ function StartEdition({
           המחזור <b>{opened}</b> נפתח, עם הרשת של 2026 וחדר «בית מדרש». עכשיו מוסיפים את הצוות.
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link to="/settings/team" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
+          <Link to="/settings/team" className="inline-flex min-h-11 items-center rounded-full bg-navy px-5 font-bold text-white transition-colors duration-150 hover:bg-navy-800">
             להוספת הצוות
           </Link>
           <Button onClick={again}>פתיחת מחזור נוסף</Button>

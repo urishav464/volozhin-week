@@ -11,7 +11,7 @@ function Text({ line }: { line: Line }) {
   );
 }
 
-const HEADING_CLASS = ["font-display text-2xl font-extrabold", "mt-5 font-display text-lg font-semibold", "mt-3 font-semibold"];
+const HEADING_CLASS = ["font-display text-2xl font-extrabold text-navy", "mt-6 font-display text-lg font-bold text-navy", "mt-3 font-bold text-ink"];
 
 /** `top`: the heading level a «#» becomes (the page around it has its own title). */
 export function Markdown({ source, top = 3 }: { source: string; top?: 2 | 3 | 4 }) {
@@ -42,7 +42,7 @@ export function Markdown({ source, top = 3 }: { source: string; top?: 2 | 3 | 4 
             );
           case "bullets":
             return (
-              <ul key={i} className="list-disc space-y-1 ps-5">
+              <ul key={i} className="list-disc space-y-1 ps-5 marker:text-olive">
                 {b.items.map((l, j) => (
                   <li key={j}>
                     <Text line={l} />
@@ -52,7 +52,7 @@ export function Markdown({ source, top = 3 }: { source: string; top?: 2 | 3 | 4 
             );
           case "numbers":
             return (
-              <ol key={i} className="list-decimal space-y-1 ps-5">
+              <ol key={i} className="list-decimal space-y-1 ps-5 marker:font-bold marker:text-olive">
                 {b.items.map((l, j) => (
                   <li key={j}>
                     <Text line={l} />

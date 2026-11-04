@@ -9,14 +9,14 @@ export function KnowledgeTabs({ actor }: { actor: Actor }) {
   const items = [{ to: "/knowledge", label: "ידע ואבני דרך" }, ...(actor.role !== "logistics" ? [{ to: "/knowledge/summary", label: "סיכום המחזור" }] : [])];
   if (items.length < 2) return null;
   return (
-    <nav aria-label="ידע" className="flex flex-wrap gap-1 print:hidden">
+    <nav aria-label="ידע" className="flex flex-wrap gap-1.5 print:hidden">
       {items.map((i) => (
         <NavLink
           key={i.to}
           to={i.to}
           end
           className={({ isActive }) =>
-            `inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold ${isActive ? "bg-ink text-paper" : "border border-line bg-card text-ink hover:bg-line/50"}`
+            `inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-bold transition-colors duration-150 ${isActive ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-navy hover:border-navy/50 hover:bg-accent-soft"}`
           }
         >
           {i.label}

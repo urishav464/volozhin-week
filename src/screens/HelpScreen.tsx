@@ -7,7 +7,7 @@ import { Markdown } from "./Markdown";
 
 export function HelpScreen() {
   return (
-    <article aria-label="מדריך קצר לצוות" className="mx-auto max-w-3xl rounded-xl border border-line bg-card p-4 pb-8 shadow-sm sm:p-6">
+    <article aria-label="מדריך קצר לצוות" className="mx-auto max-w-3xl rounded-xl border border-line bg-card p-4 pb-8 shadow-sm sm:p-8">
       <Markdown source={guide} top={2} />
     </article>
   );

@@ -166,7 +166,7 @@ function CallPointsPanel({ edition, onSaved }: { edition: Edition; onSaved: () =
       </form>
 
       <section aria-label="תצוגה מקדימה של הנקודות" className="mt-4 space-y-2 border-t border-line pt-4">
-        <h4 className="font-display font-semibold">תצוגה מקדימה</h4>
+        <h4 className="font-display font-bold text-navy">תצוגה מקדימה</h4>
         <p className="text-xs text-ink-soft">כך יראו אותן בשיחה שלך: ה-X הוא השם שלך. שום דבר מזה לא נשמר.</p>
         <Choice
           name={`${id}-sg`}
@@ -186,7 +186,7 @@ function CallPointsPanel({ edition, onSaved }: { edition: Edition; onSaved: () =
             ))}
           </ul>
         )}
-        <p data-call-preview className="whitespace-pre-line break-words rounded-lg border border-line bg-paper p-3 text-sm leading-relaxed">
+        <p data-call-preview className="whitespace-pre-line break-words rounded-lg border border-line bg-paper-light p-3 text-sm leading-relaxed">
           {preview.text}
         </p>
       </section>
@@ -308,7 +308,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
       <form onSubmit={(e) => void save(e)} aria-label="נוסח הודעת הסיכום" className="space-y-3" noValidate>
         {/* the badge above says it is empty, and blocking: this says only what to do */}
         {!saved && (
-          <p className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">מדביקים את הנוסח של אשתקד (מתחתית גיליון המעקב), בלי טלפונים, ומחליפים בו את פרטי השיעור במשתנים.</p>
+          <p className="rounded-lg bg-accent-soft p-3 text-sm text-ink">מדביקים את הנוסח של אשתקד (מתחתית גיליון המעקב), בלי טלפונים, ומחליפים בו את פרטי השיעור במשתנים.</p>
         )}
         <Field id={`${id}-text`} label="הנוסח" hint={`עד ${STAGE_LIMITS.template.toLocaleString("he-IL")} תווים. שורות ריקות נשמרות כמו שהן.`}>
           <textarea
@@ -323,7 +323,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
           />
         </Field>
 
-        <Fold title="המשתנים והצורות" hint={MESSAGE_VARIABLES.length + FORMS.length} defaultOpen={!saved} className="rounded-lg border border-line bg-paper px-3 py-0.5">
+        <Fold title="המשתנים והצורות" hint={MESSAGE_VARIABLES.length + FORMS.length} defaultOpen={!saved} className="rounded-lg bg-sage-soft px-3 py-0.5">
           <p className="mb-2 text-xs text-ink-soft">הקשה על משתנה מכניסה אותו לנוסח, במקום הסמן.</p>
           <ul aria-label="משתנים" className="space-y-1.5">
             {MESSAGE_VARIABLES.map((v) => (
@@ -335,7 +335,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
               </li>
             ))}
           </ul>
-          <ul aria-label="צורות" className="mt-3 space-y-1.5 border-t border-line pt-3">
+          <ul aria-label="צורות" className="mt-3 space-y-1.5 border-t border-sage pt-3">
             {FORMS.map((f) => (
               <li key={f.label} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <Button onClick={() => insert(f.insert, f.caret)} aria-label={`הוספת ${f.label} לנוסח`}>
@@ -379,7 +379,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
 
       {text.trim() && (
         <section aria-label="תצוגה מקדימה של הנוסח" className="mt-4 space-y-2 border-t border-line pt-4">
-          <h4 className="font-display font-semibold">תצוגה מקדימה, על שיעור לדוגמה</h4>
+          <h4 className="font-display font-bold text-navy">תצוגה מקדימה, על שיעור לדוגמה</h4>
           <p className="text-xs text-ink-soft">
             שני 20:00, «כותרת לדוגמה», «חדר לדוגמה»{paid === "paid" ? `, ${SAMPLE_AMOUNT} לדוגמה` : ""}. התאריך הוא של המחזור{edition.start_date ? "" : " (עוד TBD)"}. שום דבר מזה לא נשמר.
           </p>
@@ -406,7 +406,7 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
               </ul>
             </div>
           )}
-          <div className="whitespace-pre-wrap break-words rounded-lg border border-line bg-paper p-3 text-sm leading-relaxed">{preview.text}</div>
+          <div className="whitespace-pre-wrap break-words rounded-lg border border-line bg-paper-light p-3 text-sm leading-relaxed">{preview.text}</div>
         </section>
       )}
     </Panel>
@@ -464,7 +464,7 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
           ברשימת המלווים, ליד כל שיעור, מופיעים הניסוחים שחלים עליו, בסדר שלהם, ואחריהם ההערה של השיעור. לעולם לא הסכום.
         </p>
         {list.length === 0 ? (
-          <p className="rounded-lg border border-accent bg-accent-soft p-3 text-sm">מדביקים את הניסוחים מקובץ המלווים של אשתקד, בלי שמות וטלפונים.</p>
+          <p className="rounded-lg bg-accent-soft p-3 text-sm text-ink">מדביקים את הניסוחים מקובץ המלווים של אשתקד, בלי שמות וטלפונים.</p>
         ) : (
           <Rows label="הניסוחים" head={["מתי", "ניסוח"]}>
             {list.map((p, i) => (
@@ -502,7 +502,7 @@ function PhrasesPanel({ edition, onSaved }: { edition: Edition; onSaved: () => P
             ))}
           </Rows>
         )}
-        <form onSubmit={(e) => void add(e)} aria-label="הוספת ניסוחים" className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
+        <form onSubmit={(e) => void add(e)} aria-label="הוספת ניסוחים" className="space-y-3 rounded-xl bg-sand-soft p-3" noValidate>
           <Field id={`${id}-when`} label="מתי הניסוח חל">
             <select id={`${id}-when`} value={when} onChange={(e) => setWhen(e.target.value as DutyWhen)} className={INPUT}>
               {DUTY_WHENS.map((w) => (

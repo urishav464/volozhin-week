@@ -14,7 +14,7 @@ import { statusLabel, vettingLabel } from "../lib/labels";
 import { DEFAULT_MAX_CATEGORY_PER_DAY } from "../rules/warnings";
 import { Button, Confirm, Fold, INPUT, useFocusBack } from "../screens/settings/kit";
 import { CallPoints, CallResults } from "../screens/speakers/call";
-import { Chip, GenderDot, STAGE_DOT } from "./bits";
+import { Chip, GenderDot, NO_TOPIC_COLOR, STAGE_DOT } from "./bits";
 import { needText } from "./DayHeader";
 import { rowActive } from "./layout";
 import { type Fit, type GridModel, POOL_SECTION_LABEL, type PoolSection, fitFor, guessedCategory, pitchSpeaker, poolSection, searchKey, speakerMatches } from "./model";
@@ -52,7 +52,7 @@ export function Sheet({
   title: ReactNode;
   /** The dialog's name for a screen reader, when the heading is not plain text («שיעור סגור»). */
   label?: string;
-  /** A band across the top in this colour: the lesson's topic, the same as its card's stripe. */
+  /** A band across the top in this colour: the lesson's topic, the same as its card's stripe. Without one, the band is the brand's navy. */
   accent?: string | null;
   subtitle?: ReactNode;
   onClose: () => void;
@@ -95,11 +95,17 @@ export function Sheet({
       aria-label={label ?? (typeof title === "string" ? title : undefined)}
       className={
         wide
-          ? "fixed inset-y-0 end-0 z-40 flex w-[26rem] max-w-full flex-col border-s border-line bg-paper shadow-lg outline-none"
-          : "fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col rounded-t-2xl border-t border-line bg-paper shadow-2xl outline-none"
+          ? "fixed inset-y-0 end-0 z-40 flex w-[26rem] max-w-full flex-col border-s border-line bg-paper-light shadow-xl outline-none"
+          : // overflow-hidden: the band follows the rounded top instead of standing out past its corners
+            "fixed inset-x-0 bottom-0 z-40 flex max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border-t border-line bg-paper-light shadow-2xl outline-none"
       }
     >
-      {accent && <span aria-hidden data-sheet-accent className={`h-1.5 shrink-0 ${wide ? "" : "rounded-t-2xl"}`} style={{ backgroundColor: accent }} />}
+      {/* the topic's band when the panel is a lesson's; the brand's navy otherwise */}
+      {accent ? (
+        <span aria-hidden data-sheet-accent className="h-1.5 shrink-0" style={{ backgroundColor: accent }} />
+      ) : (
+        <span aria-hidden className="h-1.5 shrink-0 bg-navy" />
+      )}
       {!wide && <span aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line" />}
       <header className="flex items-start gap-2 border-b border-line px-5 pb-3 pt-4">
         {onBack && (
@@ -107,16 +113,16 @@ export function Sheet({
             type="button"
             onClick={onBack}
             aria-label={backLabel ? `חזרה ל${backLabel}` : "חזרה"}
-            className="-ms-2 -mt-1 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm font-semibold text-ink-soft hover:bg-line/50"
+            className="-ms-2 -mt-1 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-3 text-sm font-semibold text-navy hover:bg-accent-soft"
           >
             <span aria-hidden>→</span> חזרה
           </button>
         )}
         <div className="min-w-0 flex-1">
-          <h2 className="font-display text-xl font-bold leading-tight">{title}</h2>
+          <h2 className="font-display text-xl font-extrabold leading-tight text-navy">{title}</h2>
           {subtitle && <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-soft">{subtitle}</div>}
         </div>
-        <button type="button" onClick={onClose} aria-label="סגירה" className="-me-2 -mt-1 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-md text-xl leading-none hover:bg-line/50">
+        <button type="button" onClick={onClose} aria-label="סגירה" className="-me-2 -mt-1 ms-auto inline-flex size-11 shrink-0 items-center justify-center rounded-full text-xl leading-none text-navy hover:bg-accent-soft">
           ×
         </button>
       </header>
@@ -134,7 +140,7 @@ export function Section({ title, count, aside, label, children }: { title: strin
   return (
     <section aria-label={label ?? title}>
       <div className="mb-2.5 flex min-h-8 items-center gap-2">
-        <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+        <h3 className="text-[15px] font-bold text-navy">{title}</h3>
         {count != null && count !== false && <span className="text-sm tabular-nums text-ink-faint">{count}</span>}
         {aside && <div className="ms-auto flex items-center gap-1 text-sm text-ink-soft">{aside}</div>}
       </div>
@@ -144,7 +150,7 @@ export function Section({ title, count, aside, label, children }: { title: strin
 }
 
 /** A small fact beside a panel's title: the day and hour, the room, a parallel lesson's reason. */
-const META_TONE = { plain: "bg-line/50 text-ink-soft", warn: "bg-amber-100 text-amber-900", bad: "bg-bad/10 text-bad" };
+const META_TONE = { plain: "bg-sand-soft text-ink-soft", warn: "bg-amber-100 text-amber-900", bad: "bg-bad/10 text-bad" };
 
 export function Meta({ children, tone = "plain" }: { children: ReactNode; tone?: keyof typeof META_TONE }) {
   return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${META_TONE[tone]}`}>{children}</span>;
@@ -155,7 +161,7 @@ export function WarningList({ items }: { items: { key: string; severity: "info" 
   return (
     <ul className="space-y-1.5" aria-label="אזהרות">
       {items.map((w) => (
-        <li key={w.key} className={`flex gap-2 rounded-lg border-s-4 px-3 py-2 text-sm leading-snug ${w.severity === "warn" ? "border-amber-400 bg-amber-50 text-amber-950" : "border-sky-400 bg-sky-50 text-sky-950"}`}>
+        <li key={w.key} className={`flex gap-2 rounded-lg px-3 py-2 text-sm leading-snug ring-1 ring-inset ${w.severity === "warn" ? "bg-amber-50 text-amber-950 ring-amber-200" : "bg-sky-soft text-navy ring-sky/25"}`}>
           <span aria-hidden>{w.severity === "warn" ? "⚠" : "ℹ"}</span>
           <span>{w.message}</span>
         </li>
@@ -223,7 +229,8 @@ export function LessonPanel(props: LessonPanelProps) {
       wide={props.wide}
       title={lead ? <SpeakerTitle speaker={lead} onOpen={() => actions.openSpeaker(lead.id)} /> : name}
       label={name}
-      accent={l.kind === "memorial" ? "#fcd34d" : topic?.color}
+      // a lesson's panel always wears its topic (the neutral when it has none), so the brand's navy never reads as one
+      accent={l.kind === "memorial" ? "#fcd34d" : (topic?.color ?? NO_TOPIC_COLOR)}
       onClose={props.onClose}
       subtitle={
         <>
@@ -419,14 +426,14 @@ function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions 
   }, [shape]);
 
   return (
-    <li ref={card} className="rounded-xl border border-line bg-card px-3 py-2.5" data-pitch-id={p.id} data-status={status}>
+    <li ref={card} className="rounded-xl border border-line bg-card px-3 py-2.5 shadow-sm" data-pitch-id={p.id} data-status={status}>
       <div className="flex items-center gap-2">
         <GenderDot gender={g} />
         {s ? (
           <button
             type="button"
             onClick={() => actions.openSpeaker(s.id)}
-            className={`inline-flex min-h-11 min-w-0 items-center truncate text-start text-[15px] font-semibold hover:underline hover:underline-offset-4 lg:min-h-9 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
+            className={`inline-flex min-h-11 min-w-0 items-center truncate text-start text-[15px] font-bold text-navy hover:underline hover:underline-offset-4 lg:min-h-9 ${p.state === "declined" ? "line-through opacity-60" : ""}`}
           >
             {displayName(s)}
           </button>
@@ -875,7 +882,7 @@ function ChooserRow({
     <li data-chooser-speaker={s.id} className="flex items-center gap-2 border-s-[3px] py-1.5 ps-2" style={{ borderInlineStartColor: shown?.color ?? "transparent" }}>
       <GenderDot gender={s.gender} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">{displayName(s)}</span>
+        <span className="block truncate text-sm font-bold text-navy">{displayName(s)}</span>
         {notes.length > 0 && (
           <span className="block text-[11px] leading-snug text-ink-soft">
             {notes.map((n, i) => (

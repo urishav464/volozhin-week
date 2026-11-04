@@ -97,7 +97,7 @@ export function ArchivePanel({ data, editions, onDownloaded }: { data: DataPort;
       </div>
       <div className="mt-3 space-y-1">
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-          <input type="checkbox" checked={withSources} onChange={(e) => setWithSources(e.target.checked)} disabled={busy === "archive"} className="size-4 accent-ink" />
+          <input type="checkbox" checked={withSources} onChange={(e) => setWithSources(e.target.checked)} disabled={busy === "archive"} className="size-4 accent-navy" />
           כולל קבצי המקורות
         </label>
         {withSources && (

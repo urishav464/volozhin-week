@@ -24,33 +24,38 @@ function Schedule({ view: v }: { view: ScheduleView }) {
     <>
       <PrintSetup landscape={false} title={title} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
-        <h2 className="min-w-0 flex-1 font-display text-2xl font-extrabold">{title}</h2>
+        <h2 className="min-w-0 flex-1 font-display text-2xl font-extrabold text-navy">{title}</h2>
         {v.rows.length > 0 && <Button onClick={() => window.print()}>הדפסה</Button>}
       </div>
       {!v.edition.start_date && <p className="text-sm text-ink-soft">תאריך השבוע עוד לא נקבע (TBD).</p>}
-      {v.rows.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">עוד אין שיעורים סגורים בלו"ז.</p>}
+      {v.rows.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">עוד אין שיעורים סגורים בלו"ז.</p>}
       {days.map((day) => {
         const rows = v.rows.map((e, i) => ({ e, r: designerRow(e, i) })).filter((x) => x.e.day === day);
         const date = rows[0].r.date;
         return (
-          <section key={day} aria-label={`יום ${DAY_NAMES[day]}`} className="rounded-xl border border-line bg-card p-4 print:break-inside-auto print:rounded-none print:border-0 print:p-0">
-            <h3 className="mb-2 font-display text-lg font-semibold print:break-after-avoid">
+          <section
+            key={day}
+            aria-label={`יום ${DAY_NAMES[day]}`}
+            className="rounded-xl border border-line bg-card p-4 shadow-sm print:break-inside-auto print:rounded-none print:border-0 print:p-0 print:shadow-none"
+          >
+            <h3 className="mb-2 font-display text-lg font-bold text-navy print:break-after-avoid">
               יום {DAY_NAMES[day]}
               {date !== "TBD" && <span className="font-sans text-base font-normal text-ink-soft"> · {date}</span>}
             </h3>
-            <ol className="divide-y divide-line">
+            {/* the brand's schedule table: sage hairlines between the rows, the key column (the time) bold navy */}
+            <ol className="divide-y divide-sage/60 border-t-2 border-sage">
               {rows.map(({ e, r }, i) => (
                 <li
                   key={i}
                   data-schedule-row
                   className={`grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 py-2 sm:grid-cols-[7rem_minmax(0,1fr)_minmax(0,12rem)] ${r.kind === "memorial" ? "bg-amber-50 px-1" : ""}`}
                 >
-                  <div className="whitespace-nowrap tabular-nums">
+                  <div className="whitespace-nowrap font-bold text-navy tabular-nums">
                     <bdi dir="ltr">{r.time}</bdi>
-                    {e.start_min >= 1440 && day < 4 && <span className="block text-xs text-ink-soft">{dayLabel(day, e.start_min)}</span>}
+                    {e.start_min >= 1440 && day < 4 && <span className="block text-xs font-normal text-ink-soft">{dayLabel(day, e.start_min)}</span>}
                   </div>
                   <div className="min-w-0">
-                    {r.speaker && <p className="font-semibold break-words">{r.speaker}</p>}
+                    {r.speaker && <p className="font-bold break-words">{r.speaker}</p>}
                     <p className="break-words">{r.title}</p>
                   </div>
                   <p className="col-start-2 text-sm text-ink-soft break-words sm:col-start-auto">

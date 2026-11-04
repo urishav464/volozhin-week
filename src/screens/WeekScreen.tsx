@@ -32,7 +32,7 @@ import { CreateSpeaker } from "./speakers/CreateSpeaker";
 import { LessonStages } from "./stages/LessonStages";
 import { MemorialSlotPanel } from "./memorial/SlotPanel";
 import { DraftFiles } from "./stages/SourceFiles";
-import { Fold } from "./settings/kit";
+import { Button, Fold } from "./settings/kit";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
 import { actorIn, useWeekStore } from "./weekStore";
 
@@ -54,6 +54,11 @@ const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משב
 export type WeekVisit = { place?: number; lesson?: number; stage?: StageKey } | null;
 type Toast = { kind: "ok" | "error"; text: string; undo?: () => Promise<void> } | null;
 type Offer = { speakerId: number; target: CellTarget; owner: string } | null;
+
+/** The toolbar's quiet pills (the pool drawer, «אזהרות»), and the progress legend's chips (the topics' legend stays a plain
+ *  line: as pills it would not fit one row beside an open panel, and the grid's height counts one). */
+const QUIET_PILL = "border-line bg-card text-navy hover:border-navy/40 hover:bg-accent-soft";
+const LEGEND_PILL = "inline-flex items-center gap-1 rounded-full border border-line bg-card px-2 py-0.5";
 
 const LENSES: [Lens, string][] = [
   ["diversity", "גיוון"],
@@ -283,12 +288,12 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
 
   if (problem === "none") {
     return (
-      <div className="mx-auto mt-8 max-w-lg rounded-xl border border-line bg-card p-5">
-        <h2 className="mb-2 font-display text-lg font-semibold">עוד לא נפתח מחזור</h2>
+      <div className="mx-auto mt-8 max-w-lg rounded-xl border border-line bg-card p-5 shadow-sm">
+        <h2 className="mb-2 font-display text-xl font-extrabold text-navy">עוד לא נפתח מחזור</h2>
         {me.global_admin ? (
           <>
             <p className="mb-4 text-ink-soft">פותחים את המחזור של השנה בהגדרות, ואז מוסיפים את הצוות.</p>
-            <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-lg bg-ink px-4 font-semibold text-paper hover:bg-ink/90">
+            <Link to="/settings/edition" className="inline-flex min-h-11 items-center rounded-full bg-navy px-5 font-semibold text-white hover:bg-navy-800">
               לפתיחת מחזור
             </Link>
           </>
@@ -326,7 +331,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
             setPlacingId(null);
             store.select(Number(e.target.value));
           }}
-          className="rounded-lg border border-line bg-card px-2 py-1 font-display text-lg font-semibold"
+          className="rounded-lg border border-line bg-card px-2 py-1 font-display text-lg font-extrabold text-navy focus:border-navy"
         >
           {editions.map((e) => (
             <option key={e.id} value={e.id}>
@@ -336,31 +341,38 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           ))}
         </select>
       ) : (
-        <h2 className="font-display text-lg font-semibold">{model.week.edition.label}</h2>
+        <h2 className="font-display text-lg font-extrabold text-navy">{model.week.edition.label}</h2>
       )}
-      <div role="radiogroup" aria-label="עדשה" className="flex overflow-hidden rounded-lg border border-line">
+      <div role="radiogroup" aria-label="עדשה" className="flex gap-0.5 rounded-full border border-line bg-card p-0.5">
         {LENSES.map(([key, label]) => (
-          <button key={key} type="button" role="radio" aria-checked={lens === key} onClick={() => setLens(key)} className={`px-3 text-sm ${wide ? "py-1" : "min-h-11"} ${lens === key ? "bg-ink text-paper" : "bg-card text-ink-soft"}`}>
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={lens === key}
+            onClick={() => setLens(key)}
+            className={`rounded-full px-3.5 text-sm font-semibold transition-colors ${wide ? "py-0.5" : "min-h-11"} ${lens === key ? "bg-navy text-white shadow-sm" : "text-ink-soft hover:bg-accent-soft hover:text-navy"}`}
+          >
             {label}
           </button>
         ))}
       </div>
       {wide && !roomy && (
-        <button type="button" onClick={() => setPoolOpen((v) => !v)} aria-pressed={poolOpen} className={`rounded-lg border px-3 py-1 text-sm ${poolOpen ? "border-ink bg-ink text-paper" : "border-line bg-card"}`}>
+        <button type="button" onClick={() => setPoolOpen((v) => !v)} aria-pressed={poolOpen} className={`rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors ${poolOpen ? "border-navy bg-navy text-white" : QUIET_PILL}`}>
           מאגר המרצים
         </button>
       )}
       {/* on a phone the bottom bar has «אזהרות» */}
       {wide && (
-        <button type="button" onClick={() => setPanel({ kind: "warnings" })} className="rounded-lg border border-line bg-card px-3 py-1 text-sm">
+        <button type="button" onClick={() => setPanel({ kind: "warnings" })} className={`rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors ${QUIET_PILL}`}>
           אזהרות <span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
         </button>
       )}
       {/* v13: the week's closed lessons, women and men, in the cells' pink and sky — each day's own is in its header and panel */}
       <span className="inline-flex flex-wrap items-center gap-1 text-xs text-ink-soft tabular-nums" aria-label="השבוע כולו" data-week-balance>
         השבוע:{" "}
-        <span className="rounded bg-need-f px-1.5 text-pink-900">{fmtCount(weekTotal.closed.f)} מרצות</span>{" "}
-        <span className="rounded bg-need-m px-1.5 text-sky-900">{fmtCount(weekTotal.closed.m)} מרצים</span>
+        <span className="rounded-full bg-need-f px-2 text-pink-900">{fmtCount(weekTotal.closed.f)} מרצות</span>{" "}
+        <span className="rounded-full bg-need-m px-2 text-sky-900">{fmtCount(weekTotal.closed.m)} מרצים</span>
         {unbalancedDays > 0 && <span className="font-semibold text-bad"> · {unbalancedDays === 1 ? "יום אחד לא מאוזן" : `${unbalancedDays} ימים לא מאוזנים`}</span>}
       </span>
     </div>
@@ -376,7 +388,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         <li key={c.id} className="inline-flex items-center gap-1">
           <span aria-hidden className="h-3 w-1.5 rounded-sm" style={{ backgroundColor: c.color }} />
           {c.name}
-          <span className={`font-semibold tabular-nums ${count ? "text-ink" : "text-ink-faint"}`}>{count}</span>
+          <span className={`font-bold tabular-nums ${count ? "text-navy" : "text-ink-faint"}`}>{count}</span>
         </li>
       ))}
     </ul>
@@ -393,7 +405,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           </LegendToggle>
         </div>
         {matrixOpen && (
-          <div id="topic-matrix" className="mt-2 w-fit max-w-full overflow-x-auto rounded-xl border border-line bg-card p-3">
+          <div id="topic-matrix" className="mt-2 w-fit max-w-full overflow-x-auto rounded-xl border border-line bg-card p-3 shadow-sm">
             <TopicMatrix model={model} />
           </div>
         )}
@@ -415,14 +427,14 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           type="button"
           aria-pressed={onlyOwner === m.key}
           onClick={() => setOnlyOwner((cur) => (cur === m.key ? null : m.key))}
-          className={`inline-flex items-center gap-1 rounded-full border ${wide ? "min-h-7 px-2" : "min-h-11 px-3"} ${onlyOwner === m.key ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
+          className={`inline-flex items-center gap-1 rounded-full border transition-colors ${wide ? "min-h-7 px-2" : "min-h-11 px-3"} ${onlyOwner === m.key ? "border-navy bg-navy font-semibold text-white" : "border-line bg-card text-ink-soft hover:border-navy/40 hover:text-navy"}`}
         >
-          <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: m.color }} />
+          <span aria-hidden className={`size-2.5 rounded-full ${onlyOwner === m.key ? "ring-1 ring-white/80" : ""}`} style={{ backgroundColor: m.color }} />
           {onlyOwner === m.key ? `רק של ${m.name}` : m.name}
         </button>
       ))}
       {onlyOwner != null && (
-        <button type="button" onClick={() => setOnlyOwner(null)} className={`px-1 text-ink-soft underline ${wide ? "" : "min-h-11"}`}>
+        <button type="button" onClick={() => setOnlyOwner(null)} className={`rounded-full px-2 font-semibold text-navy underline underline-offset-2 hover:bg-accent-soft ${wide ? "min-h-7" : "min-h-11"}`}>
           כולם
         </button>
       )}
@@ -431,9 +443,9 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
 
   // The progress lens: last year's colours on the cards (always shown), and what the five dots are (folded: read once).
   const tones = (
-    <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+    <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-1 text-xs text-ink-soft">
       {PROGRESS_LEGEND.map(([tone, label]) => (
-        <li key={tone} className="inline-flex items-center gap-1">
+        <li key={tone} className={LEGEND_PILL}>
           <span aria-hidden className={`size-3 rounded border border-line ${PROGRESS_TONE[tone]}`} />
           {label}
         </li>
@@ -483,11 +495,11 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const legend = diversityLegend || ownerLegend || progressLegend;
 
   const placingBanner = placing && (
-    <div role="status" className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-paper">
+    <div role="status" className="flex items-center gap-2 rounded-xl bg-navy px-3.5 py-2 text-sm text-white shadow-md">
       <span>
         משבצים את <b>{displayName(placing)}</b> — בחרו משבצת {wide ? "ברשת" : "ביום"}
       </span>
-      <button type="button" onClick={() => setPlacingId(null)} className="ms-auto rounded-md border border-paper/50 px-2 py-0.5">
+      <button type="button" onClick={() => setPlacingId(null)} className="ms-auto rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10">
         ביטול
       </button>
     </div>
@@ -506,7 +518,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           </div>
           {/* an open panel takes the pool's column, so the grid keeps its width */}
           {(roomy || poolOpen) && !panel && (
-            <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper p-3 pt-16 shadow-2xl"} aria-label="מאגר">
+            <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper-light p-3 pt-16 shadow-xl"} aria-label="מאגר">
               <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} dropTarget={!!drag && drag.item.kind !== "speaker"} />
             </aside>
           )}
@@ -522,14 +534,14 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
               </div>
             )}
           </div>
-          <nav aria-label="ניווט" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-line bg-card">
+          <nav aria-label="ניווט" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-line bg-card shadow-[0_-2px_10px_rgb(20_35_63/0.06)]">
             {(
               [
                 ["day", "יום"],
                 ["pool", "מאגר"],
               ] as const
             ).map(([key, label]) => (
-              <button key={key} type="button" aria-current={phoneTab === key ? "page" : undefined} onClick={() => setPhoneTab(key)} className={`py-3 text-sm font-semibold ${phoneTab === key ? "text-accent" : "text-ink-soft"}`}>
+              <button key={key} type="button" aria-current={phoneTab === key ? "page" : undefined} onClick={() => setPhoneTab(key)} className={`py-3 text-sm font-semibold ${phoneTab === key ? "text-navy shadow-[inset_0_3px_0_var(--color-navy)]" : "text-ink-soft"}`}>
                 {label}
               </button>
             ))}
@@ -633,14 +645,14 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       )}
 
       {offer && (
-        <div role="alertdialog" aria-label="המרצה בטיפול חבר/ת צוות" className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-card p-5 shadow-xl">
-            <p className="mb-1 font-semibold">{displayName(model.speakerById.get(offer.speakerId)!)} בטיפול {offer.owner}</p>
+        <div role="alertdialog" aria-label="המרצה בטיפול חבר/ת צוות" className="fixed inset-0 z-50 grid place-items-center bg-navy-900/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-line bg-card p-5 shadow-xl">
+            <p className="mb-1 font-bold text-navy">{displayName(model.speakerById.get(offer.speakerId)!)} בטיפול {offer.owner}</p>
             <p className="mb-4 text-sm text-ink-soft">אפשר להציע ל{offer.owner} את המשבצת הזו. הבעלות על הפנייה לא משתנה.</p>
             <div className="flex gap-2">
-              <button
-                type="button"
-                className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-paper"
+              <Button
+                kind="primary"
+                className="text-sm"
                 onClick={() => {
                   const o = offer;
                   setOffer(null);
@@ -648,28 +660,28 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
                 }}
               >
                 הצעה ל{offer.owner}
-              </button>
-              <button type="button" className="rounded-lg border border-line px-3 py-1.5 text-sm" onClick={() => setOffer(null)}>
+              </Button>
+              <Button className="text-sm" onClick={() => setOffer(null)}>
                 ביטול
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
       {drag && (
-        <div aria-hidden className="pointer-events-none fixed z-50 rounded-md bg-ink px-2 py-1 text-xs text-paper shadow-lg" style={{ left: drag.x + 12, top: drag.y + 12 }}>
+        <div aria-hidden className="pointer-events-none fixed z-50 rounded-full bg-navy px-2.5 py-1 text-xs font-semibold text-white shadow-lg" style={{ left: drag.x + 12, top: drag.y + 12 }}>
           {drag.label || "…"}
         </div>
       )}
 
       {toast && (
-        <div role={toast.kind === "error" ? "alert" : "status"} className={`fixed inset-x-0 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${wide ? "bottom-6" : "bottom-16"} ${toast.kind === "error" ? "bg-bad text-paper" : "bg-ink text-paper"}`}>
+        <div role={toast.kind === "error" ? "alert" : "status"} className={`fixed inset-x-0 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${wide ? "bottom-6" : "bottom-16"} ${toast.kind === "error" ? "bg-bad text-white" : "bg-navy text-white"}`}>
           <span>{toast.text}</span>
           {toast.undo && (
             <button
               type="button"
-              className="rounded-md border border-paper/50 px-2 py-0.5 font-semibold"
+              className="rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10"
               onClick={() => {
                 const u = toast.undo!;
                 setToast(null);
@@ -693,7 +705,7 @@ function LegendToggle({ open, onToggle, controls, children }: { open: boolean; o
       aria-expanded={open}
       aria-controls={controls}
       onClick={onToggle}
-      className="inline-flex min-h-7 items-center gap-1 rounded-md px-1.5 text-xs font-semibold text-ink-soft hover:bg-line/50 hover:text-ink"
+      className="inline-flex min-h-7 items-center gap-1 rounded-full px-2.5 text-xs font-semibold text-navy hover:bg-accent-soft"
     >
       {children}
       <span aria-hidden className={`transition-transform ${open ? "rotate-180" : ""}`}>

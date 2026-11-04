@@ -109,17 +109,17 @@ export function RolloverChecklist({
     <Panel title="מעבר לשנה הבאה" aside={`המחזור שנסגר: ${e.label}`}>
       <ol aria-label="מעבר לשנה הבאה" className="space-y-2">
         {steps.map((s) => (
-          <li key={s.n} data-step={s.n} data-done={s.done} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-paper px-3 py-2">
-            <span aria-hidden className={`grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold ${s.done ? "bg-ok text-paper" : "border border-line"}`}>
+          <li key={s.n} data-step={s.n} data-done={s.done} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-paper-light px-3 py-2">
+            <span aria-hidden className={`grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold ${s.done ? "bg-ok text-white" : "border border-navy/40 text-navy"}`}>
               {s.done ? "✓" : s.n}
             </span>
             <span className="min-w-0 flex-1">
-              <b>{s.title}</b>
+              <b className="text-navy">{s.title}</b>
               <span className="block text-sm text-ink-soft">{s.state}</span>
             </span>
             {s.action &&
               (s.action.to ? (
-                <Link to={s.action.to} className="inline-flex min-h-11 items-center rounded-lg border border-line bg-card px-3 text-sm font-semibold hover:bg-line/50">
+                <Link to={s.action.to} className="inline-flex min-h-11 items-center rounded-full border border-navy bg-card px-3 font-bold text-navy transition-colors duration-150 hover:bg-accent-soft sm:px-4">
                   {s.action.label}
                 </Link>
               ) : (
@@ -127,7 +127,7 @@ export function RolloverChecklist({
               ))}
           </li>
         ))}
-        <li data-step={5} className="rounded-lg border border-line bg-paper px-3 py-0.5">
+        <li data-step={5} className="rounded-lg border border-line bg-paper-light px-3 py-0.5">
           <Fold title="מה עובר לשנה הבאה" hint={CARRIED.length}>
             <ul className="list-disc ps-5 text-sm">
               {CARRIED.map((t) => (
@@ -147,7 +147,7 @@ export function DeactivateOption({ value, onChange, current }: { value: boolean;
   return (
     <div className="min-w-0">
       <label className="inline-flex min-h-11 cursor-pointer items-start gap-2 py-2">
-        <input type="checkbox" checked={value} onChange={(ev) => onChange(ev.target.checked)} className="mt-1 size-4 shrink-0 accent-ink" />
+        <input type="checkbox" checked={value} onChange={(ev) => onChange(ev.target.checked)} className="mt-1 size-4 shrink-0 accent-navy" />
         <span>
           להשבית את חברי הצוות של המחזור הקודם (מלבד אדמינים) <Badge tone="accent">הצעה</Badge>
           <span className="block text-xs text-ink-soft">
@@ -168,14 +168,14 @@ function DryRun({ deactivate, setDeactivate }: { deactivate: boolean; setDeactiv
   const p = preview?.p;
   return (
     <div className="mt-4 space-y-2 border-t border-line pt-3">
-      <h4 className="font-semibold">הרצה יבשה: מה יקרה בפתיחת המחזור הבא</h4>
+      <h4 className="font-bold text-navy">הרצה יבשה: מה יקרה בפתיחת המחזור הבא</h4>
       <p className="text-sm text-ink-soft">שום דבר לא נכתב: רק מספרים, כדי לתרגל לפני שפותחים באמת.</p>
       <DeactivateOption value={deactivate} onChange={(v) => { setDeactivate(v); setPreview(null); }} current="המחזור הנוכחי" />
       <Button onClick={() => void go()} busy={busy === "preview"} busyLabel="בודק…">
         הרצה יבשה
       </Button>
       {p && (
-        <dl data-dry-run aria-label="תוצאת ההרצה היבשה" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-paper p-3 text-sm">
+        <dl data-dry-run aria-label="תוצאת ההרצה היבשה" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-sage-soft p-3 text-sm">
           <dt className="text-ink-soft">יעבור לארכיון</dt>
           <dd data-dry="archive">{p.archive.length === 0 ? "אף מחזור (אין מחזור אמיתי פעיל)" : p.archive.map((e) => e.label).join(", ")}</dd>
           <dt className="text-ink-soft">הנוסחים ואבני הדרך מ־</dt>

@@ -54,7 +54,7 @@ export function ApprovalsScreen({ port, me }: { port: DataPort; me: Me }) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 pb-20">
-      <h2 className="font-display text-2xl font-extrabold">אישורים</h2>
+      <h2 className="font-display text-2xl font-extrabold text-navy">אישורים</h2>
 
       <Panel title="הסכימו — ממתינים לאישורך" aside={agreed.length === 1 ? "ממתין/ה אחד/ת" : `${agreed.length} ממתינים`}>
         {agreed.length === 0 ? (
@@ -157,7 +157,7 @@ function PendingList({
         <input id={noteId} value={note} maxLength={LIMITS.vetted_note} onChange={(e) => onNote(e.target.value)} className={INPUT} />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
-        <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
+        <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-bold">
           <input
             type="checkbox"
             checked={all}
@@ -165,7 +165,7 @@ function PendingList({
               if (el) el.indeterminate = selected.size > 0 && !all;
             }}
             onChange={() => setSelected(all ? new Set() : new Set(speakers.map((s) => s.id)))}
-            className="size-5 accent-ink"
+            className="size-5 accent-navy"
           />
           סימון הכול
         </label>
@@ -179,7 +179,7 @@ function PendingList({
           {selected.size > 0 ? `אישור ${selected.size} מסומנים` : "אישור המסומנים"}
         </Button>
       </div>
-      <ul className="divide-y divide-line border-y border-line">
+      <ul className="divide-y divide-sage/60 border-y border-sage/60">
         {speakers.map((s) => (
           <PendingItem
             key={s.id}
@@ -238,7 +238,7 @@ function TaughtBatch({
   const genderNote =
     noGender === 0 ? "" : noGender === 1 && one ? " (חסר/ה לו/ה מגדר — משלימים בפרופיל לפני סגירה)" : ` (ל-${noGender} מהם חסר מגדר — משלימים בפרופיל לפני סגירה)`;
   return (
-    <div role="group" aria-label={`אישור באצווה: מי שלימד/ה ב-${edition.label}`} className="rounded-lg border border-line bg-paper p-3">
+    <div role="group" aria-label={`אישור באצווה: מי שלימד/ה ב-${edition.label}`} className="rounded-xl bg-sage-soft p-3">
       <p className="text-sm">
         <b>
           אישור באצווה: מי שלימד/ה ב-{edition.label}
@@ -305,15 +305,15 @@ function PendingItem({
     <li data-speaker-id={s.id} className="py-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center">
-          <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`סימון ${displayName(s)}`} className="size-5 accent-ink" />
+          <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`סימון ${displayName(s)}`} className="size-5 accent-navy" />
         </label>
         <div className="min-w-0 flex-1 basis-40">
-          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-semibold underline decoration-ink-faint underline-offset-4 hover:decoration-ink">
+          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-bold text-navy underline decoration-navy/30 underline-offset-4 hover:decoration-navy">
             <span>
               {displayName(s)}
               {s.disambiguator && <span className="font-normal text-ink-soft">&nbsp;({s.disambiguator})</span>}
             </span>
-            <span aria-hidden className="inline-block text-ink-soft">
+            <span aria-hidden className="inline-block text-navy">
               ‹
             </span>
           </button>
@@ -329,7 +329,7 @@ function PendingItem({
         </div>
       </div>
       {rejecting && (
-        <div role="group" aria-label={`דחיית ${displayName(s)}`} className="mt-2 space-y-2 rounded-lg border border-line bg-paper p-3">
+        <div role="group" aria-label={`דחיית ${displayName(s)}`} className="mt-2 space-y-2 rounded-xl bg-sand-soft p-3">
           <Field id={id} label="למה? (לא חובה, גלוי לצוות)">
             <input id={id} value={why} maxLength={LIMITS.vetted_note} onChange={(e) => setWhy(e.target.value)} className={INPUT} autoFocus />
           </Field>
@@ -399,7 +399,7 @@ function Payments({ port, week, busy, run, reload }: { port: DataPort; week: Wee
             <input id={noteId} value={note} maxLength={STAGE_LIMITS.decision_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
           </Field>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-bold">
               <input
                 type="checkbox"
                 checked={all}
@@ -407,7 +407,7 @@ function Payments({ port, week, busy, run, reload }: { port: DataPort; week: Wee
                   if (el) el.indeterminate = selected.size > 0 && !all;
                 }}
                 onChange={() => setSelected(all ? new Set() : new Set(rows.map((r) => r.lesson.id)))}
-                className="size-5 accent-ink"
+                className="size-5 accent-navy"
               />
               סימון כל הבקשות
             </label>
@@ -421,7 +421,7 @@ function Payments({ port, week, busy, run, reload }: { port: DataPort; week: Wee
               {picked.length === 1 ? "אישור בקשה מסומנת" : picked.length > 1 ? `אישור ${picked.length} בקשות מסומנות` : "אישור המסומנות"}
             </Button>
           </div>
-          <ul aria-label="בקשות שממתינות לאישור" className="divide-y divide-line border-y border-line">
+          <ul aria-label="בקשות שממתינות לאישור" className="divide-y divide-sage/60 border-y border-sage/60">
             {rows.map((r) => (
               <PaymentItem
                 key={r.lesson.id}
@@ -472,14 +472,14 @@ function PaymentItem({
     <li data-lesson-id={l.id} className="py-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center">
-          <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`סימון הבקשה של ${name}`} className="size-5 accent-ink" />
+          <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`סימון הבקשה של ${name}`} className="size-5 accent-navy" />
         </label>
         <div className="min-w-0 flex-1 basis-40">
-          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-semibold underline decoration-ink-faint underline-offset-4 hover:decoration-ink">
+          <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-bold text-navy underline decoration-navy/30 underline-offset-4 hover:decoration-navy">
             <span>
               {name} · {DAY_NAMES[l.day]} <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
             </span>
-            <span aria-hidden className="inline-block text-ink-soft">
+            <span aria-hidden className="inline-block text-navy">
               ‹
             </span>
           </button>
@@ -495,7 +495,7 @@ function PaymentItem({
         </div>
       </div>
       {rejecting && (
-        <div role="group" aria-label={`דחיית הבקשה של ${name}`} className="mt-2 space-y-2 rounded-lg border border-line bg-paper p-3">
+        <div role="group" aria-label={`דחיית הבקשה של ${name}`} className="mt-2 space-y-2 rounded-xl bg-sand-soft p-3">
           <Field id={id} label="למה? (לא חובה, גלוי לצוות)">
             <input id={id} value={why} maxLength={STAGE_LIMITS.decision_note} onChange={(e) => setWhy(e.target.value)} className={INPUT} autoFocus />
           </Field>

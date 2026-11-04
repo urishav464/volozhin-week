@@ -93,6 +93,23 @@ body {
   outline-offset: 2px;
 }
 
+/* On Prat Navy (the header) a navy ring would vanish: gold there — one of gold's few places (4.8:1 on navy). */
+.on-navy :focus-visible {
+  outline-color: var(--color-gold);
+}
+
+/* Restrained motion (the brand's rule): whoever asks the system for less motion gets none. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* A side panel open on a wide screen (src/grid/Panels.tsx, Sheet): the whole page — banner, header,
    content — gives it its column, so nothing runs under it. */
 @media (min-width: 1024px) {

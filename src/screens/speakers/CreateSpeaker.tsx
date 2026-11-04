@@ -183,9 +183,9 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
             <>
               <ul className="space-y-1.5">
                 {shown.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-line bg-card px-3 py-2">
+                  <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-card px-3 py-2 shadow-sm">
                     <span className="min-w-0 flex-1 basis-40">
-                      <span className="block font-semibold break-words">
+                      <span className="block font-bold text-navy break-words">
                         {displayName(m)}
                         {m.disambiguator && <span className="font-normal text-ink-soft"> ({m.disambiguator})</span>}
                       </span>
@@ -260,13 +260,13 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
             />
             {actor.canEdit && (
               <label className="flex min-h-11 cursor-pointer items-center gap-2">
-                <input type="checkbox" checked={claim} onChange={(e) => setClaim(e.target.checked)} className="size-5 accent-ink" />
+                <input type="checkbox" checked={claim} onChange={(e) => setClaim(e.target.checked)} className="size-5 accent-navy" />
                 אני מטפל/ת במרצה (ב«המרצים שלי»)
               </label>
             )}
             {actor.global && (
               <label className="flex min-h-11 cursor-pointer items-center gap-2">
-                <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} className="size-5 accent-ink" />
+                <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} className="size-5 accent-navy" />
                 {`לאשר כבר עכשיו (אחרת: ${byGender(form.gender, "ממתין", "ממתינה")} לאישור)`}
               </label>
             )}

@@ -31,7 +31,7 @@ import {
 import { labelKey } from "../../data/importRules";
 import { readXlsx, type XlsxBook } from "../../import/xlsxRead";
 import { CandidatesPreview, DoubleGroups, EscortsPreview, LessonsPreview, LinesTable, SourcesTable, SpeakersPreview, TopicsTable } from "./importParts";
-import { Badge, Button, Confirm, Field, INPUT, Panel, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, Field, INPUT, Panel, useFocusBack, useSettings } from "./kit";
 
 const DEFAULT_SOURCE: Record<ImportKind, string> = { candidates: "brainstorm-5786", tracking: "tracking-5786", escorts: "" };
 const SOURCE_SAID: Record<GridSource, string> = { html: "מהדבקה", text: "מהדבקה", xlsx: "מקובץ Excel", docx: "מקובץ Word", sample: "מהנתונים לדוגמה" };
@@ -410,11 +410,11 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
           להריץ שוב את אותו ייבוא: מרצה שכבר במאגר מושלם/ת ולא נוסף/ה שוב, ומחזור ארכיון באותו שם מוחלף.
         </p>
         <fieldset className="mt-3 min-w-0">
-          <legend className="mb-1 text-sm font-semibold">מה מייבאים?</legend>
+          <legend className="mb-1 text-sm font-bold text-ink">מה מייבאים?</legend>
           <div className="flex flex-wrap gap-1.5">
             {(Object.keys(KIND_LABEL) as ImportKind[]).map((k) => (
-              <label key={k} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${kind === k ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-                <input type="radio" name={`${id}-kind`} checked={kind === k} onChange={() => chooseKind(k)} className="accent-ink" />
+              <label key={k} className={`${CHOICE} ${kind === k ? CHOICE_ON : CHOICE_OFF}`}>
+                <input type="radio" name={`${id}-kind`} checked={kind === k} onChange={() => chooseKind(k)} className="accent-navy" />
                 {KIND_LABEL[k]}
               </label>
             ))}
@@ -452,7 +452,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               <div className="flex flex-wrap items-center gap-2">
                 {typed.trim() && <Button onClick={readTyped}>קריאת הטקסט שהוקלד</Button>}
                 {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
-                <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-line bg-paper px-3 font-semibold hover:bg-line/50 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
+                <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-navy bg-card px-3 font-bold text-navy transition-colors duration-150 hover:bg-accent-soft sm:px-4 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
                   העלאת קובץ xlsx או docx
                   <input type="file" accept=".xlsx,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => void onFile(e)} className="sr-only" />
                 </label>
@@ -560,8 +560,8 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
               const escortCol = escortCols.has(i);
               const samples = escortCol ? [] : rows.map((r) => r.cells[i]).filter(Boolean).slice(0, 2);
               return (
-                <li key={i} className="min-w-0 rounded-lg border border-line bg-paper p-2.5">
-                  <label htmlFor={`${id}-col-${i}`} className="block text-sm font-semibold break-words">
+                <li key={i} className="min-w-0 rounded-lg border border-line bg-paper-light p-2.5">
+                  <label htmlFor={`${id}-col-${i}`} className="block text-sm font-bold break-words text-navy">
                     {n}
                   </label>
                   <p className="mb-1 truncate text-xs text-ink-soft" title={samples.join(" · ")}>
@@ -618,7 +618,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
             )}
             {kind !== "escorts" && (
               <label className="inline-flex min-h-11 cursor-pointer items-start gap-2 self-end">
-                <input type="checkbox" checked={genderFromTitle} onChange={(e) => setGenderFromTitle(e.target.checked)} className="mt-1 size-5 accent-ink" />
+                <input type="checkbox" checked={genderFromTitle} onChange={(e) => setGenderFromTitle(e.target.checked)} className="mt-1 size-5 accent-navy" />
                 <span>
                   מגדר מהתואר: הרב — זכר, הרבנית — נקבה <Badge tone="accent">הצעה</Badge>
                   <span className="block text-xs text-ink-soft">בלי תואר כזה המגדר נשאר לא ידוע. לעולם לא מנחשים לפי שם.</span>

@@ -65,7 +65,7 @@ export function MemorialSlotPanel({ port, week, lesson: l, actor, notify, clear,
   const liaison = l.escort_roster_id != null ? (week.roster.find((r) => r.id === l.escort_roster_id)?.full_name ?? "חניך/ה שנמחק/ה") : null;
   const files = <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />;
   const link = (
-    <Link to="/memorial" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-2">
+    <Link to="/memorial" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-2 hover:text-navy-800">
       {actor.isAdmin ? "לשיבוץ ולעריכה ב«זמני זיכרון»" : "למסך «זמני זיכרון»"}
     </Link>
   );

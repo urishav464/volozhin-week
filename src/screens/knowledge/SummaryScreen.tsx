@@ -20,7 +20,7 @@ import type { Category } from "../../domain/types";
 import { DAY_NAMES } from "../../domain/time";
 import { NO_TOPIC_COLOR } from "../../grid/bits";
 import { PrintSetup } from "../outputs/parts";
-import { Button, Panel } from "../settings/kit";
+import { Button, Panel, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
 import { KnowledgeTabs } from "./tabs";
@@ -53,7 +53,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
   if (actor.role === "logistics") {
     return (
       <div className="mx-auto max-w-3xl space-y-4 pb-20">
-        <h2 className="font-display text-2xl font-extrabold">סיכום המחזור</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">סיכום המחזור</h2>
         <p className="text-ink-soft">הסיכום כולל «איך עבר» — דעות על מרצים — ולכן הוא לצוות התוכן ולמדריך/ה.</p>
       </div>
     );
@@ -73,7 +73,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
         <p className="text-sm">הודפס ב-{israelDate(new Date().toISOString())} · יש כאן «איך עבר»: לצוות בלבד</p>
       </PrintSetup>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
-        <h2 className="font-display text-2xl font-extrabold">סיכום המחזור</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">סיכום המחזור</h2>
         <EditionSelect />
         <KnowledgeTabs actor={actor} />
       </div>
@@ -88,13 +88,13 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
       <Panel title="במספרים">
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr_auto_1fr]">
           <dt className="text-ink-soft">שיעורים שהתקיימו</dt>
-          <dd data-summary="held" className="font-semibold">{s.held}</dd>
+          <dd data-summary="held" className="font-bold text-navy">{s.held}</dd>
           <dt className="text-ink-soft">זמני זיכרון (עם תוכנית)</dt>
-          <dd className="font-semibold">{s.memorial}</dd>
+          <dd className="font-bold text-navy">{s.memorial}</dd>
           <dt className="text-ink-soft">מרצים</dt>
-          <dd className="font-semibold">{s.speakers.total}</dd>
+          <dd className="font-bold text-navy">{s.speakers.total}</dd>
           <dt className="text-ink-soft">«איך עבר» נכתב</dt>
-          <dd data-summary="reviews" className="font-semibold">
+          <dd data-summary="reviews" className="font-bold text-navy">
             {s.reviews.done} מתוך {s.reviews.total}
           </dd>
         </dl>
@@ -103,22 +103,22 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
       <Panel title="מגדר לפי יום" aside="שיעורים סגורים, בלי זמני זיכרון">
         <table className="w-full table-fixed text-sm">
           <thead>
-            <tr className="text-start text-ink-soft">
-              <th className="text-start font-semibold">יום</th>
-              <th className="text-start font-semibold">שיעורים</th>
-              <th className="text-start font-semibold">נשים</th>
-              <th className="text-start font-semibold">גברים</th>
-              <th className="text-start font-semibold">לא ידוע</th>
+            <tr className={TABLE_HEAD}>
+              <th className={`${TABLE_TH} px-2 py-1.5`}>יום</th>
+              <th className={`${TABLE_TH} px-2 py-1.5`}>שיעורים</th>
+              <th className={`${TABLE_TH} px-2 py-1.5`}>נשים</th>
+              <th className={`${TABLE_TH} px-2 py-1.5`}>גברים</th>
+              <th className={`${TABLE_TH} px-2 py-1.5`}>לא ידוע</th>
             </tr>
           </thead>
           <tbody>
             {s.days.map((d) => (
-              <tr key={d.day} data-day={d.day} className="border-t border-line">
-                <td className="py-1">{DAY_NAMES[d.day]}</td>
-                <td>{d.lessons}</td>
-                <td>{tally(d.f)}</td>
-                <td>{tally(d.m)}</td>
-                <td>{tally(d.unknown)}</td>
+              <tr key={d.day} data-day={d.day} className={TABLE_ROW}>
+                <td className={`px-2 py-1 ${TABLE_KEY}`}>{DAY_NAMES[d.day]}</td>
+                <td className="px-2">{d.lessons}</td>
+                <td className="px-2">{tally(d.f)}</td>
+                <td className="px-2">{tally(d.m)}</td>
+                <td className="px-2">{tally(d.unknown)}</td>
               </tr>
             ))}
           </tbody>
@@ -137,7 +137,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
       <Panel title="מרצים" aside={`${s.speakers.fresh.length} חדשים · ${s.speakers.returning.length} לימדו בשנים קודמות`}>
         <div className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
-            <h4 className="font-semibold">לימדו בשנים קודמות</h4>
+            <h4 className="font-bold text-navy">לימדו בשנים קודמות</h4>
             {s.speakers.returning.length === 0 ? (
               <p className="text-ink-soft">אין.</p>
             ) : (
@@ -151,7 +151,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
             )}
           </div>
           <div>
-            <h4 className="font-semibold">חדשים</h4>
+            <h4 className="font-bold text-navy">חדשים</h4>
             {s.speakers.fresh.length === 0 ? (
               <p className="text-ink-soft">אין.</p>
             ) : (
@@ -169,7 +169,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
         <div className="space-y-3 text-sm">
           {(["yes", "no", "maybe"] as InviteAgain[]).map((k) => (
             <div key={k}>
-              <h4 className="font-semibold">
+              <h4 className="font-bold text-navy">
                 {INVITE_TITLE[k]} ({s.invite[k].length})
               </h4>
               {s.invite[k].length === 0 ? (
@@ -177,7 +177,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
               ) : (
                 <ul aria-label={INVITE_TITLE[k]} className="space-y-1">
                   {s.invite[k].map((l) => (
-                    <li key={l.lesson_id} className="rounded-md bg-paper px-2 py-1">
+                    <li key={l.lesson_id} className="rounded-lg bg-sand-soft px-2 py-1">
                       {/* the rating inside the lesson's button: at 390 it never wraps away from its lesson */}
                       <LessonLink l={l} open={open} rating={l.rating} />
                       {(l.went_well || l.issues) && <span className="block whitespace-pre-line break-words text-ink-soft">{[l.went_well, l.issues].filter(Boolean).join(" · ")}</span>}
@@ -188,7 +188,7 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
             </div>
           ))}
           <div>
-            <h4 className="font-semibold">עוד לא נכתב ({s.reviews.missing.length})</h4>
+            <h4 className="font-bold text-navy">עוד לא נכתב ({s.reviews.missing.length})</h4>
             {s.reviews.missing.length === 0 ? (
               <p className="text-ink-soft">נכתב «איך עבר» לכל השיעורים.</p>
             ) : (
@@ -226,10 +226,10 @@ function CategorySpread({ categories, colors }: { categories: { name: string; co
       </div>
       <ul className="grid gap-1 text-sm sm:grid-cols-2">
         {categories.map((c) => (
-          <li key={c.name} className="flex items-center gap-2 rounded-md bg-paper px-2 py-1">
+          <li key={c.name} className="flex items-center gap-2 rounded-lg bg-sand-soft px-2 py-1">
             <span aria-hidden className="h-3 w-1.5 shrink-0 rounded-sm" style={{ backgroundColor: colorOf(c.name) }} />
             <span className="min-w-0 flex-1 break-words">{c.name}</span>
-            <span className="font-semibold tabular-nums">{c.count}</span>
+            <span className="font-bold text-navy tabular-nums">{c.count}</span>
           </li>
         ))}
       </ul>
@@ -240,7 +240,7 @@ function CategorySpread({ categories, colors }: { categories: { name: string; co
 function LessonLink({ l, open, rating = null }: { l: SummaryLesson; open: (id: number) => void; rating?: number | null }) {
   return (
     <button type="button" onClick={() => open(l.lesson_id)} className="min-h-11 text-start underline-offset-2 hover:underline print:min-h-0">
-      <b>{l.speaker}</b> · <bdi>{l.when}</bdi> · {l.title ?? "TBD"}
+      <b className="text-navy">{l.speaker}</b> · <bdi>{l.when}</bdi> · {l.title ?? "TBD"}
       {rating != null && <span className="whitespace-nowrap font-normal text-ink-soft"> · ציון {rating}/5</span>}
     </button>
   );

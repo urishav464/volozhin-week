@@ -197,7 +197,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
 
   return (
     <div className="space-y-2" aria-label="קבצי המקורות" role="group">
-      <p className="text-sm font-semibold">הקבצים</p>
+      <p className="text-sm font-bold">הקבצים</p>
       {current.length === 0 ? (
         <p className="text-sm text-ink-soft">
           {memorial
@@ -223,7 +223,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
           }}
           onDragLeave={() => setOver(false)}
           onDrop={onDrop}
-          className={`rounded-lg border-2 border-dashed p-3 text-sm ${over ? "border-ink bg-ink/5" : "border-line"}`}
+          className={`rounded-xl border-2 border-dashed p-3 text-sm transition-colors ${over ? "border-navy bg-accent-soft" : "border-line bg-paper-light"}`}
         >
           <input
             ref={input}
@@ -242,7 +242,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
           {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
           <label
             htmlFor={`${id}-pick`}
-            className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-ink px-3 font-semibold text-paper peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-ink/90"}`}
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-full bg-navy px-4 font-bold text-white transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-navy-800"}`}
           >
             העלאת קבצים
           </label>
@@ -263,7 +263,7 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
               </div>
               {!u.error && (
                 <div role="progressbar" aria-label={`העלאה: ${u.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(u.progress * 100)} className="h-1.5 rounded-full bg-line">
-                  <div className="h-1.5 rounded-full bg-ink transition-[width]" style={{ width: `${Math.round(u.progress * 100)}%` }} />
+                  <div className="h-1.5 rounded-full bg-navy transition-[width]" style={{ width: `${Math.round(u.progress * 100)}%` }} />
                 </div>
               )}
               {u.error && <p role="alert" className="text-xs text-bad">{u.error}</p>}
@@ -279,9 +279,9 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
 /** Files that came for a speaker who is not this lesson's lead any more (reopen_lesson keeps them): for removal, never in the reader. */
 export function PreviousFiles({ port, week, files, actor, notify, reload, memorial = false }: Omit<SourceFilesProps, "lesson" | "clear"> & { files: SourceFile[]; memorial?: boolean }) {
   return (
-    <div className="rounded-lg bg-amber-50 p-2">
-      <p className="text-sm font-semibold text-amber-900">{memorial ? "מתוכנית שנמחקה מהמחזור" : "מהמרצה הקודם"}</p>
-      <p className="text-xs text-amber-900">
+    <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200 ring-inset">
+      <p className="text-sm font-bold text-amber-950">{memorial ? "מתוכנית שנמחקה מהמחזור" : "מהמרצה הקודם"}</p>
+      <p className="text-xs text-amber-950">
         {memorial
           ? "הקבצים האלה הועלו לתוכנית זיכרון שכבר אין במחזור. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."
           : "השיעור נפתח מחדש אחרי שהקבצים האלה הועלו. הם לא נכנסים למקראה. מי שהעלה/תה אותם, או המדריך/ה, מסירים אותם."}

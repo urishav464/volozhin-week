@@ -68,6 +68,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 
 ## Shape of the code
 
+- **The look is Ein Prat's design system** (DECISIONS «עיצוב עין פרת»): Almoni embedded from `src/assets/fonts` (under Ein
+  Prat's web licence — its README), the seal in `src/assets/brand`, the tokens in `src/index.css` (Prat Navy, sage, sand, a
+  rare gold; two brand pairs darkened for contrast). Buttons are pills, tables take the sage header (`TABLE_*` in
+  `kit.tsx`); the data colours of the grid (topics, the gender lens, fit, stages, owners) are not the brand's to change.
 - `src/data/port.ts` — the `DataPort` interface every screen talks to; `SupabasePort` (real) and
   `DemoPort` (synthetic, in memory). Screens never call Supabase directly.
 - `src/data/gate.ts` — which screen a browser shows, from `public.whoami()` alone (pure, tested).

@@ -163,10 +163,10 @@ function IssuedBox({ issued, edition, onClose }: { issued: Issued; edition: Edit
     }
   };
   return (
-    <section ref={box} aria-label={`הקישור החדש: ${issued.who}`} className="space-y-3 rounded-xl border-2 border-ink bg-card p-4 shadow-sm sm:p-5">
-      <h3 className="font-display text-lg font-semibold">הקישור החדש: {issued.who}</h3>
+    <section ref={box} aria-label={`הקישור החדש: ${issued.who}`} className="space-y-3 rounded-xl border-2 border-navy bg-card p-4 shadow-md sm:p-5">
+      <h3 className="font-display text-lg font-bold text-navy">הקישור החדש: {issued.who}</h3>
       <div>
-        <label htmlFor={`${id}-url`} className="mb-1 block text-sm font-semibold">
+        <label htmlFor={`${id}-url`} className="mb-1 block text-sm font-bold text-ink">
           הקישור
         </label>
         <input ref={field} id={`${id}-url`} readOnly value={url} dir="ltr" onFocus={(e) => e.target.select()} className={`${INPUT} font-mono text-sm`} />
@@ -182,7 +182,7 @@ function IssuedBox({ issued, edition, onClose }: { issued: Issued; edition: Edit
           href={whatsappTextHref(linkMessage(issued.scope, edition.label, url))}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-paper px-3 font-semibold hover:bg-line/50"
+          className="inline-flex min-h-11 items-center justify-center rounded-full border border-navy bg-card px-3 font-bold text-navy transition-colors duration-150 hover:bg-accent-soft sm:px-4"
         >
           שליחה ב-WhatsApp
         </a>
@@ -191,7 +191,7 @@ function IssuedBox({ issued, edition, onClose }: { issued: Issued; edition: Edit
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-paper px-3 font-semibold hover:bg-line/50"
+          className="inline-flex min-h-11 items-center justify-center rounded-full border border-navy bg-card px-3 font-bold text-navy transition-colors duration-150 hover:bg-accent-soft sm:px-4"
         >
           פתיחה
         </a>
@@ -269,7 +269,7 @@ function ClassLinks({ data, week, links, archived, issued, reload }: RowProps) {
       {/* the sign-up's expiry is the window's, set elsewhere: the one line a row's badge cannot say */}
       <p className="mt-2 text-sm text-ink-soft">
         ההרשמה פגה כשחלון ההרשמה נסגר{w ? "" : "; עוד אין חלון, ולכן ההרשמה סגורה"} (הצעה) —{" "}
-        <Link to="/kk" className="inline-flex min-h-11 items-center font-semibold underline">
+        <Link to="/kk" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4">
           החלון ב«מכריכה לכריכה»
         </Link>
       </p>
@@ -381,7 +381,7 @@ function DemoLinksPanel({ week }: { week: Week }) {
     .filter((r) => !!r)
     .sort((a, b) => a!.full_name.localeCompare(b!.full_name, "he"));
   const to = (scope: LinkScope, subject: number | null) => `${linkUrl("", scope, demoToken(scope, ed, subject, true))}`;
-  const cls = "inline-flex min-h-11 items-center underline underline-offset-4";
+  const cls = "inline-flex min-h-11 items-center text-navy underline underline-offset-4 hover:text-navy-800";
   return (
     <Panel title="קישורים לדוגמה" aside="מצב הדגמה">
       <p className="mb-2 text-sm text-ink-soft">

@@ -84,7 +84,7 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
         </p>
       )}
       {l.needs_reconfirm && (
-        <p className="flex items-start gap-2 rounded-lg border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
+        <p className="flex items-start gap-2 rounded-xl border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
           <ReconfirmDot className="mt-1" />
           <span>
             <b>לעדכן את המרצה:</b> השיעור השתנה אחרי שההודעה נשלחה. שולחים את ההודעה המעודכנת, ומסמנים שוב «סומן כנשלח».
@@ -93,8 +93,8 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
       )}
 
       {c.problems.length > 0 && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-          <p className="font-semibold">עוד אי אפשר לשלוח:</p>
+        <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-950 ring-1 ring-amber-200 ring-inset">
+          <p className="font-bold">עוד אי אפשר לשלוח:</p>
           <ul aria-label="מה חסר כדי לשלוח" className="list-disc space-y-0.5 ps-5">
             {c.problems.map((p, i) => (
               <li key={i}>{problemText(p)}</li>
@@ -103,12 +103,12 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
           {actor.isAdmin && (emptyTemplate || noSenderGender) && (
             <div className="mt-2 flex flex-wrap gap-x-4">
               {emptyTemplate && (
-                <Link to="/settings/templates" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+                <Link to="/settings/templates" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4 hover:text-navy-800">
                   לנוסח, בהגדרות ‹
                 </Link>
               )}
               {noSenderGender && (
-                <Link to="/settings/team" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+                <Link to="/settings/team" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4 hover:text-navy-800">
                   למגדר שלי, בהגדרות ‹
                 </Link>
               )}
@@ -119,8 +119,8 @@ export function MessageComposer({ week, lesson: l, speaker, actor, handler, mine
 
       {c.text && (
         <section aria-label="תצוגה מקדימה של ההודעה" className="space-y-1">
-          <p className="text-xs font-semibold text-ink-soft">{c.ok ? "ההודעה" : "תצוגה מקדימה (עם מה שחסר)"}</p>
-          <div ref={preview} className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-card p-3 text-sm leading-relaxed">
+          <p className="text-xs font-bold text-ink-soft">{c.ok ? "ההודעה" : "תצוגה מקדימה (עם מה שחסר)"}</p>
+          <div ref={preview} className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-card p-3 text-sm leading-relaxed">
             {c.text}
           </div>
         </section>

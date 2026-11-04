@@ -68,14 +68,14 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
   return (
     <>
       <div className="space-y-1">
-        <h2 className="font-display text-2xl font-extrabold">הרשמה למכריכה לכריכה</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">הרשמה למכריכה לכריכה</h2>
         <p className="text-ink-soft">שבוע וולוז'ין {f.edition.label}</p>
       </div>
-      <p className={`rounded-lg px-3 py-2 text-sm ${f.open ? "bg-ok/10" : "bg-accent-soft"}`}>{formWindowText(f)}</p>
+      <p className={`rounded-xl px-3 py-2 text-sm ${f.open ? "bg-ok/10" : "bg-accent-soft"}`}>{formWindowText(f)}</p>
 
       {sent && (
-        <section role="status" aria-label="הבקשה נשלחה" className="space-y-2 rounded-xl border border-line bg-card p-4">
-          <p className="font-semibold">הבקשה נשלחה.</p>
+        <section role="status" aria-label="הבקשה נשלחה" className="space-y-2 rounded-xl border border-line bg-card p-4 shadow-sm">
+          <p className="font-bold text-navy">הבקשה נשלחה.</p>
           <p className="text-sm break-words">
             <span className="text-ink-soft">מה ששלחת: </span>
             {sent.name} — {sent.book}
@@ -87,13 +87,13 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
 
       {!sent && <Sessions f={f} />}
 
-      {!sent && f.groups.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">עוד אין ספרים להרשמה. כשהצוות יפתח קבוצות, הן יופיעו כאן.</p>}
+      {!sent && f.groups.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">עוד אין ספרים להרשמה. כשהצוות יפתח קבוצות, הן יופיעו כאן.</p>}
 
       {!sent && f.groups.length > 0 && (
         <form onSubmit={(e) => void submit(e)} aria-label="הרשמה" className="space-y-4" noValidate>
           <fieldset disabled={!f.open || busy} className="min-w-0 space-y-4">
-            <div className="rounded-xl border border-line bg-card p-4">
-              <label htmlFor={`${id}-who`} className="mb-1 block font-semibold">
+            <div className="rounded-xl border border-line bg-card p-4 shadow-sm">
+              <label htmlFor={`${id}-who`} className="mb-1 block font-bold">
                 השם שלי
               </label>
               <select id={`${id}-who`} value={rosterId ?? ""} onChange={(e) => setRosterId(e.target.value ? Number(e.target.value) : null)} className={INPUT} aria-describedby={`${id}-who-hint`}>
@@ -108,8 +108,8 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
                 מי שמעביר/ה קבוצה לא מופיע/ה ברשימה: הם כבר בקבוצה שלהם.
               </p>
             </div>
-            <fieldset className="min-w-0 rounded-xl border border-line bg-card p-4">
-              <legend className="px-1 font-display text-lg font-semibold">הספר שלי</legend>
+            <fieldset className="min-w-0 rounded-xl border border-line bg-card p-4 shadow-sm">
+              <legend className="px-1 font-display text-lg font-bold text-navy">הספר שלי</legend>
               <ul className="space-y-1">
                 {f.groups.map((g) => (
                   <li key={g.id}>
@@ -120,7 +120,7 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
                         checked={groupId === g.id}
                         disabled={g.full}
                         onChange={() => setGroupId(g.id)}
-                        className="mt-1 size-5 shrink-0 accent-ink"
+                        className="mt-1 size-5 shrink-0 accent-navy"
                       />
                       <GroupText g={g} />
                     </label>
@@ -153,7 +153,7 @@ export function KkSignupPage({ port, token }: { port: PublicPort; token: string 
 function Sessions({ f }: { f: KkForm }) {
   if (f.sessions.length === 0) return null;
   return (
-    <div className="rounded-xl border border-line bg-card px-4 py-1">
+    <div className="rounded-xl border border-line bg-card px-4 py-1 shadow-sm">
       <Fold title="נפגשים בכל מפגשי מכריכה לכריכה" hint={f.sessions.length === 1 ? "מפגש אחד" : `${f.sessions.length} מפגשים`}>
         <ul aria-label="המפגשים" className="space-y-0.5 text-sm">
           {f.sessions.map((s) => {
@@ -174,9 +174,9 @@ function Sessions({ f }: { f: KkForm }) {
 function GroupText({ g }: { g: KkFormGroup }) {
   return (
     <span className="min-w-0">
-      <span className="font-semibold break-words">{g.title}</span>
+      <span className="font-bold break-words">{g.title}</span>
       {g.author && <span className="break-words"> — {g.author}</span>}
-      {g.full && <span className="ms-2 inline-block rounded-full bg-line/60 px-2 text-xs font-semibold text-ink">מלאה</span>}
+      {g.full && <span className="ms-2 inline-block rounded-full bg-sand-soft px-2 text-xs font-bold text-ink-soft">מלאה</span>}
       <span className="block text-sm text-ink-soft break-words">
         {[g.place, g.leaders.length ? `מעבירים: ${g.leaders.map((x) => `${x.name} (${LEADER_KIND_LABEL[x.kind]})`).join(", ")}` : null].filter(Boolean).join(" · ")}
       </span>
