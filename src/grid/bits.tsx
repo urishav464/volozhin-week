@@ -56,7 +56,7 @@ export function topicsOf(topics: readonly string[], categories: readonly Categor
 export const STAGE_DOT: Record<StageState, string> = {
   done: "bg-ok border-ok",
   open: "bg-transparent border-ink-faint",
-  waiting: "bg-warn border-warn",
+  waiting: "bg-wait border-wait",
   problem: "bg-bad border-bad",
   na: "bg-transparent border-ink-faint border-dashed", // quiet, but visible: dashed, not a hollow «open»
 };

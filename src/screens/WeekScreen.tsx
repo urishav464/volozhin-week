@@ -499,7 +499,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       <span>
         משבצים את <b>{displayName(placing)}</b> — בחרו משבצת {wide ? "ברשת" : "ביום"}
       </span>
-      <button type="button" onClick={() => setPlacingId(null)} className="ms-auto rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10">
+      <button type="button" onClick={() => setPlacingId(null)} className="ms-auto rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10 focus-visible:outline-white!">
         ביטול
       </button>
     </div>
@@ -681,7 +681,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           {toast.undo && (
             <button
               type="button"
-              className="rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10"
+              className="rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10 focus-visible:outline-white!"
               onClick={() => {
                 const u = toast.undo!;
                 setToast(null);

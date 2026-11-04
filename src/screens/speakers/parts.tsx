@@ -608,7 +608,7 @@ export function useToast(bottom = "bottom-6") {
     >
       <span>{toast.text}</span>
       {/* on navy or red a navy ring would vanish: white */}
-      <button type="button" aria-label="סגירת ההודעה" onClick={clear} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/15 focus-visible:outline-white">
+      <button type="button" aria-label="סגירת ההודעה" onClick={clear} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/15 focus-visible:outline-white!">
         ×
       </button>
     </div>

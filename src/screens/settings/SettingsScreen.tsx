@@ -203,7 +203,7 @@ export function SettingsScreen({
           }`}
         >
           <span>{toast.text}</span>
-          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/10 focus-visible:outline-white">
+          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/10 focus-visible:outline-white!">
             ×
           </button>
         </div>
