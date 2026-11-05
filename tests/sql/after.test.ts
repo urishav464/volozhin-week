@@ -459,7 +459,7 @@ describe("after the week", () => {
         expect(hits).toBeGreaterThan(0);
         const before = await counts(run);
         const report = (await val(run, ADMIN, "select public.purge_edition_private($1, 'תשפ\"ז')", [ed])) as Record<string, unknown>;
-        expect({ ...report, purged_at: typeof report.purged_at }).toEqual({ transport_details: 1, import_notes: 0, links_revoked: 3, link_hits: hits, purged_at: "string" });
+        expect({ ...report, purged_at: typeof report.purged_at }).toEqual({ transport_details: 1, import_notes: 0, links_revoked: 3, link_hits: hits, rota_contacts: 0, purged_at: "string" });
         expect(Number(await val(run, "owner", "select count(*) from public.transport_details t join public.lessons l on l.id = t.lesson_id where l.edition_id = $1", [ed]))).toBe(0);
         expect(Number(await val(run, "owner", "select count(*) from public.share_links where edition_id = $1 and revoked_at is null", [ed]))).toBe(0);
         expect(Number(await val(run, "owner", "select count(*) from public.share_link_hits h join public.share_links s on s.token_hash = h.token_hash where s.edition_id = $1", [ed]))).toBe(0);
@@ -478,7 +478,7 @@ describe("after the week", () => {
         const log = (await run("owner", "select actor, edition_id, entity, entity_id, kind, detail from public.activity where kind = 'purge'")).rows;
         const adminId = Number(await val(run, "owner", "select id from public.members where email = $1 and edition_id is null", [ADMIN]));
         expect(log.map((r) => ({ ...r, actor: Number(r.actor), edition_id: Number(r.edition_id), entity_id: Number(r.entity_id) }))).toEqual([
-          { actor: adminId, edition_id: ed, entity: "editions", entity_id: ed, kind: "purge", detail: { transport_details: 1, import_notes: 0, links_revoked: 3, link_hits: hits } },
+          { actor: adminId, edition_id: ed, entity: "editions", entity_id: ed, kind: "purge", detail: { transport_details: 1, import_notes: 0, links_revoked: 3, link_hits: hits, rota_contacts: 0 } },
         ]);
         expect(JSON.stringify(log)).not.toContain(ADDRESS);
         // the edition's admins read the log row (the archive reads it so)
@@ -493,7 +493,7 @@ describe("after the week", () => {
         const at = await val(run, "owner", "select purged_at::text from public.editions where id = $1", [ed]);
         expect(at).not.toBeNull();
         const second = (await val(run, ADMIN, "select public.purge_edition_private($1, 'תשפ\"ז')", [ed])) as Record<string, unknown>;
-        expect(second).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, purged_at: first.purged_at });
+        expect(second).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, rota_contacts: 0, purged_at: first.purged_at });
         expect(await val(run, "owner", "select purged_at::text from public.editions where id = $1", [ed])).toBe(at);
         expect(Number(await val(run, "owner", "select count(*) from public.activity where kind = 'purge'"))).toBe(2);
       });
@@ -538,6 +538,9 @@ describe("after the week", () => {
           confirm_template: false,
           call_template: false,
           duty_phrases: 0,
+          rota_duties: 0,
+          rota_prep_tasks: 0,
+          rota_shifts: false,
           deactivate: nonAdmins,
           admins_stay: 1,
           stays: {
@@ -566,10 +569,18 @@ describe("after the week", () => {
         await run(ED_ADMIN, "select public.set_duty_phrases($1, '[{\"when\": \"always\", \"text\": \"ניסוח לבדיקה\"}]')", [ed]);
         await run(ED_ADMIN, "select public.set_confirm_template($1, 'נוסח לבדיקה')", [ed]);
         await run(ED_ADMIN, "select public.set_call_template($1, 'נקודות לבדיקה')", [ed]);
+        // v16: «תורנויות»'s duties, preparations and shifts (the logistics member writes the first two)
+        await run(L, "insert into public.rota_duties (edition_id, name, need_morning, sort) values ($1, 'תורנות לבדיקה', 1, 1), ($1, 'עוד תורנות', null, 2)", [ed]);
+        await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה לבדיקה 1', 1), ($1, 'הכנה לבדיקה 2', 2), ($1, 'הכנה לבדיקה 3', 3)", [ed]);
+        await run(ED_ADMIN, "select public.set_rota_shifts($1, '{\"cuts\": [840, 1320], \"labels\": [\"בוקר\", \"צהריים\", \"לילה\"]}')", [ed]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(true)")) as Record<string, unknown>;
-        expect(preview).toMatchObject({ archive: [{ id: ed, label: "תשפ\"ז" }], carry_from: { id: ed }, milestones: 2, confirm_template: true, call_template: true, duty_phrases: 1, admins_stay: 1 });
+        expect(preview).toMatchObject({ archive: [{ id: ed, label: "תשפ\"ז" }], carry_from: { id: ed }, milestones: 2, confirm_template: true, call_template: true, duty_phrases: 1, admins_stay: 1,
+                                        rota_duties: 2, rota_prep_tasks: 3, rota_shifts: true });
         const newId = Number(await val(run, ADMIN, "select public.start_edition('תשפ\"ח', null)")); // the option off: nobody is deactivated
         expect(Number(await val(run, "owner", "select count(*) from public.milestones where edition_id = $1", [newId]))).toBe(2);
+        expect(Number(await val(run, "owner", "select count(*) from public.rota_duties where edition_id = $1", [newId]))).toBe(preview.rota_duties);
+        expect(Number(await val(run, "owner", "select count(*) from public.rota_prep_tasks where edition_id = $1", [newId]))).toBe(preview.rota_prep_tasks);
+        expect(await val(run, "owner", "select settings -> 'rota_shifts' -> 'cuts' from public.editions where id = $1", [newId])).toEqual([840, 1320]);
         expect(await val(run, "owner", "select settings ->> 'call_template' from public.editions where id = $1", [newId])).toBe("נקודות לבדיקה");
         expect(Number(await val(run, "owner", "select count(*) from public.members where not active"))).toBe(0);
       });

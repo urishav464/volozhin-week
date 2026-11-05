@@ -248,6 +248,14 @@ export interface EditionSettings {
   reader_cover?: number;
   /** The memorial policy — the staff meeting's (DESIGN «זמני זיכרון»); each part absent until decided, never seeded. */
   memorial?: MemorialPolicy;
+  /** v16 «תורנויות»: the two cuts between the three shifts and their names; absent = last year's (src/domain/rota.ts). */
+  rota_shifts?: RotaShiftsSetting;
+}
+
+/** settings.rota_shifts: cuts [morning→afternoon, afternoon→night] in the day's minutes (390 < a < b < 1830, ×5), three names. */
+export interface RotaShiftsSetting {
+  cuts: [number, number];
+  labels: [string, string, string];
 }
 
 /** settings.memorial: where memorial times go (free text), the most minutes one may take, whether one next to a meal is warned about. */

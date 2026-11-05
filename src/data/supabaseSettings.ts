@@ -81,6 +81,9 @@ export class SupabaseSettings implements SettingsPort {
       confirm_template: p.confirm_template === true,
       call_template: p.call_template === true,
       duty_phrases: n(p.duty_phrases),
+      rota_duties: n(p.rota_duties),
+      rota_prep_tasks: n(p.rota_prep_tasks),
+      rota_shifts: p.rota_shifts === true,
       deactivate: n(p.deactivate),
       admins_stay: n(p.admins_stay),
       stays: { speakers: n(p.stays?.speakers), categories: n(p.stays?.categories), fallen: n(p.stays?.fallen), notes: n(p.stays?.notes) },
@@ -91,6 +94,7 @@ export class SupabaseSettings implements SettingsPort {
     const r = (await this.rpc("purge_edition_private", { p_edition: editionId, p_confirm: confirm })) as Record<string, unknown>;
     return {
       transport_details: Number(r.transport_details ?? 0), import_notes: Number(r.import_notes ?? 0), links_revoked: Number(r.links_revoked ?? 0), link_hits: Number(r.link_hits ?? 0),
+      rota_contacts: Number(r.rota_contacts ?? 0),
       purged_at: String(r.purged_at),
     };
   }

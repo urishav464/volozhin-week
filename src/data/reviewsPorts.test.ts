@@ -61,14 +61,14 @@ describe("after the week on the wire", () => {
 
   it("starts an edition with the option, previews it, purges with the typed label — by their parameter names", async () => {
     const preview = {
-      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, call_template: true, duty_phrases: 1, deactivate: 4,
-      admins_stay: 1, stays: { speakers: 60, categories: 10, fallen: 9, notes: 2 },
+      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, call_template: true, duty_phrases: 1, rota_duties: 4, rota_prep_tasks: 2, rota_shifts: true,
+      deactivate: 4, admins_stay: 1, stays: { speakers: 60, categories: 10, fallen: 9, notes: 2 },
     };
-    const { sb, sent } = client([[200, 8], [200, preview], [200, { transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, purged_at: "2027-02-20T10:00:00.000Z" }], [400, { code: "P0001", message: "confirm_mismatch" }]]);
+    const { sb, sent } = client([[200, 8], [200, preview], [200, { transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, rota_contacts: 6, purged_at: "2027-02-20T10:00:00.000Z" }], [400, { code: "P0001", message: "confirm_mismatch" }]]);
     const s = new SupabaseSettings(sb);
     expect(await s.startEdition({ label: "תשפ\"ח", start_date: null, first_day_from: null }, { deactivateTeam: true })).toBe(8);
     expect(await s.previewStart(true)).toEqual({ ...preview, archive: [{ id: 7, label: "תשפ\"ז" }], carry_from: { id: 7, label: "תשפ\"ז" }, grid_rows: 21, milestones: 2 });
-    expect(await s.purgeEdition(7, "תשפ\"ז")).toEqual({ transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, purged_at: "2027-02-20T10:00:00.000Z" });
+    expect(await s.purgeEdition(7, "תשפ\"ז")).toEqual({ transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, rota_contacts: 6, purged_at: "2027-02-20T10:00:00.000Z" });
     expect(await code(s.purgeEdition(7, "x"))).toBe("confirm_mismatch");
     expect(sent.map((x) => [x.path, x.body])).toEqual([
       ["start_edition", { p_label: "תשפ\"ח", p_start_date: null, p_first_day_from: null, p_deactivate_team: true }],
@@ -148,9 +148,9 @@ describe("after the week in the demo", () => {
     const token = port.shared.links.find((l) => l.edition_id === 1 && l.scope === "schedule")!.token;
     expect(await code(port.public.scheduleView(token))).toBe("link_invalid");
     // again: nothing more, the first time kept, and logged with counts only
-    expect(await s.purgeEdition(1, "הדגמה")).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, purged_at: report.purged_at });
+    expect(await s.purgeEdition(1, "הדגמה")).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, rota_contacts: 0, purged_at: report.purged_at });
     const logged = port.shared.log.filter((x) => x.kind === "purge");
-    const keys = ["import_notes", "link_hits", "links_revoked", "transport_details"];
+    const keys = ["import_notes", "link_hits", "links_revoked", "rota_contacts", "transport_details"];
     expect(logged.map((x) => Object.keys(x.detail).sort())).toEqual([keys, keys]);
     // a content member may not
     expect(await code(new DemoPort({ memberId: 2, role: "content" }).settings.purgeEdition(1, "הדגמה"))).toBe("forbidden");

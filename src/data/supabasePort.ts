@@ -6,6 +6,7 @@ import { REALTIME_TABLES } from "./realtime";
 import { callRpc, supabaseCommands } from "./supabaseCommands";
 import { SupabaseImports } from "./supabaseImports";
 import { SupabaseKk, SupabaseLinks } from "./supabaseLinks";
+import { SupabaseRota } from "./supabaseRota";
 import { SupabaseMemorial } from "./supabaseMemorial";
 import { SupabaseKnowledge, SupabaseOutputs } from "./supabaseOutputs";
 import { SupabaseReviews } from "./supabaseReviews";
@@ -41,6 +42,7 @@ export class SupabasePort implements DataPort {
   readonly knowledge: SupabaseKnowledge;
   readonly links: SupabaseLinks;
   readonly kk: SupabaseKk;
+  readonly rota: SupabaseRota;
   readonly sources: SupabaseSources;
   readonly memorial: SupabaseMemorial;
   readonly imports: SupabaseImports;
@@ -71,6 +73,7 @@ export class SupabasePort implements DataPort {
     this.knowledge = new SupabaseKnowledge(this.sb);
     this.links = new SupabaseLinks(this.sb);
     this.kk = new SupabaseKk(this.sb);
+    this.rota = new SupabaseRota(this.sb);
     this.sources = new SupabaseSources(this.sb, url, key);
     this.memorial = new SupabaseMemorial(this.sb);
     this.imports = new SupabaseImports(this.sb);

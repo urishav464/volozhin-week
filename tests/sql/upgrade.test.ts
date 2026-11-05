@@ -1,17 +1,19 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds an older version and its data. This runs exactly
-// that, from two bases read from git history — v13 (PR #6) and v14 (PR #8, what
-// production runs) — under both default-privilege regimes the other tests
-// model: the old file with some data in it — last year's week with its
-// transport details, links, a member, availability (v13's by part of a day, in
-// every shape the conversion meets; v14's per slot) and מכריכה לכריכה in its
-// per-session shape (a track, a group, its leader, a sign-up, a book order, the
-// window and the sign-up link) — then this file twice. Afterwards the data is
-// all there (v13's availability per slot, by the conversion's rule), the old kk
-// structure is gone while the window and the link stay, and the catalog — every
-// table, column, constraint, index, trigger, policy, function body, privilege
-// and the Realtime publication — is exactly a fresh install's, so nothing a
-// fresh database is tested for can differ on the owner's.
+// that, from three bases read from git history — v13 (PR #6), v14 (PR #8) and
+// v15 (PR #9, what production runs) — under both default-privilege regimes the
+// other tests model: the old file with some data in it — last year's week with
+// its transport details, links, a member, availability (v13's by part of a day,
+// in every shape the conversion meets; v14's and v15's per slot) and מכריכה
+// לכריכה (v13–v14 in its per-session shape: a track, a group, its leader, a
+// sign-up, a book order; v15 by the week: a group with its book, place, leader,
+// a sign-up and a book order; the window and the sign-up link) — then this file
+// twice. Afterwards the data is all there (v13's availability per slot, by the
+// conversion's rule), the old kk structure is gone (v13–v14) or kept as it was
+// (v15) while the window and the link stay, «תורנויות» (v16) is there and empty,
+// and the catalog — every table, column, constraint, index, trigger, policy,
+// function body, privilege and the Realtime publication — is exactly a fresh
+// install's, so nothing a fresh database is tested for can differ on the owner's.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,8 +28,12 @@ interface Base {
 
 const BASES: Base[] = [
   { commit: "c6d6012", version: 13 }, // PR #6, as merged: availability by part of a day
-  { commit: "fe55f7c", version: 14 }, // PR #8, as merged — what production runs: availability per slot
+  { commit: "fe55f7c", version: 14 }, // PR #8, as merged: availability per slot
+  { commit: "baf3cbe", version: 15 }, // PR #9, as merged — what production runs: מכריכה לכריכה by the week
 ];
+
+/** «תורנויות» (v16): every table, empty after the run. */
+const ROTA_TABLES = ["rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks"];
 
 function schemaAt(base: Base): string {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -149,13 +155,15 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
       );
     }
     const trainee = Number((await db.query("insert into public.roster (edition_id, full_name) values ($1, 'חניך/ה לבדיקה') returning id", [ed])).rows[0].id);
-    // מכריכה לכריכה as v9–v14 kept it — groups per session (the drop is what the instructor confirmed: no edition held any)
     await asAdmin(async () => {
       await db.query("select public.kk_set_window($1, now() - interval '1 day', now() + interval '30 days')", [ed]);
       kkToken = (await db.query("select public.issue_link($1, 'kk_signup') as l", [ed])).rows[0].l.token;
-      const group = Number((await db.query("select public.kk_add_group($1, 1, 1290, $2) as id", [ed, JSON.stringify({
-        title: "ספר לבדיקה", capacity: 3, leaders: [{ kind: "staff", label: "צוות לבדיקה" }],
-      })])).rows[0].id);
+      const fields = { title: "ספר לבדיקה", capacity: 3, leaders: [{ kind: "staff", label: "צוות לבדיקה" }] };
+      const group = Number((version >= 15
+        // v15: a group for the whole week (its book, a place, its leader) — what the run must keep as it is
+        ? await db.query("select public.kk_add_group($1, $2) as id", [ed, JSON.stringify({ ...fields, place: "מקום לבדיקה" })])
+        // as v9–v14 kept it — groups per session (the drop is what the instructor confirmed: no edition held any)
+        : await db.query("select public.kk_add_group($1, 1, 1290, $2) as id", [ed, JSON.stringify(fields)])).rows[0].id);
       await db.query("select public.kk_place($1, $2)", [group, trainee]);
       await db.query("select public.set_book_order($1, 3, true)", [group]);
     });
@@ -184,14 +192,19 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v15", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(15);
+  it("is v16, with «תורנויות»'s tables there and empty", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(16);
+    for (const t of ROTA_TABLES) {
+      expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(0);
+    }
+    // nothing carried into the old edition's settings: its shifts are last year's
+    expect((await db.query("select settings ? 'rota_shifts' as k from public.editions where id = $1", [ed])).rows[0].k).toBe(false);
   });
 
   it(version === 13
     ? "turns v13's availability by part of a day into marks per slot: «לא» wins every row it touches, «יכול/ה» only a row it covers whole"
-    : "keeps v14's availability per slot as it was", async () => {
-    if (version === 14) {
+    : `keeps v${version}'s availability per slot as it was`, async () => {
+    if (version >= 14) {
       expect((await db.query(
         "select v.speaker_id, v.day, r.start_min, v.kind, v.note from public.slot_availability v join public.grid_rows r on r.id = v.row_id",
       )).rows.map((r) => ({ ...r, speaker_id: Number(r.speaker_id) }))).toEqual([{ speaker_id: s1, day: 1, start_min: 510, kind: "cannot", note: "לא בבקרים" }]);
@@ -226,7 +239,31 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     ]);
   });
 
-  it("drops מכריכה לכריכה's per-session structure — once, saying what it dropped — and keeps the window and the sign-up link", async () => {
+  it(version >= 15
+    ? "keeps מכריכה לכריכה's week-long group as it was — its book, place, leader, sign-up and book order — with the window and the sign-up link"
+    : "drops מכריכה לכריכה's per-session structure — once, saying what it dropped — and keeps the window and the sign-up link", async () => {
+    if (version >= 15) {
+      expect([...notices[0], ...notices[1]].filter((m) => m.includes("per-session"))).toEqual([]);
+      expect((await db.query("select title, place, capacity, open from public.kk_groups where edition_id = $1", [ed])).rows).toEqual([
+        { title: "ספר לבדיקה", place: "מקום לבדיקה", capacity: 3, open: true },
+      ]);
+      expect((await db.query("select l.kind, l.label from public.kk_leaders l join public.kk_groups g on g.id = l.group_id where g.edition_id = $1", [ed])).rows).toEqual([
+        { kind: "staff", label: "צוות לבדיקה" },
+      ]);
+      expect((await db.query("select via from public.kk_signups where edition_id = $1", [ed])).rows).toEqual([{ via: "staff" }]);
+      expect((await db.query("select copies, ordered_at is not null as ordered from public.book_orders")).rows).toEqual([{ copies: 3, ordered: true }]);
+      expect((await db.query("select settings -> 'kk_window' as w from public.editions where id = $1", [ed])).rows[0].w).toEqual(kkWindow);
+      await db.query("begin");
+      try {
+        await db.query("set local role anon");
+        const f = (await db.query("select public.kk_form($1) as f", [kkToken])).rows[0].f;
+        expect(f).toMatchObject({ open: true, groups: [{ title: "ספר לבדיקה", place: "מקום לבדיקה", full: false }], roster: [{ full_name: "חניך/ה לבדיקה" }] });
+        expect(f.sessions).toHaveLength(8);
+      } finally {
+        await db.query("rollback");
+      }
+      return;
+    }
     expect(notices[0].filter((m) => m.includes("per-session"))).toEqual([
       "מכריכה לכריכה by the week (v15): dropping the per-session tables — 1 tracks, 1 groups, 1 leaders, 1 sign-ups, 1 book orders",
     ]);
@@ -276,6 +313,7 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect(a.length).toBeGreaterThan(500);
     expect(a).toContain("pub slot_availability");
     expect(a).toContain("idx CREATE UNIQUE INDEX kk_leaders_trainee ON public.kk_leaders USING btree (roster_id) WHERE (roster_id IS NOT NULL)");
+    expect(a).toContain("con rota_assignments rota_assignments_one_duty UNIQUE (edition_id, day, shift, group_id)");
     expect(a.filter((x) => !b.includes(x))).toEqual([]);
     expect(b.filter((x) => !a.includes(x))).toEqual([]);
   });

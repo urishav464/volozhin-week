@@ -7,6 +7,7 @@
 // one at a time, never in a Week), which the type below and the runtime check of the keys both hold. The memorial
 // times (v11) are in it as the team reads them: the plans and the names of the fallen — never a family's contact.
 import type { FallenContacts } from "../data/memorial";
+import type { RotaContact } from "../data/rota";
 import type { Me } from "../data/types";
 import type { SpeakerContacts, TransportDetails, Week } from "../domain/types";
 
@@ -58,9 +59,15 @@ void everyKeyListed;
  * contact person, an address — and an imported lesson's note (v12: last year's transport and payment words, read one
  * lesson at a time like the transport details). A family contact's `note` is the one key left out: availability's own
  * `note` (a chip's «לא בבקרים») shares its name — the family's note never travels without its `contact_name` and
- * `relation`.
+ * `relation`. And (v16) a group head's phone, `head_phone` (rota_group_contacts: never in load_rota, a Week or the copy).
  */
-export type PersonalKey = keyof SpeakerContacts | keyof TransportDetails | Exclude<keyof FallenContacts, "note"> | "address" | "import_note";
+export type PersonalKey =
+  | keyof SpeakerContacts
+  | keyof TransportDetails
+  | Exclude<keyof FallenContacts, "note">
+  | Exclude<keyof RotaContact, "group_id">
+  | "address"
+  | "import_note";
 export const PERSONAL_KEYS = [
   "phone",
   "email",
@@ -75,6 +82,7 @@ export const PERSONAL_KEYS = [
   "relation",
   "address",
   "import_note",
+  "head_phone",
 ] as const satisfies readonly PersonalKey[];
 type MissedPersonal = Exclude<PersonalKey, (typeof PERSONAL_KEYS)[number]>;
 const everyPersonalKeyListed: [MissedPersonal] extends [never] ? true : MissedPersonal = true;

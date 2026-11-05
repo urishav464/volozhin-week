@@ -271,7 +271,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on two bases, v13 (c6d6012) and v14 (fe55f7c, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on three bases, v13 (c6d6012), v14 (fe55f7c) and v15 (baf3cbe, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -313,6 +313,25 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (`kk_tracks` …) are dropped by the schema run, never converted. Screens: `src/screens/kk/` (`BookOrder.tsx` also in
   «לוגיסטיקה ← ספרים»: one row per group with a book or an order line, `bookRows`), `/k` one «הספר שלי». kk.json has no tracks (archive
   `format_version` 4). DECISIONS «מכריכה לכריכה לפי שבוע — גרסה 15».
+- **תורנויות (milestone 7, schema v16):** the campus duty roster beside the lessons — `rota_*` / `RotaPort` / `port.rota`
+  («duty» and «roster» are taken: the escorts' phrases, the trainees). Cohorts (a letter, diets), presence per cohort × day ×
+  shift (no row = not marked, never assumed), groups (a number; the code «א1» derived; size null = TBD; the head's name),
+  duties (needs per shift, null = not set), assignments (`rota_assignments_one_duty`: one duty per group per shift), staff
+  shifts (a member, a typed name or a cohort's staff; no phone), Saturday-night preparations — direct writes under RLS with
+  a guard per table (`app.may_write_rota`: the edition's admins, logistics while live), cleaned first by `src/data/rota.ts`
+  (≡ the guards). Three shifts a day, `settings.rota_shifts` (`set_rota_shifts`, an edition admin), cut as a grid row is:
+  `rotaShiftActive` ≡ `app.rota_shift_active` (`src/domain/rota.ts`). **A head's phone is personal data:** `rota_group_contacts`,
+  `app.may_see_rota_contacts` (a global admin, or admin/logistics of a real live edition), `get_rota_contacts` (invoker, one
+  call) / `set_rota_contact`; never in `load_rota`, a Week, Realtime, the offline copy, a log or a file but behind
+  «כולל טלפונים של ראשי הקבוצות» (`useHeadPhones`, `maySeeRotaContacts` in `src/screens/rota/shared.tsx`); the purge deletes it.
+  The fair suggestion is pure and deterministic (`src/domain/rotaSuggest.ts`: never touches an assignment, never an absent
+  cohort; applied as ONE insert, `stale` on a clash); `rotaWarnings`. Screens: `/logistics/rota/:view?`
+  (`src/screens/logistics/rota/`), «תוצרים ← תורנויות» `/print/rota` (`src/screens/outputs/RotaScreen.tsx`, every member;
+  `GroupSheet.tsx` an A4 landscape page per group). Builders `src/exports/rota.ts` (`groupSchedule` takes the public schedule (and
+  the closed cells' times), the rows, one group, the duties and its assignments — no Week, no phone: a future `/g` link would be anon's seventh function
+  and waits; `rotaWorkbook` a sheet per page, «מוצ״ש» in gershayim). `start_edition` carries the duties, the preparations and
+  the shifts; archive `format_version` 5 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
+  Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

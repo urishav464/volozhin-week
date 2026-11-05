@@ -408,7 +408,7 @@ test.describe("demo build", () => {
     expect(kk.groups.map((g: { title: string | null; place: string | null }) => [g.title, g.place])).toContainEqual(["ספר לדוגמה א׳", "הדשא"]);
     expect(kk.leaders.every((x: { name: string | null }) => typeof x.name === "string")).toBe(true);
     expect(kk.signups.every((s: { name: string | null }) => typeof s.name === "string")).toBe(true);
-    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(4);
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(5); // v16: rota.json
     const memorial = JSON.parse(strFromU8(files["memorial.json"]));
     expect(memorial.fallen).toHaveLength(9);
     expect(strFromU8(files["memorial.json"])).not.toContain("טלפון לדוגמה");
@@ -496,6 +496,8 @@ test.describe("mock build", () => {
     sb.tables.set("fallen", [{ id: 3, name: "חלל/ה לדוגמה 3", gender: null, note: null, active: true }, { id: 9, name: "חלל/ה לדוגמה 9", gender: null, note: null, active: false }]);
     sb.answers.set("get_fallen_contacts", null);
     sb.answers.set("load_reviews", []); // v12: «איך עבר» goes into the archive too
+    sb.answers.set("load_rota", { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] }); // v16: «תורנויות»
+    sb.answers.set("get_rota_contacts", []);
     await page.goto(`${mockUrl()}/settings/edition`);
     await page.getByRole("checkbox", { name: "כולל קבצי המקורות" }).check();
     await expect(page.getByText("2 קבצים, כ-")).toBeVisible();

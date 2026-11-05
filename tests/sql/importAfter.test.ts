@@ -114,7 +114,7 @@ describe("the import of 5786 meets after the week", () => {
     expect(await notes()).toEqual([NOTE, null]);
     expect(await code(commitAs(A, "select public.purge_edition_private($1, $2)", [archive, LABEL]))).toBe("forbidden");
     const report = (await commitAs(ADMIN, "select public.purge_edition_private($1, $2)", [archive, LABEL])) as Record<string, unknown>;
-    expect({ ...report, purged_at: typeof report.purged_at }).toEqual({ transport_details: 0, import_notes: 1, links_revoked: 0, link_hits: 0, purged_at: "string" });
+    expect({ ...report, purged_at: typeof report.purged_at }).toEqual({ transport_details: 0, import_notes: 1, links_revoked: 0, link_hits: 0, rota_contacts: 0, purged_at: "string" });
     expect(await notes()).toEqual([null, null]);
     // kept: the lessons, their amounts and speakers, the review, the speakers' pool; this year's edition untouched
     expect((await db.query("select day, pay_amount, state from public.lessons where edition_id = $1 order by day", [archive])).rows).toEqual([
@@ -127,11 +127,11 @@ describe("the import of 5786 meets after the week", () => {
     expect(await owner("select purged_at from public.editions where id = $1", [ed])).toBeNull();
     // logged with counts only — never the note
     const log = (await db.query("select detail from public.activity where kind = 'purge'")).rows;
-    expect(log).toEqual([{ detail: { transport_details: 0, import_notes: 1, links_revoked: 0, link_hits: 0 } }]);
+    expect(log).toEqual([{ detail: { transport_details: 0, import_notes: 1, links_revoked: 0, link_hits: 0, rota_contacts: 0 } }]);
     expect(JSON.stringify((await db.query("select detail from public.activity")).rows)).not.toContain("איסוף");
     // again: nothing more
     const again = (await commitAs(ADMIN, "select public.purge_edition_private($1, $2)", [archive, LABEL])) as Record<string, unknown>;
-    expect(again).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, purged_at: report.purged_at });
+    expect(again).toEqual({ transport_details: 0, import_notes: 0, links_revoked: 0, link_hits: 0, rota_contacts: 0, purged_at: report.purged_at });
   });
 
   it("start_edition and its dry run take the live real edition as the previous one — never the import, though its id is newer", async () => {

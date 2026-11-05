@@ -26,6 +26,7 @@ import type { DataPort } from "./data/port";
 // The outputs, «ידע» and «עזרה» load on first visit: the week stays as light as it was on a phone.
 const TrackingScreen = lazy(() => import("./screens/outputs/TrackingScreen").then((m) => ({ default: m.TrackingScreen })));
 const EscortsScreen = lazy(() => import("./screens/outputs/EscortsScreen").then((m) => ({ default: m.EscortsScreen })));
+const RotaScreen = lazy(() => import("./screens/outputs/RotaScreen").then((m) => ({ default: m.RotaScreen })));
 const DesignerScreen = lazy(() => import("./screens/outputs/DesignerScreen").then((m) => ({ default: m.DesignerScreen })));
 const KnowledgeScreen = lazy(() => import("./screens/knowledge/KnowledgeScreen").then((m) => ({ default: m.KnowledgeScreen })));
 const SummaryScreen = lazy(() => import("./screens/knowledge/SummaryScreen").then((m) => ({ default: m.SummaryScreen })));
@@ -299,7 +300,8 @@ function GateScreen(props: {
       // whoever handles speakers; anyone else who opens one lands on the week. The
       // outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
       // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
-      // edition on screen).
+      // edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and printed from
+      // «תוצרים» (/print/rota), which every member reads.
       return (
         <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
@@ -309,11 +311,12 @@ function GateScreen(props: {
           <Route path="/approvals" element={gate.me.global_admin ? <ApprovalsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />
+          <Route path="/print/rota" element={<RotaScreen port={props.port} me={gate.me} />} />
           <Route path="/export/designer" element={isSettingsAdmin(gate.me) ? <DesignerScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
           <Route path="/reader" element={<ReaderScreen port={props.port} me={gate.me} />} />
           <Route path="/kk" element={<KkScreen port={props.port} me={gate.me} />} />
           <Route path="/memorial" element={<MemorialScreen port={props.port} me={gate.me} />} />
-          <Route path="/logistics/:tab?" element={handlesLogistics(gate.me) ? <LogisticsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
+          <Route path="/logistics/:tab?/:view?" element={handlesLogistics(gate.me) ? <LogisticsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
           <Route path="/knowledge/summary" element={<SummaryScreen port={props.port} me={gate.me} />} />
           <Route path="/help" element={<HelpScreen />} />

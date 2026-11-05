@@ -9,6 +9,7 @@ import { DemoPort } from "../data/demoPort";
 import { demoWeek } from "../data/demoWeek";
 import type { KkData } from "../data/kk";
 import type { ArchiveExtras } from "../data/outputs";
+import { EMPTY_ROTA, type RotaData } from "../data/rota";
 import type { SourceFile, Week } from "../domain/types";
 import { type ArchiveMore, archiveFiles, archiveZip, PERSONAL_FILE, plannedFallen, safeEntryName, sourcePath, sourcesSize, touchedSpeakers } from "./archive";
 import { fetchSources, gatherArchive } from "./archiveGather";
@@ -49,7 +50,7 @@ describe("the archive's 5ב-2 files", () => {
     const files = archiveFiles({ week: w, extras, more, schemaVersion: 11, exportedAt: AT });
     expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", "kk.json", "memorial.json", PERSONAL_FILE, "sources.json", "speakers.json", "tracking.xlsx"].sort());
     const json = (k: string) => JSON.parse(strFromU8(files[k]));
-    expect(json("edition.json")).toMatchObject({ format_version: 4, escort_ticks: [{ lesson_id: 1, item: "met" }] });
+    expect(json("edition.json")).toMatchObject({ format_version: 5, escort_ticks: [{ lesson_id: 1, item: "met" }] });
     // v14: availability per slot, as the Week holds it
     expect(json("edition.json").slot_availability).toEqual(w.slotAvailability);
     expect(json("edition.json")).not.toHaveProperty("availability");
@@ -207,5 +208,75 @@ describe("reading the archive through the port", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("the archive's «תורנויות» (v16)", () => {
+  function rota(): RotaData {
+    return {
+      ...EMPTY_ROTA,
+      cohorts: [{ id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }], sort: 1 }],
+      presence: [{ cohort_id: 1, day: 1, shift: 0 }],
+      groups: [
+        { id: 11, edition_id: 1, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" },
+        { id: 12, edition_id: 1, cohort_id: 1, number: 2, size: null, head_name: null },
+      ],
+      duties: [{ id: 1, edition_id: 1, name: "מטבח", description: null, need_morning: 1, need_afternoon: 1, need_night: 1, min_people: null, sort: 1 }],
+      assignments: [{ id: 1, edition_id: 1, day: 1, shift: 0, duty_id: 1, group_id: 11, source: "hand" }],
+      prep: [{ id: 1, edition_id: 1, text: "משימת הכנה לדוגמה", group_id: null, done: false, sort: 1 }],
+    };
+  }
+  const base: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null };
+
+  it("keep load_rota's answer in rota.json — never a phone, not even one a port let slip — and say so in the README", () => {
+    const w = demoWeek();
+    const leaky = rota();
+    (leaky.groups[0] as unknown as Record<string, unknown>).head_phone = "טלפון שדלף לדוגמה"; // never sent; dropped if it were
+    const files = archiveFiles({ week: w, extras, more: { ...base, rota: leaky, rotaPhones: [] }, schemaVersion: 16, exportedAt: AT });
+    const json = JSON.parse(strFromU8(files["rota.json"]));
+    expect(Object.keys(json)).toEqual(["format", "exported_at", "shifts", "cohorts", "presence", "groups", "duties", "assignments", "staff", "prep"]);
+    expect(json.groups).toEqual(rota().groups);
+    expect(json.assignments).toEqual(rota().assignments);
+    expect(json.shifts).toBeNull(); // last year's: settings.rota_shifts absent
+    for (const [name, bytes] of Object.entries(files)) if (!name.endsWith(".xlsx")) expect(strFromU8(bytes), name).not.toMatch(/טלפון שדלף|head_phone/);
+    expect(files[PERSONAL_FILE]).toBeUndefined(); // no phone given: no personal-data file
+    expect(strFromU8(files["README.txt"])).toContain("rota.json: התורנויות");
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(5);
+    // not read (an older caller): no rota.json, and the README says so
+    const none = archiveFiles({ week: w, extras, more: base, schemaVersion: 16, exportedAt: AT });
+    expect(none["rota.json"]).toBeUndefined();
+    expect(strFromU8(none["README.txt"])).toContain("התורנויות לא נקראו בייצוא הזה.");
+  });
+
+  it("put the heads' phones the exporter was given in the personal-data file alone, by the group's code — of this edition's groups only", () => {
+    const w = demoWeek();
+    const phones = [
+      { group_id: 11, head_phone: "טלפון לדוגמה 11" },
+      { group_id: 99, head_phone: "טלפון לדוגמה 99" }, // not a group of this rota
+    ];
+    const files = archiveFiles({ week: w, extras, more: { ...base, rota: rota(), rotaPhones: phones }, schemaVersion: 16, exportedAt: AT });
+    expect(JSON.parse(strFromU8(files[PERSONAL_FILE])).rota_head_phones).toEqual([{ group: "א1", group_id: 11, head_phone: "טלפון לדוגמה 11" }]);
+    for (const [name, bytes] of Object.entries(files)) if (name !== PERSONAL_FILE) expect(strFromU8(bytes), name).not.toMatch(/טלפון לדוגמה 1[19]/);
+    expect(strFromU8(files["README.txt"])).toContain("והטלפונים של ראשי הקבוצות בתורנויות");
+  });
+
+  it("are read through the port: the demo's admin gets every head's phone; a content member none — and no personal-data file of its own", async () => {
+    const admin = await gatherArchive(new DemoPort(), 1, touchedSpeakers);
+    expect(admin.more.rota?.groups).toHaveLength(17);
+    expect(admin.more.rotaPhones).toHaveLength(17);
+    const files = archiveFiles({ week: admin.week, extras: admin.extras, more: admin.more, schemaVersion: 16, exportedAt: AT });
+    expect(JSON.parse(strFromU8(files[PERSONAL_FILE])).rota_head_phones.map((c: { group: string }) => c.group).slice(0, 7)).toEqual(["א1", "א2", "א3", "א4", "א5", "א6", "ב1"]);
+    expect(strFromU8(files["rota.json"])).not.toContain("טלפון לדוגמה");
+    const port = new DemoPort({ memberId: 2, role: "content", global: false });
+    let asked = 0;
+    const contacts = port.rota.contacts.bind(port.rota);
+    port.rota.contacts = async (e: number) => (asked++, contacts(e));
+    const content = await gatherArchive(port, 1, touchedSpeakers);
+    expect(asked).toBe(1);
+    expect(content.more.rotaPhones).toEqual([]); // the demo week is no real edition, and content never sees them
+    expect(content.more.rota?.groups).toHaveLength(17);
+    const theirs = archiveFiles({ week: content.week, extras: content.extras, more: { ...content.more, fallenContacts: [] }, schemaVersion: 16, exportedAt: AT });
+    const personal = theirs[PERSONAL_FILE] ? JSON.parse(strFromU8(theirs[PERSONAL_FILE])) : null;
+    expect(personal?.rota_head_phones ?? []).toEqual([]);
   });
 });

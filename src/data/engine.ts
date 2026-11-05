@@ -57,6 +57,7 @@ import {
 } from "./importRules";
 import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
 import type { PurgeReport } from "./settings";
+import type { RotaAssignment, RotaCohort, RotaDuty, RotaGroup, RotaPrepTask, RotaPresence, RotaStaffShift } from "./rota";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
 import {
   cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
@@ -83,6 +84,20 @@ export interface KkStore {
 }
 
 export const emptyKk = (): KkStore => ({ groups: [], leaders: [], signups: [], orders: [] });
+
+/** «תורנויות» (v16): the rota's tables, every edition's, as the database keeps them (DemoRota writes them). */
+export interface RotaStore {
+  cohorts: RotaCohort[];
+  /** rota_presence: a row = on campus (the table has its edition, the TS row does not). */
+  presence: (RotaPresence & { edition_id: number })[];
+  groups: RotaGroup[];
+  duties: RotaDuty[];
+  assignments: RotaAssignment[];
+  staff: RotaStaffShift[];
+  prep: RotaPrepTask[];
+}
+
+export const emptyRota = (): RotaStore => ({ cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] });
 
 /** What the database keeps outside a Week, shared by every edition's engine in the demo. */
 export interface PoolShared {
@@ -111,6 +126,10 @@ export interface PoolShared {
    * of its own — its transport words among them, so the transport details' rule (mayTransport): never in a Week.
    */
   importNotes: Record<string, string>;
+  /** rota_* (v16): the cohorts, groups, duties, assignments, staff shifts and preparations of every edition. */
+  rota: RotaStore;
+  /** rota_group_contacts (v16), by group id: a group head's phone — never in a Week or load_rota; the purge deletes it. */
+  rotaContacts: Record<number, string>;
 }
 
 /** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
@@ -121,7 +140,7 @@ export interface StoredObject {
   owner: string;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {} });
+export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {}, rota: emptyRota(), rotaContacts: {} });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
@@ -1345,7 +1364,8 @@ export class Engine {
    * public.purge_edition_private: a global admin (`forbidden`), the edition's label typed (`confirm_mismatch`), once the
    * week is over or the edition archived (`week_not_over`). Deletes the edition's transport details and its links' rate
    * counts, clears its lessons' import notes (an archive the import of 5786 made keeps last year's transport and payment
-   * words there), revokes every link of it; the first time is kept (purged_at); logged with the counts only.
+   * words there), revokes every link of it, deletes its group heads' phones (v16, `shared.rotaContacts` of its groups);
+   * the first time is kept (purged_at); logged with the counts only.
    */
   purgePrivate(confirm: string | null): PurgeReport {
     return this.tx(() => {
@@ -1383,8 +1403,16 @@ export class Engine {
           revoked++;
         }
       }
+      // v16: the group heads' phones (rota_group_contacts) — the groups, their heads' names and the rota stay
+      let rotaContacts = 0;
+      for (const g of this.shared.rota.groups) {
+        if (g.edition_id === e.id && g.id in this.shared.rotaContacts) {
+          delete this.shared.rotaContacts[g.id];
+          rotaContacts++;
+        }
+      }
       e.purged_at = e.purged_at ?? now;
-      const counts = { transport_details: transport, import_notes: notes, links_revoked: revoked, link_hits: hits };
+      const counts = { transport_details: transport, import_notes: notes, links_revoked: revoked, link_hits: hits, rota_contacts: rotaContacts };
       this.log(e.id, "editions", e.id, "purge", counts);
       return { ...counts, purged_at: e.purged_at };
     });

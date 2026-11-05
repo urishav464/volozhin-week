@@ -51,6 +51,8 @@ export interface PurgeReport {
   import_notes: number;
   links_revoked: number;
   link_hits: number;
+  /** v16: the group heads' phones deleted (rota_group_contacts); the groups and their heads' names stay. */
+  rota_contacts: number;
   purged_at: string;
 }
 
@@ -68,6 +70,10 @@ export interface StartPreview {
   /** v14: the instructor's own «נקודות לשיחה», when saved (absent = the built-in text, nothing to carry). */
   call_template: boolean;
   duty_phrases: number;
+  /** v16 «תורנויות»: carry_from's duties and Saturday-night preparations (counts), and whether its shifts were set. */
+  rota_duties: number;
+  rota_prep_tasks: number;
+  rota_shifts: boolean;
   deactivate: number;
   admins_stay: number;
   stays: { speakers: number; categories: number; fallen: number; notes: number };
