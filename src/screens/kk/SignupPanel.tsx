@@ -18,7 +18,7 @@ export function SignupPanel({ week, kk, admin, busy, act, port, onSaved }: { wee
   return (
     <section aria-label="ההרשמה" className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">ההרשמה</h3>
+        <h3 className="font-display text-lg font-bold text-navy">ההרשמה</h3>
         <Badge tone={state === "open" ? "ok" : "muted"}>{state === "open" ? "פתוחה עכשיו" : "סגורה עכשיו"}</Badge>
       </div>
       <WindowPanel week={week} admin={admin} busy={busy} act={act} port={port} onSaved={onSaved} />
@@ -26,7 +26,7 @@ export function SignupPanel({ week, kk, admin, busy, act, port, onSaved }: { wee
       {admin && (
         <p className="text-sm text-ink-soft">
           קישור ההרשמה:{" "}
-          <Link to="/settings/links" className="inline-flex min-h-11 items-center font-semibold underline">
+          <Link to="/settings/links" className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4 hover:text-navy-800">
             בהגדרות ← «קישורים»
           </Link>
         </p>
@@ -164,7 +164,7 @@ function NotYet({ week, kk, admin, busy, act, port }: { week: Week; kk: KkData; 
     if (ok || refused) setWho(null);
   };
   return (
-    <Fold title="עוד לא נרשמו" hint={<span data-kk-missing>{missing.length}</span>} className="rounded-lg border border-line px-3 py-0.5">
+    <Fold title="עוד לא נרשמו" hint={<span data-kk-missing>{missing.length}</span>} className="rounded-xl bg-sand-soft px-3 py-0.5">
       {leaders.length > 0 && <p className="text-sm text-ink-soft">מעבירים קבוצה (הם כבר בקבוצה שלהם): {leaders.map((r) => r.full_name).join(" · ")}</p>}
       {missing.length === 0 ? (
         <p className="text-sm text-ink-soft">כל החניכים ברשימה נרשמו.</p>

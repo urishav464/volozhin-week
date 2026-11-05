@@ -23,7 +23,7 @@ export function TeamBoard({ week, global, onOpen }: { week: Week; global: boolea
   const waiting = agreed.length + payments.length;
   const names = new Map(week.team.map((t) => [t.id, t.display_name]));
   const rows = (list: MineRow[]) => (
-    <ul className="divide-y divide-line/70">
+    <ul className="divide-y divide-sage/60">
       {list.map((r) => (
         <TeamItem key={`${r.approach.id}:${r.lesson?.id ?? ""}`} row={r} names={names} onOpen={() => onOpen(r.speaker.id)} />
       ))}
@@ -33,12 +33,12 @@ export function TeamBoard({ week, global, onOpen }: { week: Week; global: boolea
   return (
     <div className="space-y-4">
       {waiting > 0 && (
-        <section aria-label="מחכה לאישור שלך" className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 shadow-sm">
+        <section aria-label="מחכה לאישור שלך" className="rounded-xl bg-amber-50 p-4 shadow-sm ring-1 ring-amber-200 ring-inset sm:p-5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h3 className="font-display text-lg font-semibold">
+            <h3 className="font-display text-lg font-bold text-navy">
               מחכה לאישור שלך <span className="text-sm font-normal text-ink-soft tabular-nums">{waiting}</span>
             </h3>
-            <Link to="/approvals" className="ms-auto inline-flex min-h-11 items-center rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90">
+            <Link to="/approvals" className="ms-auto inline-flex min-h-11 items-center rounded-full bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-navy-800">
               לאישורים
             </Link>
           </div>
@@ -59,8 +59,8 @@ export function TeamBoard({ week, global, onOpen }: { week: Week; global: boolea
       )}
 
       {board.owners.map((o) => (
-        <section key={o.id} aria-label={o.name} className="rounded-xl border border-line bg-card px-3 py-2 shadow-sm sm:px-4">
-          <h3 className="flex min-h-11 items-center gap-2 font-display text-lg font-semibold">
+        <section key={o.id} aria-label={o.name} className="rounded-xl border border-line bg-card px-3 py-2 shadow-sm sm:px-5">
+          <h3 className="flex min-h-11 items-center gap-2 font-display text-lg font-bold text-navy">
             <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ backgroundColor: o.color }} />
             {o.name} <span className="text-sm font-normal text-ink-soft tabular-nums">{o.rows.length}</span>
           </h3>
@@ -69,7 +69,7 @@ export function TeamBoard({ week, global, onOpen }: { week: Week; global: boolea
       ))}
 
       {board.unowned.length > 0 && (
-        <div className="rounded-xl border border-line bg-card px-3 shadow-sm sm:px-4">
+        <div className="rounded-xl border border-line bg-card px-3 shadow-sm sm:px-5">
           <Fold title="בלי אחראי/ת" hint={board.unowned.length}>
             <p className="text-sm text-ink-soft">
               מרצים בתהליך השנה שאין מי שמטפל/ת בהם. מי שהוחזרו למאגר — לוקחים ב«אני מטפל/ת» בכרטיס. מי שמי שטיפל/ה בהם כבר לא בצוות — המדריך/ה מעביר/ה ב«העברה לחבר/ת צוות» בכרטיס.
@@ -98,9 +98,9 @@ function TeamItem({ row, names, onOpen }: { row: MineRow; names: Map<number, str
   const offeredTo = a.offered_to != null ? (names.get(a.offered_to) ?? "חבר/ת צוות") : null;
   return (
     <li data-speaker-id={s.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5">
-      <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-semibold underline decoration-ink-faint underline-offset-4 hover:decoration-ink">
+      <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center gap-1.5 text-start font-bold text-navy underline decoration-navy/30 underline-offset-4 hover:decoration-navy">
         {displayName(s)}
-        <span aria-hidden className="inline-block text-ink-soft">
+        <span aria-hidden className="inline-block text-navy">
           ‹
         </span>
       </button>

@@ -7,6 +7,7 @@ import { byGender, displayName } from "../domain/names";
 import { DAYS, DAY_NAMES, fmt, fmtRange } from "../domain/time";
 import type { Gender, Speaker } from "../domain/types";
 import { statusLabel, vettingLabel } from "../lib/labels";
+import { Button } from "../screens/settings/kit";
 import { Chip, GenderDot, TopicChip, topicsOf } from "./bits";
 import { type GridModel, POOL_SECTION_LABEL, type PoolSection, poolSection, speakerMatches } from "./model";
 
@@ -25,6 +26,8 @@ interface Props {
 }
 
 const SECTIONS: PoolSection[] = ["mine", "free", "others", "closed", "declined"];
+/** The search box and the two filters: the kit's field look (INPUT), at the pool's own size. */
+const FIELD = "rounded-lg border border-line bg-card text-sm text-ink placeholder:text-ink-faint focus:border-navy";
 
 export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate, dropTarget }: Props) {
   const [query, setQuery] = useState("");
@@ -57,21 +60,21 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
             onChange={(e) => setQuery(e.target.value)}
             placeholder="חיפוש מרצה, נושא או מוסד"
             aria-label="חיפוש מרצה"
-            className="min-w-0 flex-1 rounded-lg border border-line bg-card px-3 py-2 text-sm"
+            className={`min-w-0 flex-1 ${FIELD} px-3 py-2`}
           />
           {canEdit && (
-            <button type="button" onClick={() => onCreate(query.trim())} className="min-h-11 shrink-0 rounded-lg bg-ink px-3 text-sm font-semibold text-paper hover:bg-ink/90">
+            <Button kind="primary" onClick={() => onCreate(query.trim())} className="shrink-0 text-sm">
               + מרצה חדש/ה
-            </button>
+            </Button>
           )}
         </div>
         <div className="flex gap-1.5">
-          <select aria-label="מגדר" value={gender} onChange={(e) => setGender(e.target.value as Gender | "")} className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-sm">
+          <select aria-label="מגדר" value={gender} onChange={(e) => setGender(e.target.value as Gender | "")} className={`min-w-0 flex-1 ${FIELD} px-2 py-1.5`}>
             <option value="">כל המגדרים</option>
             <option value="f">נשים</option>
             <option value="m">גברים</option>
           </select>
-          <select aria-label="נושא" value={category} onChange={(e) => setCategory(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-line bg-card px-2 py-1.5 text-sm">
+          <select aria-label="נושא" value={category} onChange={(e) => setCategory(e.target.value)} className={`min-w-0 flex-1 ${FIELD} px-2 py-1.5`}>
             <option value="">כל הנושאים</option>
             {model.week.categories.filter((c) => c.active).map((c) => (
               <option key={c.id} value={c.name}>
@@ -89,7 +92,7 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
               role="tab"
               aria-selected={section === s}
               onClick={() => setSection(s)}
-              className={`min-h-11 shrink-0 whitespace-nowrap rounded-full border px-2.5 text-xs lg:min-h-0 lg:py-1 ${section === s ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-soft"}`}
+              className={`min-h-11 shrink-0 whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold transition-colors lg:min-h-0 lg:py-1 ${section === s ? "border-navy bg-navy text-white" : "border-line bg-card text-ink-soft hover:border-navy/40 hover:text-navy"}`}
             >
               {POOL_SECTION_LABEL[s]} <span className="tabular-nums opacity-80">{bySection.get(s)?.length ?? 0}</span>
             </button>
@@ -97,7 +100,7 @@ export function Pool({ model, me, canEdit, placingId, onPlace, onOpen, onCreate,
         </div>
       </div>
 
-      {dropTarget && <p className="rounded-lg border-2 border-dashed border-accent bg-accent-soft p-2 text-center text-xs">שחררו כאן כדי להחזיר למאגר</p>}
+      {dropTarget && <p className="rounded-xl border-2 border-dashed border-accent bg-accent-soft p-2 text-center text-xs text-navy">שחררו כאן כדי להחזיר למאגר</p>}
 
       <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pe-0.5" aria-label={POOL_SECTION_LABEL[section]}>
         {list.length === 0 && <li className="p-4 text-center text-sm text-ink-faint">אין כאן מרצים</li>}
@@ -138,7 +141,7 @@ function SpeakerCard({
       data-drag={draggable ? `speaker:${s.id}` : undefined}
       data-drag-label={displayName(s)}
       data-speaker-id={s.id}
-      className={`relative rounded-lg border bg-card p-2 ${placing ? "border-accent ring-2 ring-accent/40" : "border-line"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      className={`relative rounded-xl border bg-card p-2 shadow-sm transition-shadow hover:shadow-md ${placing ? "border-accent ring-2 ring-accent/40" : "border-line"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={stripe ? { borderInlineStartWidth: 4, borderInlineStartColor: stripe } : undefined}
     >
       <div className="flex items-center gap-1.5">
@@ -147,7 +150,7 @@ function SpeakerCard({
         <button
           type="button"
           onClick={onOpen}
-          className="min-w-0 truncate text-start text-sm font-semibold underline-offset-2 after:absolute after:inset-0 after:rounded-lg after:content-[''] hover:underline"
+          className="min-w-0 truncate text-start text-sm font-bold text-navy underline-offset-2 after:absolute after:inset-0 after:rounded-xl after:content-[''] hover:underline"
           aria-label={`כרטיס ${displayName(s)}`}
         >
           {displayName(s)}
@@ -158,7 +161,7 @@ function SpeakerCard({
             type="button"
             onClick={onPlace}
             aria-pressed={placing}
-            className={`relative z-10 ms-auto min-h-11 shrink-0 rounded-md border px-3 text-xs font-semibold lg:min-h-7 lg:px-2 ${placing ? "border-accent bg-accent text-paper" : "border-line bg-paper hover:bg-line/50"}`}
+            className={`relative z-10 ms-auto min-h-11 shrink-0 rounded-full border px-3 text-xs font-semibold transition-colors lg:min-h-7 lg:px-2.5 ${placing ? "border-navy bg-navy text-white" : "border-navy/40 bg-card text-navy hover:border-navy hover:bg-accent-soft"}`}
           >
             {placing ? "בוחרים משבצת…" : "שבץ"}
           </button>

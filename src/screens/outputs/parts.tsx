@@ -84,7 +84,7 @@ export function OutputsTabs({ admin, reader = false }: { admin: boolean; reader?
           key={i.to}
           to={i.to}
           className={({ isActive }) =>
-            `inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold ${isActive ? "bg-ink text-paper" : "border border-line bg-card text-ink hover:bg-line/50"}`
+            `inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-bold transition-colors duration-150 ${isActive ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-navy hover:border-navy/50 hover:bg-accent-soft"}`
           }
         >
           {i.label}
@@ -99,8 +99,8 @@ export function PhonesToggle({ actor, week, on, setOn, failed }: { actor: Actor;
   if (!maySeeSomeContacts(actor, week)) return null;
   return (
     <div className="min-w-0">
-      <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-        <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} className="size-4 accent-ink" />
+      <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-bold">
+        <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} className="size-4 accent-navy" />
         כולל טלפונים
       </label>
       {on && (
@@ -131,17 +131,21 @@ export function ToneLegend({ tones }: { tones: ProgressTone[] }) {
   );
 }
 
-/** The page size while this screen is open — and the title line a printed page carries. */
+/**
+ * The page size while this screen is open — and the title line a printed page carries, in the brand's navy. A table on
+ * the paper takes the kit's TABLE_HEAD / TABLE_TH / TABLE_ROW / TABLE_KEY (settings/kit.tsx): the sage header bar, sage
+ * hairlines, the key column bold navy — on white, the colours exact (index.css «Print»).
+ */
 export function PrintSetup({ landscape, title, children }: { landscape: boolean; title: string; children?: ReactNode }) {
   return (
     <>
       <style media="print">{`@page { size: A4 ${landscape ? "landscape" : "portrait"}; margin: 10mm; }`}</style>
       <div className="hidden print:block">
-        <p className="text-lg font-bold">{title}</p>
+        <p className="font-display text-lg font-extrabold text-navy">{title}</p>
         {children}
       </div>
     </>
   );
 }
 
-export const SELECT = "min-h-11 rounded-lg border border-line bg-card px-2 text-base";
+export const SELECT = "min-h-11 rounded-lg border border-line bg-card px-2 text-base text-ink hover:border-ink-faint focus:border-navy";

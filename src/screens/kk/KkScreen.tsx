@@ -78,13 +78,13 @@ export function KkScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-4xl space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="font-display text-2xl font-extrabold">מכריכה לכריכה</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">מכריכה לכריכה</h2>
         <EditionSelect />
       </div>
       {kk && <StatusStrip week={week} kk={kk} />}
       <Sessions week={week} />
       {failed && !kk && (
-        <div role="alert" className="rounded-lg border border-bad/30 bg-bad/5 p-4 text-sm">
+        <div role="alert" className="rounded-xl border border-bad/30 bg-bad/5 p-4 text-sm">
           <p className="mb-2">לא הצלחנו לטעון את הקבוצות.</p>
           <Button onClick={() => void load()}>לנסות שוב</Button>
         </div>
@@ -114,7 +114,8 @@ function StatusStrip({ week, kk }: { week: Week; kk: KkData }) {
   return (
     <ul aria-label="איפה זה עומד" aria-live="polite" className="flex flex-wrap gap-1.5 text-sm">
       {items.map((i) => (
-        <li key={i.key} data-kk-status={i.key} className={`rounded-full border px-2.5 py-1 ${i.ok ? "border-ok/30 bg-ok/10 text-ok" : "border-line bg-card"}`}>
+        // calm pills on the page: white with a hairline; the open window in green (on white, 5:1 — on its own tint it is not)
+        <li key={i.key} data-kk-status={i.key} className={`rounded-full bg-card px-3 py-1 ring-1 ring-inset ${i.ok ? "font-bold text-ok ring-ok/40" : "text-ink-soft ring-line"}`}>
           {i.text}
         </li>
       ))}
@@ -130,7 +131,7 @@ function Sessions({ week }: { week: Week }) {
   return (
     <section aria-label="המפגשים" className="rounded-xl border border-line bg-card px-4 pt-3 pb-1.5 shadow-sm sm:px-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">המפגשים</h3>
+        <h3 className="font-display text-lg font-bold text-navy">המפגשים</h3>
         <span className="text-sm text-ink-soft">{sessions.length === 0 ? "אין ברשת משבצות «מכריכה לכריכה»." : `${sessions.length === 1 ? "מפגש אחד" : `${sessions.length} מפגשים`} · כל הקבוצות בכל מפגש`}</span>
       </div>
       {sessions.length > 0 && (
@@ -164,9 +165,10 @@ function Groups({ week, kk, admin, books, busy, act, port }: { week: Week; kk: K
   };
   const groups = byBook(kk.groups);
   return (
-    <section aria-label="הקבוצות" className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
+    // the groups' panel: a sage grouping, the white cards on it
+    <section aria-label="הקבוצות" className="space-y-3 rounded-xl bg-sage-soft p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">הקבוצות</h3>
+        <h3 className="font-display text-lg font-bold text-navy">הקבוצות</h3>
         <span className="text-sm text-ink-soft">{groups.length === 0 ? "עוד אין קבוצות" : groupsWord(groups.length)}</span>
         {admin && !adding && (
           <Button ref={focusBack.ref()} className="ms-auto" onClick={() => setAdding(true)}>

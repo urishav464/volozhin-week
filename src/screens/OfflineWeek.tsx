@@ -27,16 +27,16 @@ export function OfflineWeek({ snapshot, path = "/" }: { snapshot: WeekSnapshot; 
 
   return (
     <div className="mx-auto max-w-3xl space-y-2">
-      <div role="status" data-offline-banner className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-        <p className="font-semibold">אין חיבור לאינטרנט — מוצג המצב מ{savedAtText(snapshot.savedAt)}</p>
+      <div role="status" data-offline-banner className="rounded-xl border border-sand bg-sand-soft px-3 py-2 text-sm text-ink">
+        <p className="font-bold text-warn">אין חיבור לאינטרנט — מוצג המצב מ{savedAtText(snapshot.savedAt)}</p>
         <p>לצפייה בלבד: אי אפשר לשנות דבר עד שהחיבור חוזר. כשהוא חוזר, המסך מתעדכן לבד.</p>
         {elsewhere && (
-          <p data-offline-elsewhere className="mt-1 font-semibold">
+          <p data-offline-elsewhere className="mt-1 font-bold">
             «{elsewhere}» צריך חיבור לאינטרנט. בינתיים מוצגת תצוגת היום מהעותק.
           </p>
         )}
       </div>
-      <h2 className="font-display text-lg font-semibold">{model.week.edition.label}</h2>
+      <h2 className="font-display text-xl font-extrabold text-navy">{model.week.edition.label}</h2>
       <DayView model={model} lens="diversity" day={day} onDay={setDay} placing={null} onCell={() => undefined} onLesson={setOpen} readOnly />
       {lesson && <LessonFacts model={model} lesson={lesson} wide={wide} onClose={() => setOpen(null)} />}
     </div>
@@ -92,7 +92,7 @@ function LessonFacts({ model, lesson, wide, onClose }: { model: GridModel; lesso
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
-            <dt className="font-semibold text-ink-soft">{k}</dt>
+            <dt className="font-bold text-ink-soft">{k}</dt>
             <dd className="min-w-0 break-words">{k === "יום ושעה" ? <bdi>{v}</bdi> : v}</dd>
           </div>
         ))}

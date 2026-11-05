@@ -19,7 +19,7 @@ export function CallPoints({ week, speakerGender, memberId }: { week: Week; spea
   });
   return (
     <div className="space-y-1.5">
-      <p className="whitespace-pre-line break-words rounded-lg bg-card px-3 py-2.5 text-[15px] leading-relaxed" data-call-points>
+      <p className="whitespace-pre-line break-words rounded-xl bg-sand-soft px-3 py-2.5 text-[15px] leading-relaxed" data-call-points>
         {c.text}
       </p>
       {c.problems.length > 0 && (
@@ -54,7 +54,7 @@ export function CallResults({
   const said = byGender(gender, "אמר", "אמרה", "אמר/ה");
   return (
     <div role="group" aria-label="תוצאת השיחה" className="space-y-2">
-      <label htmlFor={id} className="block text-sm font-medium">
+      <label htmlFor={id} className="block text-sm font-bold text-ink">
         מה נאמר בשיחה <span className="font-normal text-ink-soft">(לא חובה)</span>
       </label>
       <input id={id} value={note} onChange={(e) => setNote(e.target.value)} maxLength={LIMITS.note} placeholder={`למשל: נושא השיעור, מה ${said} על התנדבות`} className={INPUT} />

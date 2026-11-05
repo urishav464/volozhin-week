@@ -91,7 +91,7 @@ export function MineScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-3xl space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 id="mine-title" tabIndex={-1} className="font-display text-2xl font-extrabold outline-none">
+        <h2 id="mine-title" tabIndex={-1} className="font-display text-2xl font-extrabold text-navy outline-none">
           המרצים שלי
         </h2>
         <EditionSelect />
@@ -118,8 +118,8 @@ export function MineScreen({ port, me }: { port: DataPort; me: Me }) {
               aria-controls="mine-panel"
               tabIndex={selected ? 0 : -1}
               onClick={() => go(t.key)}
-              className={`-mb-px min-h-11 rounded-t-lg border-b-2 px-4 font-semibold transition-colors ${
-                selected ? "border-ink text-ink" : "border-transparent text-ink-soft hover:bg-line/50 hover:text-ink"
+              className={`-mb-px min-h-11 rounded-t-lg border-b-[3px] px-4 font-bold transition-colors ${
+                selected ? "border-navy text-navy" : "border-transparent text-ink-soft hover:bg-accent-soft hover:text-navy"
               }`}
             >
               {t.label}
@@ -145,7 +145,7 @@ export function MineScreen({ port, me }: { port: DataPort; me: Me }) {
             if (rows.length === 0) return null;
             return (
               <section key={group} aria-label={label} className="space-y-2">
-                <h3 className="flex items-baseline gap-2 font-display text-lg font-semibold">
+                <h3 className="flex items-baseline gap-2 font-display text-lg font-bold text-navy">
                   {label} <span className="text-sm font-normal text-ink-soft tabular-nums">{rows.length}</span>
                 </h3>
                 <ul className="space-y-2">
@@ -419,15 +419,15 @@ function MineItem({
   })();
   return (
     // The whole card opens the sheet (the name button's ::after covers it); the row's own buttons sit above it.
-    <li data-speaker-id={s.id} className="relative flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-card px-3 py-2 shadow-sm hover:border-ink-soft">
+    <li data-speaker-id={s.id} className="relative flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-card px-3 py-2 shadow-sm transition duration-150 ease-out hover:border-navy/40 hover:shadow-md sm:px-4">
       <div className="min-w-0 flex-1 basis-44">
         <button
           type="button"
           onClick={onOpen}
-          className="inline-flex min-h-11 items-center gap-1.5 text-start font-semibold underline decoration-ink-faint underline-offset-4 after:absolute after:inset-0 after:rounded-xl after:content-[''] hover:decoration-ink"
+          className="inline-flex min-h-11 items-center gap-1.5 text-start font-bold text-navy underline decoration-navy/30 underline-offset-4 after:absolute after:inset-0 after:rounded-xl after:content-[''] hover:decoration-navy"
         >
           {displayName(s)}
-          <span aria-hidden className="inline-block text-ink-soft">
+          <span aria-hidden className="inline-block text-navy">
             ‹
           </span>
         </button>

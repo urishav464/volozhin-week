@@ -14,11 +14,11 @@ export function GenderDot({ gender, className = "" }: { gender: Gender | null; c
 
 export function Chip({ children, tone = "plain", title }: { children: ReactNode; tone?: "plain" | "warn" | "bad" | "ok" | "info"; title?: string }) {
   const tones = {
-    plain: "bg-paper border-line text-ink-soft",
+    plain: "bg-sand-soft border-line text-ink-soft",
     warn: "bg-amber-50 border-amber-300 text-amber-900",
     bad: "bg-red-50 border-red-300 text-red-800",
     ok: "bg-emerald-50 border-emerald-300 text-emerald-900",
-    info: "bg-sky-50 border-sky-200 text-sky-900",
+    info: "bg-sky-soft border-sky/40 text-navy",
   };
   return (
     <span title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4 whitespace-nowrap ${tones[tone]}`}>
@@ -56,7 +56,7 @@ export function topicsOf(topics: readonly string[], categories: readonly Categor
 export const STAGE_DOT: Record<StageState, string> = {
   done: "bg-ok border-ok",
   open: "bg-transparent border-ink-faint",
-  waiting: "bg-warn border-warn",
+  waiting: "bg-wait border-wait",
   problem: "bg-bad border-bad",
   na: "bg-transparent border-ink-faint border-dashed", // quiet, but visible: dashed, not a hollow «open»
 };
@@ -88,5 +88,5 @@ export function Initials({ name }: { name: string }) {
     .slice(0, 2)
     .map((w) => w[0])
     .join("");
-  return <span className="inline-grid place-items-center size-5 rounded-full bg-ink text-paper text-[10px] font-semibold">{letters || "?"}</span>;
+  return <span className="inline-grid place-items-center size-5 rounded-full bg-navy text-white text-[10px] font-semibold">{letters || "?"}</span>;
 }

@@ -27,22 +27,22 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
   return (
     <Tag
       {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)} — פרטי היום` } : {})}
-      className={`block w-full rounded-lg border bg-card px-2 py-1.5 text-start ${onOpen ? "cursor-pointer transition-shadow hover:border-ink-faint hover:shadow-sm" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : off ? "border-bad/60" : "border-line"}`}
+      className={`block w-full rounded-xl border bg-card px-2.5 py-1.5 text-start shadow-sm ${onOpen ? "cursor-pointer transition-shadow hover:shadow-md" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : off ? "border-bad/60" : `border-line ${onOpen ? "hover:border-navy/30" : ""}`}`}
       data-day-header={dm.day}
     >
       <span className="flex items-baseline gap-1.5">
-        <span className="font-display text-[15px] font-semibold">{DAY_NAMES[dm.day as Day]}</span>
+        <span className="font-display text-[15px] font-extrabold text-navy">{DAY_NAMES[dm.day as Day]}</span>
         <span className="min-w-0 truncate text-[11px] text-ink-faint">{date ? `${shortDate(date)} · ${hebrewDate(date)}` : "תאריך TBD"}</span>
         {onOpen && (
-          <span aria-hidden className="ms-auto shrink-0 text-[13px] leading-none text-ink-faint">
+          <span aria-hidden className="ms-auto shrink-0 text-[13px] leading-none text-navy/60">
             ‹
           </span>
         )}
       </span>
       {/* the closed women and men in the cells' own pink and sky */}
       <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-ink-soft tabular-nums" aria-label="איזון מגדרי">
-        <span className="shrink-0 rounded bg-need-f px-1 text-pink-900">נ {n(b.closed.f)}</span>
-        <span className="shrink-0 rounded bg-need-m px-1 text-sky-900">ג {n(b.closed.m)}</span>
+        <span className="shrink-0 rounded-full bg-need-f px-1.5 text-pink-900">נ {n(b.closed.f)}</span>
+        <span className="shrink-0 rounded-full bg-need-m px-1.5 text-sky-900">ג {n(b.closed.m)}</span>
         <span className="truncate">· {b.open} פנויות</span>
       </span>
       <span className={`block text-[11px] font-semibold ${needTone}`} data-need={b.need ?? "even"}>
@@ -54,7 +54,7 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
         <span className="min-w-0 flex-1">
           <TopicAxis model={model} day={dm.day as Day} size="thin" />
         </span>
-        {!compact && warnCount > 0 && <span className="shrink-0 rounded bg-amber-100 px-1 text-[10px] leading-4 text-amber-900">⚠ {warnCount}</span>}
+        {!compact && warnCount > 0 && <span className="shrink-0 rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-900">⚠ {warnCount}</span>}
       </span>
     </Tag>
   );

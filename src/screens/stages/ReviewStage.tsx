@@ -230,7 +230,7 @@ function ReviewBody({
         onChange={setInvite}
       />
       <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={overran} onChange={(e) => setOverran(e.target.checked)} className="size-5 accent-ink" />
+        <input type="checkbox" checked={overran} onChange={(e) => setOverran(e.target.checked)} className="size-5 accent-navy" />
         {overranWord}
       </label>
       <Choice

@@ -229,7 +229,7 @@ export function TagInput({
   };
   return (
     <div className="min-w-0">
-      <label htmlFor={id} className="mb-1 block text-sm font-semibold">
+      <label htmlFor={id} className="mb-1 block text-sm font-bold text-ink">
         נושאים
       </label>
       {tags.length > 0 && (
@@ -239,12 +239,12 @@ export function TagInput({
             return (
               <li
                 key={t}
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-paper ps-3 text-sm"
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-sand-soft ps-3 text-sm"
                 style={color ? { backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`, borderColor: `color-mix(in srgb, ${color} 35%, transparent)` } : undefined}
               >
                 {color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />}
                 {t}
-                <button type="button" onClick={() => onChange({ topics: tags.filter((x) => x !== t), topicDraft: draft })} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft hover:bg-line/60">
+                <button type="button" onClick={() => onChange({ topics: tags.filter((x) => x !== t), topicDraft: draft })} aria-label={`הסרת הנושא ${t}`} className="inline-flex size-9 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-accent-soft hover:text-navy">
                   ×
                 </button>
               </li>
@@ -276,7 +276,7 @@ export function TagInput({
                 type="button"
                 onClick={() => onChange({ topics: withTopic(tags, c.name), topicDraft: draft })}
                 aria-label={`הוספת הנושא ${c.name}`}
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed border-line px-2.5 text-xs text-ink-soft hover:bg-line/40 hover:text-ink sm:min-h-8"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed border-line bg-card px-2.5 text-xs text-ink-soft transition-colors hover:border-navy/50 hover:bg-accent-soft hover:text-navy sm:min-h-8"
               >
                 <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: c.color }} />
                 {c.name}
@@ -439,7 +439,7 @@ export function SlotGrid({
               <span className="sr-only">שעה</span>
             </th>
             {DAYS.map((d) => (
-              <th key={d} scope="col" className="text-xs font-semibold text-ink-soft">
+              <th key={d} scope="col" className="rounded-md bg-sage py-1 text-xs font-bold text-ink">
                 {DAY_NAMES[d]}
               </th>
             ))}
@@ -510,7 +510,7 @@ export function SlotGrid({
         <ul aria-label="הערות על הזמינות" className="space-y-0.5 text-sm">
           {notes.map((n) => (
             <li key={n.key}>
-              <span className="font-semibold">
+              <span className="font-bold text-navy">
                 {DAY_NAMES[n.day]} <bdi>{fmtRange(n.from.start_min, n.to.end_min)}</bdi>
               </span>{" "}
               · {KIND_TEXT(n.kind, gender)} — {n.note}
@@ -556,7 +556,7 @@ function SlotNote({
     }
   };
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="הערה למשבצת" className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void submit(e)} aria-label="הערה למשבצת" className="space-y-2 rounded-xl bg-sand-soft p-3" noValidate>
       <Field id={`${id}-slot`} label="המשבצת">
         <select
           ref={slot}
@@ -604,10 +604,11 @@ export function useToast(bottom = "bottom-6") {
     <div
       key={toast.at}
       role={toast.kind === "error" ? "alert" : "status"}
-      className={`fixed inset-x-0 ${bottom} z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl print:hidden ${toast.kind === "error" ? "bg-bad text-paper" : "bg-ink text-paper"}`}
+      className={`fixed inset-x-0 ${bottom} z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-white shadow-xl print:hidden ${toast.kind === "error" ? "bg-bad" : "bg-navy"}`}
     >
       <span>{toast.text}</span>
-      <button type="button" aria-label="סגירת ההודעה" onClick={clear} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-md text-lg leading-none hover:bg-paper/10">
+      {/* on navy or red a navy ring would vanish: white */}
+      <button type="button" aria-label="סגירת ההודעה" onClick={clear} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/15 focus-visible:outline-white!">
         ×
       </button>
     </div>
@@ -622,7 +623,7 @@ export function EditionSelect() {
   const { editions, editionId, select, week } = useWeekStore();
   if (editions.length <= 1) return week ? <span className="text-ink-soft">{week.edition.label}</span> : null;
   return (
-    <select aria-label="מחזור" value={editionId ?? ""} onChange={(e) => select(Number(e.target.value))} className="min-h-11 rounded-lg border border-line bg-card px-2 font-semibold">
+    <select aria-label="מחזור" value={editionId ?? ""} onChange={(e) => select(Number(e.target.value))} className="min-h-11 rounded-lg border border-line bg-card px-2 font-bold text-navy hover:border-ink-faint focus:border-navy">
       {editions.map((e) => (
         <option key={e.id} value={e.id}>
           {e.label}

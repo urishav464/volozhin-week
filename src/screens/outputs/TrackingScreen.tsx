@@ -16,7 +16,7 @@ import {
 } from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { useMedia } from "../../lib/useMedia";
-import { Button } from "../settings/kit";
+import { Button, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
 import { OutputsTabs, PhonesToggle, PrintSetup, SELECT, ToneLegend, usePhones } from "./parts";
@@ -65,14 +65,14 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
         </p>
       </PrintSetup>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
-        <h2 className="font-display text-2xl font-extrabold">טבלת מעקב</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">טבלת מעקב</h2>
         <EditionSelect />
         <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
       </div>
 
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 print:hidden">
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 shadow-sm print:hidden">
         <div className="flex flex-col">
-          <label htmlFor="tracking-day" className="text-sm font-semibold">
+          <label htmlFor="tracking-day" className="text-sm font-bold text-ink">
             יום
           </label>
           <select id="tracking-day" value={day ?? ""} onChange={(e) => setDay(e.target.value === "" ? null : (Number(e.target.value) as Day))} className={SELECT}>
@@ -85,7 +85,7 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
           </select>
         </div>
         <div className="flex flex-col">
-          <label htmlFor="tracking-stage" className="text-sm font-semibold">
+          <label htmlFor="tracking-stage" className="text-sm font-bold text-ink">
             מה חסר
           </label>
           <select id="tracking-stage" value={stage ?? ""} onChange={(e) => setStage(e.target.value === "" ? null : (e.target.value as TrackingStage))} className={SELECT}>
@@ -99,13 +99,13 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
         </div>
         {actor.role !== "logistics" && (
           <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="size-4 accent-ink" />
+            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="size-4 accent-navy" />
             שלי
           </label>
         )}
         <PhonesToggle actor={actor} week={week} on={withPhones} setOn={setWithPhones} failed={failed} />
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" checked={pagePerDay} onChange={(e) => setPagePerDay(e.target.checked)} className="size-4 accent-ink" />
+          <input type="checkbox" checked={pagePerDay} onChange={(e) => setPagePerDay(e.target.checked)} className="size-4 accent-navy" />
           בהדפסה: עמוד לכל יום
         </label>
         <div className="flex flex-wrap gap-2 sm:ms-auto">
@@ -128,7 +128,7 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
       </div>
 
       {rows.length === 0 ? (
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">{all.length === 0 ? "עוד אין שיעורים במחזור הזה." : "אין שיעורים שמתאימים לסינון."}</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">{all.length === 0 ? "עוד אין שיעורים במחזור הזה." : "אין שיעורים שמתאימים לסינון."}</p>
       ) : (
         days.map((d, i) => {
           const ofDay = rows.filter((r) => r.day === d);
@@ -140,7 +140,7 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
                   טבלת מעקב · שבוע וולוז'ין {label} · {printed}
                 </p>
               )}
-              <h3 className="mb-1 font-display text-lg font-semibold print:break-after-avoid">
+              <h3 className="mb-1 font-display text-lg font-bold text-navy print:break-after-avoid">
                 יום {DAY_NAMES[d]} <span className="text-sm font-normal text-ink-soft">{ofDay.length}</span>
               </h3>
               {wide ? (
@@ -180,9 +180,9 @@ function DayTable({ rows, phones, onOpen, day }: { rows: TrackingRow[]; phones: 
         ))}
       </colgroup>
       <thead>
-        <tr className="border-b-2 border-ink/30 bg-paper">
+        <tr className={TABLE_HEAD}>
           {headers.map((h) => (
-            <th key={h} scope="col" className="px-2 py-1.5 text-start font-semibold text-balance">
+            <th key={h} scope="col" className={`${TABLE_TH} px-2 py-1.5 text-balance`}>
               {h}
             </th>
           ))}
@@ -190,9 +190,9 @@ function DayTable({ rows, phones, onOpen, day }: { rows: TrackingRow[]; phones: 
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.lesson.id} data-lesson-row={r.lesson.id} data-tone={r.tone} className={`border-b border-line align-top ${PROGRESS_TONE[r.tone]}`}>
-            <td className="px-2 py-1.5 font-semibold">
-              <button type="button" onClick={() => onOpen(r.lesson.id)} className="text-start underline decoration-ink/30 underline-offset-2 hover:decoration-ink print:no-underline" aria-label={`${r.speaker || r.title}: פתיחת השיעור בשבוע`}>
+          <tr key={r.lesson.id} data-lesson-row={r.lesson.id} data-tone={r.tone} className={`${TABLE_ROW} align-top ${PROGRESS_TONE[r.tone]}`}>
+            <td className={`px-2 py-1.5 ${TABLE_KEY}`}>
+              <button type="button" onClick={() => onOpen(r.lesson.id)} className="text-start underline decoration-navy/30 underline-offset-2 hover:decoration-navy print:no-underline" aria-label={`${r.speaker || r.title}: פתיחת השיעור בשבוע`}>
                 {r.speaker || r.title}
               </button>
             </td>
@@ -228,9 +228,9 @@ function RowCard({ row: r, phone, onOpen }: { row: TrackingRow; phone: string | 
   ];
   if (phone != null) lines.unshift(["טלפון", phone]);
   return (
-    <li data-lesson-row={r.lesson.id} data-tone={r.tone} className={`rounded-xl border border-line p-3 ${PROGRESS_TONE[r.tone]}`}>
+    <li data-lesson-row={r.lesson.id} data-tone={r.tone} className={`rounded-xl border border-line p-3 shadow-sm ${PROGRESS_TONE[r.tone]}`}>
       <button type="button" onClick={onOpen} className="block w-full min-h-11 text-start" aria-label={`${r.speaker || r.title}: פתיחת השיעור בשבוע`}>
-        <span className="block font-semibold">{r.speaker || r.title}</span>
+        <span className="block font-bold text-navy">{r.speaker || r.title}</span>
         <span className="block text-sm text-ink-soft">
           {r.dayLabel} <bdi dir="ltr">{r.time}</bdi>
         </span>

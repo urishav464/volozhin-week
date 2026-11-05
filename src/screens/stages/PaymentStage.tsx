@@ -114,8 +114,8 @@ function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string
   const go = (decision: "approved" | "rejected") =>
     void act(`decide:${decision}`, () => decide([{ lesson_id: l.id, version: l.version }], decision, note.trim() || null), decision === "approved" ? "הבקשה אושרה" : "הבקשה לא אושרה");
   return (
-    <div role="group" aria-label="החלטת המדריך/ה" className="space-y-2 rounded-lg border border-accent bg-accent-soft p-3">
-      <p className="text-sm font-semibold">הבקשה מחכה להחלטה שלך.</p>
+    <div role="group" aria-label="החלטת המדריך/ה" className="space-y-2 rounded-xl border border-navy/30 bg-accent-soft p-3">
+      <p className="text-sm font-bold text-navy">הבקשה מחכה להחלטה שלך.</p>
       <Field id={`${id}-note`} label="הערה (לא חובה, גלויה לצוות)">
         <input id={`${id}-note`} value={note} maxLength={STAGE_LIMITS.decision_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
       </Field>
@@ -254,7 +254,7 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   return (
     <div role="group" aria-label="פרטי ההסעה" className="space-y-2 not-first:border-t not-first:border-line not-first:pt-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="text-sm font-semibold">פרטי ההסעה</p>
+        <p className="text-sm font-bold">פרטי ההסעה</p>
         <span className="text-xs text-ink-soft">· מידע אישי</span>
         {d && !editing && (
           <span className="ms-auto">
@@ -392,7 +392,7 @@ export function TransportForm({
         />
       </Field>
       <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={draft.arranged} onChange={(e) => set({ arranged: e.target.checked })} className="size-5 accent-ink" />
+        <input type="checkbox" checked={draft.arranged} onChange={(e) => set({ arranged: e.target.checked })} className="size-5 accent-navy" />
         ההסעה סודרה
       </label>
       {problem && <Problem>{problem}</Problem>}

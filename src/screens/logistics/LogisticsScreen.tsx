@@ -32,7 +32,7 @@ import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { PRINT_WHEN_LABEL } from "../../domain/stages";
 import { Chip } from "../../grid/bits";
 import { BookOrder } from "../kk/BookOrder";
-import { Button, useRunner } from "../settings/kit";
+import { Button, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { TransportForm } from "../stages/PaymentStage";
 import { fileKind } from "../stages/SourceFiles";
@@ -70,20 +70,20 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
-        <h2 className="font-display text-2xl font-extrabold">לוגיסטיקה</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">לוגיסטיקה</h2>
         <EditionSelect />
       </div>
       {!mayLogistics(actor) ? (
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">המסך הזה לצוות הלוגיסטי ולמדריך/ה של המחזור. אפשר לבחור מחזור אחר למעלה.</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">המסך הזה לצוות הלוגיסטי ולמדריך/ה של המחזור. אפשר לבחור מחזור אחר למעלה.</p>
       ) : (
         <>
-          <nav aria-label="לוגיסטיקה" className="flex flex-wrap gap-1 print:hidden">
+          <nav aria-label="לוגיסטיקה" className="flex flex-wrap gap-1.5 print:hidden">
             {TABS.map(([k, text]) => (
               <NavLink
                 key={k}
                 to={`/logistics/${k}`}
                 aria-current={k === tab ? "page" : undefined}
-                className={`inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold ${k === tab ? "bg-ink text-paper" : "border border-line bg-card text-ink hover:bg-line/50"}`}
+                className={`inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-bold transition-colors duration-150 ${k === tab ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-navy hover:border-navy/50 hover:bg-accent-soft"}`}
               >
                 {text}
               </NavLink>
@@ -119,7 +119,7 @@ function Bar({ week, tab, table, personal, notify, children, summary }: { week: 
   };
   const empty = table().rows.length === 0;
   return (
-    <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 print:hidden">
+    <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 shadow-sm print:hidden">
       <p role="status" className="min-w-0 basis-full text-sm text-ink-soft sm:basis-auto">
         {summary}
       </p>
@@ -148,9 +148,9 @@ function PaperTable({ table, title, landscape = false }: { table: Table; title: 
       </PrintSetup>
       <table className="hidden w-full border-collapse text-start text-xs print:table">
         <thead>
-          <tr className="border-b-2 border-ink/30">
+          <tr className={TABLE_HEAD}>
             {table.headers.map((h) => (
-              <th key={h} scope="col" className="px-1.5 py-1 text-start font-semibold">
+              <th key={h} scope="col" className={`${TABLE_TH} px-1.5 py-1`}>
                 {h}
               </th>
             ))}
@@ -158,9 +158,9 @@ function PaperTable({ table, title, landscape = false }: { table: Table; title: 
         </thead>
         <tbody>
           {table.rows.map((r, i) => (
-            <tr key={i} className="border-b border-line align-top">
+            <tr key={i} className={`${TABLE_ROW} align-top`}>
               {r.map((c, j) => (
-                <td key={j} className="px-1.5 py-1 break-words">
+                <td key={j} className={`px-1.5 py-1 break-words ${j === 0 ? TABLE_KEY : ""}`}>
                   {c}
                 </td>
               ))}
@@ -176,7 +176,7 @@ function PaperTable({ table, title, landscape = false }: { table: Table; title: 
 function DayList({ day, count, children }: { day: Day; count: number; children: ReactNode }) {
   return (
     <section aria-label={`יום ${DAY_NAMES[day]}`} className="print:hidden">
-      <h3 className="mb-1 font-display text-lg font-semibold">
+      <h3 className="mb-1 font-display text-lg font-bold text-navy">
         יום {DAY_NAMES[day]} <span className="text-sm font-normal text-ink-soft">{count}</span>
       </h3>
       <ul className="grid items-start gap-2 md:grid-cols-2">{children}</ul>
@@ -242,7 +242,7 @@ function Transports({ port, week, actor, notify, clear, label }: TabProps) {
       >
         <div className="min-w-0">
           <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-            <input type="checkbox" checked={personal} onChange={(e) => setPersonal(e.target.checked)} className="size-4 accent-ink" />
+            <input type="checkbox" checked={personal} onChange={(e) => setPersonal(e.target.checked)} className="size-4 accent-navy" />
             כולל כתובות וטלפונים
           </label>
           {personal && <p className="text-xs text-ink-soft">כתובות האיסוף והטלפונים של הנהגים הם מידע אישי: לא משתפים דף או קובץ שיש בו אותם, ומוחקים אותו כשמסיימים.</p>}
@@ -270,8 +270,8 @@ function Transports({ port, week, actor, notify, clear, label }: TabProps) {
                   ...(personal ? ([["טלפון הנהג/ת", dd?.driver_phone ? <bdi>{dd.driver_phone}</bdi> : "—"]] as [string, ReactNode][]) : []),
                 ];
                 return (
-                  <li key={r.lesson.id} data-transport-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3">
-                    <p className="font-semibold">{r.speaker || "TBD"}</p>
+                  <li key={r.lesson.id} data-transport-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3 shadow-sm">
+                    <p className="font-bold text-navy">{r.speaker || "TBD"}</p>
                     <p className="text-sm text-ink-soft">
                       {r.dayLabel} <bdi dir="ltr">{r.time}</bdi> · {r.title}
                     </p>
@@ -344,9 +344,9 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
               ["טרם שולם", t.unpaid],
             ] as const
           ).map(([k, v]) => (
-            <div key={k} className="rounded-xl border border-line bg-card p-2">
+            <div key={k} className="rounded-xl bg-sage-soft p-2">
               <dt className="text-xs text-ink-soft">{k}</dt>
-              <dd className="font-display text-lg font-bold">
+              <dd className="font-display text-lg font-extrabold text-navy">
                 <bdi>{shekels(v)}</bdi>
               </dd>
             </div>
@@ -359,8 +359,8 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
         return (
           <DayList key={d} day={d} count={ofDay.length}>
             {ofDay.map((r) => (
-              <li key={r.lesson.id} data-payment-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3">
-                <p className="font-semibold">{r.speaker || "TBD"}</p>
+              <li key={r.lesson.id} data-payment-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3 shadow-sm">
+                <p className="font-bold text-navy">{r.speaker || "TBD"}</p>
                 <p className="text-sm text-ink-soft">
                   {r.dayLabel} <bdi dir="ltr">{r.time}</bdi> · {r.title}
                 </p>
@@ -430,8 +430,8 @@ function Books({ port, week, actor, notify, clear, label }: TabProps) {
       {kk && rows.length > 0 && (
         <ul aria-label="הספרים" className="grid items-start gap-2 md:grid-cols-2 print:hidden">
           {rows.map((r) => (
-            <li key={r.group.id} data-book-row={r.group.id} className="space-y-1 rounded-xl border border-line bg-card p-3">
-              <p className="font-semibold">
+            <li key={r.group.id} data-book-row={r.group.id} className="space-y-1 rounded-xl border border-line bg-card p-3 shadow-sm">
+              <p className="font-bold text-navy">
                 {r.title}
                 {r.author && <span className="font-normal text-ink-soft"> · {r.author}</span>}
               </p>
@@ -467,12 +467,12 @@ function Prints({ port, week, notify, label }: Pick<TabProps, "port" | "week" | 
       <p className="text-sm text-ink-soft print:hidden">השיעורים שהמקורות שלהם מודפסים מראש או באותו יום. כמה עותקים — לפי מה שסוכם בצוות.</p>
       {groups.map((g) => (
         <section key={g.when} aria-label={PRINT_WHEN_LABEL[g.when]} className="space-y-3 print:hidden">
-          <h3 className="font-display text-xl font-bold">{PRINT_WHEN_LABEL[g.when]}</h3>
+          <h3 className="font-display text-xl font-extrabold text-navy">{PRINT_WHEN_LABEL[g.when]}</h3>
           {g.days.map(({ day, rows: ofDay }) => (
             <DayList key={day} day={day} count={ofDay.length}>
               {ofDay.map((r) => (
-                <li key={r.lesson.id} data-print-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3">
-                  <p className="font-semibold break-words">{r.heading}</p>
+                <li key={r.lesson.id} data-print-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3 shadow-sm">
+                  <p className="font-bold text-navy break-words">{r.heading}</p>
                   <p className="text-sm text-ink-soft">
                     <bdi dir="ltr">{r.time}</bdi>
                     {r.files.length > 0 && <> · {pagesText(r)}</>}
@@ -480,7 +480,7 @@ function Prints({ port, week, notify, label }: Pick<TabProps, "port" | "week" | 
                   {r.files.length === 0 ? (
                     <p className="mt-1 text-sm text-warn">אין קבצים</p>
                   ) : (
-                    <ul aria-label={`הקבצים: ${r.heading}`} className="mt-1 divide-y divide-line">
+                    <ul aria-label={`הקבצים: ${r.heading}`} className="mt-1 divide-y divide-sage/60">
                       {r.files.map((f) => (
                         <PrintFile key={f.id} port={port} week={week} file={f} notify={notify} />
                       ))}

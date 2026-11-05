@@ -50,12 +50,12 @@ export function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }
     );
   }
   return (
-    <article aria-label={name} data-kk-group={g.id} className="space-y-2 rounded-lg border border-line bg-paper/40 p-3">
+    <article aria-label={name} data-kk-group={g.id} className="space-y-2 rounded-xl border border-line bg-card p-3 shadow-sm sm:p-4">
       <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
         <div className="min-w-0 flex-1 basis-48">
-          <h4 className="font-semibold break-words">
+          <h4 className="font-display text-[17px] font-extrabold leading-snug text-navy break-words">
             {name}
-            {g.author && <span className="font-normal"> — {g.author}</span>}
+            {g.author && <span className="font-normal text-ink-soft"> — {g.author}</span>}
           </h4>
           <p className="text-sm text-ink-soft break-words">
             {[g.place ?? "עוד אין מרחב", leaders.length ? `מעבירים: ${leaders.map((x) => `${leaderName(x, week.roster)} (${LEADER_KIND_LABEL[x.kind]})`).join(", ")}` : "עוד אין מעבירים"].join(" · ")}
@@ -69,13 +69,13 @@ export function GroupCard({ g, groups, week, kk, admin, books, busy, act, port }
         </div>
       </div>
       {signups.length === 0 ? (
-        <p className="text-sm font-semibold" data-kk-count>
+        <p className="text-sm font-bold" data-kk-count>
           {count}
         </p>
       ) : (
         // the names behind their count: open, the list — and for an admin, moving one or removing them
         <Fold title={<span data-kk-count>{count}</span>} size="sm">
-          <ul aria-label={`הנרשמים · ${name}`} className="divide-y divide-line rounded-md border border-line bg-card">
+          <ul aria-label={`הנרשמים · ${name}`} className="divide-y divide-sage/60 border-y border-sage/60">
             {signups.map((s) => (
               <SignupItem
                 key={s.id}
@@ -227,7 +227,7 @@ function SignupItem({
                   value={target}
                   disabled={moveBusy}
                   onChange={(e) => setTo(e.target.value)}
-                  className="min-h-11 max-w-48 rounded-lg border border-line bg-card px-2 text-sm"
+                  className="min-h-11 max-w-48 rounded-lg border border-line bg-card px-2 text-sm hover:border-ink-faint focus:border-navy disabled:bg-paper-light disabled:text-ink-soft"
                 >
                   <option value="">{`בקבוצה: ${group}`}</option>
                   {others.map((x) => (

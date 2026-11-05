@@ -97,20 +97,20 @@ function ColorField({ name, value, onChange, taken }: { name: string; value: str
   const anyTaken = !!taken && options.some((p) => taken.has(p.color));
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1 text-sm font-semibold">צבע</legend>
+      <legend className="mb-1 text-sm font-bold text-ink">צבע</legend>
       {anyTaken && <p className="mb-1 text-xs text-ink-soft">נקודה מתחת לצבע = כבר בשימוש בקטגוריה אחרת.</p>}
       <div className="flex flex-wrap gap-1.5">
         {options.map((p) => (
           <label
             key={p.color}
             title={p.name}
-            className={`relative inline-flex size-11 cursor-pointer items-center justify-center rounded-full border-2 ${value === p.color ? "border-ink" : "border-transparent"} has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent`}
+            className={`relative inline-flex size-11 cursor-pointer items-center justify-center rounded-full border-2 ${value === p.color ? "border-navy" : "border-transparent"} has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent`}
           >
             <input type="radio" name={name} value={p.color} checked={value === p.color} onChange={() => onChange(p.color)} className="sr-only" aria-label={`${p.name}${taken?.has(p.color) ? " (כבר בשימוש)" : ""}`} />
             <span aria-hidden className="size-8 rounded-full" style={{ background: p.color }} />
             {taken?.has(p.color) && <span aria-hidden className="absolute bottom-0 size-1.5 rounded-full bg-ink-soft" />}
             {value === p.color && (
-              <span aria-hidden className="absolute text-sm font-bold text-paper">
+              <span aria-hidden className="absolute text-sm font-bold text-white">
                 ✓
               </span>
             )}
@@ -195,7 +195,7 @@ function CategoryItem({
       <Row
         cells={cells}
         editing={
-          <form onSubmit={save} className="grid gap-3 rounded-lg border border-line bg-paper p-3" noValidate>
+          <form onSubmit={save} className="grid gap-3 rounded-xl bg-sand-soft p-3" noValidate>
             <Field id={`${id}-name`} label="שם">
               <input id={`${id}-name`} className={`${INPUT} max-w-sm`} value={name} maxLength={60} autoFocus onChange={(e) => setName(e.target.value)} />
             </Field>
@@ -256,7 +256,7 @@ function CategoryItem({
               onCancel={backToDelete}
             />
           ) : (
-            <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3 text-sm">
+            <div role="group" aria-label="אישור" className="rounded-xl border border-sand bg-sand-soft p-3 text-sm">
               <p className="mb-2">
                 <b>{c.name}</b>: יש שיעורים בקטגוריה הזו, והיא כבר מושבתת. היא נשארת בשיעורים הקיימים.
               </p>

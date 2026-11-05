@@ -11,7 +11,7 @@ import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { type PasteStatus, parseRosterPaste, pasteColumns, previewPaste } from "../../settings/roster";
-import { Badge, Button, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
+import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
@@ -148,14 +148,14 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
         </Field>
         {cols.columns.length > 1 && (
           <fieldset className="min-w-0">
-            <legend className="mb-1 text-sm font-semibold">מאיזו עמודה לקחת את השמות?</legend>
+            <legend className="mb-1 text-sm font-bold text-ink">מאיזו עמודה לקחת את השמות?</legend>
             <div className="flex flex-wrap gap-1.5">
               {cols.columns.map((c) => (
                 <label
                   key={c.index}
-                  className={`inline-flex min-h-11 min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-lg border px-3 ${column === c.index ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}
+                  className={`${CHOICE} min-w-0 max-w-full ${column === c.index ? CHOICE_ON : CHOICE_OFF}`}
                 >
-                  <input type="radio" name={`${id}-column`} checked={column === c.index} onChange={() => setPicked(c.index)} className="accent-ink" />
+                  <input type="radio" name={`${id}-column`} checked={column === c.index} onChange={() => setPicked(c.index)} className="accent-navy" />
                   <span className="min-w-0 truncate">
                     עמודה {c.index + 1}: {c.sample}
                   </span>
@@ -171,7 +171,7 @@ function PasteNames({ editionId, existing, onAdded }: { editionId: number; exist
               {exists > 0 && ` · ${exists === 1 ? "אחד כבר ברשימה" : `${exists} כבר ברשימה`}`}
               {repeat > 0 && ` · ${repeat === 1 ? "כפול אחד בהדבקה" : `${repeat} כפולים בהדבקה`}`}
             </p>
-            <ul aria-label="תצוגה מקדימה" className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line bg-paper">
+            <ul aria-label="תצוגה מקדימה" className="max-h-64 divide-y divide-sage/60 overflow-y-auto rounded-lg border border-line bg-paper-light">
               {preview.map((p, i) => (
                 <li key={i} className={`flex min-w-0 items-center gap-2 px-3 py-1.5 ${p.status === "new" ? "" : "text-ink-soft"}`}>
                   <span className="min-w-0 flex-1 break-words">
@@ -254,7 +254,7 @@ function RosterItem({ r, editionId, onChanged }: { r: RosterEntry; editionId: nu
       <Row
         cells={cells}
         editing={
-          <form onSubmit={save} className="grid gap-3 rounded-lg border border-line bg-paper p-3 sm:grid-cols-2" noValidate>
+          <form onSubmit={save} className="grid gap-3 rounded-xl bg-sand-soft p-3 sm:grid-cols-2" noValidate>
             <Field id={`${id}-name`} label="שם">
               <input id={`${id}-name`} className={INPUT} value={name} maxLength={120} autoFocus onChange={(e) => setName(e.target.value)} />
             </Field>

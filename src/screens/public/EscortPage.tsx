@@ -43,7 +43,7 @@ export function EscortPage({ port, token }: { port: PublicPort; token: string })
   return (
     <>
       <div className="space-y-1">
-        <h2 className="font-display text-2xl font-extrabold">שלום, {v.escort.full_name}</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">שלום, {v.escort.full_name}</h2>
         <p className="text-ink-soft">
           הדף שלך כמלווה בשבוע וולוז'ין {v.edition.label}.{" "}
           {v.edition.start_date ? `השבוע נפתח ביום ראשון, ${dmy(v.edition.start_date)}.` : "תאריך השבוע עוד לא נקבע (TBD)."}
@@ -59,7 +59,7 @@ export function EscortPage({ port, token }: { port: PublicPort; token: string })
         </Button>
       </div>
       {v.lessons.length === 0 ? (
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">עוד לא שובצו לך שיעורים. כשהצוות ישבץ, הם יופיעו כאן.</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">עוד לא שובצו לך שיעורים. כשהצוות ישבץ, הם יופיעו כאן.</p>
       ) : (
         <ol className="space-y-3" aria-label="השיעורים שלי">
           {v.lessons.map((l) => (
@@ -89,7 +89,7 @@ function PhonesNote({ view: v }: { view: EscortView }) {
   const today = israelDate(new Date().toISOString());
   if (v.phones_from && today >= v.phones_from) return null;
   return (
-    <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">
+    <p className="rounded-xl bg-accent-soft px-3 py-2 text-sm">
       {v.phones_from
         ? `הטלפון של כל מרצה יופיע כאן מ-${dmy(v.phones_from)}, שבוע לפני תחילת שבוע וולוז'ין.`
         : v.edition.start_date
@@ -125,7 +125,7 @@ function LessonCard({
   return (
     <article aria-labelledby={`${id}-h`} data-escort-lesson={l.lesson_id} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm">
       <div>
-        <h3 id={`${id}-h`} className="font-display text-lg font-semibold">
+        <h3 id={`${id}-h`} className="font-display text-lg font-bold text-navy">
           {when.day} <bdi dir="ltr">{when.time}</bdi>
         </h3>
         <p className="text-sm text-ink-soft">
@@ -134,7 +134,7 @@ function LessonCard({
         </p>
       </div>
       <div>
-        {(l.speaker || !memorial) && <p className="font-semibold break-words">{l.speaker?.name ?? "המרצה: TBD"}</p>}
+        {(l.speaker || !memorial) && <p className="font-bold break-words">{l.speaker?.name ?? "המרצה: TBD"}</p>}
         <p className="break-words">{title}</p>
         {intro && (
           <p className="text-sm">
@@ -176,7 +176,7 @@ function LessonCard({
       )}
       {notes.length > 0 && (
         <div className="text-sm">
-          <p className="font-semibold">משהו שחשוב לדעת</p>
+          <p className="font-bold">משהו שחשוב לדעת</p>
           <ul className="list-disc space-y-0.5 ps-5">
             {notes.map((n, i) => (
               <li key={i} className="whitespace-pre-line break-words">
@@ -187,7 +187,7 @@ function LessonCard({
         </div>
       )}
       {/* a memorial slot has no speaker to remind, meet or introduce: the liaison's role instead (no family contact) */}
-      {ticksApply(l) ? <Ticks lesson={l} port={port} token={token} onTicks={onTicks} onLost={onLost} /> : <p className="text-sm font-semibold">{liaisonLine(view.escort.gender)}</p>}
+      {ticksApply(l) ? <Ticks lesson={l} port={port} token={token} onTicks={onTicks} onLost={onLost} /> : <p className="text-sm font-bold">{liaisonLine(view.escort.gender)}</p>}
       {l.transport && <Pickup lesson={l} port={port} token={token} onLost={onLost} />}
     </article>
   );
@@ -200,11 +200,11 @@ function Phone({ phone, whatsapp = false }: { phone: string; whatsapp?: boolean 
   if (!tel) return <bdi>{phone}</bdi>;
   return (
     <span className="inline-flex flex-wrap items-center gap-x-3">
-      <a href={tel} className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+      <a href={tel} className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4">
         <bdi dir="ltr">{phone}</bdi>
       </a>
       {wa && (
-        <a href={wa} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">
+        <a href={wa} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-navy underline underline-offset-4">
           WhatsApp
         </a>
       )}
@@ -243,8 +243,8 @@ function Ticks({
     }
   };
   return (
-    <fieldset className="min-w-0 rounded-lg border border-line p-3">
-      <legend className="px-1 text-sm font-semibold">מה כבר עשיתי</legend>
+    <fieldset className="min-w-0 rounded-xl border border-sage p-3">
+      <legend className="px-1 text-sm font-bold text-navy">מה כבר עשיתי</legend>
       <ul className="grid gap-x-4 sm:grid-cols-2">
         {TICK_ITEMS.map((item) => {
           const at = l.ticks[item];
@@ -256,7 +256,7 @@ function Ticks({
                   checked={busy?.item === item ? busy.on : at != null}
                   disabled={busy != null}
                   onChange={(e) => void toggle(item, e.target.checked)}
-                  className="size-5 shrink-0 accent-ink"
+                  className="size-5 shrink-0 accent-navy"
                 />
                 <span>
                   {item === "introduced" && l.self_intro ? byGender(l.speaker?.gender ?? null, "המרצה הציג את עצמו", "המרצה הציגה את עצמה", "המרצה הציג/ה את עצמו/ה") : TICK_LABEL[item]}
@@ -306,8 +306,8 @@ function Pickup({ lesson: l, port, token, onLost }: { lesson: EscortLesson; port
     }
   };
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="כתובת איסוף" className="space-y-2 rounded-lg border border-line p-3" noValidate>
-      <label htmlFor={`${id}-a`} className="block text-sm font-semibold">
+    <form onSubmit={(e) => void submit(e)} aria-label="כתובת איסוף" className="space-y-2 rounded-xl border border-line bg-paper-light p-3" noValidate>
+      <label htmlFor={`${id}-a`} className="block text-sm font-bold">
         כתובת איסוף למרצה
       </label>
       <p id={`${id}-hint`} className="text-xs text-ink-soft">

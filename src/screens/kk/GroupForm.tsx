@@ -126,8 +126,8 @@ export function GroupForm({
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label={title} className="space-y-3 rounded-lg border border-ink/30 bg-paper p-3" noValidate>
-      <h4 className="font-semibold break-words">{title}</h4>
+    <form onSubmit={(e) => void submit(e)} aria-label={title} className="space-y-3 rounded-xl border border-navy/40 bg-card p-3 shadow-md sm:p-4" noValidate>
+      <h4 className="font-display text-[17px] font-extrabold text-navy break-words">{title}</h4>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id={`${id}-t`} label="שם הספר (לא חובה: אפשר גם אחר כך)" hint="בלי ספר הקבוצה לא מוצעת בקישור ההרשמה.">
           <input id={`${id}-t`} value={name} maxLength={KK_LIMITS.title} onChange={(e) => setName(e.target.value)} className={INPUT} autoComplete="off" aria-describedby={`${id}-t-hint`} />
@@ -149,21 +149,21 @@ export function GroupForm({
       </div>
       <div aria-live="polite">{retitled && <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm">לספר הזה כבר יש הזמנת ספרים — כדאי לבדוק אותה.</p>}</div>
       <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={open} onChange={(e) => setOpen(e.target.checked)} className="size-5 accent-ink" />
+        <input type="checkbox" checked={open} onChange={(e) => setOpen(e.target.checked)} className="size-5 accent-navy" />
         פתוחה להרשמה בקישור
       </label>
       <fieldset className="min-w-0 space-y-2">
-        <legend className="text-sm font-semibold">מעבירים</legend>
+        <legend className="text-sm font-bold text-ink">מעבירים</legend>
         {leaders.length === 0 ? (
           <p className="text-sm text-ink-soft">עוד אין מעבירים.</p>
         ) : (
           <ul aria-label="המעבירים" className="flex flex-wrap gap-1.5">
             {leaders.map((l, i) => (
-              <li key={i} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-card ps-3 text-sm">
+              <li key={i} className="inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-sand-soft ps-3 text-sm">
                 <span className="min-w-0 break-words">
                   {nameOf(l)} <span className="text-ink-soft">({LEADER_KIND_LABEL[l.kind]})</span>
                 </span>
-                <button type="button" aria-label={`הסרת ${nameOf(l)} מהמעבירים`} onClick={() => setLeaders((cur) => cur.filter((_, k) => k !== i))} className="inline-flex size-11 shrink-0 items-center justify-center rounded-full hover:bg-line/60">
+                <button type="button" aria-label={`הסרת ${nameOf(l)} מהמעבירים`} onClick={() => setLeaders((cur) => cur.filter((_, k) => k !== i))} className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-accent-soft hover:text-navy">
                   ×
                 </button>
               </li>

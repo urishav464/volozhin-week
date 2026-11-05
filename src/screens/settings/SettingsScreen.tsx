@@ -154,14 +154,14 @@ export function SettingsScreen({
   return (
     <Ctx.Provider value={ctx}>
       <div className="mx-auto max-w-5xl">
-        <h2 className="mb-3 font-display text-2xl font-extrabold">הגדרות</h2>
+        <h2 className="mb-3 font-display text-2xl font-extrabold text-navy">הגדרות</h2>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
           <div
             role="tablist"
             aria-label="אזורי ההגדרות"
             aria-orientation={wide ? "vertical" : "horizontal"}
             onKeyDown={onKey}
-            className="flex gap-0.5 overflow-x-auto pb-1 sm:gap-1 lg:sticky lg:top-4 lg:w-44 lg:shrink-0 lg:flex-col lg:overflow-visible lg:pb-0"
+            className="flex gap-1 overflow-x-auto pb-1 sm:gap-1.5 lg:sticky lg:top-4 lg:w-44 lg:shrink-0 lg:flex-col lg:gap-1 lg:overflow-visible lg:pb-0"
           >
             {tabs.map((t) => {
               const selected = t.slug === current.slug;
@@ -178,8 +178,8 @@ export function SettingsScreen({
                   aria-controls="settings-panel"
                   tabIndex={selected ? 0 : -1}
                   onClick={() => go(t.slug)}
-                  className={`min-h-11 shrink-0 whitespace-nowrap rounded-lg px-2 text-start font-semibold transition-colors sm:px-4 ${
-                    selected ? "bg-ink text-paper" : "text-ink-soft hover:bg-line/60 hover:text-ink"
+                  className={`min-h-11 shrink-0 whitespace-nowrap rounded-full px-3 text-start font-bold transition-colors duration-150 sm:px-4 ${
+                    selected ? "bg-navy text-white shadow-sm" : "text-ink-soft hover:bg-accent-soft hover:text-navy"
                   }`}
                 >
                   {t.label}
@@ -199,11 +199,11 @@ export function SettingsScreen({
           key={toast.at}
           role={toast.kind === "error" ? "alert" : "status"}
           className={`fixed inset-x-0 bottom-6 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${
-            toast.kind === "error" ? "bg-bad text-paper" : "bg-ink text-paper"
+            toast.kind === "error" ? "bg-bad text-white" : "bg-navy text-white"
           }`}
         >
           <span>{toast.text}</span>
-          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-md text-lg leading-none hover:bg-paper/10">
+          <button type="button" aria-label="סגירת ההודעה" onClick={() => setToast(null)} className="-my-1.5 -me-2 inline-flex size-11 items-center justify-center rounded-full text-lg leading-none hover:bg-white/10 focus-visible:outline-white!">
             ×
           </button>
         </div>

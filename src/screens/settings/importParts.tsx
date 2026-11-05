@@ -21,7 +21,7 @@ import type { LineKind } from "../../import/lines";
 import { scrubContacts } from "../../import/phone";
 import type { DoubleGroup, ExtraLine, GroupDecision, LessonPlan, LineAs, TrackingRead, TrackingSpeakerPreview } from "../../import/tracking";
 import { sourcesValuesOf, topicsOf } from "../../import/tracking";
-import { Badge, Button, INPUT, Panel } from "./kit";
+import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, INPUT, Panel } from "./kit";
 
 export const STATUS: Record<RowStatus, { label: string; tone: "ok" | "accent" | "bad" | "muted" }> = {
   new: { label: "חדש", tone: "ok" },
@@ -81,8 +81,8 @@ function SpeakerDecision({
         </p>
       )}
       {status === "ambiguous" && match && (
-        <fieldset data-decide className="min-w-0 rounded-lg border border-line bg-paper p-2">
-          <legend className="px-1 font-semibold">
+        <fieldset data-decide className="min-w-0 rounded-lg border border-line bg-paper-light p-2">
+          <legend className="px-1 font-bold text-navy">
             מי זה/זו?{" "}
             {inSheet
               ? sheet.some((c) => c.via === "phone")
@@ -97,26 +97,26 @@ function SpeakerDecision({
           <div className="flex flex-col gap-1">
             {sheet.map((c) => (
               <label key={`sheet-${c.ref}`} className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-                <input type="radio" name={`${id}-who`} checked={choice?.action === "same" && choice.ref === c.ref} onChange={() => onChoose({ action: "same", ref: c.ref })} className="accent-ink" />
+                <input type="radio" name={`${id}-who`} checked={choice?.action === "same" && choice.ref === c.ref} onChange={() => onChoose({ action: "same", ref: c.ref })} className="accent-navy" />
                 אותו/ה מרצה כמו {c.label}
                 <span className="text-ink-soft">{c.via === "phone" ? "(אותו טלפון)" : `(דמיון ${c.similarity?.toFixed(2)})`}</span>
               </label>
             ))}
             {match.candidates.map((c) => (
               <label key={c.id} className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-                <input type="radio" name={`${id}-who`} checked={choice?.action === "merge" && choice.target === c.id} onChange={() => onChoose({ action: "merge", target: c.id })} className="accent-ink" />
+                <input type="radio" name={`${id}-who`} checked={choice?.action === "merge" && choice.target === c.id} onChange={() => onChoose({ action: "merge", target: c.id })} className="accent-navy" />
                 להשלים את {c.label}
                 {c.similarity != null && <span className="text-ink-soft">(דמיון {c.similarity.toFixed(2)})</span>}
               </label>
             ))}
             {match.allowNew && (
               <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-                <input type="radio" name={`${id}-who`} checked={choice?.action === "new"} onChange={() => onChoose({ action: "new" })} className="accent-ink" />
+                <input type="radio" name={`${id}-who`} checked={choice?.action === "new"} onChange={() => onChoose({ action: "new" })} className="accent-navy" />
                 {name} — מרצה חדש/ה{sheet.some((c) => c.via === "phone") ? " (גם אם הטלפון משותף — למשל זוג או משרד)" : ""}
               </label>
             )}
             <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-              <input type="radio" name={`${id}-who`} checked={choice?.action === "skip"} onChange={() => onChoose({ action: "skip" })} className="accent-ink" />
+              <input type="radio" name={`${id}-who`} checked={choice?.action === "skip"} onChange={() => onChoose({ action: "skip" })} className="accent-navy" />
               דילוג על {name}
             </label>
           </div>
@@ -129,7 +129,7 @@ function SpeakerDecision({
       {action?.action === "same" && !blocked && <p className="text-ink-soft">מרצה אחד/ת עם השורה ההיא: מה שחסר שם יושלם מכאן.</p>}
       {(status === "new" || status === "match") && (
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-ink-soft">
-          <input type="checkbox" checked={choice?.action === "skip"} onChange={(e) => onChoose(e.target.checked ? { action: "skip" } : null)} className="size-5 accent-ink" />
+          <input type="checkbox" checked={choice?.action === "skip"} onChange={(e) => onChoose(e.target.checked ? { action: "skip" } : null)} className="size-5 accent-navy" />
           לא לייבא
         </label>
       )}
@@ -188,7 +188,7 @@ function EditSpeaker({
   const problem = editProblem(value, titles);
   const escort = namedEscort(name, escorts);
   return (
-    <div role="group" aria-label="עריכה" className="mt-1.5 rounded-lg border border-line bg-paper p-2.5">
+    <div role="group" aria-label="עריכה" className="mt-1.5 rounded-xl bg-sand-soft p-2.5">
       <div className="grid gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0">
           <label htmlFor={`${id}-t`} className="mb-0.5 block text-sm font-semibold">
@@ -343,7 +343,7 @@ export function CandidatesPreview({
   return (
     <Panel title="תצוגה מקדימה">
       <Counts statuses={rows.map((r) => r.status)} />
-      <ul aria-label="תצוגה מקדימה" className="divide-y divide-line border-y border-line">
+      <ul aria-label="תצוגה מקדימה" className="divide-y divide-sage/60 border-y border-sage/60">
         {rows.map((r) => {
           const d = r.data;
           const name = d ? `${d.title ? `${d.title} ` : ""}${d.name}` : "—";
@@ -353,7 +353,7 @@ export function CandidatesPreview({
             <li key={r.ref} data-row={r.row} data-ref={r.ref} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm text-ink-soft">שורה {r.row}</span>
-                <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
+                <span className="min-w-0 flex-1 font-bold text-navy break-words">{name}</span>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
               {r.skip && <p className="text-sm text-ink-soft">{r.skip}</p>}
@@ -394,7 +394,7 @@ export function DoubleGroups({ groups, read, decisions, onDecide }: { groups: Do
           const rs = g.rows.map((n) => read.rows.find((r) => r.row === n)!);
           const one = g.rows.length === 1;
           return (
-            <li key={g.id} data-undecided={!decisions.has(g.id) || undefined} className="rounded-lg border border-line bg-paper p-2.5">
+            <li key={g.id} data-undecided={!decisions.has(g.id) || undefined} className="rounded-lg border border-line bg-paper-light p-2.5">
               <p className="text-sm font-semibold">{rowsSaid(g.rows)}</p>
               <div className="mb-1 text-sm text-ink-soft">
                 {rs.map((r) => (
@@ -408,8 +408,8 @@ export function DoubleGroups({ groups, read, decisions, onDecide }: { groups: Do
                 <legend className="sr-only">{rowsSaid(g.rows)}: מה הן?</legend>
                 <div className="flex flex-wrap gap-1.5">
                   {(["parallel", "merge"] as const).map((d) => (
-                    <label key={d} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${decisions.get(g.id) === d ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-                      <input type="radio" name={`${id}-${g.id}`} checked={decisions.get(g.id) === d} onChange={() => onDecide(g.id, d)} className="accent-ink" />
+                    <label key={d} className={`${CHOICE} ${decisions.get(g.id) === d ? CHOICE_ON : CHOICE_OFF}`}>
+                      <input type="radio" name={`${id}-${g.id}`} checked={decisions.get(g.id) === d} onChange={() => onDecide(g.id, d)} className="accent-navy" />
                       {d === "parallel" ? (one ? "שיעור במשבצת אחת" : "מקבילים — כל שורה בחדר משלה") : one ? "שיעור כפול — שתי משבצות" : "שיעור אחד מאוחד"}
                     </label>
                   ))}
@@ -464,7 +464,7 @@ export function SourcesTable({ read, value, onChange }: { read: TrackingRead; va
           // a phone or an e-mail in the words: taken out of the note (scrubContacts) — said before the commit
           const contact = scrubContacts(v.text).scrubbed;
           return (
-            <li key={v.key} className="rounded-lg border border-line bg-paper p-2.5">
+            <li key={v.key} className="rounded-lg border border-line bg-paper-light p-2.5">
               <p className="text-sm font-semibold break-words">
                 «{v.text || "ריק"}» <span className="font-normal text-ink-soft">({v.count})</span> {origin && <Badge tone={origin === "הצעה" ? "accent" : "muted"}>{origin}</Badge>}{" "}
                 {contact && <Badge tone="bad">יש כאן טלפון או מייל — לא יישמרו</Badge>}
@@ -554,7 +554,7 @@ export function SpeakersPreview({
   return (
     <Panel title="המרצים">
       <Counts statuses={rows.map((r) => r.status)} />
-      <ul aria-label="המרצים בגיליון" className="divide-y divide-line border-y border-line">
+      <ul aria-label="המרצים בגיליון" className="divide-y divide-sage/60 border-y border-sage/60">
         {rows.map((r) => {
           const s = r.speaker;
           const name = `${s.title ? `${s.title} ` : ""}${s.name}`;
@@ -568,7 +568,7 @@ export function SpeakersPreview({
           return (
             <li key={s.key} data-undecided={open || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="min-w-0 flex-1 font-semibold break-words">{name}</span>
+                <span className="min-w-0 flex-1 font-bold text-navy break-words">{name}</span>
                 <span className="text-sm text-ink-soft">{rowsSaid(s.rows)}</span>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
@@ -629,7 +629,7 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
   };
   return (
     <Panel title="השיעורים" aside={`${kept.length === 1 ? "שיעור אחד לייבוא" : `${kept.length} לייבוא`} · ${plans.length - kept.length === 1 ? "מדולג אחד" : `${plans.length - kept.length} מדולגים`}`}>
-      <ul aria-label="השיעורים" className="divide-y divide-line border-y border-line">
+      <ul aria-label="השיעורים" className="divide-y divide-sage/60 border-y border-sage/60">
         {plans.map((p) => {
           const gone = !p.skip && p.speakerKeys.every(skippedSpeaker);
           const status: RowStatus = p.skip || gone ? "skip" : "new";
@@ -637,7 +637,7 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
             <li key={p.rows.join(",")} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm text-ink-soft">{rowsSaid(p.rows)}</span>
-                <span className="min-w-0 flex-1 font-semibold break-words">{p.title ?? "בלי כותרת"}</span>
+                <span className="min-w-0 flex-1 font-bold text-navy break-words">{p.title ?? "בלי כותרת"}</span>
                 <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
               </div>
               {p.skip ? (
@@ -670,7 +670,7 @@ export function LessonsPreview({ plans, categories, speakers, choices }: { plans
                     ]}
                   />
                   {gone && <p className="text-sm text-ink-soft">כל המרצים שלו דולגו — לא ייובא.</p>}
-                  {p.import_note && <p className="mt-0.5 rounded bg-line/40 px-2 py-1 text-sm whitespace-pre-line break-words">{p.import_note}</p>}
+                  {p.import_note && <p className="mt-0.5 rounded bg-sand-soft px-2 py-1 text-sm whitespace-pre-line break-words">{p.import_note}</p>}
                 </>
               )}
               <Warnings items={p.warnings} />
@@ -724,8 +724,8 @@ function LineChoice({
       <legend className="sr-only">{legend}</legend>
       <div className="flex flex-wrap gap-1.5">
         {(["speaker", "affiliation", "skip"] as const).map((as) => (
-          <label key={as} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${l.as === as ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={() => onChoose(as, keyed.current)} className="accent-ink" />
+          <label key={as} className={`${CHOICE} ${l.as === as ? CHOICE_ON : CHOICE_OFF}`}>
+            <input type="radio" name={`${id}-${l.id}`} value={as} checked={l.as === as} onChange={() => onChoose(as, keyed.current)} className="accent-navy" />
             {LINE_AS_LABEL[as](l)}
           </label>
         ))}
@@ -754,7 +754,7 @@ export function LinesTable({ lines, skipped = new Set(), onChoose }: { lines: Ex
           const gone = skipped.has(l.row);
           const open = l.as == null && !gone;
           return (
-            <li key={l.id} data-line={l.id} data-undecided={open || undefined} className="rounded-lg border border-line bg-paper p-2.5">
+            <li key={l.id} data-line={l.id} data-undecided={open || undefined} className="rounded-lg border border-line bg-paper-light p-2.5">
               <p className="text-sm break-words">
                 <span className="text-ink-soft">שורה {l.row}:</span> <b>{l.ofName}</b> / <b>{l.text}</b>{" "}
                 {gone ? (
@@ -826,7 +826,7 @@ export function EscortsPreview({
         אפשר לכתוב הערה קצרה משלך (לא חובה; בלי טלפון ובלי מייל). נשמרים רק הערוץ וההערה, ורק במה שאצל המרצה עוד ריק.
       </p>
       <Counts statuses={rows.map((r) => r.status)} />
-      <ul aria-label="תצוגה מקדימה" className="divide-y divide-line border-y border-line">
+      <ul aria-label="תצוגה מקדימה" className="divide-y divide-sage/60 border-y border-sage/60">
         {rows.map((r, i) => {
           const a = answers.get(r.key);
           const channel = a?.channel ?? null;
@@ -840,7 +840,7 @@ export function EscortsPreview({
           return (
             <li key={`${r.key}-${r.rows[0]}`} data-undecided={open || !!problem || undefined} className="py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="min-w-0 flex-1 font-semibold break-words">{r.name || "—"}</span>
+                <span className="min-w-0 flex-1 font-bold text-navy break-words">{r.name || "—"}</span>
                 <span className="text-sm text-ink-soft">{rowsSaid(r.rows)}</span>
                 <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>

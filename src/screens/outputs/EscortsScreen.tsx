@@ -44,15 +44,15 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
         </p>
       </PrintSetup>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
-        <h2 className="font-display text-2xl font-extrabold">רשימת מלווים</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">רשימת מלווים</h2>
         <EditionSelect />
         <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
       </div>
 
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 print:hidden">
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 shadow-sm print:hidden">
         <PhonesToggle actor={actor} week={week} on={withPhones} setOn={setWithPhones} failed={failed} />
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" checked={pagePerEscort} onChange={(e) => setPagePerEscort(e.target.checked)} className="size-4 accent-ink" />
+          <input type="checkbox" checked={pagePerEscort} onChange={(e) => setPagePerEscort(e.target.checked)} className="size-4 accent-navy" />
           בהדפסה: כל מלווה בעמוד משלו
         </label>
         <Button className="sm:ms-auto" onClick={() => window.print()}>
@@ -64,7 +64,7 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
         <p className="rounded-lg bg-accent-soft px-3 py-2 text-sm print:hidden">
           הניסוחים של «משהו שחשוב לדעת» עוד לא הודבקו, ולכן מופיעות כאן רק ההערות של כל שיעור.{" "}
           {actor.isAdmin ? (
-            <Link to="/settings/templates" className="font-semibold underline">
+            <Link to="/settings/templates" className="font-bold text-navy underline">
               מדביקים אותם בהגדרות ← «תבניות»
             </Link>
           ) : (
@@ -73,13 +73,13 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
         </p>
       )}
 
-      {escorts.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">עוד לא שובצו מלווים לשיעורים במחזור הזה. משבצים מלווה בלוח של שיעור סגור, בשלב «מלווה».</p>}
+      {escorts.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">עוד לא שובצו מלווים לשיעורים במחזור הזה. משבצים מלווה בלוח של שיעור סגור, בשלב «מלווה».</p>}
 
       {groups.map((g, i) => (
         <section
           key={g.escort?.id ?? "none"}
           aria-label={g.heading}
-          className={`rounded-xl border border-line bg-card p-4 print:rounded-none print:border-0 print:border-b print:p-0 print:pb-3 ${pagePerEscort && i > 0 ? "print:break-before-page" : ""} ${g.escort == null ? "print:hidden" : ""}`}
+          className={`rounded-xl border border-line bg-card p-4 shadow-sm print:rounded-none print:border-0 print:border-b print:p-0 print:pb-3 print:shadow-none ${pagePerEscort && i > 0 ? "print:break-before-page" : ""} ${g.escort == null ? "print:hidden" : ""}`}
         >
           {/* a page of its own, handed to the escort, says which week and which print it is */}
           {pagePerEscort && i > 0 && (
@@ -87,14 +87,14 @@ export function EscortsScreen({ port, me }: { port: DataPort; me: Me }) {
               {title} · {printed}
             </p>
           )}
-          <h3 className="font-display text-lg font-semibold">{g.heading}</h3>
+          <h3 className="font-display text-lg font-bold text-navy">{g.heading}</h3>
           <p className="mb-2 text-sm text-ink-soft">{g.load}</p>
           <ol className="space-y-3">
             {g.lessons.map((x) => {
               const phone = phones?.get(x.lesson.id);
               return (
-                <li key={x.lesson.id} data-lesson-row={x.lesson.id} className="break-inside-avoid border-t border-line pt-2 first:border-t-0 first:pt-0">
-                  <p className="font-semibold">
+                <li key={x.lesson.id} data-lesson-row={x.lesson.id} className="break-inside-avoid border-t border-sage/60 pt-2 first:border-t-0 first:pt-0">
+                  <p className="font-bold text-navy">
                     {x.dayLabel} <bdi dir="ltr">{x.time}</bdi> · {x.room}
                   </p>
                   <p>

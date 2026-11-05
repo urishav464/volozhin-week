@@ -66,7 +66,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
     "data-lesson-id": lesson.id,
     "data-owner": lens === "owner" && lesson.kind === "lesson" ? (ownerId ?? "none") : undefined,
     onClick: onOpen,
-    className: `group absolute inset-0 m-0.5 overflow-hidden rounded-md text-start transition-shadow hover:shadow-md focus-visible:z-10 ${ring} ${faded ? "opacity-30" : ""}`,
+    className: `group absolute inset-0 m-0.5 overflow-hidden ${tiny ? "rounded-lg" : "rounded-xl"} text-start transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 ${ring} ${faded ? "opacity-30" : ""}`,
   } as const;
 
   if (lesson.kind === "memorial") {
@@ -131,7 +131,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
             const s = pitchSpeaker(model, p);
             const owner = model.memberName.get(model.approachById.get(p.approach_id)?.owner_member_id ?? -1);
             return (
-              <span key={p.id} data-drag={`pitch:${p.id}`} data-drag-label={s ? displayName(s) : ""} className="flex items-center gap-1 rounded bg-paper px-1 text-[11px] leading-5">
+              <span key={p.id} data-drag={`pitch:${p.id}`} data-drag-label={s ? displayName(s) : ""} className="flex items-center gap-1 rounded-full bg-paper px-1.5 text-[11px] leading-5">
                 <span aria-hidden>{CALL_ICON[model.approachById.get(p.approach_id)?.status ?? "claimed"]}</span>
                 <GenderDot gender={s?.gender ?? null} />
                 <span className="truncate">{s ? displayName(s) : "?"}</span>
@@ -175,7 +175,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
     >
       <span className="flex items-center gap-1">
         <GenderDot gender={lead?.gender ?? null} />
-        <span className="truncate text-xs font-semibold">{lead ? displayName(lead) : "—"}</span>
+        <span className="truncate text-xs font-bold text-navy">{lead ? displayName(lead) : "—"}</span>
         {parallel}
         {reconfirm && <ReconfirmDot />}
         {warnings > 0 && <span className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">{warnings}</span>}

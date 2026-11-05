@@ -107,11 +107,11 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   return (
     <>
       <section aria-labelledby="stages-title" className="space-y-2">
-        <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-semibold text-ink">
+        <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-bold text-navy">
           שלבים
         </h3>
         {l.needs_reconfirm && !open.has("msg") && (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
             <ReconfirmDot />
             <span className="min-w-0 flex-1">
               <b>לעדכן את המרצה:</b> השיעור השתנה אחרי שהודעת הסיכום נשלחה.
@@ -131,7 +131,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
       {/* after the week (milestone 6): opinions about the speaker — the edition's content members and admins only */}
       {actor.role !== "logistics" && l.kind === "lesson" && (
         <section aria-labelledby={afterId}>
-          <h3 id={afterId} className="mb-2 flex min-h-8 items-center text-sm font-semibold text-ink-soft">
+          <h3 id={afterId} className="mb-2 flex min-h-8 items-center text-sm font-bold text-navy">
             אחרי השבוע
           </h3>
           <StageList>
@@ -164,8 +164,8 @@ function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: numb
   }, [cmds, lessonId]);
   if (!note) return null;
   return (
-    <section aria-label="מגיליון המעקב של אשתקד" className="rounded-lg border border-line bg-paper p-2.5">
-      <h4 className="mb-1 text-sm font-semibold">מגיליון המעקב של אשתקד</h4>
+    <section aria-label="מגיליון המעקב של אשתקד" className="rounded-xl bg-sand-soft p-3">
+      <h4 className="mb-1 text-sm font-bold text-navy">מגיליון המעקב של אשתקד</h4>
       <p className="text-sm whitespace-pre-line break-words">{note}</p>
       <p className="mt-1 text-xs text-ink-soft">כמו פרטי ההסעה: רק אדמין כללי/ת רואה, ונמחק במחיקת המידע האישי של המחזור.</p>
     </section>
@@ -262,7 +262,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
     const notes = dutyNotes({ kind: l.kind, self_intro: intro, transport: l.transport, approval: l.approval }, week.edition.settings.duty_phrases);
     return (
       <div className="space-y-1">
-        <p className="text-sm font-semibold">ברשימת המלווים יופיע</p>
+        <p className="text-sm font-bold">ברשימת המלווים יופיע</p>
         {notes.length === 0 && !extra ? (
           <p className="text-sm text-ink-soft">
             {(week.edition.settings.duty_phrases ?? []).length === 0 ? "עוד אין ניסוחים — בהגדרות ← «תבניות»." : "אין ניסוח שחל על השיעור הזה."}
@@ -285,7 +285,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
     l.escort_roster_id != null &&
     (TICK_ITEMS.some((item) => tickTimes[item] != null) ? (
       <div className="space-y-1">
-        <p className="text-sm font-semibold">מה המלווה סימן/ה בקישור</p>
+        <p className="text-sm font-bold">מה המלווה סימן/ה בקישור</p>
         <EscortTicksLine week={week} lessonId={l.id} />
       </div>
     ) : (
@@ -329,7 +329,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
         {clashes.length > 0 && (
           <ul aria-label="שיעורים קרובים של המלווה" className="space-y-1">
             {clashes.map(({ lesson: o, gap }) => (
-              <li key={o.id} className="rounded-md bg-amber-50 px-2 py-1 text-sm text-amber-900">
+              <li key={o.id} className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950 ring-1 ring-amber-200 ring-inset">
                 ⚠ {nameOf(rosterId)} כבר מלווה ב{DAY_NAMES[o.day]} <bdi>{fmtRange(o.start_min, o.end_min)}</bdi>: {gapText(gap)} (הצעה: לפחות {ESCORT_MIN_GAP} דקות)
               </li>
             ))}
@@ -337,7 +337,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
         )}
         <div>
           <label className="flex min-h-11 cursor-pointer items-center gap-2">
-            <input type="checkbox" checked={selfIntro} onChange={(e) => setSelfIntro(e.target.checked)} className="size-5 accent-ink" />
+            <input type="checkbox" checked={selfIntro} onChange={(e) => setSelfIntro(e.target.checked)} className="size-5 accent-navy" />
             הצגה עצמית: {byGender(speakerGender, "המרצה מציג את עצמו", "המרצה מציגה את עצמה", "המרצה מציג/ה את עצמו/ה")}
           </label>
           {suggested && selfIntro && !l.self_intro && (
@@ -420,7 +420,7 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
           <>
             <dt className="text-ink-soft">מצגת</dt>
             <dd className="min-w-0 break-all">
-              <a href={link} target="_blank" rel="noopener noreferrer" className="underline">
+              <a href={link} target="_blank" rel="noopener noreferrer" className="font-bold text-navy underline underline-offset-4 hover:text-navy-800">
                 פתיחת המצגת
               </a>
             </dd>
@@ -464,7 +464,7 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
         </Field>
       )}
       {link && (
-        <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4">
+        <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-sm font-bold text-navy underline underline-offset-4 hover:text-navy-800">
           פתיחת המצגת ‹
         </a>
       )}
@@ -473,7 +473,7 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
       </Field>
       <div>
         <label className={`flex min-h-11 items-center gap-2 ${printable ? "cursor-pointer" : "text-ink-soft"}`}>
-          <input type="checkbox" checked={inReader && printable} disabled={!printable} onChange={(e) => setInReader(e.target.checked)} className="size-5 accent-ink" />
+          <input type="checkbox" checked={inReader && printable} disabled={!printable} onChange={(e) => setInReader(e.target.checked)} className="size-5 accent-navy" />
           להכניס למקראה
         </label>
         {!printable && <p className="text-xs text-ink-soft">אין מה להדפיס.</p>}

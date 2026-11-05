@@ -99,7 +99,7 @@ export function TaughtHere({
       {lessons.map((h, i) => {
         const r = reviewOf.get(slotKey(h));
         return (
-          <li key={`${h.edition_id}:${i}`} className="rounded-md bg-card px-2 py-1.5">
+          <li key={`${h.edition_id}:${i}`} className="rounded-lg border border-line bg-card px-2.5 py-1.5">
             <LessonLine label={h.edition_label} day={h.day} start={h.start_min} end={h.end_min} title={h.title}>
               {h.category && (
                 <>
@@ -114,7 +114,7 @@ export function TaughtHere({
         );
       })}
       {alone.map((r) => (
-        <li key={`${r.edition_id}:${r.lesson_id}`} className="rounded-md bg-card px-2 py-1.5">
+        <li key={`${r.edition_id}:${r.lesson_id}`} className="rounded-lg border border-line bg-card px-2.5 py-1.5">
           <LessonLine label={r.edition_label} day={r.day as Day} start={r.start_min} end={r.end_min} title={r.title} />
           <ReviewLines r={r} overran={overran} />
         </li>
@@ -149,7 +149,7 @@ function LessonLine({ label, day, start, end, title, children }: { label: string
 /** One review, under its lesson: the verdict in bold, then what worked and what less. */
 function ReviewLines({ r, overran }: { r: SpeakerReview; overran: string }) {
   return (
-    <div className="mt-1 border-s-2 border-line ps-2">
+    <div className="mt-1 border-s-2 border-sage ps-2">
       <p className="font-semibold">{reviewLine(r, overran)}</p>
       {r.went_well && <p className="whitespace-pre-line break-words">מה עבד: {r.went_well}</p>}
       {r.issues && <p className="whitespace-pre-line break-words">מה פחות: {r.issues}</p>}

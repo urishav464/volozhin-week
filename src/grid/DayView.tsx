@@ -48,7 +48,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
               role="tab"
               aria-selected={d === day}
               onClick={() => onDay(d)}
-              className={`flex min-h-11 shrink-0 items-center gap-1 rounded-full border px-3.5 text-sm ${d === day ? "border-ink bg-ink text-paper" : "border-line bg-card"}`}
+              className={`flex min-h-11 shrink-0 items-center gap-1 rounded-full border px-3.5 text-sm font-semibold transition-colors ${d === day ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-ink hover:border-navy/40 hover:bg-accent-soft"}`}
             >
               {DAY_NAMES[d]}
               <span className={`size-2 rounded-full ${n === "f" ? "bg-pink-400" : n === "m" ? "bg-sky-500" : "bg-ok"}`} aria-label={n ? GENDER_NEED_LABEL[n] : "מאוזן"} />
@@ -79,7 +79,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
                     const where = alone ? undefined : { range: fmtRange(l.start_min, l.end_min), room: model.week.rooms.find((r) => r.id === l.room_id)?.name ?? null };
                     return (
                       <div key={l.id} className="flex gap-2">
-                        <bdi className="w-11 shrink-0 pt-1 text-xs font-semibold tabular-nums text-ink-soft">{fmt(l.start_min)}</bdi>
+                        <bdi className="w-11 shrink-0 pt-1 text-xs font-bold tabular-nums text-navy">{fmt(l.start_min)}</bdi>
                         <div className={`relative min-w-0 flex-1 ${where ? "h-14" : "h-12"}`}>
                           <LessonCard model={model} lesson={l} lens={lens} height={where ? 56 : 48} where={where} onOpen={() => onLesson(l.id)} />
                         </div>
@@ -96,7 +96,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
                     type="button"
                     onClick={() => onMemorial(day, row)}
                     aria-label={`הוספת זמן זיכרון: ${dayRange(day, row.start_min, row.end_min)}`}
-                    className="flex min-h-11 w-full items-center gap-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+                    className="flex min-h-11 w-full items-center gap-2 rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
                   >
                     <bdi className="tabular-nums">{fmt(row.start_min)}</bdi>
                     <span className="truncate">+ {row.label || "זמן זיכרון"}</span>
@@ -105,7 +105,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
               );
             }
             return (
-              <li key={row.id} className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs ${row.kind === "kk" ? "bg-accent-soft text-accent" : row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft"}`}>
+              <li key={row.id} className={`flex items-center gap-2 rounded-lg px-2 py-1 text-xs ${row.kind === "kk" ? "bg-accent-soft text-navy" : row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-sand-soft text-ink-soft"}`}>
                 <bdi className="tabular-nums">{fmt(row.start_min)}</bdi>
                 <span className="truncate">{row.label}</span>
               </li>
@@ -151,7 +151,7 @@ function LessonRow({
   const continuing = here.filter((l) => l.start_min < row.start_min);
 
   const time = (
-    <bdi className="w-11 shrink-0 pt-1 text-xs font-semibold tabular-nums text-ink-soft">{fmt(row.start_min)}</bdi>
+    <bdi className="w-11 shrink-0 pt-1 text-xs font-bold tabular-nums text-navy">{fmt(row.start_min)}</bdi>
   );
 
   if (here.length === 0) {
@@ -170,7 +170,7 @@ function LessonRow({
       return (
         <li className="flex gap-2">
           {time}
-          <div data-free-cell={key} className={`grid min-h-16 flex-1 place-items-center rounded-md border text-center text-sm ${tint}`}>
+          <div data-free-cell={key} className={`grid min-h-16 flex-1 place-items-center rounded-xl border text-center text-sm ${tint}`}>
             <span>
               {lens === "diversity" && need ? GENDER_NEED_LABEL[need] : "פנוי"}
               {row.label && <span className="block text-[11px] text-ink-faint">{row.label}</span>}
@@ -189,7 +189,7 @@ function LessonRow({
           data-fit={fit ?? undefined}
           disabled={!!placing && fit === "busy"}
           onClick={() => onCell(day, row)}
-          className={`min-h-16 flex-1 rounded-md border text-sm disabled:opacity-40 ${tint}`}
+          className={`min-h-16 flex-1 rounded-xl border text-sm transition-colors hover:border-navy/40 disabled:opacity-40 ${tint}`}
         >
           {said ?? (lens === "diversity" && need ? GENDER_NEED_LABEL[need] : "פנוי")}
           {row.label && <span className="block text-[11px] text-ink-faint">{row.label}</span>}
@@ -211,7 +211,7 @@ function LessonRow({
       {time}
       <div className="flex-1 space-y-1">
         {continuing.map((l) => (
-          <button key={l.id} type="button" onClick={() => onLesson(l.id)} className="block w-full rounded-md border border-dashed border-line px-2 py-1 text-start text-xs text-ink-soft">
+          <button key={l.id} type="button" onClick={() => onLesson(l.id)} className="block w-full rounded-lg border border-dashed border-line px-2 py-1 text-start text-xs text-ink-soft hover:bg-accent-soft">
             ↥ המשך השיעור <bdi>{fmtRange(l.start_min, l.end_min)}</bdi>
           </button>
         ))}

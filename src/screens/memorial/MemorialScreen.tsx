@@ -83,7 +83,7 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="font-display text-2xl font-extrabold">זמני זיכרון</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">זמני זיכרון</h2>
         <EditionSelect />
       </div>
       {/* what a plan holds, and the liaison, are the guide's «זמני זיכרון» */}
@@ -94,7 +94,7 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
       {warnings.length > 0 && (
         <ul aria-label="אזהרות זמני הזיכרון" className="space-y-1">
           {warnings.map((w) => (
-            <li key={w.key} className="rounded-md bg-amber-50 px-2 py-1 text-sm text-amber-900">
+            <li key={w.key} className="rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
               ⚠ {w.message}
             </li>
           ))}
@@ -117,7 +117,7 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
       </Panel>
 
       <section aria-label="זמני הזיכרון ברשת" className="space-y-3">
-        <h3 className="font-display text-xl font-bold">ברשת</h3>
+        <h3 className="font-display text-xl font-extrabold text-navy">ברשת</h3>
         <div className="grid items-start gap-3 lg:grid-cols-2">
           {DAYS.map((d) => (
             <DaySlots key={d} {...ctx} day={d} />
@@ -227,8 +227,8 @@ function DaySlots(props: Ctx & { day: Day }) {
   const slots = memorialSlots(week).filter((l) => l.day === day);
   if (rows.length === 0 && slots.length === 0) return null;
   return (
-    <section aria-label={`יום ${DAY_NAMES[day]}`} className="rounded-xl border border-line bg-card p-3">
-      <h4 className="mb-1 font-display text-lg font-semibold">יום {DAY_NAMES[day]}</h4>
+    <section aria-label={`יום ${DAY_NAMES[day]}`} className="rounded-xl border border-line bg-card p-3 shadow-sm">
+      <h4 className="mb-1 font-display text-lg font-bold text-navy">יום {DAY_NAMES[day]}</h4>
       <div className="space-y-3">
         {rows.map((r) => (
           <SlotRow key={r.id} {...props} row={r} slots={slots.filter((l) => overlaps(l.start_min, l.end_min, r.start_min, r.end_min))} />
@@ -317,7 +317,7 @@ function SlotCard(props: Ctx & { slot: Lesson; row: Row | null }) {
     );
   }
   return (
-    <div data-memorial-slot={l.id} className="rounded-lg border border-dashed border-amber-300 bg-paper px-3 py-1">
+    <div data-memorial-slot={l.id} className="rounded-lg border border-dashed border-amber-300 bg-paper-light px-3 py-1">
       <div className="flex flex-wrap items-center gap-x-2">
         <p className="min-w-0 flex-1 py-2.5 text-sm">
           {!row || range || room ? (
@@ -408,7 +408,7 @@ function AddSlot({ week, day, row, cmds, busy, act, onClose }: Ctx & { day: Day;
     if (done) onClose();
   };
   return (
-    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${dayRange(day, row.start_min, row.end_min)}`} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void save(e)} aria-label={`זמן זיכרון חדש: ${dayRange(day, row.start_min, row.end_min)}`} className="space-y-2 rounded-xl bg-sand-soft p-3" noValidate>
       <div className="flex flex-wrap gap-2">
         <Field id={`${id}-s`} label="מ-">
           <input id={`${id}-s`} dir="ltr" value={start} onChange={(e) => setStart(e.target.value)} className={`${INPUT} w-24`} autoComplete="off" />
@@ -648,7 +648,7 @@ function PlanForm({
     if (ok) onSaved();
   };
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label={`עריכת התוכנית: ${name}`} className="space-y-3 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void submit(e)} aria-label={`עריכת התוכנית: ${name}`} className="space-y-3 rounded-xl bg-sand-soft p-3" noValidate>
       <Field id={`${id}-st`} label="מה המשפחה אמרה">
         <select id={`${id}-st`} value={status} onChange={(e) => setStatus(e.target.value as FamilyStatus)} className={SELECT}>
           {FAMILY_STATUSES.map((s) => (
@@ -665,7 +665,7 @@ function PlanForm({
         <input id={`${id}-min`} type="number" inputMode="numeric" min={1} max={MEMORIAL_LIMITS.minutes} value={minutes} onChange={(e) => setMinutes(e.target.value)} className={`${INPUT} w-28`} />
       </Field>
       <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={hardStop} onChange={(e) => setHardStop(e.target.checked)} className="size-5 accent-ink" />
+        <input type="checkbox" checked={hardStop} onChange={(e) => setHardStop(e.target.checked)} className="size-5 accent-navy" />
         לסיים בדיוק בזמן (בלי חריגה)
       </label>
       <Field id={`${id}-note`} label="מה נכנס למקראה (לא חובה)">
@@ -754,7 +754,7 @@ function FamilyContacts({ port, busy, act, fallenId, name }: Ctx & { fallenId: n
   }
   const tel = telHref(c?.phone);
   return (
-    <div id={`${id}-box`} role="group" aria-label={`פרטי הקשר של המשפחה: ${name}`} className="w-full space-y-2 rounded-lg border border-line bg-paper p-3">
+    <div id={`${id}-box`} role="group" aria-label={`פרטי הקשר של המשפחה: ${name}`} className="w-full space-y-2 rounded-lg border border-line bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-semibold">פרטי הקשר של המשפחה</p>
         <Button kind="quiet" className="ms-auto" onClick={() => setOpen(false)} aria-expanded>
@@ -812,7 +812,7 @@ function FamilyContacts({ port, busy, act, fallenId, name }: Ctx & { fallenId: n
                   <dd className="min-w-0">
                     <bdi>{c.phone}</bdi>
                     {tel && (
-                      <a href={tel} className="ms-2 font-semibold underline">
+                      <a href={tel} className="ms-2 font-bold text-navy underline">
                         חיוג
                       </a>
                     )}
@@ -986,7 +986,7 @@ function FallenList(props: Ctx) {
         )}
         {list && list.length === 0 && <p className="text-sm text-ink-soft">עוד אין שמות ברשימה.</p>}
         {list && list.length > 0 && (
-          <ul aria-label="החללים" className="divide-y divide-line">
+          <ul aria-label="החללים" className="divide-y divide-sage/60">
             {list.map((f) => (
               <li key={f.id} data-fallen={f.id} className="py-2">
                 {editing === f.id ? (
@@ -1007,7 +1007,7 @@ function FallenList(props: Ctx) {
                   />
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="min-w-0 flex-1 basis-40 break-words font-semibold">{f.name}</span>
+                    <span className="min-w-0 flex-1 basis-40 break-words font-bold text-navy">{f.name}</span>
                     {!f.active && <Badge tone="muted">לא פעיל/ה</Badge>}
                     <Button ref={focusBack.ref(String(f.id))} kind="quiet" onClick={() => setEditing(f.id)} aria-label={`עריכה: ${f.name}`}>
                       עריכה
@@ -1072,7 +1072,7 @@ function FallenForm({
     });
   };
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label={initial ? `עריכה: ${initial.name}` : "שם חדש לרשימת החללים"} className="space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={(e) => void submit(e)} aria-label={initial ? `עריכה: ${initial.name}` : "שם חדש לרשימת החללים"} className="space-y-2 rounded-xl bg-sand-soft p-3" noValidate>
       <Field id={`${id}-n`} label="שם">
         <input id={`${id}-n`} value={name} maxLength={MEMORIAL_LIMITS.name} onChange={(e) => setName(e.target.value)} className={INPUT} autoComplete="off" />
       </Field>
@@ -1081,7 +1081,7 @@ function FallenForm({
         <textarea id={`${id}-o`} value={note} maxLength={MEMORIAL_LIMITS.note} onChange={(e) => setNote(e.target.value)} rows={2} className={`${INPUT} py-2`} />
       </Field>
       <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="size-5 accent-ink" />
+        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="size-5 accent-navy" />
         פעיל/ה (אפשר לפתוח לו/ה תוכנית)
       </label>
       {problem && <Problem>{problem}</Problem>}

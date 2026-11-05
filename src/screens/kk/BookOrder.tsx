@@ -47,7 +47,7 @@ export function BookOrder({ g, kk, signed, leaders, editable, folded = false, bu
         <input id={`${id}-n`} type="number" inputMode="numeric" min={0} max={KK_LIMITS.copies} value={copies} onChange={(e) => setCopies(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-n-hint`} />
       </Field>
       <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={ordered} onChange={(e) => setOrdered(e.target.checked)} className="size-5 accent-ink" />
+        <input type="checkbox" checked={ordered} onChange={(e) => setOrdered(e.target.checked)} className="size-5 accent-navy" />
         הוזמן
         {order?.ordered_at && <span className="text-xs text-ink-soft">({israelMoment(order.ordered_at)})</span>}
       </label>

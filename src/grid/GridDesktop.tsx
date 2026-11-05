@@ -47,7 +47,7 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
         <div className="relative" style={{ height: layout.height }} aria-hidden>
           {layout.bands.map((b) => (
             <div key={b.row.id} className="absolute inset-x-0 border-t border-line/70 pe-1 text-end" style={{ top: b.top, height: b.height }}>
-              <bdi className={`tabular-nums ${b.row.kind === "lesson" ? "text-xs font-semibold text-ink-soft" : "text-[10px] text-ink-faint"}`}>{fmt(b.row.start_min)}</bdi>
+              <bdi className={`tabular-nums ${b.row.kind === "lesson" ? "text-xs font-bold text-navy" : "text-[10px] text-ink-faint"}`}>{fmt(b.row.start_min)}</bdi>
             </div>
           ))}
         </div>
@@ -58,16 +58,16 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
           const free = freeCells(layout, day, model.week.lessons, edition);
           const need = model.days[day].balance.need;
           return (
-            <div key={day} className="relative rounded-md bg-card/40" style={{ height: layout.height }} data-day={day}>
+            <div key={day} className="relative rounded-lg bg-card/40" style={{ height: layout.height }} data-day={day}>
               {/* bands */}
               {layout.bands.map((b) => {
                 const active = rowActive(b.row, day, edition);
                 const base = "absolute inset-x-0 border-t border-line/70";
                 if (!active) {
-                  return <div key={b.row.id} className={`${base} bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(29,42,68,0.06)_6px_8px)]`} style={{ top: b.top, height: b.height }} title="מחוץ לשעות השבוע" />;
+                  return <div key={b.row.id} className={`${base} bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgb(35_67_119/0.07)_6px_8px)]`} style={{ top: b.top, height: b.height }} title="מחוץ לשעות השבוע" />;
                 }
                 if (b.row.kind === "lesson") return <div key={b.row.id} className={base} style={{ top: b.top, height: b.height }} />;
-                const tone = b.row.kind === "kk" ? "bg-accent-soft text-accent" : b.row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-line/50 text-ink-soft";
+                const tone = b.row.kind === "kk" ? "bg-accent-soft text-navy" : b.row.kind === "memorial" ? "bg-amber-50 text-amber-800" : "bg-sand-soft text-ink-soft";
                 if (b.row.kind === "memorial" && onMemorial && !lessons.some((l) => l.kind === "memorial" && overlaps(l.start_min, l.end_min, b.row.start_min, b.row.end_min)) && memorialRowFree(model, day, b.row)) {
                   // dashed, like an empty cell: one click makes a slot (not a label like the rows around it)
                   return (
@@ -75,7 +75,7 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
                       key={b.row.id}
                       type="button"
                       onClick={() => onMemorial(day, b.row)}
-                      className={`absolute inset-x-0 m-0.5 grid place-items-center rounded-md border border-dashed border-amber-300 ${tone} px-1 text-center text-[11px] font-semibold leading-tight hover:bg-amber-100`}
+                      className={`absolute inset-x-0 m-0.5 grid place-items-center rounded-lg border border-dashed border-amber-300 ${tone} px-1 text-center text-[11px] font-semibold leading-tight hover:bg-amber-100`}
                       style={{ top: b.top, height: b.height }}
                       aria-label={`הוספת זמן זיכרון: ${dayRange(day, b.row.start_min, b.row.end_min)}`}
                     >
@@ -106,7 +106,7 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
                     disabled={!!placing && fit === "busy"}
                     onClick={() => onCell(day, c.row)}
                     style={{ top: c.top, height: c.height }}
-                    className={`absolute inset-x-0 m-0.5 rounded-md border text-center text-[11px] transition-colors hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-40 ${tint} ${overKey === key ? "ring-2 ring-accent" : ""}`}
+                    className={`absolute inset-x-0 m-0.5 rounded-lg border text-center text-[11px] transition-colors hover:border-navy/40 disabled:cursor-not-allowed disabled:opacity-40 ${tint} ${overKey === key ? "ring-2 ring-accent" : ""}`}
                     aria-label={`${fmt(c.row.start_min)} — ${need ? GENDER_NEED_LABEL[need] : "פנוי"}${said ? `, ${said}` : ""}`}
                   >
                     {said ? (

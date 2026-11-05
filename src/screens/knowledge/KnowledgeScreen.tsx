@@ -10,7 +10,7 @@ import type { Me } from "../../data/types";
 import { errorMessage } from "../../errors";
 import { byDue, fmtDate, fmtMoment, isLate, israelToday, milestoneDate, milestoneLabel } from "../../domain/milestones";
 import type { Edition } from "../../domain/types";
-import { Badge, Button, Confirm, Field, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
+import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, Field, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { Markdown } from "../Markdown";
 import { actorIn, useWeekStore } from "../weekStore";
@@ -61,7 +61,7 @@ export function KnowledgeScreen({ port, me }: { port: DataPort; me: Me }) {
   return (
     <div className="mx-auto max-w-3xl space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h2 className="font-display text-2xl font-extrabold">ידע ואבני דרך</h2>
+        <h2 className="font-display text-2xl font-extrabold text-navy">ידע ואבני דרך</h2>
         <EditionSelect />
         <KnowledgeTabs actor={actor} />
       </div>
@@ -97,7 +97,7 @@ function Milestones({ edition, list, admin, k, act, busy }: { edition: Edition; 
           {admin ? " כאן מוסיפים אותן, והן עוברות למחזור הבא." : " המדריך/ה מוסיף/ה אותן."}
         </p>
       ) : (
-        <ul aria-label="אבני הדרך" className="mb-3 divide-y divide-line">
+        <ul aria-label="אבני הדרך" className="mb-3 divide-y divide-sage/60">
           {sorted.map((m) => (
             <MilestoneItem key={m.id} m={m} edition={edition} admin={admin} k={k} act={act} busy={busy} late={isLate(edition.start_date, m.days_before, m.done_at != null, today)} />
           ))}
@@ -149,11 +149,11 @@ function MilestoneItem({ m, edition, admin, k, act, busy, late }: { m: Milestone
     <li data-milestone={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
       {admin ? (
         <label className="inline-flex min-h-11 min-w-0 flex-1 basis-56 cursor-pointer items-center gap-2">
-          <input type="checkbox" checked={done} disabled={busy === `done-${m.id}`} onChange={(e) => void act(`done-${m.id}`, () => k.setMilestoneDone(m.id, e.target.checked), e.target.checked ? "סומן כבוצע" : "הסימון בוטל")} className="size-5 shrink-0 accent-ink" />
-          <span className={`min-w-0 break-words font-semibold ${done ? "text-ink-soft line-through" : ""}`}>{m.title}</span>
+          <input type="checkbox" checked={done} disabled={busy === `done-${m.id}`} onChange={(e) => void act(`done-${m.id}`, () => k.setMilestoneDone(m.id, e.target.checked), e.target.checked ? "סומן כבוצע" : "הסימון בוטל")} className="size-5 shrink-0 accent-navy" />
+          <span className={`min-w-0 break-words font-bold ${done ? "text-ink-soft line-through" : "text-navy"}`}>{m.title}</span>
         </label>
       ) : (
-        <span className={`min-w-0 flex-1 basis-56 break-words font-semibold ${done ? "text-ink-soft line-through" : ""}`}>
+        <span className={`min-w-0 flex-1 basis-56 break-words font-bold ${done ? "text-ink-soft line-through" : "text-navy"}`}>
           {m.title} <span className="sr-only">{done ? "(בוצע)" : "(עוד לא בוצע)"}</span>
         </span>
       )}
@@ -208,7 +208,7 @@ function MilestoneForm({ initial, onSave, onCancel, busy }: { initial?: Mileston
     }
   };
   return (
-    <form onSubmit={submit} aria-label={initial ? "עריכת אבן דרך" : "אבן דרך חדשה"} className="grid gap-2 rounded-lg border border-line bg-paper p-3 sm:grid-cols-[1fr_12rem]" noValidate>
+    <form onSubmit={submit} aria-label={initial ? "עריכת אבן דרך" : "אבן דרך חדשה"} className="grid gap-2 rounded-xl bg-sand-soft p-3 sm:grid-cols-[1fr_12rem]" noValidate>
       <Field id={`${id}-t`} label="אבן הדרך">
         <input id={`${id}-t`} className={INPUT} value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
       </Field>
@@ -267,7 +267,7 @@ function Notes({ edition, list, admin, global, k, act, busy, names }: { edition:
         if (notes.length === 0) return null;
         return (
           <section key={s} aria-label={NOTE_SECTION_LABEL[s]} className="mt-4">
-            <h3 className="mb-2 font-display text-lg font-semibold">{NOTE_SECTION_LABEL[s]}</h3>
+            <h3 className="mb-2 font-display text-lg font-bold text-navy">{NOTE_SECTION_LABEL[s]}</h3>
             <ul className="space-y-3">
               {notes.map((n) => (
                 <NoteItem key={n.id} n={n} edition={edition} mayEdit={n.edition_id == null ? global : admin} global={global} k={k} act={act} busy={busy} names={names} />
@@ -306,9 +306,9 @@ function NoteItem({ n, edition, mayEdit, global, k, act, busy, names }: { n: Not
     );
   }
   return (
-    <li data-note={n.id} className="rounded-lg border border-line p-3">
+    <li data-note={n.id} className="rounded-lg border border-line bg-paper-light p-3">
       <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h4 className="font-semibold">{n.title}</h4>
+        <h4 className="font-bold text-navy">{n.title}</h4>
         <Badge tone={n.edition_id == null ? "accent" : "neutral"}>{n.edition_id == null ? "לכל השנים" : `מחזור ${edition.label}`}</Badge>
         {mayEdit && !deleting && (
           <span className="ms-auto flex gap-1">
@@ -372,7 +372,7 @@ function NoteForm({
     await onSave({ edition_id: scope === "all" ? null : edition.id, section, title, body_md: body });
   };
   return (
-    <form onSubmit={submit} aria-label={initial ? "עריכת הערה" : "הערה חדשה"} className="mb-3 space-y-2 rounded-lg border border-line bg-paper p-3" noValidate>
+    <form onSubmit={submit} aria-label={initial ? "עריכת הערה" : "הערה חדשה"} className="mb-3 space-y-2 rounded-xl bg-sand-soft p-3" noValidate>
       <div className="grid gap-2 sm:grid-cols-2">
         <Field id={`${id}-s`} label="מדור">
           <select id={`${id}-s`} className={INPUT} value={section} onChange={(e) => setSection(e.target.value as NoteSection)}>
@@ -386,7 +386,7 @@ function NoteForm({
         {/* the scope is fixed once written (the database never moves a note between years) */}
         {!initial && global ? (
           <fieldset>
-            <legend className="mb-1 text-sm font-semibold">למי</legend>
+            <legend className="mb-1 text-sm font-bold text-ink">למי</legend>
             <div className="flex flex-wrap gap-1.5">
               {(
                 [
@@ -394,8 +394,8 @@ function NoteForm({
                   ["all", "לכל השנים"],
                 ] as const
               ).map(([v, label]) => (
-                <label key={v} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${scope === v ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-                  <input type="radio" name={`${id}-scope`} checked={scope === v} onChange={() => setScope(v)} className="accent-ink" />
+                <label key={v} className={`${CHOICE} ${scope === v ? CHOICE_ON : CHOICE_OFF}`}>
+                  <input type="radio" name={`${id}-scope`} checked={scope === v} onChange={() => setScope(v)} className="accent-navy" />
                   {label}
                 </label>
               ))}

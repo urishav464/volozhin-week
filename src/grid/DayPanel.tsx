@@ -126,13 +126,13 @@ export function DayPanel({ model, day, isAdmin, onLesson, onCell, onRules, onClo
             const shown = here.filter((l) => !bare.includes(l));
             return (
               <li key={r.id} className="flex gap-3 py-1.5">
-                <bdi className="w-11 shrink-0 pt-2 text-[13px] font-medium tabular-nums text-ink-soft">{fmt(r.start_min)}</bdi>
+                <bdi className="w-11 shrink-0 pt-2 text-[13px] font-bold tabular-nums text-navy">{fmt(r.start_min)}</bdi>
                 <div className="min-w-0 flex-1 space-y-1">
                   {here.length === 0 &&
                     (r.kind === "memorial" ? (
                       <p className="flex min-h-9 items-center text-[13px] text-amber-800">זמן זיכרון — עוד לא נקבע</p>
                     ) : (
-                      <button type="button" onClick={() => onCell(day, r)} className={`flex w-full items-center rounded-md px-2.5 text-start text-[13px] text-ink-faint hover:bg-line/40 hover:text-ink ${TARGET}`}>
+                      <button type="button" onClick={() => onCell(day, r)} className={`flex w-full items-center rounded-lg px-2.5 text-start text-[13px] text-ink-faint hover:bg-accent-soft hover:text-navy ${TARGET}`}>
                         פנוי
                       </button>
                     ))}
@@ -140,7 +140,7 @@ export function DayPanel({ model, day, isAdmin, onLesson, onCell, onRules, onClo
                     <HourLine key={l.id} model={model} lesson={l} onOpen={() => onLesson(l.id)} />
                   ))}
                   {bare.length > 0 && (
-                    <button type="button" onClick={() => onLesson(bare[0].id)} className={`flex w-full items-center rounded-md px-2.5 text-start text-[13px] text-ink-soft hover:bg-line/40 hover:text-ink ${TARGET}`}>
+                    <button type="button" onClick={() => onLesson(bare[0].id)} className={`flex w-full items-center rounded-lg px-2.5 text-start text-[13px] text-ink-soft hover:bg-accent-soft hover:text-navy ${TARGET}`}>
                       {bare.length === 1 ? "טיוטה — ללא מרצה" : `${bare.length} משבצות במקביל — ללא מרצה`}
                     </button>
                   )}
@@ -170,8 +170,8 @@ const TARGET = "min-h-11 lg:min-h-9";
 function Tile({ value, label, sub, tone }: { value: string; label: string; sub?: string; tone?: "f" | "m" }) {
   const bg = tone === "f" ? "bg-need-f border-pink-200" : tone === "m" ? "bg-need-m border-sky-200" : "bg-card border-line";
   return (
-    <div className={`rounded-xl border px-2 py-2.5 ${bg}`}>
-      <div className="font-display text-2xl font-bold leading-none">{value}</div>
+    <div className={`rounded-xl border px-2 py-2.5 shadow-sm ${bg}`}>
+      <div className="font-display text-2xl font-extrabold leading-none text-navy">{value}</div>
       <div className="mt-1 text-[13px] text-ink-soft">{label}</div>
       {sub && <div className="mt-0.5 text-xs text-ink-soft">{sub}</div>}
     </div>
@@ -187,7 +187,7 @@ function HourLine({ model, lesson: l, onOpen }: { model: GridModel; lesson: Less
   if (l.kind === "memorial") {
     const card = memorialCard(model.week, l);
     return (
-      <button type="button" onClick={onOpen} className={`flex w-full items-center rounded-md bg-amber-50 px-2.5 text-start text-[13px] text-amber-900 hover:bg-amber-100 ${TARGET}`}>
+      <button type="button" onClick={onOpen} className={`flex w-full items-center rounded-lg bg-amber-50 px-2.5 text-start text-[13px] text-amber-900 hover:bg-amber-100 ${TARGET}`}>
         <span className="truncate">{card.title}</span>
       </button>
     );
@@ -196,8 +196,8 @@ function HourLine({ model, lesson: l, onOpen }: { model: GridModel; lesson: Less
   if (l.state === "closed") {
     const lead = model.leadOf.get(l.id);
     return (
-      <button type="button" onClick={onOpen} className="block w-full rounded-md py-0.5 ps-2.5 text-start hover:bg-line/40" style={{ borderInlineStart: `3px solid ${cat?.color ?? NO_TOPIC_COLOR}` }}>
-        <span className="flex items-center gap-1.5 font-semibold">
+      <button type="button" onClick={onOpen} className="block w-full rounded-e-lg py-0.5 ps-2.5 text-start hover:bg-accent-soft" style={{ borderInlineStart: `3px solid ${cat?.color ?? NO_TOPIC_COLOR}` }}>
+        <span className="flex items-center gap-1.5 font-bold text-navy">
           <GenderDot gender={lead?.gender ?? null} />
           {lead ? displayName(lead) : "—"}
         </span>
@@ -216,7 +216,7 @@ function HourLine({ model, lesson: l, onOpen }: { model: GridModel; lesson: Less
     .filter((s) => s != null)
     .map((s) => displayName(s));
   return (
-    <button type="button" onClick={onOpen} className={`flex w-full items-center rounded-md border border-dashed border-ink-faint/50 px-2.5 py-1 text-start text-[13px] hover:bg-line/40 ${TARGET}`}>
+    <button type="button" onClick={onOpen} className={`flex w-full items-center rounded-lg border border-dashed border-ink-faint/50 px-2.5 py-1 text-start text-[13px] hover:bg-accent-soft ${TARGET}`}>
       <span>
         <span className="text-ink-soft">בתהליך: </span>
         {names.length ? names.join(", ") : "ללא מרצה"}

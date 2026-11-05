@@ -63,7 +63,7 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
 
   const header = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <h2 className="font-display text-2xl font-extrabold">מקראה</h2>
+      <h2 className="font-display text-2xl font-extrabold text-navy">מקראה</h2>
       <EditionSelect />
       <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
     </div>
@@ -72,7 +72,7 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
     return (
       <div className="mx-auto max-w-5xl space-y-4">
         {header}
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft">את המקראה בונים צוות התוכן והמדריך/ה. הקבצים של כל שיעור פתוחים להדפסה בלוח השיעור, בשלב «מקורות».</p>
+        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">את המקראה בונים צוות התוכן והמדריך/ה. הקבצים של כל שיעור פתוחים להדפסה בלוח השיעור, בשלב «מקורות».</p>
       </div>
     );
   }
@@ -93,7 +93,7 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
       {manifest.waiting.length > 0 && (
         <Panel title="ממתין לשיבוץ" aside="חומרים של תוכניות זיכרון שבמגש — נכנסים למקראה אחרי השיבוץ">
           <p className="mb-2 text-sm text-ink-soft">התוכניות האלה עוד לא שובצו בזמן זיכרון (במסך «זמני זיכרון»). החומרים שלהן שמורים, ועוברים עם כל תוכנית למשבצת שבה היא תשובץ.</p>
-          <ul aria-label="חומרים שממתינים לשיבוץ" className="divide-y divide-line">
+          <ul aria-label="חומרים שממתינים לשיבוץ" className="divide-y divide-sage/60">
             {manifest.waiting.map((f) => (
               <FileRow
                 key={f.id}
@@ -115,7 +115,7 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
       )}
       {manifest.leftovers.length > 0 && (
         <Panel title="קבצים בלי שיעור" aside="של משבצות שנפתחו מחדש או נמחקו — לא נכנסים למקראה">
-          <ul className="divide-y divide-line">
+          <ul className="divide-y divide-sage/60">
             {manifest.leftovers.map((f) => (
               <FileRow key={f.id} port={port} week={week} file={f} actor={actor} notify={notify} reload={reload} previous />
             ))}
@@ -207,8 +207,8 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
             {STEP_LABEL[progress.step]}
             {progress.step !== "save" && progress.total > 0 && ` · ${progress.done} מתוך ${progress.total}`}
           </p>
-          <div role="progressbar" aria-label="בניית המקראה" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-2 rounded-full bg-line">
-            <div className="h-2 rounded-full bg-ink transition-[width]" style={{ width: `${pct}%` }} />
+          <div role="progressbar" aria-label="בניית המקראה" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-2 rounded-full bg-sand-soft ring-1 ring-inset ring-line">
+            <div className="h-2 rounded-full bg-navy transition-[width]" style={{ width: `${pct}%` }} />
           </div>
         </div>
       )}
@@ -267,8 +267,8 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
         <div className="space-y-4">
           {byDay(manifest.rows).filter((d) => d.rows.length > 0).map(({ day, rows }) => (
             <section key={day} aria-label={`יום ${DAY_NAMES[day]}`}>
-              <h3 className="mb-1 font-display text-lg font-semibold">יום {DAY_NAMES[day]}</h3>
-              <ul className="divide-y divide-line">
+              <h3 className="mb-1 font-display text-lg font-bold text-navy">יום {DAY_NAMES[day]}</h3>
+              <ul className="divide-y divide-sage/60">
                 {rows.map((r) => (
                   <ManifestLine key={r.lesson.id} row={r} onOpen={() => navigate("/", { state: { lesson: r.lesson.id, stage: r.kind === "lesson" ? "sources" : undefined } })} />
                 ))}
@@ -336,7 +336,7 @@ function ManifestLine({ row: r, onOpen }: { row: ManifestRow; onOpen: () => void
         <bdi>{r.when}</bdi>
       </span>
       <div className="min-w-0 flex-1 basis-48">
-        <button type="button" onClick={onOpen} className="min-h-11 text-start font-semibold underline-offset-4 hover:underline">
+        <button type="button" onClick={onOpen} className="min-h-11 text-start font-bold text-navy underline-offset-4 hover:underline">
           <bdi>{r.header}</bdi>
         </button>
         {notes.length > 0 && (
@@ -409,7 +409,7 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
         העמוד הראשון של המקראה הוא הפוסטר של השבוע — PDF או תמונה שהמדריך/ה מעלה ומסמן/ת כאן. כל עוד אין, העמוד הראשון הוא הלו״ז, כפי שהוא בשבוע.
       </p>
       {manifest.covers.length > 0 && (
-        <ul aria-label="פוסטרים" className="divide-y divide-line">
+        <ul aria-label="פוסטרים" className="divide-y divide-sage/60">
           {manifest.covers.map((f: SourceFile) => (
             <FileRow
               key={f.id}
@@ -422,7 +422,7 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
               pick={
                 actor.isAdmin && (
                   // a poster the browser could not read cannot be the cover: its row says why
-                  <input type="radio" name={`${id}-cover`} aria-label={`השער: ${f.display_name}`} checked={shown === f.id} disabled={!!busy || !readableFile(f)} onChange={() => void mark(f.id)} className="size-5 shrink-0 accent-ink" />
+                  <input type="radio" name={`${id}-cover`} aria-label={`השער: ${f.display_name}`} checked={shown === f.id} disabled={!!busy || !readableFile(f)} onChange={() => void mark(f.id)} className="size-5 shrink-0 accent-navy" />
                 )
               }
               before={!actor.isAdmin && shown === f.id && <Badge tone="ok">השער</Badge>}
@@ -432,7 +432,7 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
       )}
       {actor.isAdmin && manifest.covers.length > 0 && (
         <label className="mt-1 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm">
-          <input type="radio" name={`${id}-cover`} checked={shown == null} disabled={!!busy} onChange={() => void mark(null)} className="size-5 accent-ink" />
+          <input type="radio" name={`${id}-cover`} checked={shown == null} disabled={!!busy} onChange={() => void mark(null)} className="size-5 accent-navy" />
           בלי פוסטר: עמוד לו״ז מהשבוע
         </label>
       )}
@@ -453,7 +453,7 @@ function CoverPanel({ port, week, manifest, actor, notify, clear, reload }: { po
           {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
           <label
             htmlFor={`${id}-pick`}
-            className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-line bg-paper px-3 font-semibold peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-line/50"}`}
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-full border border-navy bg-card px-3 font-bold text-navy transition-colors duration-150 sm:px-4 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${busy ? "opacity-50" : "hover:bg-accent-soft"}`}
           >
             {busy === "upload" ? `מעלה… ${Math.round((progress ?? 0) * 100)}%` : "העלאת פוסטר (PDF או תמונה)"}
           </label>

@@ -86,23 +86,26 @@ export function Fold({
   return (
     <details className={`group ${className}`} open={defaultOpen}>
       <summary
-        className={`flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md [&::-webkit-details-marker]:hidden ${size === "md" ? "text-[15px] font-semibold text-ink" : "text-sm font-semibold text-ink-soft"}`}
+        className={`flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md [&::-webkit-details-marker]:hidden ${size === "md" ? "text-[15px] font-bold text-navy hover:text-navy-800" : "text-sm font-bold text-ink-soft hover:text-ink"}`}
       >
         <span>{title}</span>
         {hint != null && hint !== false && <span className="min-w-0 truncate text-[13px] font-normal text-ink-soft">{hint}</span>}
-        <span aria-hidden className="ms-auto shrink-0 text-ink-soft transition-transform group-open:rotate-180">▾</span>
+        <span aria-hidden className={`ms-auto shrink-0 motion-safe:transition-transform group-open:rotate-180 ${size === "md" ? "text-navy" : "text-ink-soft"}`}>▾</span>
       </summary>
       <div className="pb-1 pt-2">{children}</div>
     </details>
   );
 }
 
+// Ein Prat's buttons are pills: the primary a solid navy, the secondary a navy outline (a white fill, so it reads the same
+// on a card, on parchment or on a tinted panel), quiet a ghost, danger in red. A busy or disabled one only fades: no
+// hover fill while it cannot act.
 const BUTTON = {
-  primary: "bg-ink text-paper hover:bg-ink/90",
-  secondary: "border border-line bg-paper hover:bg-line/50",
-  quiet: "text-ink-soft hover:bg-line/50 hover:text-ink",
-  danger: "text-bad hover:bg-bad/10",
-  dangerSolid: "bg-bad text-paper hover:bg-bad/90",
+  primary: "bg-navy text-white enabled:not-aria-disabled:hover:bg-navy-800",
+  secondary: "border border-navy bg-card text-navy enabled:not-aria-disabled:hover:bg-accent-soft",
+  quiet: "text-navy enabled:not-aria-disabled:hover:bg-accent-soft",
+  danger: "text-bad enabled:not-aria-disabled:hover:bg-bad/10",
+  dangerSolid: "bg-bad text-white enabled:not-aria-disabled:hover:bg-bad/90",
 };
 
 export function Button({
@@ -139,19 +142,20 @@ export function Button({
       aria-disabled={inert || undefined}
       onClick={inert ? (e) => e.preventDefault() : onClick}
       aria-busy={busy || undefined}
-      className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2.5 font-semibold sm:px-3 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${BUTTON[kind]} ${className}`}
+      className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-full px-3 font-bold transition duration-150 ease-out sm:px-4 motion-safe:enabled:not-aria-disabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${BUTTON[kind]} ${className}`}
     >
       {busy ? busyLabel : children}
     </button>
   );
 }
 
-export const INPUT = "block w-full min-h-11 rounded-lg border border-line bg-card px-3 text-base text-ink placeholder:text-ink-faint focus:border-ink";
+export const INPUT =
+  "block w-full min-h-11 rounded-lg border border-line bg-card px-3 text-base text-ink placeholder:text-ink-faint hover:border-ink-faint focus:border-navy disabled:bg-paper-light disabled:text-ink-soft";
 
 export function Field({ id, label, hint, children }: { id: string; label: ReactNode; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <label htmlFor={id} className="mb-1 block text-sm font-semibold">
+      <label htmlFor={id} className="mb-1 block text-sm font-bold text-ink">
         {label}
       </label>
       {children}
@@ -165,6 +169,14 @@ export function Field({ id, label, hint, children }: { id: string; label: ReactN
 }
 
 export const GENDER_LABEL: Record<Gender, string> = { f: "נקבה", m: "זכר" };
+
+/**
+ * A choice drawn as a chip — a radio or a checkbox inside its own label, at least 44px tall: `CHOICE` always, then
+ * `CHOICE_ON` when chosen (navy: its border, a navy tint, bold navy words) or `CHOICE_OFF`. The input takes `accent-navy`.
+ */
+export const CHOICE = "inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3";
+export const CHOICE_ON = "border-navy bg-accent-soft font-bold text-navy";
+export const CHOICE_OFF = "border-line bg-card hover:border-navy/50";
 
 /** Gender is optional everywhere: «לא צוין» is a real answer, never a guess. */
 export function GenderField({
@@ -187,11 +199,11 @@ export function GenderField({
   ];
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1 text-sm font-semibold">{legend}</legend>
+      <legend className="mb-1 text-sm font-bold text-ink">{legend}</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map(([g, label]) => (
-          <label key={label} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 ${value === g ? "border-ink bg-ink/5 font-semibold" : "border-line bg-card"}`}>
-            <input type="radio" name={name} checked={value === g} onChange={() => onChange(g)} className="accent-ink" />
+          <label key={label} className={`${CHOICE} ${value === g ? CHOICE_ON : CHOICE_OFF}`}>
+            <input type="radio" name={name} checked={value === g} onChange={() => onChange(g)} className="accent-navy" />
             {label}
           </label>
         ))}
@@ -204,7 +216,7 @@ export function Panel({ title, aside, children }: { title: ReactNode; aside?: Re
   return (
     <section className="rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-display text-lg font-semibold">{title}</h3>
+        <h3 className="font-display text-lg font-bold text-navy">{title}</h3>
         {aside && <div className="text-sm text-ink-soft">{aside}</div>}
       </div>
       {children}
@@ -218,7 +230,7 @@ export function Loading() {
 
 export function LoadError({ onRetry }: { onRetry: () => void }) {
   return (
-    <div role="alert" className="rounded-lg border border-bad/30 bg-bad/5 p-4 text-sm">
+    <div role="alert" className="rounded-xl border border-bad/30 bg-bad/5 p-4 text-sm">
       <p className="mb-2">לא הצלחנו לטעון. אם זה חוזר, כדאי לרענן את הדף.</p>
       <Button onClick={onRetry}>לנסות שוב</Button>
     </div>
@@ -236,7 +248,7 @@ export function EditionPicker({ editions, value, onChange }: { editions: Edition
   }
   return (
     <div className="flex max-w-sm items-center gap-2">
-      <label htmlFor="settings-edition" className="shrink-0 text-sm font-semibold">
+      <label htmlFor="settings-edition" className="shrink-0 text-sm font-bold">
         מחזור
       </label>
       <select id="settings-edition" value={value ?? ""} onChange={(e) => onChange(Number(e.target.value))} className={INPUT}>
@@ -253,13 +265,24 @@ export function EditionPicker({ editions, value, onChange }: { editions: Edition
 
 const HeadCtx = createContext<string[]>([]);
 
+/**
+ * Ein Prat's table, in the app and on paper: a sage header bar (ink on sage — olive on it fails contrast), a sage
+ * hairline under each row and no outer box, the key column (the first, right-most in RTL: the name, the day) bold navy.
+ * `TABLE_HEAD` on the header's <tr>, `TABLE_TH` on its cells (with the table's own padding), `TABLE_ROW` on each
+ * body <tr>, `TABLE_KEY` on the key cell. Print keeps the colours (index.css: print-color-adjust: exact).
+ */
+export const TABLE_HEAD = "bg-sage text-ink";
+export const TABLE_TH = "text-start font-bold";
+export const TABLE_ROW = "border-b border-sage/60";
+export const TABLE_KEY = "font-bold text-navy";
+
 /** Rows as a table on a wide screen and as stacked cards on a phone. */
 export function Rows({ head, children, label }: { head: string[]; children: ReactNode; label: string }) {
   const { wide } = useSettings();
   if (!wide) {
     return (
       <HeadCtx.Provider value={head}>
-        <ul aria-label={label} className="divide-y divide-line border-y border-line">
+        <ul aria-label={label} className="divide-y divide-sage/60 border-y border-sage/60">
           {children}
         </ul>
       </HeadCtx.Provider>
@@ -268,9 +291,9 @@ export function Rows({ head, children, label }: { head: string[]; children: Reac
   return (
     <table aria-label={label} className="w-full border-collapse text-start">
       <thead>
-        <tr className="border-b border-line text-sm text-ink-soft">
+        <tr className={`${TABLE_HEAD} text-sm`}>
           {head.map((h, i) => (
-            <th key={i} scope="col" className="px-2 py-2 text-start font-semibold">
+            <th key={i} scope="col" className={`${TABLE_TH} px-2 py-2`}>
               {h}
             </th>
           ))}
@@ -279,7 +302,7 @@ export function Rows({ head, children, label }: { head: string[]; children: Reac
           </th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-line">{children}</tbody>
+      <tbody className="divide-y divide-sage/60">{children}</tbody>
     </table>
   );
 }
@@ -324,7 +347,7 @@ export function Row({
       <>
         <tr className={muted ? "text-ink-soft" : ""}>
           {cells.map((c, i) => (
-            <td key={i} className={`px-2 py-1.5 align-middle ${i === 0 ? "font-semibold" : ""}`}>
+            <td key={i} className={`px-2 py-1.5 align-middle ${i === 0 ? `font-bold ${muted ? "" : "text-navy"}` : ""}`}>
               {c}
             </td>
           ))}
@@ -347,7 +370,7 @@ export function Row({
       {editing ?? (
         <>
           <div className="min-w-0 flex-1 basis-32">
-            <div className="font-semibold break-words">{cells[0]}</div>
+            <div className={`font-bold break-words ${muted ? "" : "text-navy"}`}>{cells[0]}</div>
             {cells.length > 1 &&
               (labelled ? (
                 <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
@@ -374,13 +397,14 @@ export function Row({
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "accent" | "ok" | "muted" | "bad" }) {
   const t = {
-    neutral: "bg-line/60 text-ink",
-    accent: "bg-accent-soft text-ink",
-    ok: "bg-ok/10 text-ok",
-    muted: "bg-line/40 text-ink-soft",
+    neutral: "bg-sage-soft text-ink",
+    accent: "bg-accent-soft text-navy",
+    // green on its own 10% tint is 4.4:1 — on white, with a green hairline, 5:1 wherever the badge sits
+    ok: "bg-card text-ok ring-1 ring-inset ring-ok/40",
+    muted: "bg-sand-soft text-ink-soft",
     bad: "bg-bad/10 text-bad",
   }[tone];
-  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${t}`}>{children}</span>;
+  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold whitespace-nowrap ${t}`}>{children}</span>;
 }
 
 /** An inline «are you sure?» inside a row — no dialog to lose on a phone. */
@@ -427,8 +451,8 @@ export function Confirm({
   danger?: boolean;
 }) {
   return (
-    <div role="group" aria-label="אישור" className="rounded-lg border border-line bg-paper p-3">
-      <p className="mb-2 text-sm">{text}</p>
+    <div role="group" aria-label="אישור" className="rounded-xl border border-sand bg-sand-soft p-3">
+      <p className="mb-2 text-sm text-ink">{text}</p>
       <div className="flex flex-wrap gap-2">
         {/* focus lands on the safe choice when the action destroys something */}
         <Button kind={danger ? "dangerSolid" : "primary"} busy={busy} onClick={onConfirm} autoFocus={!danger}>
