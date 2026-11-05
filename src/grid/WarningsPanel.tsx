@@ -4,6 +4,7 @@
 import { DAYS, DAY_NAMES, type Day } from "../domain/time";
 import type { Warning } from "../rules/warnings";
 import { Fold } from "../screens/settings/kit";
+import { SeverityMark } from "./bits";
 import type { GridModel } from "./model";
 import { Section, Sheet } from "./Panels";
 
@@ -55,10 +56,8 @@ function Items({ list, open }: { list: Warning[]; open: (w: Warning) => void }) 
             onClick={() => open(w)}
             className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm ring-1 ring-inset transition-colors ${w.severity === "warn" ? "bg-amber-50 text-amber-900 ring-amber-200 hover:bg-amber-100" : "bg-sky-soft text-navy ring-sky/25 hover:ring-sky/60"}`}
           >
-            {/* the glyph a box of its own: before a number («ℹ 2 שיעורים…») it would swap sides */}
-            <span aria-hidden className="shrink-0">
-              {w.severity === "warn" ? "⚠" : "ℹ"}
-            </span>
+            {/* the mark a box of its own: before a number («2 שיעורים…») a glyph would swap sides */}
+            <SeverityMark severity={w.severity} />
             <span>{w.message}</span>
             <span aria-hidden className="ms-auto shrink-0 opacity-60">
               ‹

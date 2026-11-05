@@ -68,7 +68,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 
 ## Shape of the code
 
-- **The look is Ein Prat's design system** (DECISIONS «עיצוב עין פרת»): Almoni embedded from `src/assets/fonts` (under Ein
+- **The look is Ein Prat's design system** (DECISIONS «עיצוב עין פרת»; no emoji — a warning's mark is `SeverityMark`, `src/grid/bits.tsx`): Almoni embedded from `src/assets/fonts` (under Ein
   Prat's web licence — its README), the seal in `src/assets/brand`, the tokens in `src/index.css` (Prat Navy, sage, sand, a
   rare gold; two brand pairs darkened for contrast). Buttons are pills, tables take the sage header (`TABLE_*` in
   `kit.tsx`); the data colours of the grid (topics, the gender lens, fit, stages, owners) are not the brand's to change.
@@ -221,7 +221,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `zip.ts`/`xml.ts` and fflate, bounded by `limits.ts` — inflation stops at the limit whatever the zip says, and every
   reader counts as it reads (`readBudget`; `cleanGrid` refuses what is too long or wide before cleaning a cell)),
   normalisation (`phone.ts` — `phoneKey` ≡ `app.phone_key`, `speakerName.ts` — gender from הרב/הרבנית or (v13) the candidates' «מגדר» column, never from a name nor against a title, `when.ts`,
-  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers by default, the header row found in the
+  `sources.ts`), mapping (`fields.ts`: only the DESIGN appendix's headers and those last year's own files use (their dry runs, DECISIONS «הרצה יבשה…») by default, the header row found in the
   first five rows (`findHeaderRow`, the admin may choose another); the escorts' column is ASKED for, never guessed —
   always in the escorts' file, in the tracking sheet and the candidates when a header or a first row looks like one
   (`escortLike`) — and never mappable in any kind (`escortColumns` a guard besides)), matching (`match.ts`) and the

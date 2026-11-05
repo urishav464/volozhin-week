@@ -27,6 +27,7 @@ import { fallenName, freeSlots, memorialRowsOf, memorialSlots, minutesText, plan
 import { DAY_NAMES, DAYS, type Day, LRM, dayRange, fmt, fmtRange, overlaps, parseClock } from "../../domain/time";
 import type { FamilyStatus, Gender, Lesson, MemorialPlan, MemorialPolicy, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
+import { SeverityMark } from "../../grid/bits";
 import { memorialWaiting } from "../../reader/model";
 import { warningsFor } from "../../rules/warnings";
 import { Badge, Button, Confirm, Field, Fold, GenderField, INPUT, Panel, useFocusBack, useRunner } from "../settings/kit";
@@ -94,8 +95,9 @@ export function MemorialScreen({ port, me }: { port: DataPort; me: Me }) {
       {warnings.length > 0 && (
         <ul aria-label="אזהרות זמני הזיכרון" className="space-y-1">
           {warnings.map((w) => (
-            <li key={w.key} className="rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
-              ⚠ {w.message}
+            <li key={w.key} className="flex gap-2 rounded-lg bg-amber-50 px-3 py-1.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+              <SeverityMark severity="warn" className="mt-0.5" />
+              <span>{w.message}</span>
             </li>
           ))}
         </ul>

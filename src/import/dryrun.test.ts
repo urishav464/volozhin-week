@@ -9,6 +9,7 @@ import { escortColumns, escortLike, readEscorts } from "./escorts";
 import { defaultMapping, findHeaderRow } from "./fields";
 import { lineContext, lineProposal } from "./lines";
 import { genderCell, MEMORIAL_LINE } from "./speakerName";
+import { doubleGroups, planLessons, readTracking } from "./tracking";
 
 describe("the dry run of 5786's files", () => {
   it("knows the speaker's column as they head it — «שם המרצה», «שם המרצה:» — and the candidates' «נושא השיעור» and «טווח ימים…»", () => {
@@ -89,5 +90,40 @@ describe("the dry run of 5786's files", () => {
     expect(lineProposal("חלל/ה לדוגמה הי״ד", c).as).toBe("skip");
     expect(lineProposal("ישיבת דוגמה", c).as).toBe("affiliation");
     expect(MEMORIAL_LINE.test("ד״ר זלמן לדוגמה")).toBe(false);
+  });
+});
+
+// The tracking sheet itself (DECISIONS «הרצה יבשה של גיליון המעקב», 5.11.2026): a Word table under four title
+// paragraphs, its columns headed its own way. Before, only «שיעור ב :» was known — no speaker read, every row «אין מרצה».
+describe("the dry run of 5786's tracking sheet", () => {
+  const HEADER = ["שם המרצה:\n(ד\"ר/רב/פרופ?)", "שיעור ב :", "כותרת השיעור", "כותרת דף מקורות\nוהאם שלח/ה?", "הסעה או תשלום?", "מס' טלפון:", "קיבל הודעת סיכום מ (שמי)", "נושא השיעור"];
+  const grid = [
+    ["כותרת לדוגמה של הגיליון", "", "", "", "", "", "", ""],
+    ["שורת הסבר לדוגמה", "", "", "", "", "", "", ""],
+    ["עוד שורת הסבר לדוגמה", "", "", "", "", "", "", ""],
+    ["שורת הסבר אחרונה לדוגמה", "", "", "", "", "", "", ""],
+    HEADER,
+    ["ד״ר מרצה לדוגמה", "ראשון 8:30", "שיעור לדוגמה", "כן", "", "0000000001", "חניך/ה לדוגמה", "נושא לדוגמה"],
+    ["זמן זיכרון", "ראשון 11:30", "", "", "", "", "", ""],
+    ["הרב מרצה שני לדוגמה", "שני 14:30 כפולה", "שיעור לדוגמה 2", "מצגת", "500", "", "", ""],
+    ["פרופ׳ מרצה שלישי לדוגמה", "שני 14:30 כפולה", "שיעור לדוגמה 3", "", "הסעה לדוגמה", "", "", ""],
+  ];
+
+  it("finds the header under the title paragraphs and maps every one of its columns by default", () => {
+    expect(findHeaderRow("tracking", grid)).toBe(4);
+    expect(defaultMapping("tracking", HEADER, 8)).toEqual(["speaker", "when", "title", "sources", "transport", "phone", "confirmFrom", "topic"]);
+    // the candidates and the escorts' file are unchanged by it: their own headers only
+    expect(defaultMapping("candidates", HEADER, 8)).toEqual([null, null, null, null, null, null, null, "topics"]);
+  });
+
+  it("reads its lessons: the speakers, the memorial row left out, «כפולה» a group the admin decides", () => {
+    const m = defaultMapping("tracking", HEADER, 8);
+    const read = readTracking(grid, m, { headerRow: 4, titles: DEFAULT_TITLES, genderFromTitle: true });
+    expect(read.rows.map((r) => [r.row, r.skip])).toEqual([[6, null], [7, "זמן זיכרון — לא מיובא (זמני הזיכרון נבנים במסך «זמני זיכרון»)"], [8, null], [9, null]]);
+    expect(read.speakers.map((s) => [s.title, s.name])).toEqual([["ד״ר", "מרצה לדוגמה"], ["הרב", "מרצה שני לדוגמה"], ["פרופ׳", "מרצה שלישי לדוגמה"]]);
+    expect(read.rows[0]).toMatchObject({ title: "שיעור לדוגמה", sources: "כן", topic: "נושא לדוגמה", confirmFrom: "חניך/ה לדוגמה", phone: { key: "0000000001" } });
+    expect(doubleGroups(read)).toEqual([{ id: 8, rows: [8, 9] }]);
+    const plans = planLessons(read, { decisions: new Map([[8, "parallel"]]), categories: new Map(), sources: new Map() })!;
+    expect(plans.filter((p) => !p.skip).map((p) => [p.rows[0], p.day, p.start_min, p.room, p.pay_amount])).toEqual([[6, 0, 510, 0, null], [8, 1, 870, 0, 500], [9, 1, 870, 1, null]]);
   });
 });

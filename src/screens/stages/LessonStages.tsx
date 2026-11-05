@@ -21,7 +21,7 @@ import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import { byGender } from "../../domain/names";
 import { type Gender, type PrintWhen, type SourcesKind, type SpeakerContacts, TICK_ITEMS, type Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { ReconfirmDot } from "../../grid/bits";
+import { ReconfirmDot, SeverityMark } from "../../grid/bits";
 import { escortClashes, ESCORT_MIN_GAP } from "../../rules/warnings";
 import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
@@ -329,8 +329,11 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
         {clashes.length > 0 && (
           <ul aria-label="שיעורים קרובים של המלווה" className="space-y-1">
             {clashes.map(({ lesson: o, gap }) => (
-              <li key={o.id} className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950 ring-1 ring-amber-200 ring-inset">
-                ⚠ {nameOf(rosterId)} כבר מלווה ב{DAY_NAMES[o.day]} <bdi>{fmtRange(o.start_min, o.end_min)}</bdi>: {gapText(gap)} (הצעה: לפחות {ESCORT_MIN_GAP} דקות)
+              <li key={o.id} className="flex gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950 ring-1 ring-amber-200 ring-inset">
+                <SeverityMark severity="warn" className="mt-0.5" />
+                <span>
+                  {nameOf(rosterId)} כבר מלווה ב{DAY_NAMES[o.day]} <bdi>{fmtRange(o.start_min, o.end_min)}</bdi>: {gapText(gap)} (הצעה: לפחות {ESCORT_MIN_GAP} דקות)
+                </span>
               </li>
             ))}
           </ul>

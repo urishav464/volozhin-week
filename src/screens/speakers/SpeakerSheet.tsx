@@ -264,7 +264,7 @@ function Body({ port, me, week, s, wide, onClose, onBack, backLabel, notify, cle
               </div>
             )}
             {mayManage && a && calling && (
-              <Fold title="📞 נקודות לשיחה" defaultOpen={focus === "call"} className="rounded-xl border border-line bg-card px-3 py-0.5 shadow-sm">
+              <Fold title="נקודות לשיחה"defaultOpen={focus === "call"} className="rounded-xl border border-line bg-card px-3 py-0.5 shadow-sm">
                 <CallPoints week={week} speakerGender={s.gender} memberId={actor.memberId} />
               </Fold>
             )}

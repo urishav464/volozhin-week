@@ -3,7 +3,10 @@
 // הסעה/תשלום · טלפון · «קיבל הודעת סיכום מ» · נושא, and the candidates' «טווח ימים» (a status, so a note). Every other
 // column starts unread («לא לייבא») and the admin maps it; every default can be changed. The dry run on last year's own
 // files (DECISIONS «הרצה יבשה של הייבוא») added the speaker's column as they head it — «שם המרצה» — and the
-// candidates' «נושא השיעור», and reads «טווח ימים…» with words after it as the status still.
+// candidates' «נושא השיעור», and reads «טווח ימים…» with words after it as the status still. The tracking sheet's own
+// Word table (its dry run, DECISIONS «הרצה יבשה של גיליון המעקב») heads its columns its own way — «שם המרצה:
+// (ד"ר/רב/פרופ?)», «כותרת השיעור», «כותרת דף מקורות והאם שלח/ה?», «הסעה או תשלום?», «מס' טלפון:», «קיבל הודעת סיכום
+// מ (שמי)», «נושא השיעור» — each added, whole (a header compared by headerKey: its spaces, line breaks, colons gone).
 
 import type { ImportKind } from "../data/imports";
 
@@ -34,14 +37,14 @@ export const FIELDS: Record<ImportKind, readonly FieldDef[]> = {
     { key: "note", label: "הערה", headers: [], multi: true },
   ],
   tracking: [
-    { key: "speaker", label: "מרצה", headers: ["מרצה", "שם המרצה", "שם מרצה"] },
+    { key: "speaker", label: "מרצה", headers: ["מרצה", "שם המרצה", "שם מרצה", "שם המרצה: (ד\"ר/רב/פרופ?)"] },
     { key: "when", label: "יום ושעה", headers: ["שיעור ב"] },
-    { key: "title", label: "כותרת", headers: ["כותרת"] },
-    { key: "sources", label: "מקורות", headers: ["מקורות (נשלח?)"] },
-    { key: "transport", label: "הסעה/תשלום", headers: ["הסעה/תשלום"] },
-    { key: "phone", label: "טלפון", headers: ["טלפון"] },
-    { key: "confirmFrom", label: "קיבל הודעת סיכום מ", headers: ["קיבל הודעת סיכום מ"] },
-    { key: "topic", label: "נושא (לקטגוריה)", headers: ["נושא"] },
+    { key: "title", label: "כותרת", headers: ["כותרת", "כותרת השיעור"] },
+    { key: "sources", label: "מקורות", headers: ["מקורות (נשלח?)", "כותרת דף מקורות והאם שלח/ה?"] },
+    { key: "transport", label: "הסעה/תשלום", headers: ["הסעה/תשלום", "הסעה או תשלום?"] },
+    { key: "phone", label: "טלפון", headers: ["טלפון", "מס' טלפון"] },
+    { key: "confirmFrom", label: "קיבל הודעת סיכום מ", headers: ["קיבל הודעת סיכום מ", "קיבל הודעת סיכום מ (שמי)"] },
+    { key: "topic", label: "נושא (לקטגוריה)", headers: ["נושא", "נושא השיעור"] },
     { key: "note", label: "הערה", headers: [], multi: true },
   ],
   escorts: [

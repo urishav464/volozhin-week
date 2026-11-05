@@ -5,6 +5,7 @@ import { DAY_NAMES, type Day, dateOf, hebrewDate, shortDate } from "../domain/ti
 import type { Gender } from "../domain/types";
 import { DEFAULT_GENDER_TOLERANCE, unbalanced } from "../rules/balance";
 import type { DayModel, GridModel } from "./model";
+import { SeverityMark } from "./bits";
 import { TopicAxis } from "./TopicAxis";
 
 const n = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
@@ -18,7 +19,7 @@ export function needText(need: Gender | null, deficit: number): string {
 export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model: GridModel; dm: DayModel; glow?: boolean; compact?: boolean; onOpen?: () => void }) {
   const date = dateOf(model.week.edition.start_date, dm.day as Day);
   const b = dm.balance;
-  // «לא מאוזן» has a line of its own: the ⚠ counts the rest
+  // «לא מאוזן» has a line of its own: the warnings' count is the rest
   const warnCount = dm.warnings.filter((w) => w.severity === "warn" && w.kind !== "gender_day").length;
   const needTone = b.unreachable ? "text-bad" : b.need === "f" ? "text-pink-700" : b.need === "m" ? "text-sky-700" : "text-ok";
   const off = unbalanced(b.closed, model.week.edition.settings.gender_tolerance ?? DEFAULT_GENDER_TOLERANCE);
@@ -46,7 +47,7 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
         <span className="truncate">· {b.open} פנויות</span>
       </span>
       <span className={`block text-[11px] font-semibold ${needTone}`} data-need={b.need ?? "even"}>
-        {off && <span className="text-bad" data-unbalanced>⚠ לא מאוזן · </span>}
+        {off && <span className="text-bad" data-unbalanced>לא מאוזן · </span>}
         {needText(b.need, b.deficit)}
         {b.unreachable && " — לא ייסגר מאוזן"}
       </span>
@@ -54,7 +55,12 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
         <span className="min-w-0 flex-1">
           <TopicAxis model={model} day={dm.day as Day} size="thin" />
         </span>
-        {!compact && warnCount > 0 && <span className="shrink-0 rounded-full bg-amber-100 px-1.5 text-[10px] leading-4 text-amber-900">⚠ {warnCount}</span>}
+        {!compact && warnCount > 0 && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 ps-0.5 pe-1.5 text-[10px] leading-4 text-amber-900">
+            <SeverityMark severity="warn" size="sm" />
+            {warnCount}
+          </span>
+        )}
       </span>
     </Tag>
   );
