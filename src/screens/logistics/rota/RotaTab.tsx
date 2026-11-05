@@ -6,7 +6,7 @@
 // is not in Realtime. The edition's admins write, its logistics team while it is not archived (app.may_write_rota);
 // anyone else here reads. The pages to print are «תוצרים ← תורנויות» (/print/rota), every member's.
 import { useMemo } from "react";
-import { Link, NavLink, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import type { DataPort } from "../../../data/port";
 import type { Week } from "../../../domain/types";
 import { RotaLoadFailed, maySeeRotaContacts, useRota } from "../../rota/shared";
@@ -52,15 +52,16 @@ export function RotaTab({ port, week, actor, notify, clear, reloadWeek }: { port
   const pills = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
       <nav aria-label="תורנויות" className="flex flex-wrap gap-1.5">
+        {/* Link, not NavLink: at /logistics/rota (no view) «לוח» is the page, and NavLink would drop its aria-current */}
         {ROTA_TABS.map(([k, text]) => (
-          <NavLink
+          <Link
             key={k}
             to={`/logistics/rota/${k}`}
             aria-current={k === view ? "page" : undefined}
             className={`inline-flex min-h-11 items-center rounded-full border px-3.5 text-sm font-bold transition-colors duration-150 ${k === view ? "border-navy bg-accent-soft text-navy" : "border-line bg-card text-ink-soft hover:border-navy/50 hover:text-navy"}`}
           >
             {text}
-          </NavLink>
+          </Link>
         ))}
       </nav>
       <Link to="/print/rota" className="inline-flex min-h-11 items-center text-sm font-bold text-navy underline underline-offset-2 sm:ms-auto">

@@ -265,8 +265,10 @@ export class DemoRota implements RotaPort {
   async assign(editionId: number, a: NewAssignment): Promise<void> {
     const v = this.cleanAssignment(a);
     const e = this.writable(editionId);
-    this.checkNew(e, v);
+    // the database's order: the guard (outside_week), then the unique index (busy), then the foreign keys (stale)
+    if (!rotaShiftActive(e, v.day, v.shift)) fail("outside_week");
     if (this.busy(editionId, v.day, v.shift, v.group_id)) fail("rota_group_busy");
+    this.checkNew(e, v);
     this.t.assignments.push({ id: nextId(this.t.assignments), edition_id: editionId, ...v, source: "hand" });
     this.done();
   }

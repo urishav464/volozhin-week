@@ -336,7 +336,6 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [cohort, setCohort] = useState<number | null>(null);
-  const [added, setAdded] = useState(0);
   const chosen = cohorts.find((c) => c.id === cohort) ?? cohorts[0] ?? null;
   const phones = heads.phones; // only while «כולל טלפונים» is on, here, and answered
   return (
@@ -363,8 +362,9 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
                         busy={busy === `group-${g.id}`}
                         onCancel={() => setEditing(null)}
                         onSave={async (v, phone, refused) => {
-                          const before = phones?.get(g.id) ?? "";
-                          const changed = phone != null && phone.trim() !== before;
+                          // the form sends a phone only when it differs from the one its field was filled with — never
+                          // compared with the phones as they are now (a later answer would read as a change: a deletion)
+                          const changed = phone != null;
                           const ok = await act(
                             `group-${g.id}`,
                             async () => {
@@ -433,16 +433,14 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
         );
       })}
       {mayWrite && chosen && (
+        // never remounted (no key): the focus stays on the field or the button it was on after an add or a cohort chosen
         <NewGroup
-          key={`${chosen.id}:${added}`}
           cohorts={cohorts}
           cohort={chosen}
           next={data.groups.filter((g) => g.cohort_id === chosen.id).reduce((m, g) => Math.max(m, g.number), 0) + 1}
           onCohort={setCohort}
           busy={busy === "group-new"}
-          onSave={async (v, refused) => {
-            if (await act("group-new", () => port.rota.addGroup(week.edition.id, { cohort_id: chosen.id, ...v }), `הקבוצה ${groupCode(chosen.letter, v.number)} נוספה`, refused)) setAdded((n) => n + 1);
-          }}
+          onSave={(v, refused) => act("group-new", () => port.rota.addGroup(week.edition.id, { cohort_id: chosen.id, ...v }), `הקבוצה ${groupCode(chosen.letter, v.number)} נוספה`, refused)}
         />
       )}
     </Part>
@@ -480,6 +478,7 @@ function GroupForm({ title, initial, phone: phone0, busy, onSave, onCancel }: {
   /** The head's phone as loaded; null — not shown (the switch off, or not allowed): no field at all. */
   phone: string | null;
   busy: boolean;
+  /** `phone`: the phone to save — null when there is no field, or it holds what it was filled with («ריק» deletes). */
   onSave: (v: GroupValues, phone: string | null, refused: Refused) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -488,11 +487,20 @@ function GroupForm({ title, initial, phone: phone0, busy, onSave, onCancel }: {
   const [size, setSize] = useState(initial.size == null ? "" : String(initial.size));
   const [head, setHead] = useState(initial.head_name ?? "");
   const [phone, setPhone] = useState(phone0 ?? "");
+  // The phone the field was filled with. The loaded phone may come while the form is open (the switch checked after
+  // «עריכה», a late answer, a re-read after a save): the field takes it while it still holds what it was filled with —
+  // React's «state from the previous render» pattern, so the other fields keep what was typed.
+  const [base, setBase] = useState<string | null>(phone0);
+  if (phone0 !== base && phone === (base ?? "")) {
+    setBase(phone0);
+    setPhone(phone0 ?? "");
+  }
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
     setProblem(null);
-    void onSave(groupValues(number, size, head), phone0 == null ? null : phone, formRefusal(setProblem, GROUP_WORDS));
+    const changed = phone0 != null && phone.trim() !== (base ?? "");
+    void onSave(groupValues(number, size, head), changed ? phone : null, formRefusal(setProblem, GROUP_WORDS));
   };
   return (
     <form aria-label={title} onSubmit={submit} className="space-y-3 rounded-lg bg-sand-soft p-3">
@@ -516,22 +524,41 @@ function GroupForm({ title, initial, phone: phone0, busy, onSave, onCancel }: {
   );
 }
 
-function NewGroup({ cohorts, cohort, next, onCohort, busy, onSave }: { cohorts: RotaCohort[]; cohort: RotaCohort; next: number; onCohort: (id: number) => void; busy: boolean; onSave: (v: GroupValues, refused: Refused) => Promise<void> }) {
+/**
+ * «קבוצה חדשה», one form for every group added: after an add it empties itself in place (and the number follows the
+ * list again), so the focus stays where it was — never a remount (DECISIONS «המיקוד»).
+ */
+function NewGroup({ cohorts, cohort, next, onCohort, busy, onSave }: { cohorts: RotaCohort[]; cohort: RotaCohort; next: number; onCohort: (id: number) => void; busy: boolean; onSave: (v: GroupValues, refused: Refused) => Promise<boolean> }) {
   const id = useId();
-  const [number, setNumber] = useState(String(next));
+  // null: the suggested number — the cohort's next, as the list is now (after an add, after another cohort is chosen)
+  const [typed, setTyped] = useState<string | null>(null);
+  const number = typed ?? String(next);
   const [size, setSize] = useState("");
   const [head, setHead] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
     setProblem(null);
-    void onSave(groupValues(number, size, head), formRefusal(setProblem, GROUP_WORDS));
+    void onSave(groupValues(number, size, head), formRefusal(setProblem, GROUP_WORDS)).then((ok) => {
+      if (!ok) return;
+      setTyped(null);
+      setSize("");
+      setHead("");
+    });
   };
   return (
     <form aria-label="קבוצה חדשה" onSubmit={submit} className="space-y-3 rounded-lg border border-line p-3">
       <p className="font-bold text-navy">קבוצה חדשה</p>
       <Field id={`${id}-cohort`} label="מכינה">
-        <select id={`${id}-cohort`} value={cohort.id} onChange={(e) => onCohort(Number(e.target.value))} className={INPUT}>
+        <select
+          id={`${id}-cohort`}
+          value={cohort.id}
+          onChange={(e) => {
+            onCohort(Number(e.target.value));
+            setTyped(null);
+          }}
+          className={INPUT}
+        >
           {cohorts.map((c) => (
             <option key={c.id} value={c.id}>
               {c.letter} · {c.name}
@@ -539,7 +566,7 @@ function NewGroup({ cohorts, cohort, next, onCohort, busy, onSave }: { cohorts: 
           ))}
         </select>
       </Field>
-      <GroupFields id={id} number={number} setNumber={setNumber} size={size} setSize={setSize} head={head} setHead={setHead} />
+      <GroupFields id={id} number={number} setNumber={setTyped} size={size} setSize={setSize} head={head} setHead={setHead} />
       <Problem>{problem}</Problem>
       <Button kind="primary" type="submit" busy={busy}>
         הוספת הקבוצה

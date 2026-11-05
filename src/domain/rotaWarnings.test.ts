@@ -83,6 +83,28 @@ describe("each warning fires, and only it", () => {
     expect(ws.filter((w) => w.kind === "short_people")).toHaveLength(13);
   });
 
+  it("over when a shift needs no group (0), with or without a minimum of people — never «short_people» there", () => {
+    const d = quiet();
+    d.duties[0].need_night = 0;
+    d.duties[0].min_people = 10;
+    d.groups.forEach((g) => (g.size = 5));
+    d.assignments = d.assignments.filter((a) => a.shift !== 2); // the nights' groups taken away…
+    d.assignments.push({ id: 99, edition_id: 1, day: 1, shift: 2, duty_id: 1, group_id: 13, source: "hand" }); // …and one put back by hand
+    const night = (ws: RotaWarning[]) => cellWarnings(ws, 1, 2, 1).map((w) => w.kind);
+    expect(night(rotaWarnings(d, WEEK))).toEqual(["over"]);
+    expect(cellWarnings(rotaWarnings(d, WEEK), 1, 2, 1)[0].message).toBe("1 קבוצות ב«מטבח» (יום שני · משמרת לילה), וצריך 0");
+    // two groups there: 5 + 5 reach the minimum, still none are needed
+    d.assignments.push({ id: 100, edition_id: 1, day: 1, shift: 2, duty_id: 1, group_id: 11, source: "hand" });
+    expect(night(rotaWarnings(d, WEEK))).toEqual(["over"]);
+    // a size TBD: not «size_unknown» either
+    d.assignments = d.assignments.filter((a) => a.id !== 100);
+    d.groups[2].size = null;
+    expect(night(rotaWarnings(d, WEEK))).toEqual(["over"]);
+    // and without a minimum, the same
+    d.duties[0].min_people = null;
+    expect(night(rotaWarnings(d, WEEK))).toEqual(["over"]);
+  });
+
   it("short_people: the groups on a duty together fewer than its minimum; size_unknown when a size is TBD", () => {
     const d = quiet();
     d.duties[0].min_people = 9; // sizes 8, 9, 10, 7: א1 and א4 are short
@@ -175,6 +197,19 @@ describe("each warning fires, and only it", () => {
     e.staff[0].start_min = 510;
     e.staff[0].end_min = 600;
     expect(rotaWarnings(e, WEEK).map((w) => w.key)).toEqual(["no_lead:0:1", "no_lead:0:2"]);
+  });
+
+  it("no_lead: a lead leads every shift its hours overlap — one from 14:00 to 22:30 the morning and the afternoon", () => {
+    const d = quiet();
+    // Monday: 06:30–14:20, 14:00–22:30, 22:30–06:30 — every shift has a lead
+    d.staff = d.staff.filter((x) => x.day !== 1);
+    for (const [i, [start, end]] of [[390, 860], [840, 1350], [1350, 1830]].entries()) {
+      d.staff.push({ id: 20 + i, edition_id: 1, day: 1, start_min: start, end_min: end, member_id: null, name: "אחראי/ת לדוגמה", cohort_id: null, kind: "lead", note: null });
+    }
+    expect(rotaWarnings(d, WEEK)).toEqual([]);
+    // the afternoon's lead ends at 22:30 exactly: the night is not theirs
+    d.staff = d.staff.filter((x) => x.id !== 22);
+    expect(rotaWarnings(d, WEEK).map((w) => w.key)).toEqual(["no_lead:1:2"]);
   });
 
   it("no_head: the groups without a head, in one warning", () => {

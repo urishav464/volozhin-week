@@ -7,6 +7,10 @@
 // /print/rota with no switch and get_rota_contacts never called; a logistics member reads load_rota once, the switch on
 // asks get_rota_contacts once with the member's token, «החלת ההצעה» is ONE POST of an array, the clear ONE DELETE of
 // source=eq.suggested, a head's phone goes through set_rota_contact alone; an archived edition reads only.
+// The review's round: a group form open when the phones come (the switch checked after «עריכה», a late answer, a re-read
+// after a save) takes the phone, and a save of another field never deletes or rolls it back; «קבוצה חדשה» keeps the
+// focus after an add and a cohort chosen; «הסרה» lands the focus inside the sheet (a closed fold opened, a shift the week
+// no longer has); a staff shift of a member deactivated since is edited; «לוח» is aria-current at /logistics/rota.
 // Synthetic data only («לדוגמה»).
 import { readFileSync } from "node:fs";
 import { type Download, expect, type Page, test } from "@playwright/test";
@@ -38,6 +42,9 @@ test.describe("demo build", () => {
     await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "תורנויות" }).click();
     await expect(page).toHaveURL(/\/logistics\/rota$/);
     await expect(pills(page).getByRole("link")).toHaveText(["לוח", "קבוצות ומכינות", "משמרות צוות", "מוצ״ש"]);
+    // no view in the address: «לוח» is drawn as the page, and a screen reader hears it so
+    await expect(pills(page).getByRole("link", { name: "לוח" })).toHaveAttribute("aria-current", "page");
+    await expect(pills(page).locator("[aria-current]")).toHaveCount(1);
     await expect(page.getByRole("link", { name: "דפים להדפסה" })).toHaveAttribute("href", "/print/rota");
 
     // ---- the setup: a cohort with a diet, its presence, a group, a duty
@@ -68,14 +75,23 @@ test.describe("demo build", () => {
 
     const groups = page.getByRole("region", { name: "הקבוצות" });
     const gform = groups.getByRole("form", { name: "קבוצה חדשה" });
-    await gform.getByLabel("מכינה").selectOption({ label: "ד · מכינה לדוגמה ד" });
+    const cohortSelect = gform.getByLabel("מכינה");
+    await expect(gform.getByLabel("מספר")).toHaveValue("7"); // the first cohort's next number
+    await cohortSelect.focus();
+    await cohortSelect.selectOption({ label: "ד · מכינה לדוגמה ד" });
     await expect(gform.getByLabel("מספר")).toHaveValue("1"); // the next number of that cohort
+    await expect(cohortSelect).toBeFocused(); // the form is not drawn anew: the keyboard keeps its place
     await gform.getByLabel("גודל", { exact: true }).fill("8");
     await gform.getByLabel("ראש/ת הקבוצה (לא חובה)").fill("ראש/ת קבוצה לדוגמה 18");
-    await gform.getByRole("button", { name: "הוספת הקבוצה" }).click();
+    const addGroup = gform.getByRole("button", { name: "הוספת הקבוצה" });
+    await addGroup.press("Enter");
     await expect(toast(page, "הקבוצה ד1 נוספה")).toBeVisible();
     await expect(groups.locator('[data-rota-group="ד1"]')).toContainText("8 חניכים");
-    await expect(groups.getByRole("form", { name: "קבוצה חדשה" }).getByLabel("מספר")).toHaveValue("2");
+    await expect(gform.getByLabel("מספר")).toHaveValue("2");
+    await expect(gform.getByLabel("גודל", { exact: true })).toHaveValue(""); // emptied in place, for the next group
+    await expect(gform.getByLabel("ראש/ת הקבוצה (לא חובה)")).toHaveValue("");
+    await expect(cohortSelect.locator("option:checked")).toHaveText("ד · מכינה לדוגמה ד");
+    await expect(addGroup).toBeFocused(); // the busy button keeps the focus: the next group starts here, not at the top
 
     const duties = page.getByRole("region", { name: "התורנויות" });
     await expect(duties.locator("[data-rota-duty]")).toHaveCount(4); // the demo's: last year's four
@@ -125,6 +141,17 @@ test.describe("demo build", () => {
     await expect(toast(page, "נ1 שובצה ל«מטבח»")).toBeVisible();
     await expect(sheet.locator('[data-assigned="נ1"]')).toContainText("לא סומנה בקמפוס");
     await expect(sheet.getByRole("button", { name: "הסרה: נ1" })).toBeFocused(); // the focus follows the group
+    // back where it came from, its fold closed: the fold opens and the focus follows it there — never to the page
+    const away = sheet.locator("details").filter({ has: page.locator('ul[aria-label="לא בקמפוס"]') }); // closed, it is hidden from roles
+    await sheet.getByText("לא בקמפוס", { exact: true }).click();
+    await expect(away).not.toHaveAttribute("open");
+    await sheet.getByRole("button", { name: "הסרה: נ1" }).press("Enter");
+    await expect(toast(page, "נ1 הוסרה מ«מטבח»")).toBeVisible();
+    await expect(sheet.getByRole("button", { name: "שיבוץ: נ1" })).toBeFocused();
+    await expect(away).toHaveAttribute("open");
+    await sheet.getByRole("button", { name: "שיבוץ: נ1" }).press("Enter");
+    await expect(sheet.locator('[data-assigned="נ1"]')).toContainText("לא סומנה בקמפוס");
+    await expect(sheet.getByRole("button", { name: "הסרה: נ1" })).toBeFocused();
     await noSidewaysScroll(page);
     await sheet.getByRole("button", { name: "סגירה" }).click();
     await expect(sheet).toHaveCount(0);
@@ -181,10 +208,19 @@ test.describe("demo build", () => {
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
     await expect(page.getByText(/טלפון:/)).toHaveCount(0);
     await groups.getByRole("button", { name: "עריכה: א1" }).click();
+    const first = groups.getByRole("form", { name: "עריכת הקבוצה א1" });
     await expect(groups.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveCount(0); // no field while the switch is off
-    await groups.getByRole("form", { name: "עריכת הקבוצה א1" }).getByRole("button", { name: "ביטול" }).click();
-
+    // the switch checked with the form open (as its hint says): the field shows the stored phone, and a save of the size
+    // alone keeps it — the empty field it once was is not a deletion
+    await first.getByLabel("גודל", { exact: true }).fill("9");
     await toggle.check();
+    await expect(first.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveValue("טלפון לדוגמה");
+    await expect(first.getByLabel("גודל", { exact: true })).toHaveValue("9"); // what was typed stays
+    await first.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "הקבוצה נשמרה")).toBeVisible();
+    await expect(groups.locator('[data-rota-group="א1"]')).toContainText("9 חניכים");
+    await expect(groups.locator('[data-rota-group="א1"] [data-head-phone]')).toContainText("טלפון לדוגמה");
+
     await expect(groups.locator("[data-head-phone]")).toHaveCount(17);
     await expect(groups.locator('[data-rota-group="א1"] [data-head-phone]')).toContainText("טלפון לדוגמה");
     await expect(groups.getByText("מידע אישי", { exact: false }).first()).toBeVisible();
@@ -431,6 +467,103 @@ test.describe("mock build", () => {
     for (const w of sb.writes) expect(JSON.stringify(w.body), w.table).not.toContain("000-000-0001");
     await expect.poll(() => sb.rpc.get("get_rota_contacts")?.length).toBe(2); // read again after the save
     expect(sb.calls.some((c) => c.path === "/rest/v1/rota_group_contacts")).toBe(false);
+  });
+
+  test("the heads' phones answering late: a form opened before the answer takes the phone, and a save of the size alone sends no phone", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb } = await signedIn(page, "logistics");
+    sb.answers.set("get_rota_contacts", [{ group_id: 11, head_phone: "000-000-0011" }]);
+    sb.answers.set("set_rota_contact", null);
+    // every get_rota_contacts waits until the test lets it go
+    const held: (() => void)[] = [];
+    await page.route("**/rest/v1/rpc/get_rota_contacts", (route) => new Promise<void>((done) => held.push(() => void route.fallback().then(done))));
+    const release = async () => {
+      await expect.poll(() => held.length).toBe(1);
+      held.shift()!();
+    };
+    const patches = () => sb.writes.filter((w) => w.table === "rota_groups").map((w) => [w.method, w.query.get("id"), w.body]);
+    await page.goto(`${mockUrl()}/logistics/rota/setup`);
+    const groups = page.getByRole("region", { name: "הקבוצות" });
+    await expect(groups.locator("[data-rota-group]")).toHaveCount(2);
+
+    // the switch checked, «עריכה» before the answer: no field yet; the answer comes — the field shows it
+    await groups.locator("[data-head-phones]").check();
+    await groups.getByRole("button", { name: "עריכה: א1" }).click();
+    const a1 = groups.getByRole("form", { name: "עריכת הקבוצה א1" });
+    await expect(a1.getByLabel("גודל", { exact: true })).toHaveValue("8");
+    await expect(a1.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveCount(0);
+    await release();
+    await expect(a1.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveValue("000-000-0011");
+    await a1.getByLabel("גודל", { exact: true }).fill("9");
+    await a1.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "הקבוצה נשמרה")).toBeVisible();
+    expect(patches()).toEqual([["PATCH", "eq.11", { number: 1, size: 9, head_name: "ראש/ת קבוצה לדוגמה 1" }]]);
+    expect(sb.rpc.get("set_rota_contact")).toBeUndefined(); // the phone untouched — not deleted
+
+    // a phone saved, and the group opened again before the phones are read again: the field takes the new one when it comes
+    await groups.getByRole("button", { name: "עריכה: א2" }).click();
+    const a2 = groups.getByRole("form", { name: "עריכת הקבוצה א2" });
+    await expect(a2.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveValue("");
+    await a2.getByLabel("הטלפון של ראש/ת הקבוצה").fill("000-000-0012");
+    await a2.getByRole("button", { name: "שמירה" }).click();
+    await expect(a2).toHaveCount(0);
+    expect(sb.rpc.get("set_rota_contact")).toEqual([{ p_group: 12, p_phone: "000-000-0012" }]);
+    sb.answers.set("get_rota_contacts", [
+      { group_id: 11, head_phone: "000-000-0011" },
+      { group_id: 12, head_phone: "000-000-0012" },
+    ]);
+    await groups.getByRole("button", { name: "עריכה: א2" }).click();
+    await expect(a2.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveValue(""); // the phones as they were read last
+    await release();
+    await expect(a2.getByLabel("הטלפון של ראש/ת הקבוצה")).toHaveValue("000-000-0012");
+    await a2.getByLabel("גודל", { exact: true }).fill("6");
+    await a2.getByRole("button", { name: "שמירה" }).click();
+    await expect(a2).toHaveCount(0);
+    expect(patches().at(-1)).toEqual(["PATCH", "eq.12", { number: 2, size: 6, head_name: null }]);
+    expect(sb.rpc.get("set_rota_contact")).toEqual([{ p_group: 12, p_phone: "000-000-0012" }]); // not written over
+  });
+
+  test("a staff shift whose team member was deactivated since: edited and saved, the member kept", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb, week } = await signedIn(page, "logistics");
+    expect(week.team.some((m) => m.id === 99)).toBe(false); // load_week's team is the active one
+    const who = "איש/אשת צוות לדוגמה שהושבת/ה";
+    sb.answers.set("load_rota", { ...mockRota(), staff: [{ id: 41, edition_id: 7, day: 1, start_min: 510, end_min: 870, member_id: 99, name: who, cohort_id: null, kind: "lead", note: null }] });
+    await page.goto(`${mockUrl()}/logistics/rota/staff`);
+    const monday = page.getByRole("region", { name: "יום שני" });
+    await monday.getByRole("button", { name: `עריכה: ${who} 08:30–14:30` }).click();
+    const form = monday.getByRole("form", { name: `עריכת משמרת צוות: ${who}` });
+    const member = form.getByLabel("איש/אשת צוות", { exact: true });
+    await expect(member).toHaveValue("99");
+    await expect(member.locator("option:checked")).toHaveText(`${who} (מושבת/ת)`);
+    await expect(member.locator("option")).toHaveCount(week.team.length + 2); // «בחירה…», the team, and this member alone
+    await form.getByLabel("הערה (לא חובה)").fill("הערה לדוגמה");
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "משמרת הצוות נשמרה")).toBeVisible();
+    const writes = sb.writes.filter((w) => w.table === "rota_staff_shifts");
+    expect(writes.map((w) => [w.method, w.query.get("id")])).toEqual([["PATCH", "eq.41"]]);
+    expect(writes[0].body).toMatchObject({ member_id: 99, name: who, cohort_id: null, kind: "lead", note: "הערה לדוגמה" });
+  });
+
+  test("a shift the week no longer has: «הסרה» of its last group keeps the focus in the sheet; closing it lands on the cell", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "the board's table: one width");
+    const { sb, week } = await signedIn(page, "logistics");
+    Object.assign(week.edition, { first_day_from: 900 }); // Sunday opens at 15:00: its morning is not part of the week
+    await page.goto(`${mockUrl()}/logistics/rota`);
+    await page.getByRole("button", { name: "שיבוץ: מטבח · ראשון · בוקר" }).click();
+    const sheet = page.getByRole("dialog", { name: "מטבח · ראשון · בוקר" });
+    await expect(sheet).toContainText("אפשר רק להסיר ממנה קבוצות");
+    await expect(sheet.getByRole("button", { name: /^שיבוץ/ })).toHaveCount(0);
+    sb.answers.set("load_rota", { ...mockRota(), assignments: mockRota().assignments.filter((a) => a.id !== 31) }); // the read after the delete
+    await sheet.getByRole("button", { name: "הסרה: א1" }).press("Enter");
+    await expect(toast(page, "א1 הוסרה מ«מטבח»")).toBeVisible();
+    await expect(sheet.locator("[data-assigned]")).toHaveCount(0);
+    await expect(sheet).toBeFocused(); // nowhere left in it to go: the sheet itself, never the page behind the dialog
+    const deletes = sb.writes.filter((w) => w.table === "rota_assignments" && w.method === "DELETE");
+    expect(deletes.map((w) => w.query.get("id"))).toEqual(["eq.31"]);
+    await sheet.getByRole("button", { name: "סגירה" }).press("Enter");
+    await expect(sheet).toHaveCount(0);
+    await expect(page.locator("#rota-d-0-0-21")).toBeFocused(); // its «שיבוץ» is gone with its last group: the cell
   });
 
   test("an archived edition: logistics reads the board, the setup, the staff and the list — nothing to write, no phones", async ({ page }, info) => {

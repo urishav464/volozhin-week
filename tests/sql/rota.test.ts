@@ -1,7 +1,8 @@
 // «תורנויות» (v16) in the database, as the roles a browser gets (docs/CONTRACT.md «תורנויות»): every shared case of
 // src/testing/rotaCases.ts, each sent as the Supabase port sends it (an INSERT/UPDATE/DELETE under RLS, or the RPC) and
-// read back by the port's rule (23505 → the table's code, 23503 → in_use, 23514/22P02 → bad_value, P0001 → its
-// message, 42501 or no row → forbidden) — DemoRota runs the same table (src/data/rotaPorts.test.ts); who writes (an
+// read back by the port's rule (23505 → the table's code, 23503 → stale on an INSERT/UPDATE and in_use on a DELETE, an
+// apply both stale; 23514/22P02 → bad_value, P0001 → its message, 42501 or no row → forbidden) — DemoRota runs the same
+// table (src/data/rotaPorts.test.ts); the composite foreign keys that keep a row in its edition; who writes (an
 // edition's admins, its logistics members while it is live) and who reads (the edition's team; nobody else); the
 // fair suggestion's apply, all or nothing; the shifts the week has (app.rota_shift_active ≡ rotaShiftActive, value for
 // value); the group heads' phones (a role × edition-kind matrix, get_rota_contacts ≡ the per-group rule, never in
@@ -41,14 +42,18 @@ const UNIQUE: Record<string, string> = { rota_cohorts: "rota_letter_taken", rota
 type Run = (who: string, sql: string, params?: unknown[]) => Promise<pg.QueryResult>;
 type Ids = Record<string, number>;
 
-/** What the Supabase port makes of a database error (src/data/supabaseRota.ts). In an apply, a row taken meanwhile is `stale`. */
-function portCode(e: unknown, table: string, apply = false): string {
+/** A foreign key's refusal as the port reads it (supabaseRota.ts `one(q, unique, fk)`): on an INSERT/UPDATE the row it points at is gone or another edition's (`stale`); on a DELETE a row still points at it (`in_use`). */
+type Fk = "stale" | "in_use";
+const DELETE = { row: true, fk: "in_use" } as const;
+
+/** What the Supabase port makes of a database error (src/data/supabaseRota.ts). In an apply, a row taken or gone meanwhile is `stale`. */
+function portCode(e: unknown, table: string, opts: { apply?: boolean; fk?: Fk } = {}): string {
   const err = e as { code?: string; message: string };
   switch (err.code) {
     case "23505":
-      return apply ? "stale" : (UNIQUE[table] ?? `unmapped 23505 on ${table}`);
+      return opts.apply ? "stale" : (UNIQUE[table] ?? `unmapped 23505 on ${table}`);
     case "23503":
-      return apply ? "stale" : "in_use";
+      return opts.apply ? "stale" : (opts.fk ?? "stale");
     case "23514":
     case "22P02":
       return "bad_value";
@@ -61,13 +66,13 @@ function portCode(e: unknown, table: string, apply = false): string {
   }
 }
 
-/** One write as the port reads its answer: an UPDATE or DELETE that matched no row it may write is `forbidden`. */
-async function attempt(table: string, p: Promise<pg.QueryResult>, opts: { apply?: boolean; row?: boolean } = {}): Promise<string> {
+/** One write as the port reads its answer: an UPDATE or DELETE that matched no row it may write is `forbidden`; a DELETE passes `DELETE` (its 23503 is `in_use`). */
+async function attempt(table: string, p: Promise<pg.QueryResult>, opts: { apply?: boolean; row?: boolean; fk?: Fk } = {}): Promise<string> {
   try {
     const r = await p;
     return opts.row && r.rowCount === 0 ? "forbidden" : "ok";
   } catch (e) {
-    return portCode(e, table, opts.apply);
+    return portCode(e, table, opts);
   }
 }
 
@@ -173,7 +178,7 @@ describe("תורנויות (v16)", () => {
         return attempt("rota_cohorts", run(who, `update public.rota_cohorts set ${sets} where id = $1 returning id`, [ids[c.ref], ...values]), { row: true });
       }
       case "deleteCohort":
-        return attempt("rota_cohorts", run(who, "delete from public.rota_cohorts where id = $1 returning id", [ids[c.ref]]), { row: true });
+        return attempt("rota_cohorts", run(who, "delete from public.rota_cohorts where id = $1 returning id", [ids[c.ref]]), DELETE);
       case "addGroup":
         return attempt("rota_groups", run(who, "insert into public.rota_groups (edition_id, cohort_id, number, size, head_name) values ($1, $2, $3, $4, $5) returning id",
           [edition, ids[c.args.cohort], c.args.number, c.args.size ?? null, c.args.head_name ?? null]));
@@ -222,13 +227,13 @@ describe("תורנויות (v16)", () => {
     out.staff_update = await attempt("rota_staff_shifts", run(who, "update public.rota_staff_shifts set note = 'הערה לבדיקה' where id = $1 returning id", [ids.S]), { row: true });
     out.prep_insert = await attempt("rota_prep_tasks", run(who, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'משימה לבדיקה', 5) returning id", [edition]));
     out.prep_update = await attempt("rota_prep_tasks", run(who, "update public.rota_prep_tasks set done = true where id = $1 returning id", [ids.P]), { row: true });
-    out.presence_delete = await attempt("rota_presence", run(who, "delete from public.rota_presence where cohort_id = $1 and day = 1 returning cohort_id", [ids.A]), { row: true });
-    out.assign_delete = await attempt("rota_assignments", run(who, "delete from public.rota_assignments where id = $1 returning id", [ids.A1]), { row: true });
-    out.staff_delete = await attempt("rota_staff_shifts", run(who, "delete from public.rota_staff_shifts where id = $1 returning id", [ids.S]), { row: true });
-    out.prep_delete = await attempt("rota_prep_tasks", run(who, "delete from public.rota_prep_tasks where id = $1 returning id", [ids.P]), { row: true });
-    out.duty_delete = await attempt("rota_duties", run(who, "delete from public.rota_duties where id = $1 returning id", [ids.D2]), { row: true });
-    out.group_delete = await attempt("rota_groups", run(who, "delete from public.rota_groups where id = $1 returning id", [ids.G2]), { row: true });
-    out.cohort_delete = await attempt("rota_cohorts", run(who, "delete from public.rota_cohorts where id = $1 returning id", [ids.N]), { row: true });
+    out.presence_delete = await attempt("rota_presence", run(who, "delete from public.rota_presence where cohort_id = $1 and day = 1 returning cohort_id", [ids.A]), DELETE);
+    out.assign_delete = await attempt("rota_assignments", run(who, "delete from public.rota_assignments where id = $1 returning id", [ids.A1]), DELETE);
+    out.staff_delete = await attempt("rota_staff_shifts", run(who, "delete from public.rota_staff_shifts where id = $1 returning id", [ids.S]), DELETE);
+    out.prep_delete = await attempt("rota_prep_tasks", run(who, "delete from public.rota_prep_tasks where id = $1 returning id", [ids.P]), DELETE);
+    out.duty_delete = await attempt("rota_duties", run(who, "delete from public.rota_duties where id = $1 returning id", [ids.D2]), DELETE);
+    out.group_delete = await attempt("rota_groups", run(who, "delete from public.rota_groups where id = $1 returning id", [ids.G2]), DELETE);
+    out.cohort_delete = await attempt("rota_cohorts", run(who, "delete from public.rota_cohorts where id = $1 returning id", [ids.N]), DELETE);
     return out;
   }
   const all = (code: string, p: Record<string, string>) => Object.fromEntries(Object.keys(p).map((k) => [k, code]));
@@ -298,6 +303,24 @@ describe("תורנויות (v16)", () => {
         const p = await probe(run, C, ed.live, ids);
         expect(p).toEqual(all("forbidden", p));
         expect(await attempt("", run(C, "select public.set_rota_shifts($1, null)", [ed.live]))).toBe("forbidden");
+      });
+    });
+
+    it("«ניקוי השיבוצים המוצעים» by a member who may not write: no error, no row — RLS filters the delete, so SupabaseRota answers 0 (DemoRota refuses `forbidden`: CONTRACT, the port)", async () => {
+      await inTx(async (run) => {
+        const clear = "delete from public.rota_assignments where edition_id = $1 and source = 'suggested' returning id";
+        const suggested = "select count(*) from public.rota_assignments where edition_id = $1 and source = 'suggested'";
+        for (const kind of ["live", "archived"] as const) {
+          const ids = await fixture(run, ed[kind]);
+          await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id, source) values ($1, 2, 0, $2, $3, 'suggested'), ($1, 2, 1, $2, $3, 'suggested')", [ed[kind], ids.D1, ids.G1]);
+        }
+        for (const [kind, who] of [["live", C], ["live", OTHER_LOGISTICS], ["live", STRANGER], ["live", INACTIVE], ["archived", member("archived", "logistics")]] as const) {
+          expect((await run(who, clear, [ed[kind]])).rowCount, `${who} in ${kind}`).toBe(0);
+          expect(await num(run, "owner", suggested, [ed[kind]]), `${who} in ${kind}: the rows stay`).toBe(2);
+        }
+        // a writer's same statement takes them
+        expect((await run(L, clear, [ed.live])).rowCount).toBe(2);
+        expect(await num(run, "owner", suggested, [ed.live])).toBe(0);
       });
     });
 
@@ -570,17 +593,50 @@ describe("תורנויות (v16)", () => {
         await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 1, 510, 780, $2, 'shift')", [ed.live, ids.N]);
         await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE]);
         await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 2, 0, $2, $3)", [ed.live, ids.D1, ids.G1]);
-        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.A]), { row: true })).toBe("in_use");
-        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.N]), { row: true })).toBe("ok");
+        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.A]), DELETE)).toBe("in_use");
+        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.N]), DELETE)).toBe("ok");
         expect(await num(run, "owner", "select count(*) from public.rota_presence where cohort_id = $1", [ids.N])).toBe(0);
         expect(await num(run, "owner", "select count(*) from public.rota_staff_shifts where cohort_id is not null")).toBe(0);
-        expect(await attempt("rota_groups", run(L, "delete from public.rota_groups where id = $1 returning id", [ids.G1]), { row: true })).toBe("ok");
+        expect(await attempt("rota_groups", run(L, "delete from public.rota_groups where id = $1 returning id", [ids.G1]), DELETE)).toBe("ok");
         expect(await num(run, "owner", "select count(*) from public.rota_assignments where group_id = $1", [ids.G1])).toBe(0);
         expect(await num(run, "owner", "select count(*) from public.rota_group_contacts where group_id = $1", [ids.G1])).toBe(0);
         expect((await run("owner", "select text, group_id from public.rota_prep_tasks where id = $1", [ids.P])).rows).toEqual([{ text: "הכנה לדוגמה", group_id: null }]);
-        expect(await attempt("rota_duties", run(L, "delete from public.rota_duties where id = $1 returning id", [ids.D2]), { row: true })).toBe("ok");
+        expect(await attempt("rota_duties", run(L, "delete from public.rota_duties where id = $1 returning id", [ids.D2]), DELETE)).toBe("ok");
         expect(await num(run, "owner", "select count(*) from public.rota_assignments where edition_id = $1", [ed.live])).toBe(0);
-        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.A]), { row: true })).toBe("in_use"); // G2 still
+        expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.A]), DELETE)).toBe("in_use"); // G2 still
+      });
+    });
+
+    it("a row never points into another edition — the composite foreign keys, whoever writes (23503 → stale); deleting there leaves this edition as it was", async () => {
+      await inTx(async (run) => {
+        const ids = await fuller(run, ed.live);
+        const there = await fixture(run, other); // another live real edition: its cohorts, groups and duties
+        const before = { here: await state(run, ed.live), there: await state(run, other) };
+        const tries: [string, string, string, unknown[]][] = [
+          ["an assignment on its group", "rota_assignments", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 2, 0, $2, $3) returning id", [ed.live, ids.D1, there.G1]],
+          ["an assignment on its duty", "rota_assignments", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 2, 0, $2, $3) returning id", [ed.live, there.D1, ids.G1]],
+          ["an assignment moved to its duty", "rota_assignments", "update public.rota_assignments set duty_id = $2 where id = $1 returning id", [ids.A1, there.D1]],
+          ["an assignment moved to its group", "rota_assignments", "update public.rota_assignments set group_id = $2 where id = $1 returning id", [ids.A1, there.G1]],
+          ["a group in its cohort", "rota_groups", "insert into public.rota_groups (edition_id, cohort_id, number) values ($1, $2, 9) returning id", [ed.live, there.N]],
+          ["a group moved to its cohort", "rota_groups", "update public.rota_groups set cohort_id = $2 where id = $1 returning id", [ids.G1, there.N]],
+          ["a staff shift of its cohort", "rota_staff_shifts", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 2, 510, 600, $2, 'shift') returning id", [ed.live, there.N]],
+          ["a staff shift moved to its cohort", "rota_staff_shifts", "update public.rota_staff_shifts set name = null, cohort_id = $2 where id = $1 returning id", [ids.S, there.N]],
+          ["a preparation for its group", "rota_prep_tasks", "insert into public.rota_prep_tasks (edition_id, text, group_id) values ($1, 'הכנה לבדיקה', $2) returning id", [ed.live, there.G1]],
+          ["a preparation moved to its group", "rota_prep_tasks", "update public.rota_prep_tasks set group_id = $2 where id = $1 returning id", [ids.P, there.G1]],
+          ["presence of its cohort", "rota_presence", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 2, 0) returning cohort_id", [ed.live, there.A]],
+        ];
+        // logistics of this edition; a global admin, who may write in both (RLS cannot stop it); the owner, past RLS
+        for (const who of [L, ADMIN, "owner"]) {
+          for (const [name, table, sql, params] of tries) expect(await attempt(table, run(who, sql, params), { row: true }), `${who}: ${name}`).toBe("stale");
+        }
+        expect(await state(run, ed.live), "this edition unchanged").toEqual(before.here);
+        expect(await state(run, other), "the other unchanged").toEqual(before.there);
+        // the other edition deletes its groups, duties and cohorts: nothing here cascades
+        for (const [table, id] of [["rota_groups", there.G1], ["rota_groups", there.G2], ["rota_duties", there.D1], ["rota_duties", there.D2], ["rota_cohorts", there.A], ["rota_cohorts", there.N]] as const) {
+          expect(await attempt(table, run(OTHER_LOGISTICS, `delete from public.${table} where id = $1 returning id`, [id]), DELETE), `${table} ${id}`).toBe("ok");
+        }
+        expect(await num(run, "owner", "select count(*) from public.rota_cohorts where edition_id = $1", [other])).toBe(0);
+        expect(await state(run, ed.live), "this edition unchanged").toEqual(before.here);
       });
     });
 

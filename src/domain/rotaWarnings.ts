@@ -3,9 +3,9 @@
 // their codes and the duties by their names, a shift as «יום X · משמרת Y»; it carries the cell it is about (day,
 // shift, duty) and the groups, so the board can mark them. Nothing is deleted or changed here — an assignment on a
 // shift the week no longer has stays, warned about, until someone moves it.
-import type { RotaAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
-import { groupCode, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
-import { ROTA_LOAD_TOLERANCE, ROTA_MAX_EXTRA } from "./rotaSuggest";
+import type { RotaAssignment, RotaCohort, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import { groupCode, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
+import { overNeed, ROTA_LOAD_TOLERANCE } from "./rotaSuggest";
 import { type Day, DAY_NAMES } from "./time";
 import type { Edition } from "./types";
 
@@ -123,10 +123,12 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
         const missing = need - on.length;
         out.push({ ...base, key: `under:${k}`, kind: "under", severity: "warn", groupIds: on, message: `${missing === 1 ? "חסרה קבוצה אחת" : `חסרות ${missing} קבוצות`} ב«${d.name}» (${when(s.day, s.shift)})` });
       }
-      if (need != null && on.length > need && !extrasJustified(d, need, on, groupOf)) {
+      // «too many» is one rule with the suggestion's (overNeed): the groups a minimum of people needs are not too many
+      if (overNeed(need, d.min_people, on.map((id) => groupOf.get(id)?.size ?? null))) {
         out.push({ ...base, key: `over:${k}`, kind: "over", severity: "warn", groupIds: on, message: `${on.length} קבוצות ב«${d.name}» (${when(s.day, s.shift)}), וצריך ${need}` });
       }
-      if (d.min_people != null && on.length > 0) {
+      // a shift that needs no group (0) is not asked for more people: «over» already says it
+      if (d.min_people != null && on.length > 0 && need !== 0) {
         const known = on.reduce((sum, id) => sum + (groupOf.get(id)?.size ?? 0), 0);
         const unknown = on.filter((id) => groupOf.get(id)?.size == null);
         if (known < d.min_people) {
@@ -139,9 +141,7 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
       }
     }
     if (staff) {
-      const range = rotaShiftRange(edition, s.day, s.shift)!;
-      const lead = staff.some((x) => x.kind === "lead" && x.day === s.day && x.start_min < range.end && x.end_min > range.start);
-      if (!lead) out.push({ key: `no_lead:${s.day}:${s.shift}`, kind: "no_lead", severity: "warn", day: s.day, shift: s.shift, groupIds: [], message: `אין אחראי/ת משמרת ב${when(s.day, s.shift)}` });
+      if (leadsOf(edition, staff, s.day, s.shift).length === 0) out.push({ key: `no_lead:${s.day}:${s.shift}`, kind: "no_lead", severity: "warn", day: s.day, shift: s.shift, groupIds: [], message: `אין אחראי/ת משמרת ב${when(s.day, s.shift)}` });
     }
   }
 
@@ -166,15 +166,6 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
     });
   }
   return out;
-}
-
-/** More groups than the need, to reach the minimum of people (as the suggestion adds them): not «too many». */
-function extrasJustified(d: RotaDuty, need: number, on: number[], groupOf: Map<number, RotaGroup>): boolean {
-  if (d.min_people == null || on.length > need + ROTA_MAX_EXTRA) return false;
-  const sizes = on.map((id) => groupOf.get(id)?.size ?? null);
-  if (sizes.some((x) => x == null)) return true; // unknown: the minimum may need them
-  const people = (sizes as number[]).reduce((a, b) => a + b, 0);
-  return people - Math.min(...(sizes as number[])) < d.min_people;
 }
 
 /**

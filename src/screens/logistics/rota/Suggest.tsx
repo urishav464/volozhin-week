@@ -45,7 +45,8 @@ export function SuggestBar({ ctx, suggestion, onStart, onStop }: { ctx: RotaCtx;
       null,
     );
     setClearing(false);
-    if (ok) notify("ok", gone === 1 ? "שיבוץ מוצע אחד נמחק." : `${gone} שיבוצים מוצעים נמחקו.`);
+    // none gone while some were shown: not ours to clear any more (a permission changed, or someone cleared them) — said, not «0 נמחקו»
+    if (ok) notify(gone === 0 && stored > 0 ? "error" : "ok", gone === 0 && stored > 0 ? "לא נמחק אף שיבוץ מוצע. אולי מישהו אחר כבר ניקה אותם, או שההרשאה השתנתה — הנתונים נטענו מחדש." : gone === 1 ? "שיבוץ מוצע אחד נמחק." : `${gone} שיבוצים מוצעים נמחקו.`);
     focusBack.back("clear");
   };
 

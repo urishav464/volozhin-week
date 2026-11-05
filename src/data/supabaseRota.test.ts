@@ -190,11 +190,15 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(sent[0].body).toEqual(rows.map((x) => ({ edition_id: 7, ...x, source: "suggested" })));
   });
 
-  it("«ניקוי השיבוצים המוצעים» is ONE delete of the edition's suggested rows, and says how many", async () => {
-    const { r, sent } = port([[200, [{ id: 1 }, { id: 2 }, { id: 3 }]], [200, []]]);
+  it("«ניקוי השיבוצים המוצעים» is ONE delete of the edition's suggested rows, and says how many — 0 for a member who may not write", async () => {
+    const { r, sent } = port([[200, [{ id: 1 }, { id: 2 }, { id: 3 }]], [200, []], [200, []]]);
     expect(await r.clearSuggested(7)).toBe(3);
+    expect(await r.clearSuggested(7)).toBe(0); // nothing left
+    // a member who may not write (content, an archived edition's logistics): RLS filters every row and PostgREST answers
+    // [] without an error, so the real port answers 0, not `forbidden` — DemoRota refuses (CONTRACT «תורנויות», the port)
     expect(await r.clearSuggested(7)).toBe(0);
-    expect([sent[0].method, sent[0].path, q(sent[0])]).toEqual(["DELETE", "rota_assignments", { edition_id: "eq.7", source: "eq.suggested", select: "id" }]);
+    expect(sent).toHaveLength(3);
+    for (const s of sent) expect([s.method, s.path, q(s)]).toEqual(["DELETE", "rota_assignments", { edition_id: "eq.7", source: "eq.suggested", select: "id" }]);
   });
 
   it("«כל השבוע»: the edition's row read once, then ONE insert of the shifts the week has (ON CONFLICT DO NOTHING); absent ONE delete", async () => {

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { RotaAssignment, RotaData } from "../data/rota";
 import {
-  adjacent, codeOf, DEFAULT_ROTA_SHIFTS, groupCode, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds, slotIndex, slotKey,
+  adjacent, codeOf, DEFAULT_ROTA_SHIFTS, groupCode, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds, slotIndex, slotKey,
 } from "./rota";
 
 const week = (first_day_from: number | null = 510, last_day_until = 1140, rota_shifts?: { cuts: [number, number]; labels: [string, string, string] }) => ({
@@ -40,6 +40,17 @@ describe("the shifts", () => {
     expect(rotaShiftRange(week(1200), 0, 1)).toEqual({ start: 1200, end: 1350 });
     expect(rotaShiftRange(week(null), 0, 0)).toEqual({ start: 390, end: 870 });
     expect(rotaShiftRange(week(870), 0, 0)).toBeNull();
+  });
+
+  it("a shift's leads: every lead of that day whose hours overlap the shift as the week has it", () => {
+    const lead = (id: number, day: 0 | 1 | 2 | 3 | 4, start_min: number, end_min: number, kind: "lead" | "shift" = "lead") => ({ id, day, start_min, end_min, kind });
+    const staff = [lead(1, 1, 840, 1350), lead(2, 1, 390, 870), lead(3, 1, 1350, 1830, "shift"), lead(4, 2, 390, 1830), lead(5, 0, 390, 500)];
+    const ids = (day: 0 | 1 | 2 | 3 | 4, shift: 0 | 1 | 2, e = week()) => leadsOf(e, staff, day, shift).map((x) => x.id);
+    expect([0, 1, 2].map((s) => ids(1, s as 0 | 1 | 2))).toEqual([[1, 2], [1], []]); // 14:00–22:30 crosses the cut; 22:30 is the night's start, not theirs; a staff shift is not a lead
+    expect([0, 1, 2].map((s) => ids(2, s as 0 | 1 | 2))).toEqual([[4], [4], [4]]); // a whole day
+    expect(ids(0, 0)).toEqual([]); // 06:30–08:20 ends before Sunday's opening (08:30)
+    expect(ids(0, 0, week(null))).toEqual([5]); // the opening not known: the whole morning
+    expect(ids(4, 2)).toEqual([]); // not part of the week
   });
 
   it("Thursday: a shift that begins at or after the close is not part of the week; one before it is, until the close", () => {

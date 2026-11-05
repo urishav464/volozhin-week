@@ -1587,7 +1587,9 @@ guard trigger per table, the knowledge notes' way; the heads' phones through two
 - **Writes:** `app.may_write_rota(p_edition)` — an admin of the edition (`app.my_role = 'admin'`, a global admin
   included), or a logistics member of it while the edition is neither of kind `archive` nor `archived`
   (`app.require_logistics`'s rule). Anything else: RLS refuses (42501 → `forbidden`; an UPDATE/DELETE that matches no
-  row it may write → no row back → `forbidden`).
+  row it may write → no row back → `forbidden`). A DELETE of a scope rather than a row — `setPresence` absent,
+  `clearSuggested` — has no row to miss: RLS makes it a no-op without an error, so the real port answers as if there
+  were nothing to remove, while the demo refuses `forbidden` (the port, below).
 - **The heads' phones:** `app.may_see_rota_contacts(p_group)` — a global admin, or an admin or logistics member of the
   group's edition when that edition is of kind `real` and not `archived` (`app.may_see_transport`'s rule: a practice
   or demo week gives none).
@@ -1622,6 +1624,11 @@ longer has stays, and is warned about (`outside_week` in the screens' warnings),
 | `rota_assignments` | `id`, `edition_id`, `day` 0–4, `shift` 0–2, `duty_id`, `group_id`, `source` `'hand'`/`'suggested'` (default `'hand'`); FKs `(duty_id, edition_id)` and `(group_id, edition_id)` (cascade); **`constraint rota_assignments_one_duty unique (edition_id, day, shift, group_id)` → `rota_group_busy`** (in an apply: `stale`) |
 | `rota_staff_shifts` | `id`, `edition_id` → editions (cascade), `day` 0–4, `start_min`/`end_min` 390–1830, start < end, multiples of 5, `member_id` → members (set null), `name` (line ≤ 80 or null), `cohort_id` (FK `(cohort_id, edition_id)` → cohorts, cascade), `kind` `'shift'`/`'lead'`, `note` (line ≤ 200 or null); **exactly one of `name` and `cohort_id`** (`member_id` only with a `name`) → else `name_required` (neither) / `bad_value`; `kind` default `'shift'` |
 | `rota_prep_tasks` | `id`, `edition_id` → editions (cascade), `text` (line ≤ 200, required), `group_id` (FK `(group_id, edition_id)` → groups, `on delete set null (group_id)`), `done` bool, `sort` |
+
+**The composite foreign keys** (`(x_id, edition_id)` → `(id, edition_id)`) are what keeps a row's cohort, group and duty
+in its own edition — RLS and the guards check only the row's own `edition_id`, so these keys alone hold every writer
+(logistics, a global admin who may write in both editions, the owner): another edition's id is 23503 (→ `stale`), and
+deleting there never cascades here. `tests/sql/rota.test.ts` pins each of the six.
 
 **Every guard** (BEFORE INSERT OR UPDATE, SECURITY DEFINER, `search_path = ''`: `app.rota_cohorts_guard`,
 `app.rota_groups_guard`, `app.rota_duties_guard`, `app.rota_assignments_guard`, `app.rota_staff_guard`,
@@ -1666,7 +1673,7 @@ insert/update/delete with `app.may_write_rota`; `rota_group_contacts` SELECT wit
 | `moveAssignment(id, duty)` | UPDATE `duty_id` (the guard makes it `'hand'`) | the same |
 | `unassign(id)` | DELETE `eq(id)` | the same |
 | `applySuggestion(e, rows)` | ONE `insert([...])` with `source: 'suggested'` — all or nothing; 23505 or 23503 → `stale` | all or nothing, `stale` |
-| `clearSuggested(e)` | ONE `delete().eq('edition_id', e).eq('source', 'suggested')`, returns the count | the same |
+| `clearSuggested(e)` | ONE `delete().eq('edition_id', e).eq('source', 'suggested')`, returns the count — for a member who may not write, RLS leaves it 0 rows without an error, so it returns 0 (not `forbidden`: the delete cannot tell «not allowed» from «nothing to clear») | the same, but a member who may not write → `forbidden` (the screens never offer it to one) |
 | `addStaffShift / updateStaffShift / deleteStaffShift` | as cohorts | the same |
 | `addPrepTasks(e, texts)` | ONE insert, `sort` after the last, in order | the same |
 | `updatePrepTask / deletePrepTask` | as cohorts | the same |

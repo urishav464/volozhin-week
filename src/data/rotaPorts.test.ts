@@ -118,6 +118,8 @@ describe("who reads and who writes", () => {
     expect(await code(c.port.rota.addCohort(c.e, { letter: "א", name: "מכינה לדוגמה" }))).toBe("forbidden");
     expect(await code(c.port.rota.addDuty(c.e, { name: "מטבח" }))).toBe("forbidden");
     expect(await code(c.port.rota.addPrepTasks(c.e, ["משימה לדוגמה"]))).toBe("forbidden");
+    // the demo refuses; SupabaseRota answers 0, RLS filtering the delete without an error (CONTRACT «תורנויות», the port;
+    // tests/sql/rota.test.ts and src/data/supabaseRota.test.ts pin that side) — the screens never offer it to a non-writer
     expect(await code(c.port.rota.clearSuggested(c.e))).toBe("forbidden");
     expect(await code(c.port.rota.setPresence(c.e, 1, {}, true))).toBe("forbidden");
     // and on the demo's seeded week: reads, cannot touch a row
@@ -147,6 +149,7 @@ describe("who reads and who writes", () => {
     const d = await port.rota.load(e);
     expect(await code(port.rota.unassign(d.assignments[0].id))).toBe("forbidden");
     expect(await code(port.rota.updateDuty(d.duties[0].id, { need_night: 2 }))).toBe("forbidden");
+    expect(await code(port.rota.clearSuggested(e))).toBe("forbidden"); // SupabaseRota: 0, as for content above
     expect(d.cohorts).toHaveLength(2); // still read
     const a = await edition(EDITION_ADMIN);
     a.port.engine(a.e).week.edition.status = "archived";

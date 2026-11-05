@@ -4,7 +4,7 @@
 // (src/grid/layout.ts rowActive). An edition's admin may move the two cuts and rename the shifts (settings.rota_shifts,
 // public.set_rota_shifts); the count stays three, so a moved cut never orphans an assignment's shift index.
 // `rotaShiftActive` ≡ app.rota_shift_active (tests/sql/rota.test.ts compares them value for value).
-import type { RotaAssignment, RotaData, RotaDuty, RotaGroup, ShiftIndex } from "../data/rota";
+import type { RotaAssignment, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
 import { DAY_END, DAY_START, type Day } from "./time";
 import type { Edition, RotaShiftsSetting } from "./types";
 
@@ -46,6 +46,17 @@ export function rotaShiftRange(edition: WeekEdges, day: Day, shift: ShiftIndex):
   const start = day === 0 && edition.first_day_from != null ? Math.max(from, edition.first_day_from) : from;
   const end = day === 4 ? Math.min(to, edition.last_day_until) : to;
   return { start, end };
+}
+
+/**
+ * The «אחראי/ת משמרת» of a shift: the leads of that day whose hours overlap the shift as the week has it
+ * (rotaShiftRange) — a lead from 14:00 to 22:30 leads the morning and the afternoon, a whole-day lead every shift;
+ * none when the shift is not part of the week. One rule for the board's «no_lead» and the day sheet.
+ */
+export function leadsOf<S extends Pick<RotaStaffShift, "kind" | "day" | "start_min" | "end_min">>(edition: WeekEdges, staff: readonly S[], day: Day, shift: ShiftIndex): S[] {
+  const r = rotaShiftRange(edition, day, shift);
+  if (!r) return [];
+  return staff.filter((x) => x.kind === "lead" && x.day === day && x.start_min < r.end && x.end_min > r.start);
 }
 
 export interface RotaSlot {

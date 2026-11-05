@@ -156,6 +156,9 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
   const { week, data } = ctx;
   const id = useId();
   const team = [...week.team].sort((a, b) => a.display_name.localeCompare(b.display_name, "he") || a.id - b.id);
+  // the shift's own member, deactivated since (week.team is the active team): kept as a choice — such a row stays and
+  // may still be edited (CONTRACT «תורנויות»), and the guard takes the same member_id; another one is not offered
+  const kept = initial?.member_id != null && !team.some((m) => m.id === initial.member_id) ? { id: initial.member_id, display_name: initial.name ?? "" } : null;
   const cohorts = cohortsInOrder(data);
   const [day, setDay] = useState<Day>(initial?.day ?? day0);
   const [from, setFrom] = useState(initial ? fmt(initial.start_min) : "");
@@ -173,7 +176,7 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
     const start = minutes(from, false);
     const end = minutes(to, true);
     if (start == null || end == null) return setProblem("שעה בפורמט HH:MM, למשל 08:30 (06:30 בסוף — עד הבוקר שאחרי).");
-    const picked = team.find((m) => String(m.id) === member);
+    const picked = team.find((m) => String(m.id) === member) ?? (kept && String(kept.id) === member ? kept : undefined);
     if (who === "member" && !picked) return setProblem("צריך לבחור איש/אשת צוות.");
     const v: NewStaffShift = {
       day,
@@ -232,6 +235,7 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
                   {m.display_name}
                 </option>
               ))}
+              {kept && <option value={kept.id}>{kept.display_name} (מושבת/ת)</option>}
             </select>
           )}
           {who === "name" && <input aria-label="השם" value={name} onChange={(ev) => setName(ev.target.value)} maxLength={80} className={INPUT} />}

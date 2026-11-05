@@ -5,15 +5,17 @@
 // the workbook's sheet names, the formula guard on every cell of the files, and the same answer whatever the order.
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import type { RotaData } from "../data/rota";
-import { LRM } from "../domain/time";
+import type { RotaData, RotaStaffShift } from "../data/rota";
+import { SHIFTS } from "../domain/rota";
+import { rotaWarnings } from "../domain/rotaWarnings";
+import { type Day, LRM } from "../domain/time";
 import type { Week } from "../domain/types";
 import { addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
 import { toCsv } from "./csv";
 import { scheduleEntries } from "./designer";
 import {
   BAND_FILL, campusTable, cohortTotal, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, headsTable, kitchenDutyId, kitchenSheet, loadsTable,
-  phonesOf, prepTable, regularCell, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, stackTables, staffTable,
+  phonesOf, prepTable, regularCell, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, shiftText, stackTables, STAFF_KIND_LABEL, staffTable,
 } from "./rota";
 import type { Table } from "./table";
 import { toXlsx, xlsxParts } from "./xlsx";
@@ -205,6 +207,27 @@ describe("the board, the day and the heads", () => {
       expect(cells(off).join("|")).not.toMatch(/טלפון/);
       for (const r of off.rows) expect(r).toHaveLength(off.headers.length);
     }
+  });
+
+  it("lists a lead in every shift their hours overlap, and TBD exactly where the board warns «no_lead»", () => {
+    const d = rota();
+    const lead = (id: number, day: Day, start_min: number, end_min: number, name: string): RotaStaffShift => ({ id, edition_id: 1, day, start_min, end_min, member_id: null, name, cohort_id: null, kind: "lead", note: null });
+    d.staff = [
+      ...d.staff,
+      lead(11, 1, 390, 860, "אחראי/ת בוקר לדוגמה"), // Monday 06:30–14:20
+      lead(12, 1, 840, 1350, "אחראי/ת ערב לדוגמה"), // Monday 14:00–22:30: the morning's end and the whole afternoon
+      lead(13, 2, 390, 1830, "אחראי/ת יום לדוגמה"), // Tuesday, the whole day
+    ];
+    const leadRows = (day: Day, shift: 0 | 1 | 2) => daySheet(d, w.edition, day, null).rows.filter((r) => r[0] === shiftText(w.edition, shift, day) && r[1] === STAFF_KIND_LABEL.lead).map((r) => r[2]);
+    expect(leadRows(1, 0)).toEqual([`אחראי/ת בוקר לדוגמה ${LRM}06:30–14:20`, `אחראי/ת ערב לדוגמה ${LRM}14:00–22:30`]);
+    expect(leadRows(1, 1)).toEqual([`אחראי/ת ערב לדוגמה ${LRM}14:00–22:30`]);
+    expect(leadRows(1, 2)).toEqual(["TBD"]);
+    for (const shift of SHIFTS) expect(leadRows(2, shift)).toEqual([`אחראי/ת יום לדוגמה ${LRM}06:30–06:30`]);
+    // one rule with the board: a shift's TBD on the page is its «no_lead» there, day by day
+    const warned = rotaWarnings(d, w.edition).filter((x) => x.kind === "no_lead").map((x) => `${x.day}:${x.shift}`);
+    const tbd = ([0, 1, 2, 3, 4] as Day[]).flatMap((day) => SHIFTS.filter((shift) => leadRows(day, shift).includes("TBD")).map((shift) => `${day}:${shift}`));
+    expect(tbd).toEqual(warned);
+    expect(tbd).toContain("1:2");
   });
 
   it("adds a טלפון column with the phones given, and only those — a left-to-right mark first", () => {

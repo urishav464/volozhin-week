@@ -20,7 +20,7 @@
 // Nothing here fills in a number nobody entered: a group without a size is TBD, and so is every sum it is part of.
 import type { Diet, RotaAssignment, RotaCohort, RotaContact, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
 import { nameKey } from "../domain/nameKey";
-import { groupCode, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, type RotaSlot } from "../domain/rota";
+import { groupCode, leadsOf, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, type RotaSlot } from "../domain/rota";
 import { DAY_NAMES, type Day, dateOf, fmtRange, LRM, overlaps, shortDate } from "../domain/time";
 import type { Edition, GridRow, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
@@ -397,11 +397,17 @@ export function staffWho(data: Pick<RotaData, "cohorts">, s: Pick<RotaStaffShift
   return c ? `צוות ${c.name}` : "TBD";
 }
 
-/** The staff of one shift: those whose shift starts in it — the lead first. */
-function staffOfShift(data: RotaData, edition: RotaEdition, day: Day, shift: ShiftIndex): RotaStaffShift[] {
-  return staffInOrder(data)
-    .filter((s) => s.day === day && shiftOfStart(edition, day, s.start_min) === shift)
+/**
+ * The staff of one shift: its leads as the board counts them (leadsOf — every shift a lead's hours overlap), then the
+ * rest in the shift they start in (among them, first, a lead whose hours overlap none of the week's shifts that day).
+ */
+function staffOfShift(data: RotaData, edition: RotaEdition, day: Day, shift: ShiftIndex): { leads: RotaStaffShift[]; others: RotaStaffShift[] } {
+  const mine = staffInOrder(data).filter((s) => s.day === day);
+  const leading = new Set(SHIFTS.flatMap((sh) => leadsOf(edition, mine, day, sh)).map((s) => s.id));
+  const others = mine
+    .filter((s) => !leading.has(s.id) && shiftOfStart(edition, day, s.start_min) === shift)
     .sort((a, b) => Number(a.kind !== "lead") - Number(b.kind !== "lead") || a.start_min - b.start_min || a.id - b.id);
+  return { leads: leadsOf(edition, mine, day, shift), others };
 }
 
 const staffCell = (data: RotaData, s: RotaStaffShift) => `${staffWho(data, s)} ${LRM}${fmtRange(s.start_min, s.end_min)}${s.note ? ` · ${s.note}` : ""}`;
@@ -418,8 +424,9 @@ export function staffTable(data: RotaData): Table {
 // ------------------------------------------------------------------ דף יום
 
 /**
- * One day: per shift its staff (the lead first) and each duty's groups with their size and head — and the head's
- * phone only when `phones` is given (then a טלפון column, filled only where a phone came back).
+ * One day: per shift its staff (its leads first — a lead in every shift its hours overlap, as the board counts them)
+ * and each duty's groups with their size and head — and the head's phone only when `phones` is given (then a טלפון
+ * column, filled only where a phone came back).
  */
 export function daySheet(data: RotaData, edition: RotaEdition, day: Day, phones: HeadPhones): Table {
   const withPhones = phones != null;
@@ -434,10 +441,10 @@ export function daySheet(data: RotaData, edition: RotaEdition, day: Day, phones:
   };
   for (const shift of shiftsOfDay(edition, day, data.assignments)) {
     const st = shiftText(edition, shift, day);
-    const staff = staffOfShift(data, edition, day, shift);
-    // no lead yet: said, not left out (TBD)
-    if (!staff.some((s) => s.kind === "lead")) push([st, STAFF_KIND_LABEL.lead, "TBD", ...blank], BAND_FILL);
-    for (const s of staff) push([st, STAFF_KIND_LABEL[s.kind], staffCell(data, s), ...blank], BAND_FILL);
+    const { leads, others } = staffOfShift(data, edition, day, shift);
+    // no lead yet in a shift of the week (the board's «no_lead»): said, not left out (TBD)
+    if (rotaShiftActive(edition, day, shift) && leads.length === 0) push([st, STAFF_KIND_LABEL.lead, "TBD", ...blank], BAND_FILL);
+    for (const s of [...leads, ...others]) push([st, STAFF_KIND_LABEL[s.kind], staffCell(data, s), ...blank], BAND_FILL);
     for (const d of dutiesInOrder(data)) {
       const on = new Set(data.assignments.filter((a) => a.day === day && a.shift === shift && a.duty_id === d.id).map((a) => a.group_id));
       const mine = groups.filter((g) => on.has(g.id));

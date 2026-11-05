@@ -71,8 +71,12 @@ export function Board({ ctx }: { ctx: RotaCtx }) {
   const close = () => {
     const c = cell;
     setCell(null);
-    // back to the cell's own «שיבוץ», wherever it is on screen
-    if (c) requestAnimationFrame(() => visible([buttonId("d", c.day, c.shift, c.dutyId), buttonId("p", c.day, c.shift, c.dutyId)])?.focus());
+    // back to the cell's own «שיבוץ», wherever it is on screen — or, once a shift the week no longer has was emptied
+    // (no «שיבוץ» there; on a phone the shift is gone), to the cell, else to the day
+    if (c)
+      requestAnimationFrame(() =>
+        visible([buttonId("d", c.day, c.shift, c.dutyId), buttonId("p", c.day, c.shift, c.dutyId), cellId("d", c.day, c.shift, c.dutyId), cellId("p", c.day, c.shift, c.dutyId), `rota-p-${c.day}`])?.focus(),
+      );
   };
 
   if (data.groups.length === 0 || data.duties.length === 0) {
