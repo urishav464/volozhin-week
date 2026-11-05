@@ -1572,3 +1572,145 @@ not_closed not_handler bad_value`.
 | `start_edition` | `p_label text, p_start_date date, p_first_day_from integer default null, p_room text default 'בית מדרש', p_deactivate_team boolean default false` | `bigint` | authenticated |
 
 No new `app.*` function is a browser's to run; anon gets nothing new.
+
+# «תורנויות» — the campus duty roster (milestone 7, schema v16)
+
+The duty roster that runs beside the lessons (DECISIONS «תורנויות — גרסה 16»): the cohorts on campus («מכינות») and
+when each is there, their groups, the duties, which group does which duty in each shift, the staff's shifts and the
+Saturday-night preparations. Two implementations: `supabase/schema.sql` «תורנויות» (direct writes under RLS with a
+guard trigger per table, the knowledge notes' way; the heads' phones through two functions) and `src/data/demoRota.ts`
+(in memory, the same rules and refusals). Shared cases: `src/testing/rotaCases.ts`, run on both
+(`tests/sql/rota.test.ts`, `src/data/rotaPorts.test.ts`). Not grid commands: no engine, no parity harness.
+
+## Who
+- **Reads:** every member of the edition (`app.can_see_edition`) — the content team too («תוצרים ← תורנויות»).
+- **Writes:** `app.may_write_rota(p_edition)` — an admin of the edition (`app.my_role = 'admin'`, a global admin
+  included), or a logistics member of it while the edition is neither of kind `archive` nor `archived`
+  (`app.require_logistics`'s rule). Anything else: RLS refuses (42501 → `forbidden`; an UPDATE/DELETE that matches no
+  row it may write → no row back → `forbidden`). A DELETE of a scope rather than a row — `setPresence` absent,
+  `clearSuggested` — has no row to miss: RLS makes it a no-op without an error, so the real port answers as if there
+  were nothing to remove, while the demo refuses `forbidden` (the port, below).
+- **The heads' phones:** `app.may_see_rota_contacts(p_group)` — a global admin, or an admin or logistics member of the
+  group's edition when that edition is of kind `real` and not `archived` (`app.may_see_transport`'s rule: a practice
+  or demo week gives none).
+
+## The shifts — `settings.rota_shifts` ≡ `src/domain/rota.ts`
+Three a day, index 0 morning · 1 afternoon · 2 night, in the day's minutes (the night belongs to the day before it):
+[390, a) · [a, b) · [b, 1830), `{cuts: [a, b], labels: [three names]}`; absent = last year's `{cuts: [870, 1350],
+labels: ["בוקר", "אחר צהריים", "לילה"]}`. **Active** (`app.rota_shift_active(p_edition, p_day, p_shift)` ≡
+`rotaShiftActive`): on Sunday (`day 0`) the block must end after `first_day_from` (null: it does), on Thursday
+(`day 4`) it must begin before `last_day_until` — rowActive's rule on the block. Its range as the week has it
+(`rotaShiftRange`): Sunday's start raised to `first_day_from`, Thursday's end lowered to `last_day_until`.
+`app.rota_shift_active` is NULL for an edition that is not there (the guard: `outside_week`); a cut that is not a whole
+number limits nothing, as in the browser. `tests/sql/rota.test.ts` compares the two on 2,625 values (five cut settings ×
+`first_day_from` ∈ {null, 390, 510, 870, 1000, 1350, 1830} × `last_day_until` ∈ {390, 870, 1140, 1350, 1830} × day × shift).
+
+### `setShifts(e, s)` — `set_rota_shifts(p_edition bigint, p_shifts jsonb)` → `void`
+SECURITY DEFINER; `not_member`, then an admin of the edition (`forbidden`). `p_shifts` null → the key removed (last
+year's). Else in this order: an object with `cuts` (two integers, `390 < a < b < 1830`, multiples of 5) and `labels`
+(three strings, each one line ≤ 20, `app.clean_line`, no contact) → else `bad_value` (an empty label `name_required` —
+a JSON null label counts as empty —, a contact `rota_contact_in_text`). Stored as cleaned, `{cuts, labels}` only. Assignments keep their shift index; one on a shift the week no
+longer has stays, and is warned about (`outside_week` in the screens' warnings), never deleted.
+
+## The tables
+
+| table | columns and rules |
+|---|---|
+| `rota_cohorts` | `id`, `edition_id` → editions (cascade), `letter` (`app.clean_line` ≤ 3, no digit or white space — JavaScript's `\d` and `\s`, written out; empty → `name_required`), `name` (≤ 80, required), `diets` jsonb `[]` (≤ 6 × `{label: line ≤ 40, count: integer 0–1000}`, stored with those two keys only; NULL → `[]`), `sort` int; `unique (id, edition_id)`; **`unique (edition_id, letter)` → `rota_letter_taken`** |
+| `rota_presence` | `edition_id`, `cohort_id`, `day` 0–4, `shift` 0–2; PK `(cohort_id, day, shift)`; FK `(cohort_id, edition_id)` → cohorts (cascade). A row = on campus; **none = not marked** (never assumed present) |
+| `rota_groups` | `id`, `edition_id` → editions (cascade), `cohort_id`, `number` 1–99, `size` 0–200 or null (TBD), `head_name` (line ≤ 80 or null); `unique (id, edition_id)`; **`unique (cohort_id, number)` → `rota_group_taken`**; FK `(cohort_id, edition_id)` → cohorts **no action** (a cohort with groups: 23503 → `in_use`; an edition's delete cascades both) |
+| `rota_group_contacts` | `group_id` PK → rota_groups (cascade), `head_phone` text not null (line ≤ 40, ≥ 6 digits). No INSERT/UPDATE/DELETE grant: `set_rota_contact` only |
+| `rota_duties` | `id`, `edition_id` → editions (cascade), `name` (line ≤ 40, required), `name_key` generated `app.name_key(name)`, `description` (block ≤ 500 or null), `need_morning`/`need_afternoon`/`need_night` 0–20 or null (not set), `min_people` 1–500 or null, `sort`; `unique (id, edition_id)`; **`unique (edition_id, name_key)` → `rota_duty_exists`** |
+| `rota_assignments` | `id`, `edition_id`, `day` 0–4, `shift` 0–2, `duty_id`, `group_id`, `source` `'hand'`/`'suggested'` (default `'hand'`); FKs `(duty_id, edition_id)` and `(group_id, edition_id)` (cascade); **`constraint rota_assignments_one_duty unique (edition_id, day, shift, group_id)` → `rota_group_busy`** (in an apply: `stale`) |
+| `rota_staff_shifts` | `id`, `edition_id` → editions (cascade), `day` 0–4, `start_min`/`end_min` 390–1830, start < end, multiples of 5, `member_id` → members (set null), `name` (line ≤ 80 or null), `cohort_id` (FK `(cohort_id, edition_id)` → cohorts, cascade), `kind` `'shift'`/`'lead'`, `note` (line ≤ 200 or null); **exactly one of `name` and `cohort_id`** (`member_id` only with a `name`) → else `name_required` (neither) / `bad_value`; `kind` default `'shift'` |
+| `rota_prep_tasks` | `id`, `edition_id` → editions (cascade), `text` (line ≤ 200, required), `group_id` (FK `(group_id, edition_id)` → groups, `on delete set null (group_id)`), `done` bool, `sort` |
+
+**The composite foreign keys** (`(x_id, edition_id)` → `(id, edition_id)`) are what keeps a row's cohort, group and duty
+in its own edition — RLS and the guards check only the row's own `edition_id`, so these keys alone hold every writer
+(logistics, a global admin who may write in both editions, the owner): another edition's id is 23503 (→ `stale`), and
+deleting there never cascades here. `tests/sql/rota.test.ts` pins each of the six.
+
+**Every guard** (BEFORE INSERT OR UPDATE, SECURITY DEFINER, `search_path = ''`: `app.rota_cohorts_guard`,
+`app.rota_groups_guard`, `app.rota_duties_guard`, `app.rota_assignments_guard`, `app.rota_staff_guard`,
+`app.rota_prep_guard`, each on its table as `rota_<table>_guard`; `rota_presence` has no text and no UPDATE, and
+`rota_group_contacts` is written by `set_rota_contact` alone, so neither has one) refuses to change `edition_id`
+(`bad_value`) first, then checks the row's fields in this order — cohorts: `letter`, `name`, `diets`; groups: `number`,
+`size`, `head_name`; duties: `name`, `description`, the three needs, `min_people`; preparations: `text`; staff shifts and
+assignments below — each as `src/data/rota.ts`'s cleaner of it does: its text cleaned as
+above (`app.clean_line` / `app.clean_block`; too long → `bad_value`) with no phone or e-mail in it (`app.rota_no_contact`
+= `app.has_contact` → `rota_contact_in_text`), its ranges refused as `bad_value` (P0001 — the CHECKs are the same rules,
+a backstop no guarded write reaches); a NULL `sort` is 0, a NULL `done` false. A guard runs before RLS's check, so a row
+a member may not write is refused as `forbidden` only when its fields pass. Besides:
+- `rota_assignments`: `day` 0–4 and `shift` 0–2 first (`bad_value`); on INSERT, and on an UPDATE that changes `day` or
+  `shift`, `app.rota_shift_active` must hold → else `outside_week`; on every UPDATE `source := 'hand'`.
+- `rota_staff_shifts`: in order — `day`, the times, the who (exactly one of a name and a cohort; a member only with a
+  name), the member, `kind`, `note`. A `member_id` picked (on INSERT, or an UPDATE that changes it) must be an active
+  member of the edition or of every edition → else `bad_value`; a row whose member was deactivated later stays and may
+  still be edited; a member's row deleted leaves the shift by its name (`member_id` NULL).
+- `rota_cohorts.diets`: the shape above (`app.rota_clean_diets`) → else `bad_value`.
+
+**Grants** (`authenticated`; anon none): SELECT and DELETE on the seven non-contact tables (an id or `name_key` is never
+a browser's: generated); INSERT
+`rota_cohorts(edition_id, letter, name, diets, sort)`, `rota_presence(edition_id, cohort_id, day, shift)`,
+`rota_groups(edition_id, cohort_id, number, size, head_name)`, `rota_duties(edition_id, name, description,
+need_morning, need_afternoon, need_night, min_people, sort)`, `rota_assignments(edition_id, day, shift, duty_id,
+group_id, source)`, `rota_staff_shifts(edition_id, day, start_min, end_min, member_id, name, cohort_id, kind, note)`,
+`rota_prep_tasks(edition_id, text, group_id, done, sort)`; UPDATE the same columns but `edition_id`, `source` and
+`rota_presence` (none); `rota_group_contacts` SELECT only. **Policies**: the seven read with `app.can_see_edition`,
+insert/update/delete with `app.may_write_rota`; `rota_group_contacts` SELECT with `app.may_see_rota_contacts`.
+**Realtime**: every `rota_*` table on the never-publish list.
+
+## The port (`src/data/rota.ts` `RotaPort`)
+
+| method | SupabaseRota | DemoRota |
+|---|---|---|
+| `load(e)` | `load_rota(p_edition)` (invoker, `stable`): `{cohorts, presence, groups, duties, assignments, staff, prep}`, each record exactly the fields of its `src/data/rota.ts` type (`name_key` not among them), ordered: cohorts by `sort`, `letter` (by code point, as JavaScript compares strings), `id`; presence by `cohort_id`, `day`, `shift`; groups by `cohort_id`, `number`; duties by `sort`, `id`; assignments by `day`, `shift`, `duty_id`, `group_id`; staff by `day`, `start_min`, `id`; prep by `sort`, `id`; **never a phone**; an edition the caller cannot see → null → `not_member` (a global admin sees every id: one with no edition gives the empty rota) | the same, but an edition id that does not exist → `not_member` for everyone |
+| `addCohort / updateCohort / deleteCohort` | INSERT … `select('id')` / UPDATE `eq(id)` / DELETE `eq(id)` (no row → `forbidden`; 23505 → `rota_letter_taken`; 23503 → `stale` on an INSERT or UPDATE — the parent is gone or another edition's — and `in_use` on a DELETE) | the same codes |
+| `setPresence(e, cohort, scope, present)` | reads the edition's `first_day_from, last_day_until, settings` first (no row → `not_member`); present: ONE insert of every active slot (`rotaSlots`) in the scope, `onConflict` ignore; absent: ONE delete `eq(cohort_id)` (+ `eq(day)`, `eq(shift)`) — for a member who may not write, RLS leaves it a no-op without an error | the same, but a member who may not write → `forbidden` (the screens never offer it to one) |
+| `addGroup / updateGroup / deleteGroup` | as cohorts; 23505 → `rota_group_taken` | the same |
+| `addDuty / updateDuty / deleteDuty` | as cohorts; 23505 → `rota_duty_exists` | the same |
+| `assign(e, a)` | INSERT (`source` `'hand'`); 23505 → `rota_group_busy`; `outside_week` from the guard | the same |
+| `moveAssignment(id, duty)` | UPDATE `duty_id` (the guard makes it `'hand'`) | the same |
+| `unassign(id)` | DELETE `eq(id)` | the same |
+| `applySuggestion(e, rows)` | ONE `insert([...])` with `source: 'suggested'` — all or nothing; 23505 or 23503 → `stale` | all or nothing, `stale` |
+| `clearSuggested(e)` | ONE `delete().eq('edition_id', e).eq('source', 'suggested')`, returns the count — for a member who may not write, RLS leaves it 0 rows without an error, so it returns 0 (not `forbidden`: the delete cannot tell «not allowed» from «nothing to clear») | the same, but a member who may not write → `forbidden` (the screens never offer it to one) |
+| `addStaffShift / updateStaffShift / deleteStaffShift` | as cohorts | the same |
+| `addPrepTasks(e, texts)` | ONE insert, `sort` after the last, in order | the same |
+| `updatePrepTask / deletePrepTask` | as cohorts | the same |
+| `setShifts(e, s)` | `set_rota_shifts` | the same refusals |
+| `contacts(e)` | `get_rota_contacts(p_edition)` (invoker): `[{group_id, head_phone}]` of the edition's groups the caller may see, by group id — the per-group rule row by row, never wider; none → `[]` | the same |
+| `setContact(group, phone)` | `set_rota_contact(p_group, p_phone)`: SECURITY DEFINER; in order: no membership at all → `not_member`; the group locked (FOR KEY SHARE; gone → `stale`); not a member of its edition → `not_member`; `app.may_see_rota_contacts` → else `rota_contact_hidden`; blank/null deletes; else `app.clean_line` ≤ 40 (longer `bad_value`) with ≥ 6 digits → else `bad_phone`; upsert. Never logged | the same |
+
+The browser cleans every write first with `src/data/rota.ts`'s cleaners (≡ the guards), so a refusal is the
+server's backstop.
+
+## Next year, after the week, the archive
+- **`start_edition`** copies from the edition it carries from (the same as the milestones): its duties (name,
+  description, the three needs, `min_people`, sort), its preparations (text, sort; no group, not done) and
+  `settings.rota_shifts`. Never the cohorts, presence, groups, heads, assignments or staff shifts.
+  **`start_edition_preview`** gains `rota_duties` and `rota_prep_tasks` (counts of `carry_from`'s) and
+  `rota_shifts` (boolean).
+- **`purge_edition_private`** deletes the edition's `rota_group_contacts` and returns (and logs) `rota_contacts`, the
+  count; the groups, the head names, assignments, staff shifts and tasks stay.
+- **The archive** (`format_version` 5): `rota.json` = `load_rota`'s answer (no phone); the heads' phones go to the
+  personal-data file as `rota_head_phones` (`[{group, group_id, head_phone}]` — `group` the code), only those the exporter may
+  see. `rota.json` also carries `format`, `exported_at` and `shifts` (the edition's shifts as `rotaShiftsOf` gives them).
+
+## Errors (milestone 7)
+`rota_letter_taken rota_group_taken rota_duty_exists rota_group_busy outside_week rota_contact_in_text
+rota_contact_hidden`, and `stale not_member forbidden in_use bad_value bad_phone name_required`.
+
+## RPC signatures (milestone 7)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `load_rota` | `p_edition bigint` | `jsonb` | authenticated (invoker) |
+| `get_rota_contacts` | `p_edition bigint` | `jsonb` | authenticated (invoker) |
+| `set_rota_contact` | `p_group bigint, p_phone text` | `void` | authenticated |
+| `set_rota_shifts` | `p_edition bigint, p_shifts jsonb` | `void` | authenticated |
+
+`app.may_write_rota` and `app.may_see_rota_contacts` are granted to `authenticated` (the policies run them);
+`app.rota_shift_active`, `app.rota_no_contact` and `app.rota_clean_diets` run inside the definer guards and functions
+only (not granted). Anon gets nothing new: its reach stays the six link functions. The Security Advisor's count of
+signed-in definer functions grows by two (`set_rota_contact`, `set_rota_shifts`). `on delete set null (group_id)`
+needs PostgreSQL 15 or later (Supabase's).

@@ -37,8 +37,11 @@ interface Props {
   onOpen: () => void;
 }
 
-/** Where the call stands, at a glance (the card's label says it in words): before the call, no answer, talked, agreed, declined. */
-const CALL_ICON: Record<ApproachStatus, string> = { claimed: "☎", no_answer: "↻", approached: "?", positive: "✓", declined: "✗" };
+/**
+ * Where the call stands, at a glance (the card's label says it in words): before the call, no answer, talked, agreed,
+ * declined. Typographic marks, never an emoji (Ein Prat's design system): «○» not yet called.
+ */
+const CALL_ICON: Record<ApproachStatus, string> = { claimed: "○", no_answer: "↻", approached: "?", positive: "✓", declined: "✗" };
 
 /** A free cell coloured by a speaker's fit (GridDesktop, DayView): green «יכול/ה», red «לא», grey where they are already closed. */
 export const FIT_CELL: Record<Exclude<Fit, "neutral">, string> = {

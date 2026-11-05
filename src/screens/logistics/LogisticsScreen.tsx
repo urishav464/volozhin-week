@@ -1,5 +1,7 @@
 // «לוגיסטיקה» (/logistics/<tab>, milestone 5ב-2) — the logistics team's and the
-// admins' four lists, each from the loaded week (src/exports/logistics.ts):
+// admins' four lists, each from the loaded week (src/exports/logistics.ts), and
+// (milestone 7) «תורנויות», the campus duty roster (/logistics/rota/<view>,
+// src/screens/logistics/rota/):
 // הסעות (the approved transports, in one get_transports_for call; edited
 // through set_transport_details), תשלומים (the approved amounts, «שולם» by the
 // existing command, the totals), ספרים (מכריכה לכריכה's book orders), הדפסות
@@ -39,15 +41,17 @@ import { fileKind } from "../stages/SourceFiles";
 import { archivedEdition } from "../stages/parts";
 import { PrintSetup } from "../outputs/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
+import { RotaTab } from "./rota/RotaTab";
 
-export type LogisticsTab = "transports" | "payments" | "books" | "prints";
+export type LogisticsTab = "transports" | "payments" | "books" | "prints" | "rota";
 const TABS: [LogisticsTab, string][] = [
   ["transports", "הסעות"],
   ["payments", "תשלומים"],
   ["books", "ספרים"],
   ["prints", "הדפסות"],
+  ["rota", "תורנויות"],
 ];
-const TAB_FILE: Record<LogisticsTab, string> = { transports: "transports", payments: "payments", books: "books", prints: "prints" };
+const TAB_FILE: Record<LogisticsTab, string> = { transports: "transports", payments: "payments", books: "books", prints: "prints", rota: "rota" };
 
 /** May this member open «לוגיסטיקה» in this edition: its logistics team and its admins. */
 export function mayLogistics(actor: Actor): boolean {
@@ -68,7 +72,8 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
   const label = TABS.find(([k]) => k === tab)![1];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 pb-20">
+    // the rota's board takes the width of a computer's screen (five days side by side)
+    <div className={`mx-auto ${tab === "rota" ? "max-w-7xl" : "max-w-5xl"} space-y-4 pb-20`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
         <h2 className="font-display text-2xl font-extrabold text-navy">לוגיסטיקה</h2>
         <EditionSelect />
@@ -93,6 +98,7 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
           {tab === "payments" && <Payments port={port} week={week} actor={actor} notify={notify} clear={clear} reload={store.reload} label={label} />}
           {tab === "books" && <Books port={port} week={week} actor={actor} notify={notify} clear={clear} label={label} />}
           {tab === "prints" && <Prints port={port} week={week} notify={notify} label={label} />}
+          {tab === "rota" && <RotaTab key={week.edition.id} port={port} week={week} actor={actor} notify={notify} clear={clear} reloadWeek={store.reload} />}
         </>
       )}
       {node}

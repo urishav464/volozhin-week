@@ -48,6 +48,7 @@ const CARRIED = [
   "מאגר המרצים, עם פרטי הקשר ועם «איך עבר» של השנים הקודמות.",
   "הקטגוריות, ורשימת החללים עם אנשי הקשר של המשפחות.",
   "רשת השבוע מהתבנית של 2026 וחדר «בית מדרש». החדרים האחרים, החניכים והצוות — מוסיפים מחדש.",
+  "התורנויות (השם, התיאור, כמה קבוצות צריך ומינימום האנשים), רשימת ההכנות של מוצ״ש (בלי קבוצה ובלי «בוצע») ושעות המשמרות. המכינות, הקבוצות, השיבוצים ומשמרות הצוות — מגדירים מחדש.",
 ];
 
 const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -183,7 +184,9 @@ function DryRun({ deactivate, setDeactivate }: { deactivate: boolean; setDeactiv
           <dt className="text-ink-soft">יועתקו</dt>
           <dd data-dry="copy">
             {p.grid_rows} שורות רשת · {p.milestones} אבני דרך · {p.call_template ? "«נקודות לשיחה» שנערכו" : "בלי «נקודות לשיחה» שנערכו (נשאר הטקסט המובנה)"} ·{" "}
-            {p.confirm_template ? "תבנית הודעת הסיכום" : "בלי תבנית הודעה"} · {p.duty_phrases} ניסוחי מלווים
+            {p.confirm_template ? "תבנית הודעת הסיכום" : "בלי תבנית הודעה"} · {p.duty_phrases} ניסוחי מלווים ·{" "}
+            {p.rota_duties === 1 ? "תורנות אחת" : `${p.rota_duties} תורנויות`} · {p.rota_prep_tasks === 1 ? "משימת הכנה אחת למוצ״ש" : `${p.rota_prep_tasks} משימות הכנה למוצ״ש`} ·{" "}
+            {p.rota_shifts ? "שעות המשמרות שנקבעו" : "בלי שעות משמרות שנקבעו (נשארות של אשתקד)"}
           </dd>
           <dt className="text-ink-soft">יושבתו</dt>
           <dd data-dry="deactivate">
@@ -278,6 +281,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
                 </li>
               )}
               <li>כל הקישורים של המחזור מבוטלים: קישורי המלווים, ההרשמה למכריכה לכריכה והלו"ז. הם לא ייפתחו יותר.</li>
+              <li>הטלפונים של ראשי הקבוצות בתורנויות.</li>
               <li>מוני מגבלת הקצב של הקישורים (טביעות חד-כיווניות של כתובות ה-IP של מי שפתח/ה אותם).</li>
             </ul>
           </div>
@@ -286,6 +290,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
               <li>השיעורים, הלו"ז, «איך עבר», ידע ואבני דרך, קבצי המקורות ותוכניות זמני הזיכרון.</li>
               <li>שמות החניכים וההרשמות למכריכה לכריכה (שמות בלבד), והסימונים של המלווים.</li>
               <li>פרטי הקשר של המרצים ואנשי הקשר של המשפחות: הם לכל השנים, ומשמשים בשנה הבאה.</li>
+              <li>התורנויות: המכינות, הקבוצות ושמות ראשי הקבוצות, השיבוצים, משמרות הצוות והכנות מוצ״ש.</li>
               <li>חברי הצוות (את ההשבתה עושים בפתיחת המחזור הבא).</li>
             </ul>
           </Fold>
@@ -336,6 +341,7 @@ export function PurgePanel({ editions, reload }: { editions: Edition[]; reload: 
                 )}
                 <li>{report.r.links_revoked === 1 ? "קישור אחד בוטל." : `${report.r.links_revoked} קישורים בוטלו.`}</li>
                 <li>{report.r.link_hits === 1 ? "מונה אחד של מגבלת הקצב נמחק." : `${report.r.link_hits} מונים של מגבלת הקצב נמחקו.`}</li>
+                <li>{report.r.rota_contacts === 1 ? "הטלפון של ראש/ת קבוצה אחד/ת נמחק." : `${report.r.rota_contacts} טלפונים של ראשי קבוצות נמחקו.`}</li>
               </ul>
               <p className="text-xs text-ink-soft">נרשם ביומן הפעולות של המחזור, עם המספרים בלבד.</p>
             </div>

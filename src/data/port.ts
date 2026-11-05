@@ -7,6 +7,7 @@ import type { LinksPort } from "./links";
 import type { MemorialPort } from "./memorial";
 import type { OutputsPort } from "./outputs";
 import type { ReviewsPort } from "./reviews";
+import type { RotaPort } from "./rota";
 import type { SettingsPort } from "./settings";
 import type { SourcesPort } from "./sources";
 import type { SpeakerPort } from "./speakers";
@@ -66,4 +67,6 @@ export interface DataPort {
   readonly imports: ImportPort;
   /** «איך עבר» after the week (src/data/reviews.ts): the edition's, a save, a speaker's across the years, the returning speakers. */
   readonly reviews: ReviewsPort;
+  /** «תורנויות» (v16): cohorts, groups, duties, assignments, staff shifts, preparations, the heads' phones (src/data/rota.ts). */
+  readonly rota: RotaPort;
 }

@@ -12,6 +12,22 @@ export function GenderDot({ gender, className = "" }: { gender: Gender | null; c
   return <span role="img" aria-label={label} title={label} className={`inline-block size-2 rounded-full shrink-0 ${color} ${className}`} />;
 }
 
+/**
+ * A warning's or a note's mark, beside its words: «!» or «i» in a small circle — never an emoji (Ein Prat's design
+ * system has none, and no unicode-as-icons). Decorative: the list's own label and the words say it.
+ */
+export function SeverityMark({ severity, size = "md", className = "" }: { severity: "warn" | "info"; size?: "sm" | "md"; className?: string }) {
+  // the size is the component's own (no class merging here: a second size class would lose to the stylesheet's order)
+  return (
+    <span
+      aria-hidden
+      className={`inline-grid shrink-0 place-items-center rounded-full leading-none font-extrabold ${size === "sm" ? "size-3.5 text-[9px]" : "size-4 text-[10px]"} ${severity === "warn" ? "bg-amber-200 text-amber-950" : "bg-navy text-white"} ${className}`}
+    >
+      {severity === "warn" ? "!" : "i"}
+    </span>
+  );
+}
+
 export function Chip({ children, tone = "plain", title }: { children: ReactNode; tone?: "plain" | "warn" | "bad" | "ok" | "info"; title?: string }) {
   const tones = {
     plain: "bg-sand-soft border-line text-ink-soft",

@@ -213,7 +213,7 @@ test.describe("the call on the card (v14)", () => {
     const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "ד״ר מרצה 09" });
     await expect(card).toContainText("שוחחנו, מחכים לתשובה");
     await expect(card.locator("[data-call-points]")).toBeHidden(); // folded
-    await card.getByText("📞 נקודות לשיחה").click();
+    await card.getByText("נקודות לשיחה", { exact: true }).click();
     const points = card.locator("[data-call-points]");
     await expect(points).toContainText("*אני מדריך/ה (הדגמה) מהמדרשה הגבוהה בעין פרת");
     await expect(points).toContainText("*נשמח שתגיע ללמד שעה ורבע, תסכים?");

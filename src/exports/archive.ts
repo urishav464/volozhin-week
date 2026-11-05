@@ -15,23 +15,30 @@
 //   sources.json     the sources' files: what each is, whose, where in the zip
 //   reviews.json     «איך עבר» of the edition's lessons (milestone 6) — opinions
 //                    about the speakers, as its admins and content read them
+//   rota.json        «תורנויות» (milestone 7): load_rota's answer — the cohorts,
+//                    when each is on campus, the groups and their heads' names,
+//                    the duties, the assignments, the staff's shifts and the
+//                    Saturday-night preparations; never a phone
 //   sources/<day>/   the files themselves — only when «כולל קבצי המקורות» was
 //                    asked for; a file that could not be read is listed in
 //                    sources.json and README.txt, not silently left out
 //   tracking.xlsx    the tracking table, without phones
 //   PERSONAL-DATA_contacts_and_transport.json — only when the caller's RLS
 //                    showed any (a global admin): the speakers' contacts, the
-//                    lessons' transport details and the families' contact persons
+//                    lessons' transport details, the families' contact persons
 //                    of the fallen this edition has a plan for — never another
-//                    year's family (admins only — so only here), apart, named so
-//                    nobody mistakes it.
+//                    year's family (admins only — so only here) — and the group
+//                    heads' phones the caller may see (get_rota_contacts), apart,
+//                    named so nobody mistakes it.
 import { strToU8, zipSync } from "fflate";
 import type { KkData } from "../data/kk";
 import type { Fallen, FallenContacts } from "../data/memorial";
 import type { LessonReview } from "../data/reviews";
 import type { ArchiveExtras } from "../data/outputs";
+import type { RotaContact, RotaData } from "../data/rota";
 import { fallenName } from "../domain/memorial";
 import { displayName } from "../domain/names";
+import { codeOf } from "../domain/rota";
 import { DAY_NAMES, fmt } from "../domain/time";
 import type { SourceFile, Week } from "../domain/types";
 import { PERSONAL_FILE } from "./download";
@@ -54,9 +61,13 @@ export interface ArchiveMore {
   sources: { bytes: ReadonlyMap<number, Uint8Array>; skipped: { id: number; name: string }[] } | null;
   /** «איך עבר» (milestone 6) as the caller reads them (load_reviews); null: not read. */
   reviews?: LessonReview[] | null;
+  /** «תורנויות» (milestone 7, load_rota — never a phone); null or absent: not read. */
+  rota?: RotaData | null;
+  /** The group heads' phones the caller may see (get_rota_contacts) — personal data, for the personal-data file only. */
+  rotaPhones?: RotaContact[];
 }
 
-export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null, reviews: null };
+export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null, reviews: null, rota: null, rotaPhones: [] };
 
 /**
  * The fallen this edition has a plan for (placed or in the tray), in id order: the only families whose contact person
@@ -132,12 +143,15 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     "- memorial.json: תוכניות זמני הזיכרון של המחזור ורשימת החללים של כל השנים (בלי פרטי קשר).",
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
     more.reviews ? "- reviews.json: «איך עבר» לכל שיעור שנכתב לו — דעות על המרצים. לשמור במקום מוגן, כמו כל הארכיון." : "- «איך עבר» לא נקרא בייצוא הזה.",
+    more.rota
+      ? "- rota.json: התורנויות — המכינות ומתי כל אחת בקמפוס, הקבוצות ושמות ראשי הקבוצות, התורנויות, השיבוצים, משמרות הצוות ומשימות מוצ״ש–ראשון (בלי טלפונים)."
+      : "- התורנויות לא נקראו בייצוא הזה.",
     more.sources
       ? `- sources/: קבצי המקורות עצמם, בתיקייה לכל יום.${skipped.length ? ` ${skipped.length} קבצים לא נקראו ולא נכללו: ${skipped.map((x) => x.name).join(", ")}.` : ""}`
       : "- קבצי המקורות עצמם לא נכללו (אפשר לבחור «כולל קבצי המקורות»).",
     "- tracking.xlsx: טבלת המעקב (בלי טלפונים).",
     personal
-      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים) ואנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות).`
+      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים), אנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות) והטלפונים של ראשי הקבוצות בתורנויות.`
       : "- אין בקובץ הזה פרטי קשר או פרטי הסעה: מי שייצא/ה לא רשאי/ת לראות אותם.",
     "",
     personal
@@ -157,7 +171,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const edition = {
     format: ARCHIVE_FORMAT,
-    format_version: 4, // v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
+    format_version: 5, // v16: rota.json; v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
     schema_version: input.schemaVersion,
     exported_at: input.exportedAt,
     edition: week.edition,
@@ -209,6 +223,13 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
       reviews: more.reviews.map((r) => ({ ...r, speaker: r.speaker_id != null ? (speakerName.get(r.speaker_id) ?? null) : null, lesson_title: lessonTitleOf(week, r.lesson_id) })),
     });
   }
+  if (more.rota) {
+    // load_rota's answer, as it came — never a phone: a head's phone is its own table, and a stray key is dropped here too
+    const { cohorts, presence, groups, duties, assignments, staff, prep } = more.rota;
+    files["rota.json"] = strToU8(
+      JSON.stringify({ format: ARCHIVE_FORMAT, exported_at: input.exportedAt, shifts: week.edition.settings?.rota_shifts ?? null, cohorts, presence, groups, duties, assignments, staff, prep }, (k, v) => (k === "head_phone" ? undefined : v), 2),
+    );
+  }
   const included = more.sources?.bytes;
   const skipped = new Set((more.sources?.skipped ?? []).map((x) => x.id));
   const lessonTitle = new Map(week.lessons.map((l) => [l.id, l.title]));
@@ -235,18 +256,22 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const transport = extras.transport.filter((t) => t.pickup_address || t.pickup_time || t.driver_name || t.driver_phone || t.arranged);
   const planned = new Set(plannedFallen(week));
   const families = more.fallenContacts.filter((c) => planned.has(c.fallen_id) && (c.contact_name || c.relation || c.phone || c.email || c.note));
-  const personal = contacts.length > 0 || transport.length > 0 || families.length > 0;
+  // the heads' phones the caller was given, of this edition's groups only, by their code
+  const rotaGroups = new Map((more.rota?.groups ?? []).map((g) => [g.id, g]));
+  const heads = (more.rotaPhones ?? []).filter((c) => c.head_phone && rotaGroups.has(c.group_id)).sort((a, b) => a.group_id - b.group_id);
+  const personal = contacts.length > 0 || transport.length > 0 || families.length > 0 || heads.length > 0;
   if (personal) {
     const name = new Map(week.speakers.map((s) => [s.id, displayName(s)]));
     const fallen = new Map(more.fallen.map((f) => [f.id, f.name]));
     files[PERSONAL_FILE] = json({
-      warning: "מידע אישי: פרטי קשר של מרצים, פרטי הסעה ואנשי הקשר של משפחות שכולות. לשמור במקום מוגן, לא לשתף ולא להעלות לשום מקום.",
+      warning: "מידע אישי: פרטי קשר של מרצים, פרטי הסעה, אנשי הקשר של משפחות שכולות והטלפונים של ראשי הקבוצות. לשמור במקום מוגן, לא לשתף ולא להעלות לשום מקום.",
       format: ARCHIVE_FORMAT,
       exported_at: input.exportedAt,
       edition: { id: week.edition.id, label: week.edition.label },
       speaker_contacts: contacts.map((c) => ({ speaker: name.get(c.speaker_id) ?? null, ...c })),
       transport_details: transport,
       family_contacts: families.map((c) => ({ fallen: fallen.get(c.fallen_id) ?? null, ...c })),
+      rota_head_phones: heads.map((c) => ({ group: codeOf(more.rota!, rotaGroups.get(c.group_id)!), group_id: c.group_id, head_phone: c.head_phone })),
     });
   }
   files["README.txt"] = strToU8(readme(input, more, personal));

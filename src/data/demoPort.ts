@@ -5,6 +5,7 @@ import type { CellTarget, EscortPatch, LessonPatch, PaymentItem, ReshapeOp, Sour
 import { DemoKnowledge, type DemoKnowledgeStore, demoKnowledge, type DemoMilestone, DemoOutputs } from "./demoOutputs";
 import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
+import { DemoRota, seedDemoRota } from "./demoRota";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
 import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
 import { DemoReviews } from "./demoReviews";
@@ -13,7 +14,7 @@ import { DemoMemorial } from "./demoMemorial";
 import { DemoImports, type DemoImportStore } from "./demoImports";
 import type { Sample } from "./demoFiles";
 import { DemoSources, type DemoSourceStore } from "./demoSources";
-import { type Actor, emptyKk, Engine, type PoolShared } from "./engine";
+import { type Actor, emptyKk, emptyRota, Engine, type PoolShared } from "./engine";
 import type { Note } from "./knowledge";
 import type { ExportSnapshot } from "./outputs";
 import type { DataPort } from "./port";
@@ -42,6 +43,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   readonly links: DemoLinks;
   /** מכריכה לכריכה. */
   readonly kk: DemoKk;
+  /** «תורנויות» (v16): `shared.rota` and the heads' phones beside it (src/data/demoRota.ts). */
+  readonly rota: DemoRota;
   /** What a link's public page reads: the anon functions on the engine. */
   readonly public: DemoPublic;
   /** The sources' files (v10): the engine's bucket, the bytes in this tab. */
@@ -75,7 +78,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.shared = {
       contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
       fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
-      importNotes: {},
+      importNotes: {}, rota: emptyRota(), rotaContacts: {},
     };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
@@ -94,6 +97,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.knowledge = new DemoKnowledge(this);
     this.links = new DemoLinks(this);
     this.kk = new DemoKk(this);
+    this.rota = new DemoRota(this, actor);
     this.public = new DemoPublic(this);
     this.sources = new DemoSources(this);
     this.memorial = new DemoMemorial(this);
@@ -103,6 +107,9 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.seeding = true;
     seedDemoLinks(this.newEngine(this.engine(week.edition.id).week, { memberId: 1, role: "admin", global: true }));
     this.seeding = false;
+    // «תורנויות» (v16): cohorts, groups, presence, last year's duties, staff shifts, preparations — no assignments
+    const logistics = this.members.find((m) => m.role === "logistics" && m.edition_id === week.edition.id) ?? null;
+    seedDemoRota(this.shared, this.engine(week.edition.id).week.edition, logistics);
   }
 
   private newEngine(week: Week, actor: Actor = this.actor): Engine {

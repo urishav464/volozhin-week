@@ -140,6 +140,7 @@ test.describe("demo build", () => {
     await expect(report).toContainText("נמחק המידע האישי של הדגמה");
     await expect(report).toContainText(/פרטי הסעה של [1-9]\d* שיעורים נמחקו/);
     await expect(report).toContainText(/[1-9]\d* קישורים בוטלו/);
+    await expect(report).toContainText("17 טלפונים של ראשי קבוצות נמחקו"); // v16: the demo's group heads
     await expect(purge.locator("[data-purged]")).toContainText("נמחק ב-");
     await expect(purge.locator("[data-export-first]")).toHaveCount(0); // the «export first» warning is for before — not over the report
     // the checklist's third step is done
@@ -149,6 +150,7 @@ test.describe("demo build", () => {
     await button.click();
     await expect(report).toContainText("פרטי הסעה של 0 שיעורים נמחקו");
     await expect(report).toContainText("0 קישורים בוטלו");
+    await expect(report).toContainText("0 טלפונים של ראשי קבוצות נמחקו");
 
     // «קישורים»: every link of the edition revoked
     await page.getByRole("tab", { name: "קישורים" }).click();
@@ -174,6 +176,8 @@ test.describe("demo build", () => {
     await dry.click();
     await expect(page.locator("[data-dry=archive]")).toHaveText("אף מחזור (אין מחזור אמיתי פעיל)");
     await expect(page.locator("[data-dry=stays]")).toContainText(/\d+ מרצים · \d+ קטגוריות · 9 חללים/);
+    // v16: no real edition to carry «תורנויות» from — nothing, and last year's shifts
+    await expect(page.locator("[data-dry=copy]")).toContainText("0 תורנויות · 0 משימות הכנה למוצ״ש · בלי שעות משמרות שנקבעו (נשארות של אשתקד)");
 
     // a real edition, with a content member: the dry run would archive it and deactivate one
     await page.getByLabel("שם המחזור").fill("מחזור לדוגמה");

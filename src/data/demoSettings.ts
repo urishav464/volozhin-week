@@ -115,9 +115,23 @@ export class DemoSettings implements SettingsPort {
         ...(prev?.confirm_template != null ? { confirm_template: prev.confirm_template } : {}),
         ...(prev?.call_template != null ? { call_template: prev.call_template } : {}),
         ...(prev?.duty_phrases != null ? { duty_phrases: structuredClone(prev.duty_phrases) } : {}),
+        // v16: the shifts' cuts and names
+        ...(prev?.rota_shifts != null ? { rota_shifts: structuredClone(prev.rota_shifts) } : {}),
       },
     };
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
+    // v16 «תורנויות»: the duties (what each is and needs) and the Saturday-night preparations (no group, not done) —
+    // never the cohorts, presence, groups, heads, assignments or staff shifts
+    const rota = this.s.shared.rota;
+    if (prevEdition) {
+      for (const d of rota.duties.filter((x) => x.edition_id === prevEdition.id).sort((a, b) => a.sort - b.sort || a.id - b.id)) {
+        const { id: _id, edition_id: _e, ...fields } = d;
+        rota.duties.push({ ...fields, id: nextId(rota.duties), edition_id: edition.id });
+      }
+      for (const t of rota.prep.filter((x) => x.edition_id === prevEdition.id).sort((a, b) => a.sort - b.sort || a.id - b.id)) {
+        rota.prep.push({ id: nextId(rota.prep), edition_id: edition.id, text: t.text, group_id: null, done: false, sort: t.sort });
+      }
+    }
     // v8: and its milestones — titles and W−n, none of them done
     const carried = this.s.milestones.filter((m) => prevEdition && m.edition_id === prevEdition.id).sort((a, b) => b.days_before - a.days_before || a.id - b.id);
     // milestones_guard stamps the starter (app.my_member_id: the new edition has no row yet — their global one)
@@ -143,6 +157,9 @@ export class DemoSettings implements SettingsPort {
       confirm_template: from?.settings.confirm_template != null,
       call_template: from?.settings.call_template != null,
       duty_phrases: from?.settings.duty_phrases?.length ?? 0,
+      rota_duties: from ? this.s.shared.rota.duties.filter((d) => d.edition_id === from.id).length : 0,
+      rota_prep_tasks: from ? this.s.shared.rota.prep.filter((t) => t.edition_id === from.id).length : 0,
+      rota_shifts: from?.settings.rota_shifts != null,
       deactivate: deactivateTeam ? of(false) : 0,
       admins_stay: of(true),
       stays: {

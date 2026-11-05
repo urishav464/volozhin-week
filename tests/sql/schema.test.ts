@@ -51,22 +51,27 @@ const PEER_ADMIN = "peer.admin@example.org";
 // v15 (מכריכה לכריכה by the week) gave kk_add_group (p_edition, p_fields) and
 // kk_unplace (p_edition, p_roster) new signatures; the old ones are dropped, so
 // each name is still one function here — an overload left over would show twice.
+// v16 («תורנויות», the campus duty roster) added load_rota and get_rota_contacts —
+// both invoker, under the tables' policies — and set_rota_contact (a group head's
+// phone) and set_rota_shifts (an edition admin's); and the two policies'
+// predicates, may_write_rota and may_see_rota_contacts. app.rota_shift_active runs
+// inside the assignments' guard only (tests/sql/rota.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
-  "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_import_note", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
+  "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_import_note", "get_rota_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
   "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
-  "kk_update_group", "load_kk", "load_reviews", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
+  "kk_update_group", "load_kk", "load_reviews", "load_rota", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
   "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
   "set_book_order", "set_call_template", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
   "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
-  "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
+  "set_rota_contact", "set_rota_shifts", "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
   "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_fallen", "may_see_fallen_contacts",
-  "may_see_transport", "may_upload_source", "my_email", "my_member_id", "my_role", "name_key",
+  "may_see_rota_contacts", "may_see_transport", "may_upload_source", "may_write_rota", "my_email", "my_member_id", "my_role", "name_key",
 ];
 
 describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regime) => {
@@ -144,7 +149,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       await db.query(
         "alter publication supabase_realtime add table public.speaker_contacts, public.members, public.roster, public.transport_details, public.export_snapshots, public.notes, public.milestones, " +
           "public.share_links, public.share_link_hits, public.escort_ticks, public.kk_groups, public.kk_leaders, public.kk_signups, public.book_orders, public.source_files, " +
-          "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes",
+          "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes, " +
+          // v16: every table of «תורנויות» — the group heads' phones among them
+          "public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_group_contacts, public.rota_duties, public.rota_assignments, " +
+          "public.rota_staff_shifts, public.rota_prep_tasks",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -175,6 +183,14 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect(await definer("anon")).toEqual(["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "schedule_view"]);
       expect((await db.query("select prosecdef from pg_proc where oid = 'public.ping()'::regprocedure")).rows[0].prosecdef).toBe(false);
     });
+
+    it("reads «תורנויות» as the caller (load_rota, get_rota_contacts: invoker, stable) — only the two writes are definer", async () => {
+      const fn = async (sig: string) => (await db.query("select prosecdef, provolatile from pg_proc where oid = $1::regprocedure", [sig])).rows[0];
+      expect(await fn("public.load_rota(bigint)")).toEqual({ prosecdef: false, provolatile: "s" });
+      expect(await fn("public.get_rota_contacts(bigint)")).toEqual({ prosecdef: false, provolatile: "s" });
+      expect((await fn("public.set_rota_contact(bigint, text)")).prosecdef).toBe(true);
+      expect((await fn("public.set_rota_shifts(bigint, jsonb)")).prosecdef).toBe(true);
+    });
   });
 
   describe("anon (the publishable key, no sign-in)", () => {
@@ -185,7 +201,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select * from public.editions"))).toBe("42501");
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
-        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability"]) {
+        for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability",
+                         "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
@@ -193,7 +210,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select app.link_for('x', 'escort')"))).toBe("42501");
         // v12: nothing of «איך עבר», the purge or the dry run; v14: no slot of availability, no call's points
         for (const f of ["public.load_reviews(1)", "public.speaker_reviews(1)", "public.edition_returning(1)", "public.purge_edition_private(1, 'x')", "public.start_edition_preview()",
-                         "public.save_lesson_review(1, 0, 'x', null, null, false, null)", "public.set_slot_availability(1, 1, 0, 1, 'can')", "public.set_call_template(1, 'x')"]) {
+                         "public.save_lesson_review(1, 0, 'x', null, null, false, null)", "public.set_slot_availability(1, 1, 0, 1, 'can')", "public.set_call_template(1, 'x')",
+                         // v16: nothing of «תורנויות»
+                         "public.load_rota(1)", "public.get_rota_contacts(1)", "public.set_rota_contact(1, 'x')", "public.set_rota_shifts(1, null)",
+                         "app.may_write_rota(1)", "app.may_see_rota_contacts(1)", "app.rota_shift_active(1, 0, 0)"]) {
           expect(await sqlstate(q(`select ${f}`)), f).toBe("42501");
         }
       });
@@ -229,7 +249,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(15);
+        expect(w.schema_version).toBe(16);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -311,6 +331,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     // export_snapshots INSERT by column only — never UPDATE or DELETE: a
     // snapshot is what an export held. No author, time, version or done_by is
     // ever a browser's to write (the guard triggers stamp them).
+    // v16: the seven tables of «תורנויות» likewise (DELETE on the row, INSERT and
+    // UPDATE by column — never an id, a row's edition once written, a presence
+    // row's update or an assignment's source on an update); the group heads'
+    // phones SELECT only (set_rota_contact writes them).
     const TABLE_WRITES: Record<string, string> = {
       editions: "DELETE,INSERT,SELECT,UPDATE",
       members: "DELETE,SELECT",
@@ -319,6 +343,13 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       categories: "DELETE,SELECT",
       notes: "DELETE,SELECT",
       milestones: "DELETE,SELECT",
+      rota_cohorts: "DELETE,SELECT",
+      rota_presence: "DELETE,SELECT",
+      rota_groups: "DELETE,SELECT",
+      rota_duties: "DELETE,SELECT",
+      rota_assignments: "DELETE,SELECT",
+      rota_staff_shifts: "DELETE,SELECT",
+      rota_prep_tasks: "DELETE,SELECT",
     };
     const COLUMN_WRITES = [
       "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
@@ -329,6 +360,20 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       "notes.body_md:INSERT,UPDATE", "notes.edition_id:INSERT", "notes.section:INSERT,UPDATE", "notes.title:INSERT,UPDATE",
       "rooms.edition_id:INSERT", "rooms.name:INSERT,UPDATE", "rooms.sort:INSERT,UPDATE",
       "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
+      "rota_assignments.day:INSERT,UPDATE", "rota_assignments.duty_id:INSERT,UPDATE", "rota_assignments.edition_id:INSERT",
+      "rota_assignments.group_id:INSERT,UPDATE", "rota_assignments.shift:INSERT,UPDATE", "rota_assignments.source:INSERT",
+      "rota_cohorts.diets:INSERT,UPDATE", "rota_cohorts.edition_id:INSERT", "rota_cohorts.letter:INSERT,UPDATE", "rota_cohorts.name:INSERT,UPDATE",
+      "rota_cohorts.sort:INSERT,UPDATE",
+      "rota_duties.description:INSERT,UPDATE", "rota_duties.edition_id:INSERT", "rota_duties.min_people:INSERT,UPDATE", "rota_duties.name:INSERT,UPDATE",
+      "rota_duties.need_afternoon:INSERT,UPDATE", "rota_duties.need_morning:INSERT,UPDATE", "rota_duties.need_night:INSERT,UPDATE", "rota_duties.sort:INSERT,UPDATE",
+      "rota_groups.cohort_id:INSERT,UPDATE", "rota_groups.edition_id:INSERT", "rota_groups.head_name:INSERT,UPDATE", "rota_groups.number:INSERT,UPDATE",
+      "rota_groups.size:INSERT,UPDATE",
+      "rota_prep_tasks.done:INSERT,UPDATE", "rota_prep_tasks.edition_id:INSERT", "rota_prep_tasks.group_id:INSERT,UPDATE", "rota_prep_tasks.sort:INSERT,UPDATE",
+      "rota_prep_tasks.text:INSERT,UPDATE",
+      "rota_presence.cohort_id:INSERT", "rota_presence.day:INSERT", "rota_presence.edition_id:INSERT", "rota_presence.shift:INSERT",
+      "rota_staff_shifts.cohort_id:INSERT,UPDATE", "rota_staff_shifts.day:INSERT,UPDATE", "rota_staff_shifts.edition_id:INSERT",
+      "rota_staff_shifts.end_min:INSERT,UPDATE", "rota_staff_shifts.kind:INSERT,UPDATE", "rota_staff_shifts.member_id:INSERT,UPDATE",
+      "rota_staff_shifts.name:INSERT,UPDATE", "rota_staff_shifts.note:INSERT,UPDATE", "rota_staff_shifts.start_min:INSERT,UPDATE",
     ];
 
     it("are SELECT everywhere it reads, row writes only on editions, column writes on the settings, knowledge and snapshot tables, never TRUNCATE/REFERENCES/TRIGGER", async () => {

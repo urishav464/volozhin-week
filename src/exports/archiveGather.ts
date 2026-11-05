@@ -6,7 +6,9 @@
 // speakers the edition touched); and, when «כולל קבצי המקורות» is asked for, the sources' bytes
 // through signed URLs a batch at a time (a file that cannot be read is skipped
 // and named, never silently left out). A cancel stops between files. And «איך עבר»
-// (milestone 6) as the caller reads it.
+// (milestone 6) as the caller reads it, and «תורנויות» (milestone 7): load_rota (no
+// phone) and the group heads' phones the caller may see (get_rota_contacts — one
+// call; none for whoever may not), for the personal-data file only.
 import type { DataPort } from "../data/port";
 import type { Week } from "../domain/types";
 import type { ArchiveExtras } from "../data/outputs";
@@ -23,7 +25,9 @@ export async function gatherArchive(port: DataPort, editionId: number, touchedSp
     if (c && Object.values(c).some((v) => v != null)) fallenContacts.push({ fallen_id: id, ...c });
   }
   const reviews = await port.reviews.ofEdition(editionId); // «איך עבר» (v12): its admins and content read them
-  return { week, extras, more: { kk, fallen, fallenContacts, sources: null, reviews } };
+  const rota = await port.rota.load(editionId); // «תורנויות» (v16): never a phone
+  const rotaPhones = await port.rota.contacts(editionId); // the heads' phones this caller may see: [] for the others
+  return { week, extras, more: { kk, fallen, fallenContacts, sources: null, reviews, rota, rotaPhones } };
 }
 
 

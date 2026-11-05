@@ -14,7 +14,7 @@ import { statusLabel, vettingLabel } from "../lib/labels";
 import { DEFAULT_MAX_CATEGORY_PER_DAY } from "../rules/warnings";
 import { Button, Confirm, Fold, INPUT, useFocusBack } from "../screens/settings/kit";
 import { CallPoints, CallResults } from "../screens/speakers/call";
-import { Chip, GenderDot, NO_TOPIC_COLOR, STAGE_DOT } from "./bits";
+import { Chip, GenderDot, NO_TOPIC_COLOR, SeverityMark, STAGE_DOT } from "./bits";
 import { needText } from "./DayHeader";
 import { rowActive } from "./layout";
 import { type Fit, type GridModel, POOL_SECTION_LABEL, type PoolSection, fitFor, guessedCategory, pitchSpeaker, poolSection, searchKey, speakerMatches } from "./model";
@@ -162,7 +162,7 @@ export function WarningList({ items }: { items: { key: string; severity: "info" 
     <ul className="space-y-1.5" aria-label="אזהרות">
       {items.map((w) => (
         <li key={w.key} className={`flex gap-2 rounded-lg px-3 py-2 text-sm leading-snug ring-1 ring-inset ${w.severity === "warn" ? "bg-amber-50 text-amber-950 ring-amber-200" : "bg-sky-soft text-navy ring-sky/25"}`}>
-          <span aria-hidden>{w.severity === "warn" ? "⚠" : "ℹ"}</span>
+          <SeverityMark severity={w.severity} className="mt-0.5" />
           <span>{w.message}</span>
         </li>
       ))}
@@ -468,7 +468,7 @@ function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions 
         <div data-card-actions className="mt-2 space-y-2">
           {mine && calling && (
             <>
-              <Fold size="sm" title="📞 נקודות לשיחה">
+              <Fold size="sm" title="נקודות לשיחה">
                 <CallPoints week={model.week} speakerGender={g} memberId={me} />
               </Fold>
               <CallResults status={status} gender={g} busy={busy === "call"} onResult={(st, note) => act("call", () => actions.callResult(a, st, note))} />
@@ -877,7 +877,7 @@ function ChooserRow({
         {shown.name}
       </span>,
     );
-  if (already > 0) notes.push(<span className={full ? "font-semibold text-amber-800" : undefined}>{full ? `⚠ כבר ${already} היום (${limit.rule})` : `כבר ${already} היום`}</span>);
+  if (already > 0) notes.push(<span className={full ? "font-semibold text-amber-800" : undefined}>{full ? `כבר ${already} היום (${limit.rule})` : `כבר ${already} היום`}</span>);
   return (
     <li data-chooser-speaker={s.id} className="flex items-center gap-2 border-s-[3px] py-1.5 ps-2" style={{ borderInlineStartColor: shown?.color ?? "transparent" }}>
       <GenderDot gender={s.gender} />
