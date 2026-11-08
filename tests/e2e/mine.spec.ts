@@ -186,10 +186,11 @@ test.describe("demo build", () => {
       },
     ]);
     await page.goto(`${demoUrl()}/settings/import`);
-    await page.getByRole("radio", { name: "גיליון המעקב של אשתקד" }).check();
+    await page.locator("summary", { hasText: "קבצים של אשתקד" }).click(); // last year's two files are folded under the candidates
+    await page.getByRole("radio", { name: "גיליון המעקב" }).check();
     await page.locator('input[type="file"]').setInputFiles({ name: "מעקב לדוגמה.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(bytes) });
     await page.getByLabel("שם המחזור בארכיון").fill("ארכיון לדוגמה");
-    await page.getByRole("button", { name: "בדיקה מול המאגר" }).click();
+    // checked against the pool by itself: «ייבוא» once it has
     await page.getByRole("button", { name: "ייבוא", exact: true }).click();
     await page.getByRole("group", { name: "אישור", exact: true }).getByRole("button", { name: "ייבוא" }).click();
     await expect(toast(page, "הייבוא נשמר")).toBeVisible();
