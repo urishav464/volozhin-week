@@ -330,6 +330,42 @@ test.describe("demo build", () => {
     await expect(page.getByText("טלפון לדוגמה").filter({ visible: true }).first()).toBeVisible();
     await noSidewaysScroll(page);
   });
+
+  test("the week's «תורנויות» lens: the duties alone, each shift's codes and its lead, a shift to the board", async ({ page }) => {
+    const wide = (page.viewportSize()?.width ?? 0) >= 1024;
+    await page.goto(`${demoUrl()}/logistics/rota`);
+    await page.getByRole("button", { name: "הצעה הוגנת" }).click();
+    await page.getByRole("button", { name: "החלת ההצעה" }).click();
+    await expect(toast(page, /שיבוצים מוצעים נוספו/)).toBeVisible();
+    // the week, in the app (the demo keeps its data in memory): the fourth lens
+    await page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "השבוע" }).click();
+    await expect(page.getByRole("radiogroup", { name: "עדשה" }).getByRole("radio")).toHaveText(["גיוון", "התקדמות", "אחריות", "תורנויות"]);
+    await expect(page.locator("[data-lesson-id]").first()).toBeVisible();
+    await page.getByRole("radio", { name: "תורנויות" }).click();
+    await expect(page.getByRole("radio", { name: "תורנויות" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator("[data-rota-week]")).toBeVisible();
+    await expect(page.locator("[data-lesson-id]")).toHaveCount(0); // no lesson in it
+    // Sunday morning: «בית מדרש» first, its codes dashed («מוצע»), the shift's lead, said in words
+    const sunday = page.locator('[data-lens-shift="0:0"]');
+    await expect(sunday.locator('[data-lens-duty="בית מדרש"] [data-lens-chip][data-suggested]').first()).toBeVisible();
+    await expect(sunday).toHaveAttribute("aria-label", /^ראשון, בוקר: בית מדרש: [אבנ]\d.* · אחראי\/ת: /);
+    await expect(page.getByText("שובצה מ«הצעה הוגנת» ועוד לא נגעו בה")).toBeVisible();
+    if (wide) {
+      // the days' headers stand over their own columns (the corner holds the shifts' column)
+      const head = (await page.getByRole("columnheader", { name: /^ראשון/ }).boundingBox())!;
+      const cell = (await sunday.boundingBox())!;
+      expect(Math.abs(head.x + head.width - (cell.x + cell.width))).toBeLessThan(2);
+    }
+    // Thursday has no night (the week closes at 19:00): hatched, not a link
+    if (!wide) await page.getByRole("tab", { name: "חמישי" }).click();
+    await expect(page.locator('[data-lens-shift="4:2"]')).toHaveAttribute("title", "מחוץ לשעות השבוע");
+    await expect(page.locator('a[data-lens-shift="4:2"]')).toHaveCount(0);
+    await expect(page.locator('a[data-lens-shift="4:1"]')).toBeVisible();
+    await noSidewaysScroll(page);
+    // a shift leads to the board (the demo's member is an admin)
+    await page.locator('a[data-lens-shift="4:1"]').click();
+    await expect(page).toHaveURL(/\/logistics\/rota$/);
+  });
 });
 
 // ------------------------------------------------------------------ the mock build: on the wire
@@ -590,5 +626,24 @@ test.describe("mock build", () => {
     await expect(page.getByText("הדבקת רשימה")).toHaveCount(0);
     expect(sb.writes).toEqual([]);
     expect(sb.rpc.get("get_rota_contacts")).toBeUndefined();
+  });
+  test("the week's «תורנויות» lens: load_rota only once it is on, never a phone; a content member's shift leads to the printout", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb, session } = await signedIn(page, "content");
+    await page.goto(`${mockUrl()}/`);
+    await expect(page.locator("[data-lesson-id]").first()).toBeVisible();
+    expect(sb.rpc.get("load_rota")).toBeUndefined(); // the other lenses never read it
+    await page.getByRole("radio", { name: "תורנויות" }).click();
+    await expect(page.locator('[data-lens-shift="0:0"] [data-lens-chip="א1"]')).toHaveAttribute("data-suggested", "true");
+    await expect(page.locator('[data-lens-shift="0:1"] [data-lens-chip="א2"]')).not.toHaveAttribute("data-suggested");
+    await expect(page.locator('[data-lens-shift="0:0"]')).toHaveAttribute("aria-label", "ראשון, בוקר: מטבח: א1");
+    await expect(page.locator('[data-lens-shift="1:0"]')).toHaveAttribute("aria-label", "שני, בוקר: אין שיבוצים");
+    expect(sb.rpc.get("load_rota")).toEqual([{ p_edition: 7 }]);
+    authed(sb, "/rest/v1/rpc/load_rota", session.access_token);
+    await expect(page.getByRole("link", { name: "ללוח התורנויות" })).toHaveAttribute("href", "/print/rota");
+    await page.locator('a[data-lens-shift="0:0"]').click();
+    await expect(page).toHaveURL(/\/print\/rota$/);
+    expect(sb.calls.some((c) => c.path === "/rest/v1/rpc/get_rota_contacts" || c.path === "/rest/v1/rota_group_contacts")).toBe(false);
+    expect(sb.writes).toEqual([]);
   });
 });

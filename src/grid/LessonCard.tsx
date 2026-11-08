@@ -14,7 +14,8 @@ import { Chip, GenderDot, Initials, NO_TOPIC_COLOR, ReconfirmDot, StageDots } fr
 import { type Fit, type GridModel, fitText, pitchSpeaker } from "./model";
 import { lessonOwner } from "./owners";
 
-export type Lens = "diversity" | "progress" | "owner";
+/** v16 (8.11): «תורנויות» draws the duties alone (src/grid/RotaWeek.tsx) — no card is drawn in it. */
+export type Lens = "diversity" | "progress" | "owner" | "rota";
 /** The «אחריות» lens's colour per handler, and «רק של X» (v13): the others' cards fade. */
 export type CardOwners = { colorOf: Map<number, string>; only: number | "none" | null };
 export { PROGRESS_TONE };

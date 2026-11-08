@@ -331,7 +331,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   the closed cells' times), the rows, one group, the duties and its assignments — no Week, no phone: a future `/g` link would be anon's seventh function
   and waits; `rotaWorkbook` a sheet per page, «מוצ״ש» in gershayim). `start_edition` carries the duties, the preparations and
   the shifts; archive `format_version` 5 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
-  Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16».
+  Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16». The week's fourth lens
+  «תורנויות» (8.11, `src/grid/rotaLens.ts` → `RotaWeek.tsx`) draws the duties alone — `load_rota` only while it is on, never
+  the phones; a shift links to `/logistics/rota` (the edition's logistics and admins) or `/print/rota` (DECISIONS «עדשת התורנויות…»).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

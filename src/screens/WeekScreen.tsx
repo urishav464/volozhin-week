@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { type CellTarget, CommandError, type GridRules, type LessonPatch, type ReshapeOp } from "../data/commands";
+import { handlesLogistics } from "../data/gate";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { byGender, displayName } from "../domain/names";
@@ -23,6 +24,7 @@ import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
 import { buildModel, pitchSpeaker, weekTopics } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
 import { Pool } from "../grid/Pool";
+import { RotaWeek } from "../grid/RotaWeek";
 import { TopicMatrix } from "../grid/TopicMatrix";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
@@ -31,6 +33,7 @@ import { NO_TOPIC_COLOR, STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
 import { CreateSpeaker } from "./speakers/CreateSpeaker";
 import { LessonStages } from "./stages/LessonStages";
 import { MemorialSlotPanel } from "./memorial/SlotPanel";
+import { RotaLoadFailed, useRota } from "./rota/shared";
 import { DraftFiles } from "./stages/SourceFiles";
 import { Button, Fold } from "./settings/kit";
 import { SpeakerSheet } from "./speakers/SpeakerSheet";
@@ -64,6 +67,8 @@ const LENSES: [Lens, string][] = [
   ["diversity", "גיוון"],
   ["progress", "התקדמות"],
   ["owner", "אחריות"],
+  // 8.11: the duties alone, no lesson — read (load_rota) only while it is on
+  ["rota", "תורנויות"],
 ];
 
 export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
@@ -106,6 +111,13 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const actor = actorIn(me, week?.edition ?? editions.find((e) => e.id === editionId));
   const { memberId, isAdmin, canEdit } = actor;
   const cmds = useMemo(() => (editionId != null ? port.commands(editionId) : null), [port, editionId]);
+  // «תורנויות»: the edition's rota, loaded when the lens turns on (and again each time it does) — never its heads' phones
+  const rota = useRota(port, lens === "rota" ? editionId : null);
+  // a speaker to place, or a lesson or a cell opened (the pool on a phone, a warning, «המרצים שלי»): that needs the
+  // lessons — back to the grid
+  useEffect(() => {
+    if (lens === "rota" && (placingId != null || panel?.kind === "lesson" || panel?.kind === "cell")) setLens("diversity");
+  }, [lens, placingId, panel]);
 
   // Sent here from «המרצים שלי» or a speaker sheet elsewhere: place a speaker, or open a lesson — once.
   const location = useLocation();
@@ -350,14 +362,21 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
             type="button"
             role="radio"
             aria-checked={lens === key}
-            onClick={() => setLens(key)}
+            onClick={() => {
+              setLens(key);
+              // no lesson in the duties' lens: nothing to place, no lesson's panel beside it
+              if (key === "rota") {
+                setPlacingId(null);
+                setPanel(null);
+              }
+            }}
             className={`rounded-full px-3.5 text-sm font-semibold transition-colors ${wide ? "py-0.5" : "min-h-11"} ${lens === key ? "bg-navy text-white shadow-sm" : "text-ink-soft hover:bg-accent-soft hover:text-navy"}`}
           >
             {label}
           </button>
         ))}
       </div>
-      {wide && !roomy && (
+      {wide && !roomy && lens !== "rota" && (
         <button type="button" onClick={() => setPoolOpen((v) => !v)} aria-pressed={poolOpen} className={`rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors ${poolOpen ? "border-navy bg-navy text-white" : QUIET_PILL}`}>
           מאגר המרצים
         </button>
@@ -492,7 +511,47 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       </Fold>
     ));
 
-  const legend = diversityLegend || ownerLegend || progressLegend;
+  // The duties' lens (8.11): where its shifts lead — «לוגיסטיקה ← תורנויות» for the edition's logistics and admins, the
+  // printout for everyone else — and what a dashed code is.
+  const rotaHref = handlesLogistics(me) && (actor.isAdmin || actor.role === "logistics") ? "/logistics/rota" : "/print/rota";
+  const rotaData = lens === "rota" ? rota.data : null;
+  const rotaLegend = lens === "rota" && rotaData && rotaData.duties.length > 0 && (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
+      {rotaData.assignments.length === 0 ? (
+        <span>עוד לא שובצו תורנויות במחזור הזה.</span>
+      ) : (
+        rotaData.assignments.some((a) => a.source === "suggested") && (
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden className="inline-block h-3 w-5 rounded-full border border-dashed border-navy/60 bg-card" />
+            שובצה מ«הצעה הוגנת» ועוד לא נגעו בה
+          </span>
+        )
+      )}
+      <Link to={rotaHref} className={`inline-flex items-center rounded-full px-2 font-semibold text-navy underline underline-offset-2 hover:bg-accent-soft ${wide ? "min-h-7" : "min-h-11"}`}>
+        ללוח התורנויות
+      </Link>
+    </div>
+  );
+  const rotaBody =
+    lens === "rota" &&
+    (rotaData ? (
+      rotaData.duties.length === 0 ? (
+        <div className="rounded-xl border border-line bg-card p-4 text-sm shadow-sm">
+          <p className="text-ink-soft">עוד אין תורנויות במחזור הזה.</p>
+          <Link to={rotaHref} className="mt-1 inline-flex min-h-11 items-center font-semibold text-navy underline underline-offset-2">
+            לתורנויות
+          </Link>
+        </div>
+      ) : (
+        <RotaWeek edition={model.week.edition} data={rotaData} wide={wide} day={day} onDay={setDay} boardHref={rotaHref} />
+      )
+    ) : rota.failed ? (
+      <RotaLoadFailed code={rota.failed} onRetry={() => void rota.reload()} />
+    ) : (
+      <p className="mt-6 text-center text-ink-soft">טוען את התורנויות…</p>
+    ));
+
+  const legend = diversityLegend || ownerLegend || progressLegend || rotaLegend;
 
   const placingBanner = placing && (
     <div role="status" className="flex items-center gap-2 rounded-xl bg-navy px-3.5 py-2 text-sm text-white shadow-md">
@@ -514,10 +573,12 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       {wide ? (
         <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 12rem)" : "calc(100dvh - 9.5rem)" }}>
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
-            <GridDesktop model={model} lens={lens} owners={owners} placing={placing} lookAt={lookAt} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
+            {rotaBody || (
+              <GridDesktop model={model} lens={lens} owners={owners} placing={placing} lookAt={lookAt} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
+            )}
           </div>
           {/* an open panel takes the pool's column, so the grid keeps its width */}
-          {(roomy || poolOpen) && !panel && (
+          {(roomy || poolOpen) && !panel && lens !== "rota" && (
             <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper-light p-3 pt-16 shadow-xl"} aria-label="מאגר">
               <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} dropTarget={!!drag && drag.item.kind !== "speaker"} />
             </aside>
@@ -527,7 +588,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         <>
           <div className="pb-16">
             {phoneTab === "day" ? (
-              <DayView model={model} lens={lens} owners={owners} day={day} onDay={setDay} placing={placing} lookAt={lookAt} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
+              rotaBody || <DayView model={model} lens={lens} owners={owners} day={day} onDay={setDay} placing={placing} lookAt={lookAt} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
             ) : (
               <div style={{ height: "calc(100dvh - 12rem)" }}>
                 <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} />
