@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { jsonbText, labelKey } from "../../src/data/importRules";
 import { DIGIT_ZEROS, EMAIL_RUN, FOLD_UNICODE, FORMAT_RANGES, foldContact, hasContact, PG_DIGITS_FROM, PG_DIGITS_TO, PG_FORMAT_CLASS, PHONE, phoneKey, scrubContacts, stripContacts } from "../../src/import/phone";
+import { DEFAULT_TITLES } from "../../src/data/speakerRules";
+import { titleGender } from "../../src/import/speakerName";
 import { SCHEMA, as, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -84,6 +86,14 @@ describe("the import of 5786", () => {
         expect(await refusal(q("select public.import_lookup('{}', '{}')"))).toBe("42501");
       });
       expect(await count("select count(*) as n from public.speakers where name = 'מרצה לבדיקת הרשאות'")).toBe(0);
+    });
+
+    it("v17: app.titles' default is DEFAULT_TITLES, and app.title_gender says what titleGender says", async () => {
+      expect((await db.query("select app.titles(null) as t")).rows[0].t).toEqual([...DEFAULT_TITLES]);
+      for (const t of [...DEFAULT_TITLES, "הרה״ג", "מר", ""]) {
+        const sql = (await db.query("select app.title_gender($1) as g", [t])).rows[0].g;
+        expect(sql, t).toBe(titleGender(t));
+      }
     });
 
     it("the helpers are no API role's to run", async () => {

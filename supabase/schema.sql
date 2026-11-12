@@ -47,7 +47,7 @@ create schema if not exists app;
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 16 $$;
+  as $$ select 17 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1259,6 +1259,9 @@ create or replace function public.start_edition(
     -- edition starts without them. v8: so do its milestones (title and W−n,
     -- none of them done yet) — public.milestones is created further down.
     -- v14: and «נקודות לשיחה» once edited (absent, the code's built-in text).
+    -- v17: and the titles a speaker may carry (settings.titles) once set —
+    -- else next year a title the pool already holds could not be chosen for a
+    -- new speaker, and an import row carrying it would be refused.
     -- v16: and from the same edition, «תורנויות»'s duties (what each needs), its
     -- Saturday-night preparations (no group, none done yet) and the shifts' cuts
     -- and names (settings.rota_shifts) — never its cohorts, groups, heads,
@@ -1274,7 +1277,8 @@ create or replace function public.start_edition(
     values (p_label, 'real', p_start_date, p_first_day_from,
             '{"lesson_minutes": 75, "row_minutes": 90}'::jsonb
             || jsonb_strip_nulls(jsonb_build_object('confirm_template', v_prev -> 'confirm_template', 'duty_phrases', v_prev -> 'duty_phrases',
-                                                    'call_template', v_prev -> 'call_template', 'rota_shifts', v_prev -> 'rota_shifts')))
+                                                    'call_template', v_prev -> 'call_template', 'rota_shifts', v_prev -> 'rota_shifts',
+                                                    'titles', v_prev -> 'titles')))
     returning id into v;
     insert into public.grid_rows (edition_id, start_min, end_min, kind, label, days)
     select v, start_min, end_min, kind, label, days from public.grid_template;
@@ -1552,7 +1556,8 @@ create or replace function app.clean_block(p text, p_max integer) returns text
   $$;
 
 -- The titles a speaker may carry: the edition's settings.titles when it lists
--- any, else the design's four (DEFAULT_TITLES).
+-- any, else the default list (DEFAULT_TITLES): the design's four and, v17,
+-- «עו״ד» and the two together «הרב ד״ר» / «הרבנית ד״ר».
 create or replace function app.titles(p_edition bigint) returns text[]
   language sql stable security definer set search_path = ''
   as $$
@@ -1562,7 +1567,7 @@ create or replace function app.titles(p_edition bigint) returns text[]
               jsonb_array_elements(case when jsonb_typeof(e.settings -> 'titles') = 'array' then e.settings -> 'titles' else '[]'::jsonb end)
                 with ordinality as t(x, o)
         where e.id = p_edition and jsonb_typeof(t.x) = 'string'),
-      array['ד״ר', 'פרופ׳', 'הרב', 'הרבנית'])
+      array['ד״ר', 'פרופ׳', 'הרב', 'הרבנית', 'עו״ד', 'הרב ד״ר', 'הרבנית ד״ר'])
   $$;
 
 create or replace function app.pick_title(p text, p_edition bigint) returns text
@@ -5014,9 +5019,10 @@ create or replace function app.has_contact(p text) returns boolean
   $$;
 
 -- The gender a title says, and nothing else (src/import/speakerName.ts titleGender).
+-- v17: «הרב ד״ר» says what «הרב» says, «הרבנית ד״ר» what «הרבנית» says.
 create or replace function app.title_gender(p text) returns text
   language sql immutable set search_path = ''
-  as $$ select case p when 'הרב' then 'm' when 'הרבנית' then 'f' end $$;
+  as $$ select case p when 'הרב' then 'm' when 'הרבנית' then 'f' when 'הרב ד״ר' then 'm' when 'הרבנית ד״ר' then 'f' end $$;
 
 -- A whole number from a JSON value, or NULL (anything else: a string, 1.5, an object).
 create or replace function app.jint(p jsonb) returns bigint
@@ -5812,7 +5818,8 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
 -- deactivate (with p_deactivate_team) and how many of their admins stay — and
 -- what stays across the years as it is. v16: how many duties and preparations
 -- of «תורנויות» it would copy, and whether the shifts' own cuts and names come
--- too. Counts and labels; never an address.
+-- too. v17: whether the edition's own title list comes too. Counts and labels;
+-- never an address.
 -- STABLE: PL/pgSQL runs it read-only, so it cannot write.
 create or replace function public.start_edition_preview(p_deactivate_team boolean default true) returns jsonb
   language plpgsql stable security definer set search_path = ''
@@ -5834,6 +5841,7 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
       'rota_duties', (select count(*) from public.rota_duties d where d.edition_id = v_from.id)::integer,           -- v16
       'rota_prep_tasks', (select count(*) from public.rota_prep_tasks t where t.edition_id = v_from.id)::integer,
       'rota_shifts', coalesce(v_from.settings ? 'rota_shifts', false),
+      'titles', coalesce(jsonb_typeof(v_from.settings -> 'titles') = 'array' and jsonb_array_length(v_from.settings -> 'titles') > 0, false),   -- v17
       'deactivate', case when coalesce(p_deactivate_team, false) then
                       (select count(*) from public.members m
                         where m.active and m.role <> 'admin'

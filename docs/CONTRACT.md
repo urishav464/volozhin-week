@@ -200,7 +200,7 @@ a `SECURITY DEFINER` function in `public` (`search_path = ''`) that checks the c
 | a block (notes) | CRLF → LF, ASCII whitespace trimmed at both ends | `bad_value` past the limit |
 | limits | name 120 · disambiguator 60 · title 40 · affiliation 120 · bio_short 400 (block) · topic 40, at most 10 · status/hand-over note 200 · vetting note 300 · availability note 120 · phone 40 · email 120 · secretary_note 300 (block) · contact notes 1000 (block) | `bad_value` |
 | name | required; its key (`app.name_key`) must not be empty | `name_required` |
-| title | null, or one of the edition's `settings.titles` (a non-empty array of strings), else ד״ר · פרופ׳ · הרב · הרבנית | `bad_value` |
+| title | null, or one of the edition's `settings.titles` (a non-empty array of strings), else ד״ר · פרופ׳ · הרב · הרבנית · עו״ד · הרב ד״ר · הרבנית ד״ר (`DEFAULT_TITLES` ≡ `app.titles`; the last three v17) | `bad_value` |
 | gender | `m`, `f` or null (unknown) — what someone chose, **never guessed** | `bad_value` |
 | contact_pref | `phone`, `whatsapp`, `email`, `secretary` or null | `bad_value` |
 | topics | a JSON array of strings (or absent/null = none); empty ones and repeats (the first kept) dropped | `bad_value` |
@@ -1324,8 +1324,8 @@ an object, else `bad_value`; more than 1000 rows (`tracking`: speakers + lessons
 ### A speaker row (`candidates` rows, `tracking` speakers) — `app.import_speaker`
 Checked in this order (`cleanSpeakerRow`, `src/data/importRules.ts`, the same): `action` `new`/`merge` → else
 `bad_value`; `name` one line ≤ 120 with a non-empty name key → else `name_required`; `title` one of the titles of
-`titles_from`'s edition (null: the default four) → else `bad_value`; `gender` `m`/`f`/null **and never the other
-gender than the title says** (`app.title_gender`: הרב → m, הרבנית → f, any other title or none → null; v13: where the
+`titles_from`'s edition (null: the default list) → else `bad_value`; `gender` `m`/`f`/null **and never the other
+gender than the title says** (`app.title_gender`: הרב, הרב ד״ר → m; הרבנית, הרבנית ד״ר → f (v17); any other title or none → null; v13: where the
 title says none, a gender the sheet's «מגדר» column gave is kept) → else `bad_value`;
 `affiliation` ≤ 120; `topics` as `create_speaker` takes them; `phone` ≤ 40 with ≥ 6 digits → else `bad_phone`;
 `email` ≤ 120, one `@` and a dot after it → else `bad_contact_email`; `notes` a block ≤ 1000; **no phone or e-mail
@@ -1543,14 +1543,16 @@ As before, and with `p_deactivate_team`: before the live real editions are archi
 not admins (content, logistics) become `active = false` — never deleted; admins of those editions and every
 all-editions member stay. The screen sends it on by default («הצעה»). «The previous edition» is always of kind
 `real`: an archive the import of 5786 made is never archived again, never carried from and never deactivated, however
-new its id (`tests/sql/importAfter.test.ts`).
+new its id (`tests/sql/importAfter.test.ts`). v17: the edition's own title list (`settings.titles`), when it has one, carries
+over too — else next year a title the pool already holds could not be chosen for a new speaker, and an import row
+carrying it would be refused (an edit that leaves the title alone never sends it).
 
 ### `settings.previewStart(deactivateTeam)` — `start_edition_preview(p_deactivate_team default true)` → `jsonb`
 Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:
 [{id, label}] (the real editions not archived), carry_from: {id, label} | null (where the wording and
 milestones come from: the live real edition, else the newest real), grid_rows (the template's), milestones
 (carry_from's), confirm_template (boolean), call_template (boolean, v14 — false: the built-in text, nothing to
-carry), duty_phrases (count), deactivate (with the option: the active
+carry), duty_phrases (count), titles (boolean, v17: carry_from has its own title list, a non-empty array), deactivate (with the option: the active
 non-admin members of the archived editions; without: 0), admins_stay, stays: {speakers (not retired),
 categories (active), fallen (active), notes (cross-year)}}`.
 

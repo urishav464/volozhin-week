@@ -271,7 +271,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on three bases, v13 (c6d6012), v14 (fe55f7c) and v15 (baf3cbe, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on four bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe) and v16 (bcab571, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -334,6 +334,11 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16». The week's fourth lens
   «תורנויות» (8.11, `src/grid/rotaLens.ts` → `RotaWeek.tsx`) draws the duties alone — `load_rota` only while it is on, never
   the phones; a shift links to `/logistics/rota` (the edition's logistics and admins) or `/print/rota` (DECISIONS «עדשת התורנויות…»).
+- **Titles (schema v17):** the default list (`DEFAULT_TITLES` ≡ `app.titles`) adds «עו״ד», «הרב ד״ר», «הרבנית ד״ר»;
+  `app.title_gender` ≡ `titleGender` reads the two together as הרב / הרבנית; `start_edition` carries an edition's own
+  `settings.titles` (its dry run says so: `titles`); the import reads «עו"ד» and two-word titles in a sheet's spellings
+  (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
+  DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

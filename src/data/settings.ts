@@ -74,6 +74,8 @@ export interface StartPreview {
   rota_duties: number;
   rota_prep_tasks: number;
   rota_shifts: boolean;
+  /** v17: whether carry_from has its own title list (settings.titles, a non-empty array) — it carries over. */
+  titles: boolean;
   deactivate: number;
   admins_stay: number;
   stays: { speakers: number; categories: number; fallen: number; notes: number };

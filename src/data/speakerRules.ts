@@ -29,8 +29,8 @@ export const LIMITS = {
   contact_notes: 1000,
 } as const;
 
-/** The titles when the edition's settings list none (app.titles). */
-export const DEFAULT_TITLES: readonly string[] = ["ד״ר", "פרופ׳", "הרב", "הרבנית"];
+/** The titles when the edition's settings list none (app.titles): the design's four and, v17, «עו״ד» and the two together. */
+export const DEFAULT_TITLES: readonly string[] = ["ד״ר", "פרופ׳", "הרב", "הרבנית", "עו״ד", "הרב ד״ר", "הרבנית ד״ר"];
 
 /** «ייתכן שזה…»: name keys at least this alike (pg_trgm similarity) — the design's «הצעה»; app.similar_threshold(). */
 export const SIMILAR_THRESHOLD = 0.6;
