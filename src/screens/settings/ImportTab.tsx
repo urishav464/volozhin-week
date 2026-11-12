@@ -131,7 +131,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
   const [commitProblem, setCommitProblem] = useState<string | null>(null);
   const [result, setResult] = useState<{ kind: ImportKind; res: ImportResult; label: string | null } | null>(null);
 
-  // the titles a name is split by (and checked against): the year's edition's, else the default four
+  // the titles a name is split by (and checked against): the year's edition's, else the default list
   const titlesEdition = editions.find((e) => e.kind === "real" && e.status !== "archived") ?? editions.find((e) => e.kind === "real") ?? null;
   const titles = useMemo(() => titlesOf(titlesEdition?.settings), [titlesEdition]);
   /** A choice for a row (or a speaker); null takes it back. */

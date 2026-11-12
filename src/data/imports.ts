@@ -40,7 +40,7 @@ export interface SpeakerRow {
 export interface CandidatesPayload {
   /** speakers.source of a new speaker — «brainstorm-5786» unless the admin typed another. */
   source: string;
-  /** Whose settings.titles a title is checked against (null: the default four). */
+  /** Whose settings.titles a title is checked against (null: the default list, DEFAULT_TITLES). */
   titles_from: number | null;
   rows: SpeakerRow[];
 }

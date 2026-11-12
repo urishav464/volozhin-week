@@ -1544,14 +1544,15 @@ not admins (content, logistics) become `active = false` — never deleted; admin
 all-editions member stay. The screen sends it on by default («הצעה»). «The previous edition» is always of kind
 `real`: an archive the import of 5786 made is never archived again, never carried from and never deactivated, however
 new its id (`tests/sql/importAfter.test.ts`). v17: the edition's own title list (`settings.titles`), when it has one, carries
-over too — else next year's pool would refuse a title it already holds.
+over too — else next year a title the pool already holds could not be chosen for a new speaker, and an import row
+carrying it would be refused (an edit that leaves the title alone never sends it).
 
 ### `settings.previewStart(deactivateTeam)` — `start_edition_preview(p_deactivate_team default true)` → `jsonb`
 Definer, **STABLE** (PL/pgSQL runs it read-only: it cannot write); a global admin (`forbidden`). `{archive:
 [{id, label}] (the real editions not archived), carry_from: {id, label} | null (where the wording and
 milestones come from: the live real edition, else the newest real), grid_rows (the template's), milestones
 (carry_from's), confirm_template (boolean), call_template (boolean, v14 — false: the built-in text, nothing to
-carry), duty_phrases (count), titles (boolean, v17: carry_from has its own title list), deactivate (with the option: the active
+carry), duty_phrases (count), titles (boolean, v17: carry_from has its own title list, a non-empty array), deactivate (with the option: the active
 non-admin members of the archived editions; without: 0), admins_stay, stays: {speakers (not retired),
 categories (active), fallen (active), notes (cross-year)}}`.
 

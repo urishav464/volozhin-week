@@ -1260,7 +1260,8 @@ create or replace function public.start_edition(
     -- none of them done yet) — public.milestones is created further down.
     -- v14: and «נקודות לשיחה» once edited (absent, the code's built-in text).
     -- v17: and the titles a speaker may carry (settings.titles) once set —
-    -- else next year's pool would refuse a title it already holds.
+    -- else next year a title the pool already holds could not be chosen for a
+    -- new speaker, and an import row carrying it would be refused.
     -- v16: and from the same edition, «תורנויות»'s duties (what each needs), its
     -- Saturday-night preparations (no group, none done yet) and the shifts' cuts
     -- and names (settings.rota_shifts) — never its cohorts, groups, heads,
@@ -5840,7 +5841,7 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
       'rota_duties', (select count(*) from public.rota_duties d where d.edition_id = v_from.id)::integer,           -- v16
       'rota_prep_tasks', (select count(*) from public.rota_prep_tasks t where t.edition_id = v_from.id)::integer,
       'rota_shifts', coalesce(v_from.settings ? 'rota_shifts', false),
-      'titles', coalesce(v_from.settings ? 'titles', false),                    -- v17
+      'titles', coalesce(jsonb_typeof(v_from.settings -> 'titles') = 'array' and jsonb_array_length(v_from.settings -> 'titles') > 0, false),   -- v17
       'deactivate', case when coalesce(p_deactivate_team, false) then
                       (select count(*) from public.members m
                         where m.active and m.role <> 'admin'

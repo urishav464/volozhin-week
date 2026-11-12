@@ -575,6 +575,10 @@ describe("after the week", () => {
         await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה לבדיקה 1', 1), ($1, 'הכנה לבדיקה 2', 2), ($1, 'הכנה לבדיקה 3', 3)", [ed]);
         await run(ED_ADMIN, "select public.set_rota_shifts($1, '{\"cuts\": [840, 1320], \"labels\": [\"בוקר\", \"צהריים\", \"לילה\"]}')", [ed]);
         // v17: the edition's own title list (a global admin sets it on the edition's row)
+        for (const none of ["null", "[]"]) {
+          await run(ADMIN, "update public.editions set settings = jsonb_set(settings, '{titles}', $2::jsonb) where id = $1", [ed, none]);
+          expect(((await val(run, ADMIN, "select public.start_edition_preview(true)")) as { titles: boolean }).titles, none).toBe(false);
+        }
         const titles = ["ד״ר", "פרופ׳", "הרב", "הרבנית", "עו״ד", "הרב ד״ר", "הרבנית ד״ר", "תואר לבדיקה"];
         await run(ADMIN, "update public.editions set settings = jsonb_set(settings, '{titles}', $2::jsonb) where id = $1", [ed, JSON.stringify(titles)]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(true)")) as Record<string, unknown>;

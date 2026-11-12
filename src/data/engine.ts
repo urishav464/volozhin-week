@@ -175,7 +175,7 @@ interface SpeakerResult {
 
 /** What the import of the tracking sheet needs from outside the engine: the other editions, and where the archive goes. */
 export interface ImportHost {
-  /** app.titles: that edition's settings.titles when it lists any, else the default four. */
+  /** app.titles: that edition's settings.titles when it lists any, else the default list (DEFAULT_TITLES). */
   titles(editionId: number | null): readonly string[];
   /** Every edition whose label has this key (labelKey): its kind, and its week when it is an archive. */
   byLabel(key: string): { kind: Week["edition"]["kind"]; week: Week | null }[];

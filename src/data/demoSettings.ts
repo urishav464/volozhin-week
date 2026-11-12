@@ -162,7 +162,7 @@ export class DemoSettings implements SettingsPort {
       rota_duties: from ? this.s.shared.rota.duties.filter((d) => d.edition_id === from.id).length : 0,
       rota_prep_tasks: from ? this.s.shared.rota.prep.filter((t) => t.edition_id === from.id).length : 0,
       rota_shifts: from?.settings.rota_shifts != null,
-      titles: from?.settings.titles != null,
+      titles: Array.isArray(from?.settings.titles) && from.settings.titles.length > 0,
       deactivate: deactivateTeam ? of(false) : 0,
       admins_stay: of(true),
       stays: {

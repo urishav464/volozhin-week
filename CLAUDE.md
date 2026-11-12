@@ -337,7 +337,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **Titles (schema v17):** the default list (`DEFAULT_TITLES` ≡ `app.titles`) adds «עו״ד», «הרב ד״ר», «הרבנית ד״ר»;
   `app.title_gender` ≡ `titleGender` reads the two together as הרב / הרבנית; `start_edition` carries an edition's own
   `settings.titles` (its dry run says so: `titles`); the import reads «עו"ד» and two-word titles in a sheet's spellings
-  (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (names never carry the title).
+  (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
   DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
