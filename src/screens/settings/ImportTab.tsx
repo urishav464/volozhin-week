@@ -873,7 +873,7 @@ export function ImportTab({ data, editions, reload }: { data: DataPort; editions
                 <label className="inline-flex min-h-11 cursor-pointer items-start gap-2 self-end">
                   <input type="checkbox" checked={genderFromTitle} onChange={(e) => setGenderFromTitle(e.target.checked)} className="mt-1 size-5 accent-navy" />
                   <span>
-                    מגדר מהתואר: הרב — זכר, הרבנית — נקבה <Badge tone="accent">הצעה</Badge>
+                    מגדר מהתואר: הרב — זכר, הרבנית — נקבה (גם עם ד״ר) <Badge tone="accent">הצעה</Badge>
                     <span className="block text-xs text-ink-soft">בלי תואר כזה המגדר נשאר לא ידוע. לעולם לא מנחשים לפי שם.</span>
                   </span>
                 </label>

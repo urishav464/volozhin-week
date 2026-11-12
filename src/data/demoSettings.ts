@@ -117,6 +117,8 @@ export class DemoSettings implements SettingsPort {
         ...(prev?.duty_phrases != null ? { duty_phrases: structuredClone(prev.duty_phrases) } : {}),
         // v16: the shifts' cuts and names
         ...(prev?.rota_shifts != null ? { rota_shifts: structuredClone(prev.rota_shifts) } : {}),
+        // v17: the titles a speaker may carry, once set
+        ...(prev?.titles != null ? { titles: structuredClone(prev.titles) } : {}),
       },
     };
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
@@ -160,6 +162,7 @@ export class DemoSettings implements SettingsPort {
       rota_duties: from ? this.s.shared.rota.duties.filter((d) => d.edition_id === from.id).length : 0,
       rota_prep_tasks: from ? this.s.shared.rota.prep.filter((t) => t.edition_id === from.id).length : 0,
       rota_shifts: from?.settings.rota_shifts != null,
+      titles: from?.settings.titles != null,
       deactivate: deactivateTeam ? of(false) : 0,
       admins_stay: of(true),
       stays: {

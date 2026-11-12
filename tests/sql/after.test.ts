@@ -541,6 +541,7 @@ describe("after the week", () => {
           rota_duties: 0,
           rota_prep_tasks: 0,
           rota_shifts: false,
+          titles: false,
           deactivate: nonAdmins,
           admins_stay: 1,
           stays: {
@@ -573,15 +574,21 @@ describe("after the week", () => {
         await run(L, "insert into public.rota_duties (edition_id, name, need_morning, sort) values ($1, 'תורנות לבדיקה', 1, 1), ($1, 'עוד תורנות', null, 2)", [ed]);
         await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה לבדיקה 1', 1), ($1, 'הכנה לבדיקה 2', 2), ($1, 'הכנה לבדיקה 3', 3)", [ed]);
         await run(ED_ADMIN, "select public.set_rota_shifts($1, '{\"cuts\": [840, 1320], \"labels\": [\"בוקר\", \"צהריים\", \"לילה\"]}')", [ed]);
+        // v17: the edition's own title list (a global admin sets it on the edition's row)
+        const titles = ["ד״ר", "פרופ׳", "הרב", "הרבנית", "עו״ד", "הרב ד״ר", "הרבנית ד״ר", "תואר לבדיקה"];
+        await run(ADMIN, "update public.editions set settings = jsonb_set(settings, '{titles}', $2::jsonb) where id = $1", [ed, JSON.stringify(titles)]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(true)")) as Record<string, unknown>;
         expect(preview).toMatchObject({ archive: [{ id: ed, label: "תשפ\"ז" }], carry_from: { id: ed }, milestones: 2, confirm_template: true, call_template: true, duty_phrases: 1, admins_stay: 1,
-                                        rota_duties: 2, rota_prep_tasks: 3, rota_shifts: true });
+                                        rota_duties: 2, rota_prep_tasks: 3, rota_shifts: true, titles: true });
         const newId = Number(await val(run, ADMIN, "select public.start_edition('תשפ\"ח', null)")); // the option off: nobody is deactivated
         expect(Number(await val(run, "owner", "select count(*) from public.milestones where edition_id = $1", [newId]))).toBe(2);
         expect(Number(await val(run, "owner", "select count(*) from public.rota_duties where edition_id = $1", [newId]))).toBe(preview.rota_duties);
         expect(Number(await val(run, "owner", "select count(*) from public.rota_prep_tasks where edition_id = $1", [newId]))).toBe(preview.rota_prep_tasks);
         expect(await val(run, "owner", "select settings -> 'rota_shifts' -> 'cuts' from public.editions where id = $1", [newId])).toEqual([840, 1320]);
         expect(await val(run, "owner", "select settings ->> 'call_template' from public.editions where id = $1", [newId])).toBe("נקודות לבדיקה");
+        // v17: the list carries over, so next year's pool still takes a title it already holds
+        expect(await val(run, "owner", "select settings -> 'titles' from public.editions where id = $1", [newId])).toEqual(titles);
+        expect(await val(run, "owner", "select app.pick_title('תואר לבדיקה', $1)", [newId])).toBe("תואר לבדיקה");
         expect(Number(await val(run, "owner", "select count(*) from public.members where not active"))).toBe(0);
       });
     });

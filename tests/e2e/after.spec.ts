@@ -177,7 +177,7 @@ test.describe("demo build", () => {
     await expect(page.locator("[data-dry=archive]")).toHaveText("אף מחזור (אין מחזור אמיתי פעיל)");
     await expect(page.locator("[data-dry=stays]")).toContainText(/\d+ מרצים · \d+ קטגוריות · 9 חללים/);
     // v16: no real edition to carry «תורנויות» from — nothing, and last year's shifts
-    await expect(page.locator("[data-dry=copy]")).toContainText("0 תורנויות · 0 משימות הכנה למוצ״ש · בלי שעות משמרות שנקבעו (נשארות של אשתקד)");
+    await expect(page.locator("[data-dry=copy]")).toContainText("0 תורנויות · 0 משימות הכנה למוצ״ש · בלי שעות משמרות שנקבעו (נשארות של אשתקד) · בלי רשימת תארים משלו (נשארת הרשימה הקבועה)");
 
     // a real edition, with a content member: the dry run would archive it and deactivate one
     await page.getByLabel("שם המחזור").fill("מחזור לדוגמה");

@@ -84,6 +84,7 @@ export class SupabaseSettings implements SettingsPort {
       rota_duties: n(p.rota_duties),
       rota_prep_tasks: n(p.rota_prep_tasks),
       rota_shifts: p.rota_shifts === true,
+      titles: p.titles === true,
       deactivate: n(p.deactivate),
       admins_stay: n(p.admins_stay),
       stays: { speakers: n(p.stays?.speakers), categories: n(p.stays?.categories), fallen: n(p.stays?.fallen), notes: n(p.stays?.notes) },

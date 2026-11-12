@@ -1,6 +1,6 @@
-// A speaker's name as last year's files wrote it — «הרב פלוני אלמוני», «ד"ר …», «פרופ' …» — split into the title the
-// pool keeps apart (one of the edition's titles: settings.titles, else ד״ר · פרופ׳ · הרב · הרבנית) and the name.
-// Gender: from the titles הרב (m) and הרבנית (f), as a «הצעה» the admin sees and may turn off, or (v13) from the
+// A speaker's name as last year's files wrote it — «הרב פלוני אלמוני», «ד"ר …», «פרופ' …», «הרב ד"ר …» — split into the
+// title the pool keeps apart (one of the edition's titles: settings.titles, else DEFAULT_TITLES) and the name.
+// Gender: from the titles הרב / הרב ד״ר (m) and הרבנית / הרבנית ד״ר (f), as a «הצעה» the admin sees and may turn off, or (v13) from the
 // sheet's own «מגדר» column the admin maps (genderCell) — never from a name; a title that says the other gender wins
 // over nothing: the row keeps no gender (supabase/schema.sql «Import 5786» refuses it: app.title_gender).
 import type { Gender } from "../domain/types";
@@ -10,33 +10,51 @@ import { cleanCell } from "./table";
 const SPELLINGS: [RegExp, string][] = [
   [/^(?:ד["״'׳]{1,2}ר|דר['׳]?|דוקטור)$/, "ד״ר"],
   [/^(?:פרופ['׳.]?|פרופסור)$/, "פרופ׳"],
+  [/^(?:עו["״'׳]{1,2}ד|עוה["״'׳]{1,2}ד)$/, "עו״ד"],
 ];
 
-/** The title a word is, in the edition's list — or null. */
+/** One word in the pool's spelling, whether or not the edition lists it. */
+function spelled(word: string): string {
+  for (const [re, t] of SPELLINGS) if (re.test(word)) return t;
+  return word;
+}
+
+/** The title a word — or two words, «הרב ד"ר» (v17) — is, in the edition's list; or null. */
 export function titleOf(word: string, titles: readonly string[]): string | null {
   if (titles.includes(word)) return word;
-  for (const [re, t] of SPELLINGS) if (re.test(word) && titles.includes(t)) return t;
-  return null;
+  const t = word.split(" ").filter(Boolean).map(spelled).join(" ");
+  return titles.includes(t) ? t : null;
 }
 
 /** «הרב פלוני אלמוני» → {title: «הרב», name: «פלוני אלמוני»}; a name with no title (or one not in the list) as it is. */
 export function splitTitle(raw: string, titles: readonly string[]): { title: string | null; name: string } {
   const t = cleanCell(raw).replace(/\n/g, " ");
+  const words = t.split(" ");
+  let best: { title: string; name: string } | null = null;
   // the edition's own titles first, longest first (a title of two words; «הרבנית» before «הרב»)
   for (const title of [...titles].sort((a, b) => b.length - a.length)) {
-    if (t.startsWith(`${title} `) && t.length > title.length + 1) return { title, name: t.slice(title.length + 1).trim() };
+    if (t.startsWith(`${title} `) && t.length > title.length + 1) {
+      best = { title, name: t.slice(title.length + 1).trim() };
+      break;
+    }
   }
-  const sp = t.indexOf(" ");
-  if (sp > 0) {
-    const title = titleOf(t.slice(0, sp), titles);
-    if (title) return { title, name: t.slice(sp + 1).trim() };
+  // two words as a sheet spells them («הרב ד"ר» → «הרב ד״ר», v17) — the longer title wins
+  if (words.length > 2) {
+    const two = titleOf(`${words[0]} ${words[1]}`, titles);
+    if (two && (!best || two.length > best.title.length)) best = { title: two, name: words.slice(2).join(" ").trim() };
+  }
+  if (best) return best;
+  // one word as a sheet spells it
+  if (words.length > 1) {
+    const title = titleOf(words[0], titles);
+    if (title) return { title, name: words.slice(1).join(" ").trim() };
   }
   return { title: null, name: t };
 }
 
-/** The gender a title says — הרב: m, הרבנית: f — and nothing else (app.title_gender). */
+/** The gender a title says — הרב / הרב ד״ר: m, הרבנית / הרבנית ד״ר: f (v17) — and nothing else (app.title_gender). */
 export function titleGender(title: string | null | undefined): Gender | null {
-  return title === "הרב" ? "m" : title === "הרבנית" ? "f" : null;
+  return title === "הרב" || title === "הרב ד״ר" ? "m" : title === "הרבנית" || title === "הרבנית ד״ר" ? "f" : null;
 }
 
 /** A title typed in its own column: the pool's spelling of it, or null when it is not one of the edition's titles. */

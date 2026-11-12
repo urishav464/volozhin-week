@@ -23,6 +23,20 @@ describe("the title split and gender", () => {
     expect(splitTitle("הרב", T)).toEqual({ title: null, name: "הרב" }); // a title alone is not a name
   });
 
+  it("v17: «עו״ד» and the two titles together, in the sheet's spellings too", () => {
+    for (const ad of ['עו"ד', "עו״ד", "עו''ד", 'עוה"ד']) expect(splitTitle(`${ad} מרצה לדוגמה 6`, T)).toEqual({ title: "עו״ד", name: "מרצה לדוגמה 6" });
+    for (const t of ['הרב ד"ר', "הרב ד״ר", "הרב דוקטור"]) expect(splitTitle(`${t} מרצה לדוגמה 7`, T)).toEqual({ title: "הרב ד״ר", name: "מרצה לדוגמה 7" });
+    expect(splitTitle('הרבנית ד"ר מרצה לדוגמה 8', T)).toEqual({ title: "הרבנית ד״ר", name: "מרצה לדוגמה 8" });
+    expect(pickTitleCell('הרבנית ד"ר', T)).toBe("הרבנית ד״ר");
+    expect(pickTitleCell('עו"ד', T)).toBe("עו״ד");
+    // an edition that lists only the four: «הרב ד"ר» is «הרב» and the doctor stays in the name, as before v17
+    const FOUR = ["ד״ר", "פרופ׳", "הרב", "הרבנית"];
+    expect(splitTitle('הרב ד"ר מרצה', FOUR)).toEqual({ title: "הרב", name: 'ד"ר מרצה' });
+    expect(splitTitle('עו"ד מרצה', FOUR)).toEqual({ title: null, name: 'עו"ד מרצה' });
+    // a name that only starts like a title is not split as two
+    expect(splitTitle("הרב דורון מרצה", T)).toEqual({ title: "הרב", name: "דורון מרצה" });
+  });
+
   it("«הרבנית» is never read as «הרב» + «ית…» — the longer title first", () => {
     expect(splitTitle("הרבנית מרצה", T).title).toBe("הרבנית");
     expect(splitTitle("הרבנית מרצה", ["הרב", "הרבנית"]).title).toBe("הרבנית");
@@ -38,6 +52,9 @@ describe("the title split and gender", () => {
   it("gender from הרב (m) and הרבנית (f) only — never from anything else", () => {
     expect(titleGender("הרב")).toBe("m");
     expect(titleGender("הרבנית")).toBe("f");
+    expect(titleGender("הרב ד״ר")).toBe("m"); // v17
+    expect(titleGender("הרבנית ד״ר")).toBe("f");
+    expect(titleGender("עו״ד")).toBeNull();
     for (const t of ["ד״ר", "פרופ׳", null, "הרה״ג"]) expect(titleGender(t)).toBeNull();
   });
 

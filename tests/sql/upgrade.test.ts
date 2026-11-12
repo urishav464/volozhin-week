@@ -1,7 +1,7 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds an older version and its data. This runs exactly
-// that, from three bases read from git history — v13 (PR #6), v14 (PR #8) and
-// v15 (PR #9, what production runs) — under both default-privilege regimes the
+// that, from four bases read from git history — v13 (PR #6), v14 (PR #8), v15
+// (PR #9) and v16 (PR #11, what production runs) — under both default-privilege regimes the
 // other tests model: the old file with some data in it — last year's week with
 // its transport details, links, a member, availability (v13's by part of a day,
 // in every shape the conversion meets; v14's and v15's per slot) and מכריכה
@@ -29,7 +29,8 @@ interface Base {
 const BASES: Base[] = [
   { commit: "c6d6012", version: 13 }, // PR #6, as merged: availability by part of a day
   { commit: "fe55f7c", version: 14 }, // PR #8, as merged: availability per slot
-  { commit: "baf3cbe", version: 15 }, // PR #9, as merged — what production runs: מכריכה לכריכה by the week
+  { commit: "baf3cbe", version: 15 }, // PR #9, as merged: מכריכה לכריכה by the week
+  { commit: "bcab571", version: 16 }, // PR #11 — what production runs: «תורנויות»
 ];
 
 /** «תורנויות» (v16): every table, empty after the run. */
@@ -192,13 +193,15 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v16, with «תורנויות»'s tables there and empty", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(16);
+  it("is v17, with «תורנויות»'s tables there and empty", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(17);
     for (const t of ROTA_TABLES) {
       expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(0);
     }
     // nothing carried into the old edition's settings: its shifts are last year's
     expect((await db.query("select settings ? 'rota_shifts' as k from public.editions where id = $1", [ed])).rows[0].k).toBe(false);
+    // v17 writes no title list into an edition: one with none keeps reading the default list
+    expect((await db.query("select settings ? 'titles' as k from public.editions where id = $1", [ed])).rows[0].k).toBe(false);
   });
 
   it(version === 13
