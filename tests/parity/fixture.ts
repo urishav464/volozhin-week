@@ -88,7 +88,7 @@ export const EDITION = { label: "בדיקת התאמה", first_day_from: 510, la
 /** Where a lesson is: [day, start_min, room name?] — the room defaults to the default room. */
 export type At = [number, number, string?];
 
-export type Step =
+type Command =
   | { as: ActorKey; propose: string; cell: [number, number, number, string?]; mode?: "self" | "offer" }
   | { as: ActorKey; propose: string; at: At; mode?: "self" | "offer" }
   | { as: ActorKey; unpropose: string; at: At }
@@ -180,7 +180,7 @@ export type Step =
   | { as: ActorKey; deletePlan: string }
   | { as: ActorKey; policy: { placement?: string | null; max_minutes?: number | null; warn_adjacent_meal?: boolean | null } }
   | { as: ActorKey; gridRules: { gender_tolerance: number | null; max_category_per_day: number | null } }
-  /** get_transports_for: the caller's approved transports, by lesson. */
+  /** get_transports_for: the transports the caller may see — waiting or approved (v18), by lesson. */
   | { as: ActorKey; readTransports: true }
   // the import of 5786 (v12) — a merge names its pool speaker by label, a lesson its category by name
   | { as: ActorKey; importCandidates: ImportSpeakerStep[]; source?: string | null }
@@ -201,7 +201,30 @@ export type Step =
   /** edition_returning. */
   | { as: ActorKey; returning: true }
   /** purge_edition_private, with the label typed as given (null: none). */
-  | { as: ActorKey; purge: string | null; edition?: string };
+  | { as: ActorKey; purge: string | null; edition?: string }
+  // v18 (CONTRACT.md «v18 — day owners, availability by ranges, transport in two parts»)
+  /** set_day_owners: the day's owners by actor key («nobody»: an id no member has), or null. */
+  | { as: ActorKey; owners: number; members: (ActorKey | "nobody")[] | null }
+  /** mark_day_seen. */
+  | { as: ActorKey; seen: number }
+  /** load_week's `dayOwners`, as the caller reads them (the order is the answer's own). */
+  | { as: ActorKey; readOwners: true }
+  /** set_availability_ranges — the days, the ranges and the rest as they are (a wrong shape too); answers «marked=N». */
+  | { as: ActorKey; ranges: string; days: (number | null)[] | null; list: unknown; rest?: string | null }
+  /** set_transport_request / set_transport_driver: the patch as it is (a wrong shape too). */
+  | { as: ActorKey; transportRequest: At; fields: unknown }
+  | { as: ActorKey; transportDriver: At; fields: unknown }
+  /** The log's lines of these kinds, oldest first — read from outside, as the table's owner. */
+  | { log: LogKind[] };
+
+/** The kinds of log line a `log` step compares: a speaker's availability, a lesson's transport details, a day's owners. */
+export type LogKind = "availability" | "transport" | "day_owners";
+
+/**
+ * A step, and optionally what it must answer on BOTH sides (`is`): parity alone proves the two agree, not that they
+ * are right — a scenario that pins its answers also says what the contract's clause is.
+ */
+export type Step = Command & { is?: string };
 
 /** A speaker row of an import step: as SpeakerRow, the merge target by its label. */
 export interface ImportSpeakerStep {
@@ -329,6 +352,8 @@ export interface Normal {
   archive: string[];
   /** «איך עבר», by lesson */
   reviews: string[];
+  /** day_owners (v18): the day, the member by key, and whether that owner has looked («seen») */
+  owners: string[];
 }
 
 /** A review as the state (and a read) compares it: by its lesson's place, its speaker by label, who wrote it by key. */
@@ -430,6 +455,40 @@ export function slotLine(speaker: string, v: { day: number; start_min: number; e
 
 export function transportLine(label: string, t: { pickup_address: string | null; pickup_time: string | null; driver_name: string | null; driver_phone: string | null; arranged: boolean }): string {
   return `${label}|addr=${d(t.pickup_address)}|time=${d(t.pickup_time)}|drv=${d(t.driver_name)}|ph=${d(t.driver_phone)}|arr=${t.arranged}`;
+}
+
+/** A transport_details row as the state compares it: the five fields and (v18) the pickup time in minutes. */
+export function transportRowLine(label: string, t: Parameters<typeof transportLine>[1] & { pickup_min?: number | null }): string {
+  return `${transportLine(label, t)}|min=${d(t.pickup_min)}`;
+}
+
+/** A line of get_transports_for (v18): the five fields, the request's approval and the pickup time in minutes. */
+export function transportsLine(label: string, t: Parameters<typeof transportLine>[1] & { approval: string; pickup_min: number | null }): string {
+  return `${transportLine(label, t)}|ap=${t.approval}|min=${d(t.pickup_min)}`;
+}
+
+/** A day's owner as the state (and a read of the Week) compares it. */
+export function ownerLine(o: { day: number; seen_at: unknown }, member: string): string {
+  return `${o.day}|${member}|seen=${o.seen_at == null ? "-" : "y"}`;
+}
+
+/**
+ * A log line as a `log` step compares it — who did it by key, never an id: a speaker's availability under their
+ * approach or under none (`approach`), with its detail whole (the speaker by label); a lesson's transport details by
+ * the lesson's place, the field NAMES and where from; a day's owners by key.
+ */
+export function logLine(
+  r: { entity: string; entity_id: unknown; kind: string; detail: Record<string, unknown> },
+  by: string,
+  names: { speaker: (id: number) => string; lesson: (id: number) => string; member: (id: unknown) => string; edition: (id: unknown) => string },
+): string {
+  const detail = r.detail ?? {};
+  if (r.kind === "availability") {
+    return `availability|${r.entity}|approach=${r.entity_id == null ? "-" : "y"}|by=${by}|${stable({ ...detail, speaker: names.speaker(Number(detail.speaker)) })}`;
+  }
+  if (r.kind === "transport") return `transport|${r.entity}|${names.lesson(Number(r.entity_id))}|by=${by}|${stable(detail)}`;
+  const members = Array.isArray(detail.members) ? detail.members.map((m) => names.member(m)) : detail.members;
+  return `${r.kind}|${r.entity}|${names.edition(r.entity_id)}|by=${by}|${stable({ ...detail, members })}`;
 }
 
 /** What a transport read returns, as one comparable string. */
