@@ -8,7 +8,8 @@
 // dragged or swallowed by a merge), placing a plan (the liaison goes with it),
 // the liaison as the slot's escort and what the escort's link shows of it, the
 // slot's materials (uploads to a placed slot, each file remembering its fallen),
-// the memorial policy, and get_transports_for against get_transport_details.
+// the memorial policy, and get_transports_for against get_transport_details
+// (v18: pending requests too, each row with its approval and pickup minutes).
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
@@ -518,22 +519,24 @@ describe("memorial times and the logistics screen's transports", () => {
       await inTx(async (run) => expect(await sqlstate(run("anon", "select public.get_transports_for($1)", [ed]))).toBe("42501"));
     });
 
-    it("lists each person's approved transports with exactly what get_transport_details shows them", async () => {
+    it("lists each person's transports — pending and approved (v18) — with exactly what get_transport_details shows them, the approval and the pickup minutes", async () => {
       const ids = (who: string, edition: number) =>
         inTx(async (run) => ((await val(run, who, "select public.get_transports_for($1)", [edition])) as { lesson_id: number }[]).map((r) => Number(r.lesson_id)));
-      // the pending one is not a logistics item, nor B's approved amount with no transport
-      expect(await ids(ADMIN, ed)).toEqual([transport.a, transport.b]);
-      expect(await ids(A, ed)).toEqual([transport.a]);
+      // v18: the pending one too (the screen's builder keeps «הסעות» to the approved); never B's approved amount with no transport
+      expect(await ids(ADMIN, ed)).toEqual([transport.a, transport.b, transport.pending]);
+      expect(await ids(A, ed)).toEqual([transport.a, transport.pending]);
       expect(await ids(B, ed)).toEqual([transport.b]);
       await inTx(async (run) => expect((await run("owner", "select state, transport, approval, pay_amount from public.lessons where id = $1", [transport.payOnly])).rows[0]).toEqual({ state: "closed", transport: "none", approval: "approved", pay_amount: 300 }));
-      expect(await ids(L, ed)).toEqual([transport.a, transport.b]);
+      expect(await ids(L, ed)).toEqual([transport.a, transport.b, transport.pending]);
+      expect(await ids(ED_ADMIN, ed)).toEqual([transport.a, transport.b, transport.pending]); // v18: the edition's admin, handling none of them
       expect(await ids(ADMIN, sandbox)).toEqual([transport.sandbox]); // a global admin sees all
-      for (const who of [ED_ADMIN, OTHER, STRANGER]) expect(await ids(who, ed), who).toEqual([]); // the edition's admin who handles none
+      for (const who of [OTHER, STRANGER]) expect(await ids(who, ed), who).toEqual([]);
       for (const who of [SANDBOX, SANDBOX_ADMIN]) expect(await ids(who, sandbox), who).toEqual([]); // a practice week gives none
       const a = await inTx(async (run) => (await val(run, L, "select public.get_transports_for($1)", [ed])) as Record<string, unknown>[]);
       expect(a).toEqual([
-        { lesson_id: transport.a, pickup_address: ADDRESS, pickup_time: "07:15", driver_name: "נהג/ת לבדיקה", driver_phone: PHONE_T, arranged: true },
-        { lesson_id: transport.b, pickup_address: null, pickup_time: "08:00", driver_name: null, driver_phone: null, arranged: false },
+        { lesson_id: transport.a, pickup_address: ADDRESS, pickup_time: "07:15", driver_name: "נהג/ת לבדיקה", driver_phone: PHONE_T, arranged: true, approval: "approved", pickup_min: null },
+        { lesson_id: transport.b, pickup_address: null, pickup_time: "08:00", driver_name: null, driver_phone: null, arranged: false, approval: "approved", pickup_min: null },
+        { lesson_id: transport.pending, pickup_address: ADDRESS, pickup_time: null, driver_name: null, driver_phone: null, arranged: false, approval: "pending", pickup_min: null },
       ]);
     });
 
@@ -545,14 +548,15 @@ describe("memorial times and the logistics screen's transports", () => {
             const got = ((await val(run, who, "select public.get_transports_for($1)", [edition])) as Record<string, unknown>[]) ?? [];
             for (const r of got) {
               const one = await val(run, who, "select public.get_transport_details($1)", [r.lesson_id]);
-              const { lesson_id: _l, ...rest } = r;
+              // v18: the list adds the request's approval and the pickup minutes to the five details
+              const { lesson_id: _l, approval: _a, pickup_min: _m, ...rest } = r;
               expect(one, `${who} ${r.lesson_id}`).toEqual(rest);
             }
             for (const l of all) {
               const one = await val(run, who, "select public.get_transport_details($1)", [l]);
               const listed = got.some((r) => Number(r.lesson_id) === l);
               const approved = (await run("owner", "select edition_id, approval, transport from public.lessons where id = $1", [l])).rows[0];
-              const due = one != null && Number(approved.edition_id) === edition && approved.approval === "approved" && approved.transport !== "none";
+              const due = one != null && Number(approved.edition_id) === edition && ["pending", "approved"].includes(approved.approval) && approved.transport !== "none";
               expect(listed, `${who} ${edition} ${l}`).toBe(due);
             }
           }

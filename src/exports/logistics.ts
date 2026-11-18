@@ -4,7 +4,8 @@
 //   הסעות      the closed lessons whose transport the instructor approved, in grid
 //              order, with what get_transports_for returned (pickup, driver,
 //              «סודר») — the pickup address and the driver's phone only when
-//              «כולל כתובות וטלפונים» is on;
+//              «כולל כתובות וטלפונים» is on; v18's read also lists the requests
+//              that still wait for the instructor: this list leaves them out;
 //   תשלומים    the closed lessons with an approved amount, «שולם» or not, and
 //              the totals;
 //   ספרים      מכריכה לכריכה's groups — one book each for the whole week, its
@@ -64,8 +65,17 @@ export function approvedTransport(l: Lesson): boolean {
   return l.state === "closed" && l.kind === "lesson" && l.transport !== "none" && l.approval === "approved";
 }
 
+/**
+ * «הסעות» shows APPROVED transports only: the Week's lessons decide the rows (approvedTransport), and of the read
+ * (v18: pending requests too, each with its `approval` and `pickup_min`) only an approved row gives its details — the
+ * five fields, as before.
+ */
 export function transportRows(week: Week, details: readonly LessonTransport[] | null): TransportRow[] {
-  const by = new Map((details ?? []).map(({ lesson_id, ...d }) => [lesson_id, d]));
+  const by = new Map<number, TransportDetails>(
+    (details ?? [])
+      .filter((d) => d.approval === "approved")
+      .map(({ lesson_id, pickup_address, pickup_time, driver_name, driver_phone, arranged }) => [lesson_id, { pickup_address, pickup_time, driver_name, driver_phone, arranged }]),
+  );
   return week.lessons
     .filter(approvedTransport)
     .sort(gridOrder(week))

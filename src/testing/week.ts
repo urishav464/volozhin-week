@@ -27,6 +27,7 @@ export function emptyWeek(): Week {
     sourceFiles: [],
     memorialPlans: [],
     fallen: [],
+    dayOwners: [],
   };
 }
 

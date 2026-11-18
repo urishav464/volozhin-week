@@ -142,6 +142,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       sourceFiles: [],
       memorialPlans: [],
       fallen: [],
+      dayOwners: [], // start_edition copies no owners
     };
     this.engines.set(edition.id, this.newEngine(week));
     this.syncTeams();
@@ -299,6 +300,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
       importNote: async (lessonId) => e.importNoteOf(lessonId),
       setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
+      setTransportRequest: (lessonId, patch) => run(() => e.setTransportRequest(lessonId, patch)),
+      setTransportDriver: (lessonId, patch) => run(() => e.setTransportDriver(lessonId, patch)),
       // milestone 5ב-2
       transports: async () => structuredClone(e.transportsOf()),
       addMemorialSlot: (day, start, end, roomId) => run(() => e.addMemorialSlot(day, start, end, roomId)),
@@ -309,6 +312,9 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       deleteMemorialPlan: (planId) => run(() => e.deleteMemorialPlan(planId)),
       setMemorialPolicy: (policy) => run(() => e.setMemorialPolicy(policy)),
       setGridRules: (rules) => run(() => e.setGridRules(rules)),
+      // v18
+      setDayOwners: (day, memberIds) => run(() => e.setDayOwners(day, memberIds)),
+      markDaySeen: (day) => run(() => e.markDaySeen(day)),
     };
   }
 

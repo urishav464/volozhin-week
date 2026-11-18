@@ -260,6 +260,8 @@ export class DemoSettings implements SettingsPort {
       this.s.authored(id);
     if (used) fail("member_has_history");
     this.s.members = this.s.members.filter((x) => x.id !== id);
+    // day_owners.member_id … on delete cascade (v18): owning a day is no history — the days they owned lose them
+    for (const w of this.weeks()) w.dayOwners = (w.dayOwners ?? []).filter((o) => o.member_id !== id);
     this.done(null);
   }
 

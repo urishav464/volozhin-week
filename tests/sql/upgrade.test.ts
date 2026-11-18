@@ -1,7 +1,7 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds an older version and its data. This runs exactly
-// that, from four bases read from git history — v13 (PR #6), v14 (PR #8), v15
-// (PR #9) and v16 (PR #11, what production runs) — under both default-privilege regimes the
+// that, from five bases read from git history — v13 (PR #6), v14 (PR #8), v15
+// (PR #9), v16 (PR #11) and v17 (PR #14, what production runs) — under both default-privilege regimes the
 // other tests model: the old file with some data in it — last year's week with
 // its transport details, links, a member, availability (v13's by part of a day,
 // in every shape the conversion meets; v14's and v15's per slot) and מכריכה
@@ -11,7 +11,10 @@
 // twice. Afterwards the data is all there (v13's availability per slot, by the
 // conversion's rule), the old kk structure is gone (v13–v14) or kept as it was
 // (v15) while the window and the link stay, «תורנויות» (v16) is there and empty,
-// and the catalog — every table, column, constraint, index, trigger, policy,
+// the days' owners (v18) are there and empty and every transport detail is as it
+// was, its new pickup_min unset — and what v18 itself writes after the first run
+// (an owner who looked at their day, a pickup time in minutes) is still there
+// after the second. And the catalog — every table, column, constraint, index, trigger, policy,
 // function body, privilege and the Realtime publication — is exactly a fresh
 // install's, so nothing a fresh database is tested for can differ on the owner's.
 import { execFileSync } from "node:child_process";
@@ -30,7 +33,8 @@ const BASES: Base[] = [
   { commit: "c6d6012", version: 13 }, // PR #6, as merged: availability by part of a day
   { commit: "fe55f7c", version: 14 }, // PR #8, as merged: availability per slot
   { commit: "baf3cbe", version: 15 }, // PR #9, as merged: מכריכה לכריכה by the week
-  { commit: "bcab571", version: 16 }, // PR #11 — what production runs: «תורנויות»
+  { commit: "bcab571", version: 16 }, // PR #11: «תורנויות»
+  { commit: "035f6fa", version: 17 }, // PR #14 — what production runs: titles
 ];
 
 /** «תורנויות» (v16): every table, empty after the run. */
@@ -178,11 +182,20 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     await db.query("insert into public.members (email, display_name, role, edition_id) values ('content@example.org', 'חבר/ת צוות', 'content', $1)", [ed]);
     await db.query("insert into public.share_links (edition_id, scope, token_hash, expires_at) values ($1, 'schedule', extensions.digest('a-token-for-the-upgrade', 'sha256'), now() + interval '1 day')", [ed]);
     await db.query("insert into public.transport_details (lesson_id, pickup_address, driver_name) select id, 'כתובת לדוגמה', 'נהג/ת לדוגמה' from public.lessons where edition_id = $1", [ed]);
-    for (const run of notices) {
+    for (const [i, run] of notices.entries()) {
       const heard = (n: { message?: string }) => run.push(n.message ?? "");
       db.on("notice", heard);
       await db.query(SCHEMA);
       db.off("notice", heard);
+      if (i === 0) {
+        // what v18 itself writes, between the two runs: Monday's owner, who has looked at the day, and a pickup
+        // time in minutes — the second run (the file on a v18 database) must leave both as they are
+        await asAdmin(async () => {
+          await db.query("select public.set_day_owners($1, 1, array[(select id from public.members where email = 'content@example.org')])", [ed]);
+        });
+        await db.query("update public.day_owners set seen_at = '2027-02-01T08:00:00Z' where edition_id = $1", [ed]);
+        await db.query("update public.transport_details set pickup_min = 435");
+      }
     }
     ref = await freshDatabase(fresh, regime);
     await ref.query(SCHEMA);
@@ -193,8 +206,8 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v17, with «תורנויות»'s tables there and empty", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(17);
+  it("is v18, with «תורנויות»'s tables there and empty", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(18);
     for (const t of ROTA_TABLES) {
       expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(0);
     }
@@ -297,6 +310,23 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     }
   });
 
+  it("adds v18's own: the days' owners (none of the old version's making), a pickup time in minutes (unset on every old row) — and a second run keeps what v18 wrote", async () => {
+    // only the owner set between the two runs — the upgrade itself made none — and their «ראיתי» survived the second run
+    expect((await db.query(
+      "select o.day, m.email, to_char(o.seen_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as seen_at from public.day_owners o join public.members m on m.id = o.member_id",
+    )).rows).toEqual([{ day: 1, email: "content@example.org", seen_at: "2027-02-01T08:00:00Z" }]);
+    expect((await db.query("select detail from public.activity where kind = 'day_owners'")).rows).toHaveLength(1);
+    // the old row's words as they were; the minutes written after the first run still there
+    expect((await db.query("select pickup_address, pickup_time, driver_name, driver_phone, arranged, pickup_min from public.transport_details")).rows).toEqual([
+      { pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: "נהג/ת לדוגמה", driver_phone: null, arranged: false, pickup_min: 435 },
+    ]);
+    // the new commands are there, each once
+    const count = async (fn: string) => (await db.query("select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1", [fn])).rows[0].n;
+    for (const fn of ["set_day_owners", "mark_day_seen", "set_availability_ranges", "set_transport_request", "set_transport_driver", "set_transport_details", "set_slot_availability", "decide_payments", "get_transports_for"]) {
+      expect(await count(fn), fn).toBe(1);
+    }
+  });
+
   it("keeps every other row it held, and seeds nothing — «נקודות לשיחה» stay the code's own text until edited", async () => {
     expect((await db.query("select settings from public.editions where id = $1", [ed])).rows[0].settings).toEqual({ lesson_minutes: 75, row_minutes: 90, kk_window: kkWindow });
     expect((await db.query("select count(*)::int as n from public.roster where edition_id = $1", [ed])).rows[0].n).toBe(1);
@@ -317,6 +347,11 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect(a).toContain("pub slot_availability");
     expect(a).toContain("idx CREATE UNIQUE INDEX kk_leaders_trainee ON public.kk_leaders USING btree (roster_id) WHERE (roster_id IS NOT NULL)");
     expect(a).toContain("con rota_assignments rota_assignments_one_duty UNIQUE (edition_id, day, shift, group_id)");
+    // v18: the days' owners and the pickup time in minutes; the owners are not published
+    expect(a).toContain("con day_owners day_owners_pkey PRIMARY KEY (edition_id, day, member_id)");
+    expect(a).toContain("con transport_details transport_details_pickup_min_check CHECK (((pickup_min >= 0) AND (pickup_min <= 1830)))");
+    expect(a).toContain("pol public.day_owners day_owners_read PERMISSIVE authenticated SELECT app.can_see_edition(edition_id) ");
+    expect(a).not.toContain("pub day_owners");
     expect(a.filter((x) => !b.includes(x))).toEqual([]);
     expect(b.filter((x) => !a.includes(x))).toEqual([]);
   });

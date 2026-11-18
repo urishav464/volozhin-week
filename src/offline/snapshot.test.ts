@@ -72,6 +72,27 @@ describe("only the Week is kept", () => {
     }
   });
 
+  it("the days' owners (v18) are kept: a day, a member's id and when they last looked — and a pickup minute is personal wherever it turns up", () => {
+    expect(WEEK_KEYS).toContain("dayOwners");
+    expect(PERSONAL_KEYS).toContain("pickup_min");
+    const w = demoWeek();
+    w.dayOwners = [{ day: 1, member_id: 2, seen_at: null }, { day: 1, member_id: 3, seen_at: "2027-02-10T08:00:00.000Z" }];
+    const back = readWeekSnapshot(JSON.parse(JSON.stringify(makeWeekSnapshot(UID, 1, w, new Date("2027-02-14T08:00:00Z"), 10))));
+    expect(back?.week.dayOwners).toEqual(w.dayOwners);
+    const { dayOwners: _gone, ...before } = demoWeek(); // a week saved without the key is not a Week any more
+    expect(() => assertWeekOnly(before)).toThrow(/dayOwners/);
+    const leaks: [string, (w: Week) => void][] = [
+      ["pickup_min", (w) => w.lessons.push({ ...demoWeek().lessons[0], pickup_min: 435 } as never)],
+      ["pickup_min", (w) => w.dayOwners.push({ day: 1, member_id: 2, seen_at: null, pickup_min: null } as never)],
+      ["pickup_time", (w) => w.dayOwners.push({ day: 1, member_id: 2, seen_at: null, transports: [{ pickup_time: "07:15" }] } as never)],
+    ];
+    for (const [key, add] of leaks) {
+      const x = emptyWeek();
+      add(x);
+      expect(() => assertWeekOnly(x), key).toThrow(new RegExp(`personal data at .*${key}`));
+    }
+  });
+
   it("refuses a key that is not the Week's, a key missing, and a personal key anywhere inside", () => {
     expect(() => assertWeekOnly({ ...emptyWeek(), contacts: [] })).toThrow(/contacts/);
     const { roster: _gone, ...noRoster } = emptyWeek();

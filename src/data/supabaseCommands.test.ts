@@ -80,6 +80,60 @@ describe("the stage commands on the wire", () => {
     expect(errorMessage("approval_pending")).toMatch(/^התשלום או ההסעה עוד ממתינים/);
   });
 
+  it("v18: the two transport halves, the day's owners and «ראיתי» by their parameter names — a patch goes as the JSON object it is", async () => {
+    const { sb, sent } = client([[204, null], [204, null], [204, null], [204, null], [204, null], [204, null], [204, null]]);
+    const c = supabaseCommands(sb, 7);
+    await c.setTransportRequest(41, { pickup_address: "כתובת לדוגמה", pickup_min: 435 });
+    await c.setTransportRequest(41, { pickup_time: null, pickup_address: undefined }); // undefined is not sent: that field stays as it is
+    await c.setTransportDriver(41, { driver_name: "נהג/ת לדוגמה", driver_phone: null, arranged: true });
+    await c.setTransportDriver(41, {});
+    await c.setDayOwners(2, [5, 3]);
+    await c.setDayOwners(2, []);
+    await c.markDaySeen(2);
+    expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
+      ["set_transport_request", { p_lesson: 41, p_fields: { pickup_address: "כתובת לדוגמה", pickup_min: 435 } }],
+      ["set_transport_request", { p_lesson: 41, p_fields: { pickup_time: null } }],
+      ["set_transport_driver", { p_lesson: 41, p_fields: { driver_name: "נהג/ת לדוגמה", driver_phone: null, arranged: true } }],
+      ["set_transport_driver", { p_lesson: 41, p_fields: {} }],
+      ["set_day_owners", { p_edition: 7, p_day: 2, p_members: [5, 3] }],
+      ["set_day_owners", { p_edition: 7, p_day: 2, p_members: [] }],
+      ["mark_day_seen", { p_edition: 7, p_day: 2 }],
+    ]);
+    expect(sent.every((r) => r.method === "POST")).toBe(true);
+  });
+
+  it("v18: the transports read says pending or approved and gives the pickup minute; a database from before it reads as approved, no minute", async () => {
+    const five = { pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: false };
+    const { sb, sent } = client([
+      [200, [{ lesson_id: "41", ...five, approval: "pending", pickup_min: "435" }, { lesson_id: 42, ...five, arranged: true, approval: "approved", pickup_min: null }]],
+      [200, [{ lesson_id: 43, ...five }]], // v17's answer: approved transports only, neither key
+      [200, null],
+    ]);
+    const c = supabaseCommands(sb, 7);
+    expect(await c.transports()).toEqual([
+      { lesson_id: 41, ...five, approval: "pending", pickup_min: 435 },
+      { lesson_id: 42, ...five, arranged: true, approval: "approved", pickup_min: null },
+    ]);
+    expect(await c.transports()).toEqual([{ lesson_id: 43, ...five, approval: "approved", pickup_min: null }]);
+    expect(await c.transports()).toEqual([]);
+    expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([["get_transports_for", { p_edition: 7 }], ["get_transports_for", { p_edition: 7 }], ["get_transports_for", { p_edition: 7 }]]);
+  });
+
+  it("v18: the new functions' refusals come back as their codes — and the one about a driver before the approval in Hebrew", async () => {
+    const p0001 = (message: string): [number, unknown] => [400, { code: "P0001", message, details: null, hint: null }];
+    const { sb } = client([p0001("not_handler"), p0001("no_transport"), p0001("transport_hidden"), p0001("bad_phone"), p0001("bad_value"), p0001("forbidden"), [403, { code: "42501", message: "permission denied for function set_day_owners" }], p0001("forbidden")]);
+    const c = supabaseCommands(sb, 7);
+    expect(await code(c.setTransportRequest(41, { pickup_time: "07:15" }))).toBe("not_handler");
+    expect(await code(c.setTransportRequest(41, { pickup_min: 435 }))).toBe("no_transport");
+    expect(await code(c.setTransportDriver(41, { arranged: true }))).toBe("transport_hidden");
+    expect(await code(c.setTransportDriver(41, { driver_phone: "12-34" }))).toBe("bad_phone");
+    expect(await code(c.setDayOwners(2, [1, 2, 3]))).toBe("bad_value");
+    expect(await code(c.markDaySeen(2))).toBe("forbidden");
+    expect(await code(c.setDayOwners(2, [1]))).toBe("forbidden");
+    expect(await code(c.decidePayments([{ lesson_id: 41, version: 1 }], "approved"))).toBe("forbidden"); // a trainee, or staff of another edition
+    expect(errorMessage("transport_hidden")).toBe("פרטי ההסעה גלויים רק למי שמטפל/ת במרצה, למדריך/ה, ולצוות הלוגיסטי מרגע שהתבקשה הסעה. פרטי הנהג/ת נקבעים אחרי האישור.");
+  });
+
   it("settings: the templates and duty phrases are functions; a trainee's escorted lessons a read of lessons", async () => {
     const { sb, sent } = client([[204, null], [204, null], [204, null], [204, null], [200, [{ id: 5, day: 0, start_min: 600, end_min: 690, title: null }]]]);
     const s = new SupabaseSettings(sb);

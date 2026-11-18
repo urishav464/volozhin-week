@@ -56,17 +56,24 @@ const PEER_ADMIN = "peer.admin@example.org";
 // phone) and set_rota_shifts (an edition admin's); and the two policies'
 // predicates, may_write_rota and may_see_rota_contacts. app.rota_shift_active runs
 // inside the assignments' guard only (tests/sql/rota.test.ts).
+// v18 (the reset's data foundation) added five definer functions for the signed-in
+// roles — set_day_owners and mark_day_seen (the days' owners), set_availability_ranges
+// (availability written as time ranges), set_transport_request and set_transport_driver
+// (the transport details in two parts) — and no app.* function; anon's surface is as
+// it was: ping and the six link functions (tests/sql/reset.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
   "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_import_note", "get_rota_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
   "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
-  "kk_update_group", "load_kk", "load_reviews", "load_rota", "load_week", "mark_confirm_sent", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
+  "kk_update_group", "load_kk", "load_reviews", "load_rota", "load_week", "mark_confirm_sent", "mark_day_seen", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
   "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
-  "set_book_order", "set_call_template", "set_confirm_template", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
+  "set_availability_ranges",
+  "set_book_order", "set_call_template", "set_confirm_template", "set_day_owners", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
   "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
-  "set_rota_contact", "set_rota_shifts", "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "speaker_activity", "speaker_history",
+  "set_rota_contact", "set_rota_shifts", "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "set_transport_driver", "set_transport_request",
+  "speaker_activity", "speaker_history",
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
@@ -152,7 +159,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
           "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes, " +
           // v16: every table of «תורנויות» — the group heads' phones among them
           "public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_group_contacts, public.rota_duties, public.rota_assignments, " +
-          "public.rota_staff_shifts, public.rota_prep_tasks",
+          // v18: the days' owners
+          "public.rota_staff_shifts, public.rota_prep_tasks, public.day_owners",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -191,6 +199,38 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect((await fn("public.set_rota_contact(bigint, text)")).prosecdef).toBe(true);
       expect((await fn("public.set_rota_shifts(bigint, jsonb)")).prosecdef).toBe(true);
     });
+
+    it("v18: the five new functions are definer, each one signature; the transports' read stays the caller's; day_owners has one policy — SELECT, for the edition's team", async () => {
+      const fns = (
+        await db.query(
+          `select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as f, p.prosecdef
+             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = any ($1) order by 1`,
+          [["set_day_owners", "mark_day_seen", "set_availability_ranges", "set_transport_request", "set_transport_driver"]],
+        )
+      ).rows;
+      expect(fns).toEqual([
+        { f: "mark_day_seen(p_edition bigint, p_day integer)", prosecdef: true },
+        { f: "set_availability_ranges(p_edition bigint, p_speaker bigint, p_days integer[], p_ranges jsonb, p_rest text)", prosecdef: true },
+        { f: "set_day_owners(p_edition bigint, p_day integer, p_members bigint[])", prosecdef: true },
+        { f: "set_transport_driver(p_lesson bigint, p_fields jsonb)", prosecdef: true },
+        { f: "set_transport_request(p_lesson bigint, p_fields jsonb)", prosecdef: true },
+      ]);
+      const read = (await db.query("select prosecdef, provolatile from pg_proc where oid = 'public.get_transports_for(bigint)'::regprocedure")).rows[0];
+      expect(read).toEqual({ prosecdef: false, provolatile: "s" });
+      expect((await db.query("select policyname, permissive, roles::text[] as roles, cmd, qual from pg_policies where schemaname = 'public' and tablename = 'day_owners'")).rows).toEqual([
+        { policyname: "day_owners_read", permissive: "PERMISSIVE", roles: ["authenticated"], cmd: "SELECT", qual: "app.can_see_edition(edition_id)" },
+      ]);
+      // no browser role writes the table, and anon has nothing on it
+      for (const role of ["anon", "authenticated"]) {
+        expect((await db.query("select has_table_privilege($1, 'public.day_owners', 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') as p", [role])).rows[0].p, role).toBe(false);
+      }
+      expect((await db.query("select has_table_privilege('authenticated', 'public.day_owners', 'SELECT') as a, has_table_privilege('anon', 'public.day_owners', 'SELECT') as n")).rows[0]).toEqual({ a: true, n: false });
+      // the pickup time in minutes: one nullable column, inside the grid's day
+      expect((await db.query("select pg_get_constraintdef(oid) as c from pg_constraint where conname = 'transport_details_pickup_min_check'")).rows).toEqual([
+        { c: "CHECK (((pickup_min >= 0) AND (pickup_min <= 1830)))" },
+      ]);
+    });
   });
 
   describe("anon (the publishable key, no sign-in)", () => {
@@ -202,7 +242,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select public.whoami()"))).toBe("42501");
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
         for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability",
-                         "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks"]) {
+                         "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks",
+                         "day_owners", "transport_details"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
@@ -213,7 +254,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
                          "public.save_lesson_review(1, 0, 'x', null, null, false, null)", "public.set_slot_availability(1, 1, 0, 1, 'can')", "public.set_call_template(1, 'x')",
                          // v16: nothing of «תורנויות»
                          "public.load_rota(1)", "public.get_rota_contacts(1)", "public.set_rota_contact(1, 'x')", "public.set_rota_shifts(1, null)",
-                         "app.may_write_rota(1)", "app.may_see_rota_contacts(1)", "app.rota_shift_active(1, 0, 0)"]) {
+                         "app.may_write_rota(1)", "app.may_see_rota_contacts(1)", "app.rota_shift_active(1, 0, 0)",
+                         // v18: nothing of the days' owners, the ranges or the transport's two parts
+                         "public.set_day_owners(1, 0, null)", "public.mark_day_seen(1, 0)", "public.set_availability_ranges(1, 1, array[0], null)",
+                         "public.set_transport_request(1, '{}')", "public.set_transport_driver(1, '{}')", "public.get_transports_for(1)", "app.may_see_transport(1)"]) {
           expect(await sqlstate(q(`select ${f}`)), f).toBe("42501");
         }
       });
@@ -249,7 +293,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(17);
+        expect(w.schema_version).toBe(18);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -385,7 +429,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
            group by table_name order by table_name`)
       ).rows;
       for (const g of grants) expect(g.p, g.table_name).toBe(TABLE_WRITES[g.table_name] ?? "SELECT");
-      expect(grants.map((g) => g.table_name)).toEqual(expect.arrayContaining(["lessons", ...Object.keys(TABLE_WRITES)]));
+      // v18: day_owners is read (the edition's team) and written by its two functions only
+      expect(grants.map((g) => g.table_name)).toEqual(expect.arrayContaining(["lessons", "day_owners", ...Object.keys(TABLE_WRITES)]));
 
       // Column grants beyond what the table grant already gives (editions has whole-row grants).
       const cols = (

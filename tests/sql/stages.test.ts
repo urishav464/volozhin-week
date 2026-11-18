@@ -3,7 +3,9 @@
 // table and the function agree), the outsiders, the reconfirm trigger on any
 // write path, the escort's foreign key under RLS, the log, and the catalog.
 // (What each command does, refusal by refusal, is tests/parity: engine and SQL
-// held to one contract.)
+// held to one contract.) v18 widened who sees a lesson's transport details —
+// the edition's admins, and logistics from the request on — and who decides a
+// request; the whole matrix is tests/sql/reset.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { SCHEMA, as, dropDatabase, freshDatabase, google, sqlstate } from "./db";
@@ -95,6 +97,8 @@ describe("from placement to arrival", () => {
     expect(await sig("set_paid")).toEqual(["p_lesson bigint, p_paid boolean"]);
     expect(await sig("get_transport_details")).toEqual(["p_lesson bigint"]);
     expect(await sig("set_transport_details")).toEqual(["p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean DEFAULT false"]);
+    expect(await sig("set_transport_request")).toEqual(["p_lesson bigint, p_fields jsonb"]); // v18
+    expect(await sig("set_transport_driver")).toEqual(["p_lesson bigint, p_fields jsonb"]); // v18
     expect(await sig("set_confirm_template")).toEqual(["p_edition bigint, p_body text"]);
     expect(await sig("set_duty_phrases")).toEqual(["p_edition bigint, p_phrases jsonb"]);
     expect(await sig("set_call_template")).toEqual(["p_edition bigint, p_body text"]); // v14
@@ -102,7 +106,7 @@ describe("from placement to arrival", () => {
     expect((await db.query("select data_type from information_schema.columns where table_name = 'lessons' and column_name = 'pay_amount'")).rows[0].data_type).toBe("integer");
   });
 
-  it("shows transport details to the handler and a global admin; to logistics only once approved; to no one else — the table and the function agree", async () => {
+  it("shows transport details to the handler, the edition's admins and a global admin; to logistics from the request on (v18); to no one else — the table and the function agree", async () => {
     const read = (email: string) =>
       as(db, "authenticated", google(email), async (q) => {
         const rpc = (await q("select public.get_transport_details($1) as t", [lesson])).rows[0].t;
@@ -112,19 +116,25 @@ describe("from placement to arrival", () => {
       });
     expect(await read(A)).toBe(ADDRESS);
     expect(await read(ADMIN)).toBe(ADDRESS);
-    for (const who of [L, B, ED_ADMIN, PRACTICE, OLD, STRANGER]) expect(await read(who), who).toBe("hidden");
-
-    // the instructor approves: now logistics of THIS edition — not last year's
-    await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson, await version(lesson)]);
+    // v18: the edition's admin, whoever handles the lesson — and logistics of THIS edition while the request waits
+    expect(await read(ED_ADMIN)).toBe(ADDRESS);
     expect(await read(L)).toBe(ADDRESS);
-    for (const who of [B, ED_ADMIN, PRACTICE, OLD, STRANGER]) expect(await read(who), who).toBe("hidden");
+    for (const who of [B, PRACTICE, OLD, STRANGER]) expect(await read(who), who).toBe("hidden");
+
+    // the instructor approves: the same people — logistics of this edition, not last year's
+    await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson, await version(lesson)]);
+    for (const who of [A, ADMIN, ED_ADMIN, L]) expect(await read(who), who).toBe(ADDRESS);
+    for (const who of [B, PRACTICE, OLD, STRANGER]) expect(await read(who), who).toBe("hidden");
 
     // writing: the same people
-    for (const who of [B, ED_ADMIN, PRACTICE, OLD]) {
+    for (const who of [B, PRACTICE, OLD]) {
       await as(db, "authenticated", google(who), async (q) => {
         expect(await refusal(q("select public.set_transport_details($1, null, null, 'x', null)", [lesson])), who).toBe("transport_hidden");
       });
     }
+    await as(db, "authenticated", google(ED_ADMIN), async (q) => {
+      expect(await refusal(q("select public.set_transport_details($1, $2, '07:15', 'x', null)", [lesson, ADDRESS]))).toBe("ok");
+    });
     expect(await refusal(commitAs(L, "select public.set_transport_details($1, $2, '07:15', 'נהג/ת לדוגמה', $3, true)", [lesson, ADDRESS, PHONE]))).toBe("ok");
     await as(db, "authenticated", google(L), async (q) => {
       expect((await q("select public.get_transport_details($1) as t", [lesson])).rows[0].t).toEqual({
@@ -171,6 +181,8 @@ describe("from placement to arrival", () => {
       ["select public.set_paid($1, true)", [lesson]],
       ["select public.decide_payments(array[$1::bigint], array[1], 'approved')", [lesson]],
       ["select public.set_transport_details($1, 'x', null, null, null)", [lesson]],
+      ["select public.set_transport_request($1, '{}')", [lesson]],
+      ["select public.set_transport_driver($1, '{}')", [lesson]],
       ["select public.set_confirm_template($1, 'x')", [ed]],
       ["select public.set_duty_phrases($1, '[]')", [ed]],
       ["select public.set_call_template($1, 'x')", [ed]],
@@ -186,9 +198,11 @@ describe("from placement to arrival", () => {
       expect(await refusal(q("select public.set_call_template($1, 'x')", [ed]))).toBe("not_member");
     });
     await as(db, "authenticated", google(L), async (q) => {
-      // logistics reads the schedule, writes paid_at and transport only — no titles, no approvals, no requests
+      // logistics reads the schedule, writes paid_at and transport only — no titles, no requests
       expect(await refusal(q("select public.update_lesson($1, $2, '{\"title\": \"x\"}')", [lesson, await version(lesson)]))).toBe("forbidden");
-      expect(await refusal(q("select public.decide_payments(array[$1::bigint], array[1], 'approved')", [lesson]))).toBe("forbidden");
+      // v18: logistics of the lesson's edition may decide a request — this one is decided already, and never at a version it did not see
+      expect(await refusal(q("select public.decide_payments(array[$1::bigint], array[1], 'approved')", [lesson]))).toBe("stale");
+      expect(await refusal(q("select public.set_transport_request($1, '{}')", [lesson]))).toBe("forbidden"); // the handler's part
       expect(await refusal(q("select public.set_payment($1, 1, 100, 'none')", [lesson]))).toBe("forbidden");
       expect(await refusal(q("select public.set_escort($1, 1, null, true)", [lesson]))).toBe("forbidden");
       expect(await refusal(q("select public.set_call_template($1, 'x')", [ed]))).toBe("forbidden"); // an edition admin's

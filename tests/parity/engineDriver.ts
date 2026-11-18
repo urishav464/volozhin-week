@@ -39,6 +39,7 @@ export function engineDriver(): Driver {
     sourceFiles: [],
     memorialPlans: [],
     fallen: [],
+    dayOwners: [],
   };
   const speakerId = (label: string) => week.speakers.find((s) => speakerLabel(s) === label)?.id ?? -1;
   for (const [i, a] of APPROACHES.entries()) {

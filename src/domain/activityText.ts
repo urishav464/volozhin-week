@@ -67,6 +67,10 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
         text = d.vetted === "approved" ? byGender(g, "אושר", "אושרה") : d.vetted === "rejected" ? byGender(g, "נדחה", "נדחתה", "נדחה/תה") : `${byGender(g, "הוחזר", "הוחזרה")} להמתנה לאישור`;
       else if (e.kind === "contacts") text = `פרטי הקשר עודכנו: ${list(d.fields, CONTACT_FIELD)}`;
       else text = e.kind;
+    } else if (e.entity === "approaches" && e.kind === "availability" && num(d.marked) != null) {
+      // v18: a set of time ranges (set_availability_ranges) — one line for the whole update: how many slots it marked
+      const marked = num(d.marked)!;
+      text = `עודכנה הזמינות — ${marked === 1 ? "משבצת אחת" : `${marked} משבצות`}`;
     } else if (e.entity === "approaches" && e.kind === "availability") {
       // v14: one slot — its day and the row's range (an LRM before it); before: a part of a day
       const day = num(d.day);

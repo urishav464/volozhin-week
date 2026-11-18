@@ -7,6 +7,7 @@
 // Contact details never travel with a Week (load_week leaves them out, and
 // Realtime never carries them): `contacts()` fetches one speaker's, and only
 // for the people the contacts policy names.
+import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, ContactPref, Edition, Gender, SpeakerContacts, Vetting } from "../domain/types";
 
@@ -69,7 +70,8 @@ export interface HistoryLesson {
  * One line of a speaker's timeline (public.activity). `actor`, and in `detail`
  * `owner` / `offered_to`, are members.id — names come from the edition's team.
  * Kinds: speakers insert | update {fields} | vet {vetted, note} | contacts {fields};
- * approaches insert | update {status, owner, offered_to?, note?} | availability {day, part, kind};
+ * approaches insert | update {status, owner, offered_to?, note?} | availability — one slot {speaker, day, start, end,
+ * kind} (before v14: {day, part, kind}) or, v18, a set of ranges {speaker, days, ranges, marked, rest}: counts only;
  * pitches insert | update | delete {state, lesson}.
  */
 export interface ActivityEntry {
@@ -129,4 +131,11 @@ export interface SpeakerPort {
    * (no approach needed); refuses outside_grid for a row not in play that day (src/domain/availability.ts).
    */
   setSlotAvailability(editionId: number, speakerId: number, day: Day, rowId: number, kind: "can" | "cannot" | null, note?: string | null): Promise<void>;
+  /**
+   * v18: availability typed as time ranges — an input method, the slots stay the one store. For each of `days` (1–5,
+   * distinct) the speaker's slots of that day are replaced (their notes go with them) by what `rangesToSlots`
+   * (src/domain/availability.ts) makes of the ranges (at most 40) and `rest` (what a row no range decides becomes;
+   * null = no mark). The same people as setSlotAvailability. Returns how many slots were marked; logged once.
+   */
+  setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest?: SlotKind | null): Promise<number>;
 }

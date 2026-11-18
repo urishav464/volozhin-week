@@ -55,7 +55,10 @@ export interface WeekCommands {
    * Anything asked → approval «pending»; nothing → «none». The same request again is nothing, unless it was rejected.
    */
   setPayment(lessonId: number, version: number, amount: number | null, transport: Transport): Promise<void>;
-  /** A global admin approves or rejects — one lesson or a batch, each at the version on screen — with an optional note. */
+  /**
+   * Approve or reject — one lesson or a batch, each at the version on screen — with an optional note. A global admin;
+   * or (v18) an admin or a logistics member of the lesson's edition, a real one that is not archived. One approval is enough.
+   */
   decidePayments(items: PaymentItem[], decision: "approved" | "rejected", note?: string | null): Promise<void>;
   /** «סומן כנשלח»: the handler or an admin; never while the payment/transport waits or was rejected. Clears «לעדכן את המרצה». */
   markConfirmSent(lessonId: number, version: number): Promise<void>;
@@ -70,6 +73,14 @@ export interface WeekCommands {
   /** The same people only; all five fields replaced (null clears). */
   setTransport(lessonId: number, d: TransportDetails): Promise<void>;
   /**
+   * v18, the request's half: the lesson's handler or an admin of the edition, on a closed lesson that asked for
+   * transport — whatever the instructor's decision (it is filled BEFORE the approval). Only the keys present are
+   * written (null clears one); the log names the fields, never the values.
+   */
+  setTransportRequest(lessonId: number, patch: TransportRequestPatch): Promise<void>;
+  /** v18, the driver's half: logistics or an admin of the edition, once the transport is approved. Only the keys present are written. */
+  setTransportDriver(lessonId: number, patch: TransportDriverPatch): Promise<void>;
+  /**
    * What last year's tracking sheet said about an imported lesson that has no field of its own (its transport and
    * payment words among them) — null when there is none or the caller may not see it: the transport details' rule
    * (public.get_import_note; for an archive, a global admin). Never part of a Week.
@@ -78,8 +89,10 @@ export interface WeekCommands {
 
   // ---- memorial times and logistics (milestone 5ב-2; CONTRACT.md «Memorial times and logistics»)
   /**
-   * «הסעות»: the edition's closed lessons whose transport was approved, each with exactly what transport(lessonId) would
-   * show the caller — a lesson they may not see the details of is not listed (public.get_transports_for). Never in a Week.
+   * The edition's closed lessons whose transport waits for the instructor or was approved (v18: pending too — each
+   * says which, `approval`), each with what transport(lessonId) would show the caller and its `pickup_min` — a lesson
+   * they may not see the details of is not listed (public.get_transports_for). Never in a Week. «לוגיסטיקה ← הסעות»
+   * shows the approved ones only (transportRows, src/exports/logistics.ts).
    */
   transports(): Promise<LessonTransport[]>;
   /** An admin of the edition: a memorial slot inside one of the day's memorial rows (null: the default room). Returns its lesson id. */
@@ -98,6 +111,15 @@ export interface WeekCommands {
   setMemorialPolicy(policy: MemorialPolicy): Promise<void>;
   /** An admin of the edition (v13): the grid's soft rules; null removes one (its «הצעה» default returns). */
   setGridRules(rules: GridRules): Promise<void>;
+
+  // ---- v18 (CONTRACT.md «v18 — day owners, availability by ranges, transport in two parts»)
+  /**
+   * An admin of the edition: the day's owners — at most two different active members who handle speakers (content or
+   * admin). Replaces the day's list: a member already there keeps their `seen_at`, a new one starts with none.
+   */
+  setDayOwners(day: Day, memberIds: number[]): Promise<void>;
+  /** One of the day's owners looked at its notices: their own `seen_at` is now. Anyone else: `forbidden`. */
+  markDaySeen(day: Day): Promise<void>;
 }
 
 /** settings.gender_tolerance (0–5) and settings.max_category_per_day (1–10); null = the «הצעה» default. */
@@ -106,8 +128,18 @@ export interface GridRules {
   max_category_per_day: number | null;
 }
 
-/** A lesson's transport details in the logistics list. */
-export type LessonTransport = TransportDetails & { lesson_id: number };
+/** v18: the request's half of a lesson's transport details — the keys present are written, the rest left as they are. */
+export type TransportRequestPatch = Partial<{ pickup_address: string | null; pickup_time: string | null; pickup_min: number | null }>;
+
+/** v18: the driver's half — the keys present are written. */
+export type TransportDriverPatch = Partial<{ driver_name: string | null; driver_phone: string | null; arranged: boolean }>;
+
+/**
+ * A lesson's transport details in the transports read (public.get_transports_for): the five fields, whether the
+ * request still waits for the instructor or was approved, and (v18) the pickup time as minutes from 00:00 of the
+ * lesson's grid day — for a time-line board; personal data like the rest.
+ */
+export type LessonTransport = TransportDetails & { lesson_id: number; approval: "pending" | "approved"; pickup_min: number | null };
 
 /** A refusal with one of the contract's codes (src/errors.ts has the Hebrew). */
 export class CommandError extends Error {
