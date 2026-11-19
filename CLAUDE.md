@@ -172,7 +172,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   vitest's own timeouts.
   Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
   Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
-  (`/reader`, content and admins; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
+  (`/reader`, every member since v19 — content and admins build it whole, logistics builds, downloads and marks «נשלח לדפוס»; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
   `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
 - **Memorial times and logistics (milestone 5ב-2, schema v11):** `fallen` (one cross-year list; a global admin
   writes it — the names are entered in the app only, the demo's are «חלל/ה לדוגמה 1…9»), `fallen_contacts` (a bereaved
@@ -270,7 +270,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on five bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe), v16 (bcab571) and v17 (035f6fa, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on six bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe), v16 (bcab571), v17 (035f6fa) and v18 (512ae35, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -329,7 +329,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `GroupSheet.tsx` an A4 landscape page per group). Builders `src/exports/rota.ts` (`groupSchedule` takes the public schedule (and
   the closed cells' times), the rows, one group, the duties and its assignments — no Week, no phone: a future `/g` link would be anon's seventh function
   and waits; `rotaWorkbook` a sheet per page, «מוצ״ש» in gershayim). `start_edition` carries the duties, the preparations and
-  the shifts; archive `format_version` 5 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
+  the shifts; archive `format_version` 5, 6 since v19 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
   Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16». The week's fourth lens
   «תורנויות» (8.11, `src/grid/rotaLens.ts` → `RotaWeek.tsx`) draws the duties alone — `load_rota` only while it is on, never
   the phones; a shift links to `/logistics/rota` (the edition's logistics and admins) or `/print/rota` (DECISIONS «עדשת התורנויות…»).
@@ -415,7 +415,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   re-read when the pending set changes and after each decision; a failed read only drops the pickup), single or batch
   decisions, `stale` reloads with one line; vetting and «אישור באצווה» stay the global admins'. Wording: payment and
   transport are no longer «the instructor's» («ממתין לאישור», «החלטה על הבקשה»; `forbidden` = «אין הרשאה לפעולה הזו.»).
-  **The transport board** («לוגיסטיקה ← הסעות», `src/screens/logistics/TransportBoard.tsx`, the pure model `lanes.ts`): closed
+  **The transport board** («לוגיסטיקה ← הסעות», «הסעות וצוות» since phase 4, `src/screens/logistics/TransportBoard.tsx`, the pure model `lanes.ts`): closed
   lessons with a pending or approved request, from ONE `transports()` read and `useRota`; the axis (`BoardAxis.tsx`, from
   768px, `aria-hidden` — the list is its twin and the phone's board) runs 06:30 to the next morning; outbound bar from
   `boardPickupMin` (`pickup_min` only when it is the clock time typed in `pickup_time` — the old `set_transport_details`
@@ -446,6 +446,47 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `demoWeek.ts`). Offline: `/day/:d` opens the copy on that day (`offlineDayOf`); `/after`, `/approvals` need a connection.
   e2e: `approvals.spec.ts`, `staff.spec.ts`, `after.spec.ts`; `speakers.spec.ts` and `stages.spec.ts` rewritten,
   `mine.spec.ts` deleted. DECISIONS «הריסט, שלב 3 — אישורים, הסעות והמסכים של הצוות».
+- **The reset, phase 4 — the logistics home, and schema v19:** **the home** (`/logistics` with no tab, or an unknown one;
+  `src/screens/logistics/LogisticsHome.tsx`): tasks by time from the pure `logisticsTasks` (`tasks.ts`) — three groups always
+  shown («בהתחלה» · «כשהתוכן מוכן» · «קרוב לשבוע», the last with `weekLine(daysToWeek(…))`, `src/domain/israelTime.ts`), each
+  task `done` / `open` / `empty` (nothing yet — never a false «הושלם») / `unknown` («לא נטען»; «לא זמין במחזור הזה» where
+  `mayDecide` is false), its title the link to its screen. ONE read each of `load_rota`, `load_kk` and `get_transports_for`
+  (only when `mayDecide`); a failed read turns only its own tasks «לא נטען». The tab strip: «בית» · «הסעות וצוות»
+  (`/logistics/transports`, phase 3's board, full width) · «תשלומים» · «ספרים» · «הדפסות» · «תורנויות». **Logistics' header**
+  («בית» · «אישורים» · «השבוע» `/week`, read-only with «לבית» · «תוצרים» · «זמני זיכרון» · «מכריכה לכריכה» · «ידע» · «עזרה»);
+  their `/`, `/myday`, `/day/*` and `/after` go to `LOGISTICS_HOME` (`homeRedirect` and the other helpers in `nav.ts`). ONE
+  browser twin of `app.require_logistics`: `mayLogisticsWrite` (`src/domain/approvals.ts`; `maySendReader`, `mayArrangeDriver`).
+  **Cohort flags** (`rota_cohorts.helps_rota` default true, `can_drive` default false; `helpsRota` / `canDrive` /
+  `helpingGroups` / `byCohortOrder` / `presenceMarked` in `src/domain/rota.ts`): the fair suggestion and `unevenLoad` skip a
+  non-helping cohort's groups, a hand assignment of one warns `not_helping`, `presence_unknown` stays for every cohort (meals);
+  the board lists the cohorts whose staff can drive, on campus that day first (`transportLanes(…).drivers`, names only).
+  **Saturday night** (`rota_prep_tasks.kind` `task` | `item`, `qty` ≤ 40 for an item, cleaned whatever the kind — a phone is
+  `rota_contact_in_text`; «נקנה» is `done`): two lists with their own counts and paste (`addPrepTasks(edition, rows, kind)`,
+  one insert; `parsePrepItems`), `prepMoves` reorders inside one list; printing adds `shoppingTable` («קניות מוצ״ש»);
+  `start_edition` copies kind and qty; archive `format_version` 6. **The reader for logistics:** build and download, no cover,
+  headers, uploads or removal; `set_reader_sent(p_edition, p_sent)` (definer, `require_logistics`; archived → admins) writes or
+  removes `editions.settings.reader_sent = {at, by}`, never carried by `start_edition`; `filesAfterSent` («נוספו N קבצים אחרי
+  השליחה»); «מקראה» is in every member's `OutputsTabs`. **Books:** `suggestedCopies(signed, leaders)` beside the field,
+  «למלא» fills it only, saved on «שמירה». **What phase 5 needs, already in v19** (no screen writes it yet): presentations
+  (`source_files.kind` `source` | `presentation`; pptx only as a presentation — mime check, bucket, `SOURCE_PATH_RE` ≡
+  `app.source_path_re`; `register_source_file(…, p_kind)`, the 5-argument overload dropped with its grant; never in the reader,
+  the manifest or `printRows` — `isPresentation`; an edition-level one is admins', `lesson_id` null, never the cover);
+  `speakers.public_bio` (≤ 600) and `lessons.public_note` (≤ 400, `update_lesson`), both `contact_in_text`;
+  `approaches.public_ok` (`set_public_ok(p_approach, p_version, p_ok)`, the handler or an admin, logged; never carried);
+  **the speaker's photo** — `speaker_photos` (a JPEG `bytea`, 100–20480 bytes, ≤ 512 px), `app.photo_ok` ≡ `photoOk`
+  (`src/domain/photo.ts`: the file's own structure — no EXIF/XMP/ICC/comments, baseline, nothing after FFD9), written by
+  `set_speaker_photo(p_edition, p_speaker, p_photo)` (base64; null deletes; the speaker-edit rule), read one at a time by
+  `get_speaker_photo` (invoker); `load_week` carries `has_photo` only; never in Realtime, the offline copy (`image`/`photo`
+  are `PERSONAL_KEYS`), a log detail or the archive. Fixtures are built byte by byte (`src/testing/photos.ts`,
+  `src/data/demoPhoto.ts`) — never a base64 blob in git. **`schedule_view`** (still anon's sixth door, no seventh) returns
+  `{edition, rows (+note, +people), people [{label, bio, photo}], fixed}`: a speaker in `people` only with an approach of
+  THAT edition marked `public_ok`, once, by first appearance; a memorial slot nameless; `fixed` = the grid's fixed/kk rows
+  inside the day window; the browser twin is `publicSchedule` (`src/exports/publicSchedule.ts`, `GuestSchedule`), and
+  `SchedulePage.tsx` shows none of it yet (phase 5). `public/privacy.html` says what a guest sees. Advisor 83 (three more
+  definer functions: `set_reader_sent`, `set_speaker_photo`, `set_public_ok`). **The demo's `?as=logistics`** adds a cohort
+  that can drive, one that does not help, two shopping items, a week date three weeks ahead (`demoLogisticsStart`, that mode
+  only) and one `public_ok` speaker with a synthetic photo. Parity: six v19 scenarios, every step pinned with `is`; tests
+  `tests/sql/v19.test.ts`, e2e `logistics-home.spec.ts`. DECISIONS «הריסט, שלב 4 — הבית של הלוגיסטיקה, וגרסה 19».
 - `src/screens/speakers/` — the speaker's shared parts (since phase 3 of the reset no screen of its own): `sheetParts.tsx`
   (contacts, hand-over and offers, claim, `mayEditSpeaker`), `call.tsx`, `parts.tsx`, `nameCheck.tsx`, `SpeakerReviews.tsx`
   — used by `src/screens/speakerPages/` and the lesson page. The week, the new pages and /approvals share one loaded edition
