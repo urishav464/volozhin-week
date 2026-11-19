@@ -394,6 +394,8 @@ test.describe("mock build", () => {
     sb.answers.set("load_kk", kkOf());
     await page.keyboard.press("Enter");
     await expect.poll(() => held.length).toBe(1);
+    // the request leaves before React draws the busy label: wait for the drawing, as above, then ask where the focus is
+    await expect(alert.getByRole("button", { name: "טוען…" })).toHaveAttribute("aria-busy", "true");
     expect(await focused(page)).toBe("טוען…");
     held.shift()!();
     await expect(task(page, "books")).toHaveAttribute("data-state", "open");
