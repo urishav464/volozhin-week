@@ -15,12 +15,13 @@ import { buildModel, type GridModel, pitchSpeaker } from "../grid/model";
 import { Sheet } from "../grid/Panels";
 import { useMedia } from "../lib/useMedia";
 import type { WeekSnapshot } from "../offline/snapshot";
-import { savedAtText, sectionNeedingConnection, todayColumn } from "../offline/view";
+import { offlineDayOf, savedAtText, sectionNeedingConnection, todayColumn } from "../offline/view";
 
 export function OfflineWeek({ snapshot, path = "/" }: { snapshot: WeekSnapshot; path?: string }) {
   const wide = useMedia("(min-width: 1024px)");
   const model = useMemo(() => buildModel(snapshot.week), [snapshot]);
-  const [day, setDay] = useState<Day>(() => todayColumn(snapshot.week.edition.start_date, new Date().toISOString()) ?? 0);
+  // «ימים» of one day (/day/2) opens on it; else today's column, else Sunday
+  const [day, setDay] = useState<Day>(() => offlineDayOf(path) ?? todayColumn(snapshot.week.edition.start_date, new Date().toISOString()) ?? 0);
   const [open, setOpen] = useState<number | null>(null);
   const lesson = open != null ? model.week.lessons.find((l) => l.id === open) : undefined;
   const elsewhere = sectionNeedingConnection(path);
@@ -37,7 +38,7 @@ export function OfflineWeek({ snapshot, path = "/" }: { snapshot: WeekSnapshot; 
         )}
       </div>
       <h2 className="font-display text-xl font-extrabold text-navy">{model.week.edition.label}</h2>
-      <DayView model={model} lens="diversity" day={day} onDay={setDay} placing={null} onCell={() => undefined} onLesson={setOpen} readOnly />
+      <DayView model={model} lens="diversity" day={day} onDay={setDay} onCell={() => undefined} onLesson={setOpen} readOnly />
       {lesson && <LessonFacts model={model} lesson={lesson} wide={wide} onClose={() => setOpen(null)} />}
     </div>
   );

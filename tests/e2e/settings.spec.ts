@@ -387,7 +387,7 @@ test.describe("mock build", () => {
     const offer = page.getByRole("group", { name: "אישור" });
     await expect(offer).toContainText("חבר/ת צוות לדוגמה: לחבר/ת הצוות כבר יש פעולות במערכת");
     await offer.getByRole("button", { name: "השבתה" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "הפעולה הזו שמורה למדריך/ה" })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "אין הרשאה לפעולה הזו." })).toBeVisible(); // `forbidden`, in the neutral words of the reset's phase 3
     await expect(toast(page, /הושבת/)).toHaveCount(0);
     expect(sent).toEqual(["DELETE eq.5", "PATCH eq.5"]);
   });

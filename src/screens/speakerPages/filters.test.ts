@@ -9,7 +9,8 @@ import { rangesToSlots } from "../../domain/availability";
 import { rangesCall, rangesFormOf } from "../../domain/rangesForm";
 import { targetOf } from "../../domain/placement";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../../testing/week";
-import { filterSpeakers, slotFor } from "./filters";
+import { teamBoard } from "../../domain/mine";
+import { filterSpeakers, filterTeam, slotFor } from "./filters";
 
 const ME = 2;
 
@@ -147,5 +148,56 @@ describe("the speakers' list (filterSpeakers)", () => {
     const into = w.pitches.filter((p) => w.approaches.find((a) => a.id === p.approach_id)?.speaker_id === speaker.id).map((p) => p.lesson_id);
     expect(into).toEqual([l2.id]);
     expect(w.pitches.some((p) => p.lesson_id === l1.id)).toBe(false);
+  });
+});
+
+describe("filterTeam: «כל הצוות» under the search", () => {
+  function team() {
+    const f = fixture();
+    f.w.team = [
+      { id: ME, display_name: "חניך/ה א׳", gender: null, role: "content" },
+      { id: 3, display_name: "חניך/ה ב׳", gender: null, role: "content" },
+      { id: 9, display_name: "לוגיסטיקה", gender: null, role: "logistics" },
+    ];
+    addApproach(f.w, f.retired, "claimed").owner_member_id = ME;
+    const nobody = addSpeaker(f.w, "m", "זאב");
+    addApproach(f.w, nobody, "claimed").owner_member_id = null;
+    return { ...f, nobody };
+  }
+  const ids = (b: ReturnType<typeof teamBoard>) => [b.owners.map((o) => [o.id, o.rows.map((r) => r.speaker.name)]), b.unowned.map((r) => r.speaker.name)];
+
+  it("every handler's block in the team's order (never logistics), without a retired speaker; nothing typed keeps the board", () => {
+    const { w } = team();
+    const m = buildModel(w);
+    expect(ids(filterTeam(m, teamBoard(w), {}))).toEqual([
+      [
+        [ME, ["בתיה"]],
+        [3, ["גדעון", "דניאל", "הדס"]],
+      ],
+      ["זאב"],
+    ]);
+  });
+
+  it("the search, the topic and the gender narrow every block; an emptied block stays", () => {
+    const { w } = team();
+    const m = buildModel(w);
+    expect(ids(filterTeam(m, teamBoard(w), { q: "מכון" }))).toEqual([
+      [
+        [ME, []],
+        [3, ["גדעון"]],
+      ],
+      [],
+    ]);
+    expect(ids(filterTeam(m, teamBoard(w), { cat: 1 }))[0]).toEqual([
+      [ME, ["בתיה"]],
+      [3, []],
+    ]);
+    expect(ids(filterTeam(m, teamBoard(w), { g: "m" }))).toEqual([
+      [
+        [ME, []],
+        [3, ["גדעון", "דניאל"]],
+      ],
+      ["זאב"],
+    ]);
   });
 });

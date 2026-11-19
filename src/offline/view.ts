@@ -1,5 +1,6 @@
 // The read-only day view's words and its first day — pure, in Israel time whatever the device's clock zone says.
 import { addDays, israelLocal } from "../domain/israelTime";
+import { parseDay } from "../domain/routes";
 import { DAY_START, type Day } from "../domain/time";
 
 const TZ = "Asia/Jerusalem";
@@ -26,16 +27,19 @@ export function todayColumn(startDate: string | null, nowIso: string): Day | nul
   return null;
 }
 
-/** The week's own addresses (the reset, phase 2: a trainee's «השבוע» is /week, the old grid /grid): the day view is them. */
-const WEEK = new Set(["week", "grid"]);
+/**
+ * The week's own addresses (the reset, phase 2: a trainee's «השבוע» is /week, the old grid /grid; phase 3: the staff's
+ * «ימים», /day/:d): the day view is them — read-only from the copy.
+ */
+const WEEK = new Set(["week", "grid", "day"]);
 
 /** The team's sections by their first path segment, as the header names them — every one but the week needs a connection. */
 const SECTIONS: Record<string, string> = {
   myday: "היום שלי",
   speakers: "מרצים",
   lesson: "עמוד השיעור",
-  mine: "המרצים שלי",
   approvals: "אישורים",
+  after: "אחרי השבוע",
   tracking: "תוצרים",
   print: "תוצרים",
   export: "תוצרים",
@@ -56,4 +60,10 @@ export function sectionNeedingConnection(path: string): string | null {
   const first = path.split("/").filter(Boolean)[0];
   if (!first || WEEK.has(first)) return null;
   return SECTIONS[first] ?? "המסך הזה";
+}
+
+/** The day an address asks the offline day view to open on: `/day/2` → 2; any other address (or a bad day) → null. */
+export function offlineDayOf(path: string): Day | null {
+  const [first, d] = path.split("/").filter(Boolean);
+  return first === "day" ? parseDay(d) : null;
 }

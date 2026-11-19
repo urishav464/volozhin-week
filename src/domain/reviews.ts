@@ -34,6 +34,20 @@ export function reviewWindow(edition: Pick<Edition, "start_date">, lesson: { day
   return israelDate(nowIso) >= opensOn ? { state: "open", opensOn } : { state: "before", opensOn };
 }
 
+/**
+ * The first date any «איך עבר» of the edition can open (the reset, phase 3): the day after the week's first day —
+ * reviewOpensOn of a lesson of day 0 that ends that day. null while the week's date is TBD.
+ */
+export function reviewsOpenOn(edition: Pick<Edition, "start_date">): string | null {
+  return edition.start_date ? addDays(edition.start_date, 1) : null;
+}
+
+/** Has «אחרי השבוע» anything to open yet: the week's date is set and today in Israel is at least reviewsOpenOn. */
+export function reviewsOpen(edition: Pick<Edition, "start_date"> | null | undefined, nowIso: string): boolean {
+  const on = edition ? reviewsOpenOn(edition) : null;
+  return on != null && israelDate(nowIso) >= on;
+}
+
 /** Has the edition's week ended — Friday 00:00 in Israel, start_date + 5 (when the links expire)? Never while TBD. */
 export function weekOver(edition: Pick<Edition, "start_date">, nowIso: string): boolean {
   return !!edition.start_date && israelDate(nowIso) >= addDays(edition.start_date, 5);

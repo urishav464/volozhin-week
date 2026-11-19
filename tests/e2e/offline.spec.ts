@@ -261,7 +261,7 @@ test.describe("mock build", () => {
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1);
   });
 
-  test("memorial times offline: the yellow card and its plan from the snapshot, never a family's contact — «זמני זיכרון» and «לוגיסטיקה» say they need a connection", async ({ context, page }) => {
+  test("memorial times offline: the yellow card and its plan from the snapshot, never a family's contact — «זמני זיכרון», «לוגיסטיקה», «אחרי השבוע» and «אישורים» say they need a connection; «ימים» opens at its day", async ({ context, page }) => {
     const { week, offline } = await signedIn(context, page);
     const placed = week.memorialPlans.find((p) => p.lesson_id != null)!;
     const name = week.fallen.find((f) => f.id === placed.fallen_id)!.name;
@@ -307,6 +307,18 @@ test.describe("mock build", () => {
 
     await page.goto(`${mockUrl()}/logistics/transports`);
     await expect(offlineBanner(page)).toContainText("«לוגיסטיקה» צריך חיבור לאינטרנט");
+    // the reset, phase 3: «ימים» is a week's address — the copy at its own day; «אחרי השבוע» and «אישורים» need a connection
+    await page.goto(`${mockUrl()}/day/2`);
+    await expect(offlineBanner(page)).toBeVisible();
+    await expect(page.locator("[data-offline-elsewhere]")).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "שלישי" })).toHaveAttribute("aria-selected", "true");
+    for (const [path, name] of [
+      ["/after", "אחרי השבוע"],
+      ["/approvals", "אישורים"],
+    ] as const) {
+      await page.goto(`${mockUrl()}${path}`);
+      await expect(offlineBanner(page)).toContainText(`«${name}» צריך חיבור לאינטרנט`);
+    }
     await page.goto(`${mockUrl()}/`);
     await expect(offlineBanner(page)).toBeVisible();
     await expect(page.locator("[data-offline-elsewhere]")).toHaveCount(0);

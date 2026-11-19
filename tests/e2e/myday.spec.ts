@@ -2,7 +2,7 @@
 // `?as=trainee` (src/data/demoPort.ts): «חניך/ה א׳» (member 2, content) owns Sunday with «חניך/ה ב׳» and Wednesday with
 // «חניך/ה ג׳»; Monday is the other two's. Every width: the trainee's four links and nothing else, the day's slots in
 // time order each with one next step, «חדש» on what someone else handles and «ראיתי», the speakers who can come, the
-// week read-only with the trainee's days marked; staff keep the grid at «/». Mock build: «ראיתי» and «הגדרות ← ימים» go
+// week read-only with the trainee's days marked; staff keep the grid at «/», and «/myday» sends them to «ימים». Mock build: «ראיתי» and «הגדרות ← ימים» go
 // out as mark_day_seen and set_day_owners by the contract's parameter names, with the member's token.
 import { expect, type Page, test } from "@playwright/test";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
@@ -157,14 +157,18 @@ test.describe("demo build — «עזרה»", () => {
 });
 
 test.describe("demo build — staff", () => {
-  test("the instructor keeps the week at «/» and the staff's header; «/myday» previews a trainee's day", async ({ page }) => {
+  test("the instructor keeps the week at «/» and the staff's header; «/myday» is a trainee's — staff land on «ימים»", async ({ page }) => {
     await page.goto(demoUrl());
     await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible(); // the week that writes, with its lenses
     await expect(nav(page).getByRole("link", { name: "היום שלי" })).toHaveCount(0);
-    await expect(nav(page).getByRole("link", { name: "השבוע" })).toBeVisible();
+    // the reset, phase 3: «ימים» and «מרצים» after «השבוע»; «המרצים שלי» is gone
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "ימים", "מרצים", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
+    await expect(nav(page).getByRole("link", { name: "השבוע" })).toHaveAttribute("aria-current", "page");
+    // «/myday» was a preview of a trainee's day for staff: the staff's own «ימים» (any day, the pair named) replaced it
     await page.goto(`${demoUrl()}/myday`);
-    await expect(page.getByRole("heading", { name: "היום שלי", level: 2 })).toBeVisible();
-    await expect(page.getByText(/תצוגה מקדימה/)).toBeVisible();
+    await expect(page).toHaveURL(/\/day$/);
+    await expect(page.getByRole("heading", { name: "ימים", level: 2 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "היום שלי", level: 2 })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "ראיתי" })).toHaveCount(0); // nobody's notices to clear but an owner's
     await noSidewaysScroll(page);
   });

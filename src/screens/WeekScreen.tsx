@@ -1,67 +1,56 @@
-// The week: the grid (desktop) or the day view (phone/tablet), the pool, the
-// panels, and every command — through the DataPort, so the demo and the real
-// database behave the same (docs/CONTRACT.md). The edition and its loaded week
-// are shared with «המרצים שלי» and the approvals queue (weekStore.tsx); those
-// screens send a speaker here to be placed, or a lesson to be opened.
+// The writing grid — the staff's overview (`/`, and `/grid` for everyone): the grid (desktop) or the day view
+// (phone/tablet), the panels, and every command — through the DataPort, so the demo and the real database behave the
+// same (docs/CONTRACT.md). The edition and its loaded week are shared with the pages (weekStore.tsx). The reset, phase 3:
+// no pool and no placing mode — a speaker is proposed from a cell's or a lesson's chooser, or from their page
+// (/speakers/:id); opening a speaker goes to that page, «+ מרצה חדש/ה» to /speakers/new; a lesson's panel stays (its
+// shaping, moving and the grid's rules live here) with «לדף השיעור»; the «התקדמות» lens is a lesson × step table.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { type CellTarget, CommandError, type GridRules, type LessonPatch, type ReshapeOp } from "../data/commands";
 import { handlesLogistics } from "../data/gate";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { byGender, displayName } from "../domain/names";
+import { newSpeakerPath, speakerPath } from "../domain/routes";
 import type { Day } from "../domain/time";
 import type { GridRow, Speaker } from "../domain/types";
 import { errorMessage } from "../errors";
 import { statusLabel } from "../lib/labels";
 import { DayView } from "../grid/DayView";
 import { GridDesktop } from "../grid/GridDesktop";
-import { type Lens, PROGRESS_LEGEND, PROGRESS_TONE } from "../grid/LessonCard";
-import { ownerColors } from "../grid/owners";
+import type { Lens } from "../grid/LessonCard";
+import { OWNER_EXCEPTION_NOTE, ownerColors } from "../grid/owners";
 import { DayPanel } from "../grid/DayPanel";
 import { weekBalance } from "../rules/balance";
 import { type DragItem, type DropTarget, useMouseDrag } from "../grid/dnd";
 import { buildModel, pitchSpeaker, weekTopics } from "../grid/model";
 import { CellPanel, LessonPanel, type PanelActions } from "../grid/Panels";
-import { Pool } from "../grid/Pool";
 import { RotaWeek } from "../grid/RotaWeek";
 import { TopicMatrix } from "../grid/TopicMatrix";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
-import { reopenLoses, type StageKey } from "../domain/stages";
-import { NO_TOPIC_COLOR, STAGE_DOT, STAGE_STATE_LABEL } from "../grid/bits";
-import { CreateSpeaker } from "./speakers/CreateSpeaker";
+import { NO_TOPIC_COLOR } from "../grid/bits";
 import { LessonStages } from "./stages/LessonStages";
 import { MemorialSlotPanel } from "./memorial/SlotPanel";
+import { ProgressTable } from "./progress/ProgressTable";
 import { RotaLoadFailed, useRota } from "./rota/shared";
 import { DraftFiles } from "./stages/SourceFiles";
 import { Button, Fold } from "./settings/kit";
-import { SpeakerSheet } from "./speakers/SpeakerSheet";
 import { actorIn, useWeekStore } from "./weekStore";
 
 type Panel =
-  /** `stage`: the section to open (from «המרצים שלי» or the approvals queue). */
-  | { kind: "lesson"; id: number; stage?: StageKey }
+  | { kind: "lesson"; id: number }
   | { kind: "cell"; day: Day; row: GridRow }
   | { kind: "warnings" }
   /** v13: a day at a glance — the day header opens it. */
   | { kind: "day"; day: Day }
-  /** `back`: the panel it was opened from (a lesson, a cell, «מרצה חדש/ה»), which «חזרה» returns to. */
-  | { kind: "speaker"; id: number; back?: Panel }
-  | { kind: "create"; name: string }
   | null;
 
-const BACK_LABEL: Record<string, string> = { lesson: "שיעור", cell: "משבצת", create: "מרצה חדש/ה", warnings: "אזהרות", day: "היום" };
-
-/** What «המרצים שלי» (and the approvals queue) hand the week: a speaker to place, or a lesson to open — at one of its stages. */
-export type WeekVisit = { place?: number; lesson?: number; stage?: StageKey } | null;
 type Toast = { kind: "ok" | "error"; text: string; undo?: () => Promise<void> } | null;
 type Offer = { speakerId: number; target: CellTarget; owner: string } | null;
 
-/** The toolbar's quiet pills (the pool drawer, «אזהרות»), and the progress legend's chips (the topics' legend stays a plain
- *  line: as pills it would not fit one row beside an open panel, and the grid's height counts one). */
-const QUIET_PILL = "border-line bg-card text-navy hover:border-navy/40 hover:bg-accent-soft";
-const LEGEND_PILL = "inline-flex items-center gap-1 rounded-full border border-line bg-card px-2 py-0.5";
+/** The toolbar's quiet pills («אזהרות», «+ מרצה חדש/ה»): 44px on a phone, slimmer beside the wide grid. */
+const QUIET_PILL = "inline-flex items-center rounded-full border border-line bg-card px-3.5 text-sm font-semibold text-navy transition-colors hover:border-navy/40 hover:bg-accent-soft";
 
 const LENSES: [Lens, string][] = [
   ["diversity", "גיוון"],
@@ -73,23 +62,18 @@ const LENSES: [Lens, string][] = [
 
 export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const wide = useMedia("(min-width: 1024px)");
-  // Below 1280px the grid needs the pool's width: the pool becomes a drawer.
-  const roomy = useMedia("(min-width: 1280px)");
-  const [poolOpen, setPoolOpen] = useState(false);
   const store = useWeekStore();
   const { editions, editionId, week, problem, reload } = store;
   const [lens, setLens] = useState<Lens>("diversity");
   // the «אחריות» lens's «רק של X» (v13): a member's id, «בלי אחראי/ת», or everyone
   const [onlyOwner, setOnlyOwner] = useState<number | "none" | null>(null);
   const [day, setDay] = useState<Day>(0);
-  const [placingId, setPlacingId] = useState<number | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [offer, setOffer] = useState<Offer>(null);
-  const [phoneTab, setPhoneTab] = useState<"day" | "pool">("day");
-  // the legends' second layer on a wide screen: the topics «לפי ימים», the progress dots (a phone folds the whole legend)
+  // the topics' legend's second layer on a wide screen, «לפי ימים» (a phone folds the whole legend)
   const [matrixOpen, setMatrixOpen] = useState(false);
-  const [dotsOpen, setDotsOpen] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!toast) return;
@@ -97,14 +81,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
     return () => clearTimeout(t);
   }, [toast]);
 
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPlacingId(null);
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, []);
-
   const model = useMemo(() => (week ? buildModel(week) : null), [week]);
-  // a draft gone from under its panel (its last candidate removed, a proposal undone): the panel goes with it, and the pool is back
+  // a draft gone from under its panel (its last candidate removed, a proposal undone): the panel goes with it
   useEffect(() => {
     if (panel?.kind === "lesson" && model && !model.week.lessons.some((l) => l.id === panel.id)) setPanel(null);
   }, [panel, model]);
@@ -113,32 +91,11 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   const cmds = useMemo(() => (editionId != null ? port.commands(editionId) : null), [port, editionId]);
   // «תורנויות»: the edition's rota, loaded when the lens turns on (and again each time it does) — never its heads' phones
   const rota = useRota(port, lens === "rota" ? editionId : null);
-  // a speaker to place, or a lesson or a cell opened (the pool on a phone, a warning, «המרצים שלי»): that needs the
-  // lessons — back to the grid
+  // a lesson or a cell opened (a warning, the day's panel) needs the grid: the duties' lens and the progress table have
+  // no card to stand beside — back to the grid's first lens
   useEffect(() => {
-    if (lens === "rota" && (placingId != null || panel?.kind === "lesson" || panel?.kind === "cell")) setLens("diversity");
-  }, [lens, placingId, panel]);
-
-  // Sent here from «המרצים שלי» or a speaker sheet elsewhere: place a speaker, or open a lesson — once.
-  const location = useLocation();
-  const navigate = useNavigate();
-  const visit = location.state as WeekVisit;
-  useEffect(() => {
-    if (!visit || !model) return;
-    if (visit.place != null && model.speakerById.has(visit.place)) {
-      setPanel(null);
-      setPlacingId(visit.place);
-      setPhoneTab("day");
-    } else if (visit.lesson != null) {
-      const l = model.week.lessons.find((x) => x.id === visit.lesson);
-      if (l) {
-        setDay(l.day);
-        setPanel({ kind: "lesson", id: l.id, stage: visit.stage });
-        requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${l.id}"]`)?.scrollIntoView({ block: "center", inline: "center" }));
-      }
-    }
-    navigate(".", { replace: true, state: null });
-  }, [visit, model, navigate]);
+    if ((lens === "rota" || lens === "progress") && (panel?.kind === "lesson" || panel?.kind === "cell")) setLens("diversity");
+  }, [lens, panel]);
 
   /** Run a command, reload, and say what happened (or why not). */
   const run = useCallback(
@@ -163,7 +120,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       if (!model || !cmds) return;
       const s = model.speakerById.get(speakerId);
       const a = model.approachBySpeaker.get(speakerId);
-      setPlacingId(null);
       if (mode === "self" && a?.owner_member_id != null && a.owner_member_id !== memberId) {
         setOffer({ speakerId, target, owner: model.memberName.get(a.owner_member_id) ?? "חבר/ת צוות" });
         return;
@@ -215,66 +171,32 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         setPanel(null);
         void run(() => cmds.reshape(d, rowStart, op), "המשבצת עוצבה מחדש");
       },
-      openSpeaker: (id) => setPanel((p) => ({ kind: "speaker", id, back: p ?? undefined })),
+      // a speaker opens their page (the old side sheet is gone)
+      openSpeaker: (id) => navigate(speakerPath(id)),
     };
-  }, [cmds, editionId, model, port, propose, run]);
+  }, [cmds, editionId, model, port, propose, run, navigate]);
 
+  // A lesson dragged to another cell moves there (move_lesson) — the one drag left; a speaker is proposed from the
+  // choosers or their page, a candidate removed with «הסרה», a closed lesson reopened from its panel.
   const onDrop = useCallback(
     (item: DragItem, target: DropTarget) => {
       if (!model || !cmds || !canEdit) return;
-      const cell = (t: DropTarget): CellTarget | null =>
-        t.kind === "cell" ? { day: t.day as Day, start_min: t.start, end_min: t.end, room_id: null } : t.kind === "lesson" ? { lesson_id: t.id } : null;
-      if (item.kind === "speaker") {
-        const t = cell(target);
-        if (t) propose(item.id, t);
-        return;
-      }
-      if (item.kind === "pitch") {
-        const p = model.week.pitches.find((x) => x.id === item.id);
-        const a = p && model.approachById.get(p.approach_id);
-        if (!p || !a) return;
-        if (target.kind === "pool") return void run(() => cmds.unpropose(p.id), "הוסר/ה מהמשבצת");
-        const t = cell(target);
-        if (!t || ("lesson_id" in t && t.lesson_id === p.lesson_id)) return;
-        void run(async () => {
-          await cmds.propose(a.speaker_id, t, a.owner_member_id === memberId || isAdmin ? "self" : "offer");
-          await cmds.unpropose(p.id);
-        }, "הועבר/ה למשבצת אחרת");
-        return;
-      }
       const l = model.week.lessons.find((x) => x.id === item.id);
       if (!l) return;
-      if (target.kind === "pool") {
-        // a reopen erases the speaker's stages: when any holds something, it is done from the panel, after it says what goes
-        if (l.state === "closed" && (l.paid_at != null || reopenLoses(l).length > 0)) {
-          setPanel({ kind: "lesson", id: l.id });
-          setToast({ kind: "error", text: "לשיעור כבר יש שלבים, ופתיחה מחדש מוחקת אותם. פותחים מחדש מלוח השיעור, אחרי אישור." });
-          return;
-        }
-        return void run(() => cmds.reopenLesson(l.id), "השיעור חזר לטיוטה");
-      }
-      if (target.kind === "cell") {
-        const len = l.end_min - l.start_min;
-        void run(() => cmds.moveLesson(l.id, { day: target.day as Day, start_min: target.start, end_min: target.start + len, room_id: l.room_id }), "השיעור הוזז");
-      }
+      const len = l.end_min - l.start_min;
+      void run(() => cmds.moveLesson(l.id, { day: target.day as Day, start_min: target.start, end_min: target.start + len, room_id: l.room_id }), "השיעור הוזז");
     },
-    [model, cmds, canEdit, propose, run, memberId, isAdmin],
+    [model, cmds, canEdit, run],
   );
   const drag = useMouseDrag(onDrop);
 
-  const onCell = (d: Day, row: GridRow) => {
-    if (placingId != null) propose(placingId, { day: d, start_min: row.start_min, end_min: row.end_min, room_id: null });
-    else setPanel({ kind: "cell", day: d, row });
-  };
+  const onCell = (d: Day, row: GridRow) => setPanel({ kind: "cell", day: d, row });
   const onLesson = (id: number) => {
     const l = model?.week.lessons.find((x) => x.id === id);
-    if (placingId != null && l?.state === "draft" && l.kind === "lesson") propose(placingId, { lesson_id: id });
-    else {
-      if (l && !wide) setDay(l.day);
-      setPanel({ kind: "lesson", id });
-      // the docked panel narrows the grid: keep the card that was opened in view
-      if (wide) requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
-    }
+    if (l && !wide) setDay(l.day);
+    setPanel({ kind: "lesson", id });
+    // the docked panel narrows the grid: keep the card that was opened in view
+    if (wide) requestAnimationFrame(() => document.querySelector(`[data-lesson-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
   };
   // v13: either memorial row, before lunch or after it, takes a slot from the grid — an edition admin's (add_memorial_slot)
   const onMemorial = isAdmin && cmds
@@ -287,16 +209,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         });
       }
     : undefined;
-  const onDayPanel = (d: Day) => {
-    setPlacingId(null);
-    setPanel({ kind: "day", day: d });
-  };
+  const onDayPanel = (d: Day) => setPanel({ kind: "day", day: d });
   const onRules = cmds ? (rules: GridRules) => run(() => cmds.setGridRules(rules), "כללי הרשת נשמרו").then(() => true) : undefined;
-  const startPlacing = (speakerId: number) => {
-    setPlacingId((cur) => (cur === speakerId ? null : speakerId));
-    setPanel(null);
-    if (!wide) setPhoneTab("day");
-  };
 
   if (problem === "none") {
     return (
@@ -320,12 +234,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   }
   if (!model || !actions) return <p className="mt-10 text-center text-ink-soft">טוען את השבוע…</p>;
 
-  const placing = placingId != null ? (model.speakerById.get(placingId) ?? null) : null;
-  // v14: the grid is coloured for a speaker without placing them too — while a speaker (or a pitch) is dragged, and while
-  // a speaker's sheet stands beside the grid on a wide screen
-  const draggedPitch = drag?.item.kind === "pitch" ? model.week.pitches.find((p) => p.id === drag.item.id) : undefined;
-  const dragged = drag?.item.kind === "speaker" ? model.speakerById.get(drag.item.id) : draggedPitch && pitchSpeaker(model, draggedPitch);
-  const lookAt = dragged ?? (wide && panel?.kind === "speaker" ? model.speakerById.get(panel.id) : undefined) ?? null;
   const openLesson = panel?.kind === "lesson" ? model.week.lessons.find((l) => l.id === panel.id) : undefined;
   const warnCount = model.warnings.filter((w) => w.severity === "warn").length;
   const weekTotal = weekBalance(model.days.map((d) => d.balance));
@@ -340,7 +248,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           value={editionId ?? ""}
           onChange={(e) => {
             setPanel(null);
-            setPlacingId(null);
             store.select(Number(e.target.value));
           }}
           className="rounded-lg border border-line bg-card px-2 py-1 font-display text-lg font-extrabold text-navy focus:border-navy"
@@ -364,11 +271,8 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
             aria-checked={lens === key}
             onClick={() => {
               setLens(key);
-              // no lesson in the duties' lens: nothing to place, no lesson's panel beside it
-              if (key === "rota") {
-                setPlacingId(null);
-                setPanel(null);
-              }
+              // no card in the duties' lens or the progress table: no lesson's (or cell's) panel beside it
+              if (key === "rota" || key === "progress") setPanel(null);
             }}
             className={`rounded-full px-3.5 text-sm font-semibold transition-colors ${wide ? "py-0.5" : "min-h-11"} ${lens === key ? "bg-navy text-white shadow-sm" : "text-ink-soft hover:bg-accent-soft hover:text-navy"}`}
           >
@@ -376,16 +280,13 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           </button>
         ))}
       </div>
-      {wide && !roomy && lens !== "rota" && (
-        <button type="button" onClick={() => setPoolOpen((v) => !v)} aria-pressed={poolOpen} className={`rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors ${poolOpen ? "border-navy bg-navy text-white" : QUIET_PILL}`}>
-          מאגר המרצים
-        </button>
-      )}
-      {/* on a phone the bottom bar has «אזהרות» */}
-      {wide && (
-        <button type="button" onClick={() => setPanel({ kind: "warnings" })} className={`rounded-full border px-3.5 py-1 text-sm font-semibold transition-colors ${QUIET_PILL}`}>
-          אזהרות <span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
-        </button>
+      <button type="button" onClick={() => setPanel({ kind: "warnings" })} className={`${QUIET_PILL} ${wide ? "min-h-8" : "min-h-11"}`}>
+        אזהרות&nbsp;<span className={`tabular-nums ${warnCount ? "font-bold text-warn" : ""}`}>{warnCount}</span>
+      </button>
+      {canEdit && (
+        <Link to={newSpeakerPath()} className={`${QUIET_PILL} ${wide ? "min-h-8" : "min-h-11"}`}>
+          + מרצה חדש/ה
+        </Link>
       )}
       {/* v13: the week's closed lessons, women and men, in the cells' pink and sky — each day's own is in its header and panel */}
       <span className="inline-flex flex-wrap items-center gap-1 text-xs text-ink-soft tabular-nums" aria-label="השבוע כולו" data-week-balance>
@@ -457,59 +358,16 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           כולם
         </button>
       )}
+      {/* the day's pair (its owners, «הגדרות ← צוות ← ימים»): a card handled by someone else is marked «חריג» */}
+      <span data-owner-note className="inline-flex items-center gap-1 text-ink-soft">
+        <span aria-hidden className="inline-block h-3 w-5 rounded border-2 border-dashed border-gold" />
+        {OWNER_EXCEPTION_NOTE}
+      </span>
     </div>
   );
 
-  // The progress lens: last year's colours on the cards (always shown), and what the five dots are (folded: read once).
-  const tones = (
-    <ul aria-label="מקרא עדשת ההתקדמות" className="flex flex-wrap items-center gap-1 text-xs text-ink-soft">
-      {PROGRESS_LEGEND.map(([tone, label]) => (
-        <li key={tone} className={LEGEND_PILL}>
-          <span aria-hidden className={`size-3 rounded border border-line ${PROGRESS_TONE[tone]}`} />
-          {label}
-        </li>
-      ))}
-    </ul>
-  );
-  const dots = (
-    <ul aria-label="הנקודות שעל הכרטיס" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
-      <li>לפי הסדר: תשלום/הסעה · הודעה · מלווה · מקורות · מקראה</li>
-      {(["done", "waiting", "problem", "open", "na"] as const).map((st) => (
-        <li key={st} className="inline-flex items-center gap-1">
-          <span aria-hidden className={`size-2.5 rounded-full border-2 ${STAGE_DOT[st]}`} />
-          {STAGE_STATE_LABEL[st]}
-        </li>
-      ))}
-      <li className="inline-flex items-center gap-1">
-        <span aria-hidden className="size-2.5 rounded-full bg-bad" />
-        לעדכן את המרצה
-      </li>
-    </ul>
-  );
-  const progressLegend =
-    lens === "progress" &&
-    (wide ? (
-      <div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {tones}
-          <LegendToggle open={dotsOpen} onToggle={() => setDotsOpen((v) => !v)} controls="progress-dots">
-            מה הנקודות?
-          </LegendToggle>
-        </div>
-        {dotsOpen && (
-          <div id="progress-dots" className="mt-1">
-            {dots}
-          </div>
-        )}
-      </div>
-    ) : (
-      <Fold size="sm" title="מקרא ההתקדמות">
-        <div className="space-y-2">
-          {tones}
-          {dots}
-        </div>
-      </Fold>
-    ));
+  // The progress lens (the reset, phase 3): a lesson × step table in the grid's place — its own filters and legend.
+  const progressBody = lens === "progress" && <ProgressTable model={model} wide={wide} />;
 
   // The duties' lens (8.11): where its shifts lead — «לוגיסטיקה ← תורנויות» for the edition's logistics and admins, the
   // printout for everyone else — and what a dashed code is.
@@ -551,66 +409,26 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       <p className="mt-6 text-center text-ink-soft">טוען את התורנויות…</p>
     ));
 
-  const legend = diversityLegend || ownerLegend || progressLegend || rotaLegend;
-
-  const placingBanner = placing && (
-    <div role="status" className="flex items-center gap-2 rounded-xl bg-navy px-3.5 py-2 text-sm text-white shadow-md">
-      <span>
-        משבצים את <b>{displayName(placing)}</b> — בחרו משבצת {wide ? "ברשת" : "ביום"}
-      </span>
-      <button type="button" onClick={() => setPlacingId(null)} className="ms-auto rounded-full border border-white/60 px-3 py-0.5 font-semibold hover:bg-white/10 focus-visible:outline-white!">
-        ביטול
-      </button>
-    </div>
-  );
+  const legend = diversityLegend || ownerLegend || rotaLegend;
 
   return (
     <div className="flex flex-col gap-2">
       {toolbar}
       {legend}
-      {placingBanner}
 
-      {wide ? (
+      {progressBody ? (
+        // the table reads at its own height: the page scrolls, as a list does
+        <div className="min-w-0">{progressBody}</div>
+      ) : wide ? (
         <div className="flex gap-3" style={{ height: legend ? "calc(100dvh - 12rem)" : "calc(100dvh - 9.5rem)" }}>
           <div className="min-w-0 flex-1 overflow-auto rounded-lg" data-autoscroll>
             {rotaBody || (
-              <GridDesktop model={model} lens={lens} owners={owners} placing={placing} lookAt={lookAt} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
+              <GridDesktop model={model} lens={lens} owners={owners} overKey={drag?.overKey ?? null} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
             )}
           </div>
-          {/* an open panel takes the pool's column, so the grid keeps its width */}
-          {(roomy || poolOpen) && !panel && lens !== "rota" && (
-            <aside className={roomy ? "w-80 shrink-0" : "fixed inset-y-0 end-0 z-30 w-80 border-s border-line bg-paper-light p-3 pt-16 shadow-xl"} aria-label="מאגר">
-              <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} dropTarget={!!drag && drag.item.kind !== "speaker"} />
-            </aside>
-          )}
         </div>
       ) : (
-        <>
-          <div className="pb-16">
-            {phoneTab === "day" ? (
-              rotaBody || <DayView model={model} lens={lens} owners={owners} day={day} onDay={setDay} placing={placing} lookAt={lookAt} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />
-            ) : (
-              <div style={{ height: "calc(100dvh - 12rem)" }}>
-                <Pool model={model} me={memberId} canEdit={canEdit} placingId={placingId} onPlace={startPlacing} onOpen={(id) => setPanel({ kind: "speaker", id })} onCreate={(name) => setPanel({ kind: "create", name })} />
-              </div>
-            )}
-          </div>
-          <nav aria-label="ניווט" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-line bg-card shadow-[0_-2px_10px_rgb(20_35_63/0.06)]">
-            {(
-              [
-                ["day", "יום"],
-                ["pool", "מאגר"],
-              ] as const
-            ).map(([key, label]) => (
-              <button key={key} type="button" aria-current={phoneTab === key ? "page" : undefined} onClick={() => setPhoneTab(key)} className={`py-3 text-sm font-semibold ${phoneTab === key ? "text-navy shadow-[inset_0_3px_0_var(--color-navy)]" : "text-ink-soft"}`}>
-                {label}
-              </button>
-            ))}
-            <button type="button" onClick={() => setPanel({ kind: "warnings" })} className="py-3 text-sm font-semibold text-ink-soft">
-              אזהרות {warnCount > 0 && <span className="text-warn">{warnCount}</span>}
-            </button>
-          </nav>
-        </>
+        <div>{rotaBody || <DayView model={model} lens={lens} owners={owners} day={day} onDay={setDay} onCell={onCell} onLesson={onLesson} onMemorial={onMemorial} onDayPanel={onDayPanel} />}</div>
       )}
 
       {openLesson && (
@@ -633,12 +451,11 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
           }
           stages={(l) => (
             <LessonStages
-              key={`${l.id}:${panel?.kind === "lesson" ? (panel.stage ?? "") : ""}`}
+              key={l.id}
               port={port}
               week={model.week}
               lessonId={l.id}
               actor={actor}
-              focus={panel?.kind === "lesson" ? panel.stage : null}
               notify={(kind, text) => setToast({ kind, text })}
               clear={() => setToast(null)}
               reload={reload}
@@ -647,39 +464,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
         />
       )}
       {panel?.kind === "cell" && <CellPanel model={model} me={memberId} day={panel.day} row={panel.row} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}
-      {panel?.kind === "speaker" && (
-        <SpeakerSheet
-          key={panel.id}
-          port={port}
-          me={me}
-          week={model.week}
-          speakerId={panel.id}
-          wide={wide}
-          onClose={() => setPanel(null)}
-          onBack={panel.back ? () => setPanel(panel.back ?? null) : undefined}
-          backLabel={panel.back ? BACK_LABEL[panel.back.kind] : undefined}
-          notify={(kind, text) => setToast({ kind, text })}
-          clear={() => setToast(null)}
-          reload={reload}
-          onPlace={startPlacing}
-          onLesson={onLesson}
-        />
-      )}
-      {panel?.kind === "create" && (
-        <CreateSpeaker
-          port={port}
-          me={me}
-          week={model.week}
-          initialName={panel.name}
-          wide={wide}
-          onClose={() => setPanel(null)}
-          onOpen={(id, name) => setPanel({ kind: "speaker", id, back: { kind: "create", name } })}
-          onCreated={(id) => setPanel({ kind: "speaker", id })}
-          notify={(kind, text) => setToast({ kind, text })}
-          clear={() => setToast(null)}
-          reload={reload}
-        />
-      )}
       {panel?.kind === "warnings" && (
         <WarningsPanel
           model={model}
@@ -737,7 +521,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
       )}
 
       {toast && (
-        <div role={toast.kind === "error" ? "alert" : "status"} className={`fixed inset-x-0 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${wide ? "bottom-6" : "bottom-16"} ${toast.kind === "error" ? "bg-bad text-white" : "bg-navy text-white"}`}>
+        <div role={toast.kind === "error" ? "alert" : "status"} className={`fixed inset-x-0 bottom-6 z-50 mx-auto flex w-fit max-w-[92vw] items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-xl ${toast.kind === "error" ? "bg-bad text-white" : "bg-navy text-white"}`}>
           <span>{toast.text}</span>
           {toast.undo && (
             <button
@@ -758,7 +542,7 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
   );
 }
 
-/** A legend's «more» on a wide screen (the topics «לפי ימים», the progress dots): a small disclosure at the row's end. */
+/** A legend's «more» on a wide screen (the topics «לפי ימים»): a small disclosure at the row's end. */
 function LegendToggle({ open, onToggle, controls, children }: { open: boolean; onToggle: () => void; controls: string; children: string }) {
   return (
     <button

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { CommandError } from "../data/commands";
 import { cleanReview, EMPTY_REVIEW } from "../data/reviews";
-import { earlierEdition, purgeAllowed, reviewOpensOn, reviewWindow, weekOver } from "./reviews";
+import { earlierEdition, purgeAllowed, reviewOpensOn, reviewsOpen, reviewsOpenOn, reviewWindow, weekOver } from "./reviews";
 
 const code = (f: () => unknown) => {
   try {
@@ -64,6 +64,20 @@ describe("the end of the week", () => {
     expect(purgeAllowed({ ...live, start_date: null, status: "archived" }, "2027-02-17T10:00:00.000Z")).toBe(true);
     expect(purgeAllowed({ start_date: null, kind: "archive", status: "planning" }, "2027-02-17T10:00:00.000Z")).toBe(true);
     expect(purgeAllowed({ ...live, start_date: null }, "2030-02-17T10:00:00.000Z")).toBe(false);
+  });
+});
+
+describe("reviewsOpen («אחרי השבוע»)", () => {
+  it("opens the day after the week's first day, in Israel time — never while the date is TBD", () => {
+    expect(reviewsOpenOn({ start_date: "2027-02-14" })).toBe("2027-02-15");
+    expect(reviewsOpenOn({ start_date: null })).toBeNull();
+    expect(reviewsOpenOn({ start_date: "2027-02-14" })).toBe(reviewOpensOn("2027-02-14", 0, 1140)); // Sunday's last lesson
+    expect(reviewsOpen({ start_date: "2027-02-14" }, "2027-02-14T21:59:00Z")).toBe(false); // 23:59 on Sunday in Israel
+    expect(reviewsOpen({ start_date: "2027-02-14" }, "2027-02-14T22:00:00Z")).toBe(true); // 00:00 on Monday
+    expect(reviewsOpen({ start_date: "2027-02-14" }, "2027-03-01T10:00:00Z")).toBe(true);
+    expect(reviewsOpen({ start_date: null }, "2030-01-01T10:00:00Z")).toBe(false);
+    expect(reviewsOpen(null, "2030-01-01T10:00:00Z")).toBe(false);
+    expect(reviewsOpen(undefined, "2030-01-01T10:00:00Z")).toBe(false);
   });
 });
 

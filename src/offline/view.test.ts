@@ -1,6 +1,6 @@
 // The offline banner's day and time, and the day the view opens on — in Israel, whatever the device's clock zone.
 import { describe, expect, it } from "vitest";
-import { savedAtText, sectionNeedingConnection, todayColumn } from "./view";
+import { offlineDayOf, savedAtText, sectionNeedingConnection, todayColumn } from "./view";
 
 describe("savedAtText", () => {
   it("the day and the time in Israel (summer time, winter time, across midnight UTC)", () => {
@@ -45,5 +45,22 @@ describe("sectionNeedingConnection", () => {
     expect(sectionNeedingConnection("/myday")).toBe("היום שלי");
     expect(sectionNeedingConnection("/speakers/7")).toBe("מרצים");
     expect(sectionNeedingConnection("/lesson/7")).toBe("עמוד השיעור");
+    // the reset, phase 3: the staff's «ימים» is the week; «אחרי השבוע» and «אישורים» need a connection
+    expect(sectionNeedingConnection("/day")).toBeNull();
+    expect(sectionNeedingConnection("/day/3")).toBeNull();
+    expect(sectionNeedingConnection("/after")).toBe("אחרי השבוע");
+    expect(sectionNeedingConnection("/approvals")).toBe("אישורים");
+    expect(sectionNeedingConnection("/mine/team")).toBe("המסך הזה"); // gone: its address only redirects
+  });
+});
+
+describe("offlineDayOf", () => {
+  it("the day of a «ימים» address; nothing for any other", () => {
+    expect(offlineDayOf("/day/3")).toBe(3);
+    expect(offlineDayOf("/day/0")).toBe(0);
+    expect(offlineDayOf("/day")).toBeNull();
+    expect(offlineDayOf("/day/7")).toBeNull();
+    expect(offlineDayOf("/speakers/2")).toBeNull();
+    expect(offlineDayOf("/")).toBeNull();
   });
 });

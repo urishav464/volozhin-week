@@ -1,9 +1,9 @@
 // Everything the grid screen derives from a loaded Week, computed once per load
 // (pure, so it is unit-testable and identical on every device).
 import { type SpeakerSlots, coveredRows, slotFit, slotsBySpeaker } from "../domain/availability";
-import { byGender, displayName } from "../domain/names";
+import { displayName } from "../domain/names";
 import { DAYS, type Day, overlaps } from "../domain/time";
-import type { Approach, ApproachStatus, Category, Gender, Lesson, Pitch, Speaker, Week, GridRow } from "../domain/types";
+import type { Approach, ApproachStatus, Category, Lesson, Pitch, Speaker, Week, GridRow } from "../domain/types";
 import { LIVE_PITCH } from "../domain/types";
 import { type DayBalance, categoryLoad, dayBalance } from "../rules/balance";
 import { type Warning, warningsFor } from "../rules/warnings";
@@ -132,20 +132,6 @@ export type Fit = "cannot" | "busy" | "can" | "neutral";
 export function fitFor(m: GridModel, speakerId: number, day: Day, start: number, end: number): Fit {
   if ((m.closedOf.get(speakerId) ?? []).some((l) => l.day === day && overlaps(l.start_min, l.end_min, start, end))) return "busy";
   return slotFit(m.slots.get(speakerId), day, coveredRows(m.week.rows, m.week.edition, day, start, end)) ?? "neutral";
-}
-
-/** A fit in words, by the speaker's gender: what a coloured cell or draft says beside its colour (never the colour alone). */
-export function fitText(fit: Fit, g: Gender | null): string | null {
-  switch (fit) {
-    case "can":
-      return `✓ ${byGender(g, "יכול", "יכולה")}`;
-    case "cannot":
-      return `⊘ ${byGender(g, "לא יכול", "לא יכולה")}`;
-    case "busy":
-      return `כבר ${byGender(g, "משובץ", "משובצת")} בשעה הזו`;
-    case "neutral":
-      return null;
-  }
 }
 
 export type PoolSection = "mine" | "free" | "others" | "closed" | "declined";

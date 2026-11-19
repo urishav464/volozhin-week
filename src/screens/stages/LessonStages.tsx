@@ -9,13 +9,15 @@
 // Who may do what (the database decides; the screen only offers it):
 //   the handler or an admin — the payment/transport request, «סומן כנשלח»;
 //   any content member or admin — the escort, the sources;
-//   a global admin — approve or reject a request;
+//   a global admin, or an admin or logistics of the real, live edition — approve or reject a request
+//   (src/domain/approvals.ts mayDecide; one approval is enough);
 //   logistics or an admin — «שולם», and the transport's details once approved.
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data/stageRules";
 import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro, ticksOf } from "../../domain/escorts";
+import { lessonHandler } from "../../domain/handler";
 import { PRINT_WHEN_LABEL, readerFilesOf, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import { byGender } from "../../domain/names";
@@ -38,24 +40,18 @@ export interface LessonStagesProps {
   week: Week;
   lessonId: number;
   actor: Actor;
-  /** The section to open first (from «המרצים שלי», or the approvals queue). */
-  focus?: StageKey | null;
   notify: Notify;
   clear: () => void;
   /** Re-reads the week after a command. */
   reload: () => Promise<void>;
 }
 
-export function LessonStages({ port, week, lessonId, actor, focus, notify, clear, reload }: LessonStagesProps) {
+export function LessonStages({ port, week, lessonId, actor, notify, clear, reload }: LessonStagesProps) {
   const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
   const { busy, run } = useRunner(notify, clear);
-  const [open, setOpen] = useState<Set<StageKey>>(() => new Set(focus ? [focus] : []));
+  const [open, setOpen] = useState<Set<StageKey>>(() => new Set());
   const [reviewOpen, setReviewOpen] = useState(false);
   const afterId = useId();
-  // From «המרצים שלי»: the section it was opened for comes into view.
-  useEffect(() => {
-    if (focus) requestAnimationFrame(() => document.getElementById(`stage-${focus}`)?.scrollIntoView({ block: "start" }));
-  }, [focus]);
 
   const l = week.lessons.find((x) => x.id === lessonId);
   if (!l || l.state !== "closed") return null;
@@ -67,7 +63,8 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
   };
   const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
   const speaker = lead ? (week.speakers.find((s) => s.id === lead.speaker_id) ?? null) : null;
-  const handler = speaker ? (week.approaches.find((a) => a.speaker_id === speaker.id)?.owner_member_id ?? null) : null;
+  // the one rule (src/domain/handler.ts): the lead's approach's owner
+  const handler = lessonHandler(week, l.id);
   const mine = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
   const ctx: StageCtx = { week, lesson: l, actor, cmds, busy, act, handler, mine };
   const stages = stagesOf(l, readerFilesOf(week, l.id));

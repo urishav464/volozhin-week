@@ -1,6 +1,7 @@
 // The signed-in path against a fake Supabase: the week comes from rpc/load_week
 // and a placement goes out as rpc/propose with the contract's parameter names
-// (tests/sql/grid.test.ts pins the same names on the database side).
+// (tests/sql/grid.test.ts pins the same names on the database side) — from a
+// free cell's chooser (the reset, phase 3: the pool and its «שבץ» are gone).
 import { expect, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
@@ -8,7 +9,7 @@ import { FakeSupabase, signIn } from "./mock";
 
 const mockUrl = () => process.env.E2E_MOCK_URL!;
 
-test("a member's week loads from load_week; «שבץ» sends propose with the contract's parameters", async ({ page }, info) => {
+test("a member's week loads from load_week; a cell's chooser sends propose with the contract's parameters", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
   const week = demoWeek();
   week.edition.id = 7;
@@ -27,8 +28,10 @@ test("a member's week loads from load_week; «שבץ» sends propose with the co
   await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();
   expect(sb.rpc.get("load_week")).toEqual([{ p_edition: 7 }]);
 
-  await page.locator('[data-speaker-id="41"]').getByRole("button", { name: "שבץ" }).click();
   await page.locator('[data-drop="cell:4:510:600"]').click();
+  const chooser = page.getByRole("dialog", { name: "משבצת פנויה" });
+  await chooser.getByLabel("חיפוש מרצה למשבצת").fill("מרצה 41");
+  await chooser.locator('[data-chooser-speaker="41"]').getByRole("button", { name: "הצע", exact: true }).click();
   await expect.poll(() => sb.rpc.get("propose")?.length ?? 0).toBe(1);
   expect(sb.rpc.get("propose")![0]).toEqual({
     p_edition: 7, p_speaker: 41, p_lesson: null, p_day: 4, p_start: 510, p_end: 600, p_room: null, p_mode: "self",

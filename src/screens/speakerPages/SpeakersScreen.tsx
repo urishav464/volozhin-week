@@ -2,12 +2,15 @@
 // on a phone. Search, a topic, the gender, where they stand (שלי / פנויים / בטיפול אחרים / נסגרו / סירבו), «מתאים/ה
 // ליום», and the sort — all in the address, so «לבחור מרצה» on «היום שלי» opens the list for one slot
 // (`?slot=0:960-1050`, `&lesson=34` for a draft): who fits it, «יכול/ה» first, each with «להציע כאן». A row (a card on a
-// phone) opens the speaker's page; its name is the link.
+// phone) opens the speaker's page; its name is the link. The reset, phase 3: «כל הצוות» (`?view=team`, TeamView.tsx) —
+// a block per handler under the same search — and, on top, the hand-overs offered to me («הוצעו לך», each to its page).
 import { type FormEvent, type MouseEvent, useEffect, useId, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { activeLessonRows } from "../../domain/availability";
+import { teamBoard } from "../../domain/mine";
+import { offeredTo } from "../../domain/myDay";
 import { byGender, displayName } from "../../domain/names";
 import { proposeMode, targetOf } from "../../domain/placement";
 import { newSpeakerPath, parseSpeakersQuery, speakerPath, speakersPath, type SpeakersQuery } from "../../domain/routes";
@@ -21,8 +24,10 @@ import { useMedia } from "../../lib/useMedia";
 import { Button, Confirm, Field, Fold, INPUT, TABLE_HEAD, TABLE_ROW, TABLE_TH, useFocusBack, useFocusRescue, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
-import { filterSpeakers, SECTION_ORDER, slotFor, type SpeakerRow } from "./filters";
+import { OffersLine } from "../myday/parts";
+import { filterSpeakers, filterTeam, SECTION_ORDER, slotFor, type SpeakerRow } from "./filters";
 import { otherDayText, type PageNotice, weekProblem } from "./page";
+import { TeamView } from "./TeamView";
 
 export function SpeakersScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
@@ -45,6 +50,10 @@ function Body({ port, me, week, reload, notify, clear }: { port: DataPort; me: M
   const model = useMemo(() => buildModel(week), [week]);
   const actor = actorIn(me, week.edition);
   const rows = useMemo(() => filterSpeakers(model, actor.memberId, q), [model, actor.memberId, q]);
+  // «כל הצוות»: the team's board under the search, the topic and the gender (the rest is the list's)
+  const team = q.view === "team";
+  const board = useMemo(() => (team ? filterTeam(model, teamBoard(week), q) : null), [team, model, week, q]);
+  const teamCount = board ? new Set([...board.owners.flatMap((o) => o.rows), ...board.unowned].map((r) => r.speaker.id)).size : 0;
   // from the address as it is NOW (a filter chosen right after typing must not bring back the search before it, which
   // a render that has not happened yet would still hold)
   const set = (patch: Partial<SpeakersQuery>) => navigate(speakersPath({ ...parseSpeakersQuery(window.location.search), ...patch }), { replace: true });
@@ -61,11 +70,11 @@ function Body({ port, me, week, reload, notify, clear }: { port: DataPort; me: M
   const playDays = DAYS.filter((d) => activeLessonRows(week.rows, week.edition, d).length > 0);
 
   // the five filters: in a row on a wide screen; on a phone folded under the search (open while one is on)
-  const active = [q.cat, q.g, q.s, q.day, q.sort].filter((v) => v != null).length;
+  const active = (team ? [q.cat, q.g] : [q.cat, q.g, q.s, q.day, q.sort]).filter((v) => v != null).length;
   // open at first when the address came with a filter; after that it is the reader's (never shut under their hand)
   const [filtersOpen] = useState(active > 0);
   const filters = (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+    <div className={`grid grid-cols-2 gap-2 ${team ? "md:max-w-md" : "md:grid-cols-5"}`}>
       <Field id={`${id}-cat`} label="נושא">
         <select id={`${id}-cat`} value={q.cat ?? ""} onChange={(e) => set({ cat: e.target.value ? Number(e.target.value) : undefined })} className={INPUT}>
           <option value="">כל הנושאים</option>
@@ -83,32 +92,36 @@ function Body({ port, me, week, reload, notify, clear }: { port: DataPort; me: M
           <option value="m">גברים</option>
         </select>
       </Field>
-      <Field id={`${id}-s`} label="מצב">
-        <select id={`${id}-s`} value={q.s ?? ""} onChange={(e) => set({ s: (e.target.value || undefined) as PoolSection | undefined })} className={INPUT}>
-          <option value="">הכול</option>
-          {SECTION_ORDER.map((s) => (
-            <option key={s} value={s}>
-              {POOL_SECTION_LABEL[s]}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field id={`${id}-day`} label="מתאים/ה ליום">
-        <select id={`${id}-day`} value={q.day ?? ""} onChange={(e) => set({ day: e.target.value === "" ? undefined : (Number(e.target.value) as Day) })} className={INPUT}>
-          <option value="">כל יום</option>
-          {playDays.map((d) => (
-            <option key={d} value={d}>
-              יום {DAY_NAMES[d]}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field id={`${id}-sort`} label="מיון">
-        <select id={`${id}-sort`} value={q.sort ?? "status"} onChange={(e) => set({ sort: e.target.value === "name" ? "name" : undefined })} className={INPUT}>
-          <option value="status">לפי מצב</option>
-          <option value="name">לפי שם</option>
-        </select>
-      </Field>
+      {!team && (
+        <>
+          <Field id={`${id}-s`} label="מצב">
+            <select id={`${id}-s`} value={q.s ?? ""} onChange={(e) => set({ s: (e.target.value || undefined) as PoolSection | undefined })} className={INPUT}>
+              <option value="">הכול</option>
+              {SECTION_ORDER.map((s) => (
+                <option key={s} value={s}>
+                  {POOL_SECTION_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field id={`${id}-day`} label="מתאים/ה ליום">
+            <select id={`${id}-day`} value={q.day ?? ""} onChange={(e) => set({ day: e.target.value === "" ? undefined : (Number(e.target.value) as Day) })} className={INPUT}>
+              <option value="">כל יום</option>
+              {playDays.map((d) => (
+                <option key={d} value={d}>
+                  יום {DAY_NAMES[d]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field id={`${id}-sort`} label="מיון">
+            <select id={`${id}-sort`} value={q.sort ?? "status"} onChange={(e) => set({ sort: e.target.value === "name" ? "name" : undefined })} className={INPUT}>
+              <option value="status">לפי מצב</option>
+              <option value="name">לפי שם</option>
+            </select>
+          </Field>
+        </>
+      )}
     </div>
   );
 
@@ -117,14 +130,23 @@ function Body({ port, me, week, reload, notify, clear }: { port: DataPort; me: M
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h2 className="font-display text-2xl font-extrabold text-navy">מרצים</h2>
         <EditionSelect />
+        <Link
+          to={team ? speakersPath({ ...q, view: undefined }) : speakersPath({ q: q.q, cat: q.cat, g: q.g, view: "team" })}
+          data-team-toggle
+          className={`ms-auto inline-flex min-h-11 items-center rounded-full border border-navy bg-card px-4 font-bold text-navy transition-colors hover:bg-accent-soft`}
+        >
+          {team ? "לרשימה" : "כל הצוות"}
+        </Link>
         {actor.canEdit && (
-          <Link to={newSpeakerPath(text)} className="ms-auto inline-flex min-h-11 items-center rounded-full bg-navy px-4 font-bold text-white transition-colors hover:bg-navy-800">
+          <Link to={newSpeakerPath(text)} className="inline-flex min-h-11 items-center rounded-full bg-navy px-4 font-bold text-white transition-colors hover:bg-navy-800">
             מרצה חדש/ה
           </Link>
         )}
       </div>
 
-      {q.slot && (
+      <OffersLine model={model} offers={offeredTo(week, actor.memberId)} />
+
+      {q.slot && !team && (
         <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-navy/30 bg-accent-soft px-4 py-2.5">
           <span className="font-bold text-navy">
             מרצים למשבצת: יום {DAY_NAMES[q.slot.day]}{" "}
@@ -171,11 +193,20 @@ function Body({ port, me, week, reload, notify, clear }: { port: DataPort; me: M
         )}
       </form>
 
-      <p role="status" className="text-sm text-ink-soft">
-        {rows.length === 0 ? "אין מרצים שמתאימים לסינון." : rows.length === 1 ? "מרצה אחד/ת" : `${rows.length} מרצים`}
-      </p>
+      {board ? (
+        <>
+          <p role="status" className="text-sm text-ink-soft">
+            {teamCount === 0 ? "אין מרצים בטיפול שמתאימים לסינון." : teamCount === 1 ? "מרצה אחד/ת בטיפול" : `${teamCount} מרצים בטיפול`}
+          </p>
+          <TeamView week={week} board={board} />
+        </>
+      ) : (
+        <p role="status" className="text-sm text-ink-soft">
+          {rows.length === 0 ? "אין מרצים שמתאימים לסינון." : rows.length === 1 ? "מרצה אחד/ת" : `${rows.length} מרצים`}
+        </p>
+      )}
 
-      {rows.length > 0 && (
+      {!board && rows.length > 0 && (
         <SpeakerList port={port} week={week} model={model} actor={actor} rows={rows} slot={slot} wide={wide} notify={notify} clear={clear} reload={reload} />
       )}
     </>

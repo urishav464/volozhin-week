@@ -59,11 +59,11 @@ export function ReadOnlyWeek({ me }: { port: DataPort; me: Me }) {
       </div>
       {wide ? (
         <div className="min-w-0 overflow-auto rounded-lg" style={{ height: "calc(100dvh - 9.5rem)" }}>
-          <GridDesktop model={model} lens="diversity" placing={null} overKey={null} onCell={nothing} onLesson={onLesson} readOnly mine={mine} />
+          <GridDesktop model={model} lens="diversity" overKey={null} onCell={nothing} onLesson={onLesson} readOnly mine={mine} />
         </div>
       ) : (
         <div className="mx-auto w-full max-w-3xl pb-6">
-          <DayView model={model} lens="diversity" day={day} onDay={setPicked} placing={null} onCell={nothing} onLesson={onLesson} readOnly mine={mine} />
+          <DayView model={model} lens="diversity" day={day} onDay={setPicked} onCell={nothing} onLesson={onLesson} readOnly mine={mine} />
         </div>
       )}
     </div>

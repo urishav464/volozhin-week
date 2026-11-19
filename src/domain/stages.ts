@@ -1,9 +1,9 @@
 // A closed lesson's five stages after it closes (DESIGN «מסך הרשת», «התא לפי
 // שלב»): תשלום/הסעה · הודעה · מלווה · מקורות · מקראה — and the one next step
-// «המרצים שלי» groups it by. Pure, from the lesson's own columns and the count
+// «היום שלי» groups it by. Pure, from the lesson's own columns and the count
 // of its files (readerFilesOf — the «מקראה» stage is the reader manifest's own
 // verdict: «במקראה» only when a PDF or a picture the browser read is there), so the card's dots,
-// the lesson panel, «המרצים שלי», the tracking table and the reader's manifest
+// the lesson panel and page, «היום שלי», the progress table, the tracking table and the reader's manifest
 // all say the same.
 import { amountText } from "./message";
 import type { Approval, Lesson, PrintWhen, SourcesKind, Transport, Week } from "./types";
@@ -43,7 +43,7 @@ export const PRINT_WHEN_LABEL: Record<PrintWhen, string> = { none: "לא צרי�
 
 export const APPROVAL_LABEL: Record<Approval, string> = {
   none: "לא התבקשו",
-  pending: "ממתין לאישור המדריך/ה",
+  pending: "ממתין לאישור",
   approved: "אושר",
   rejected: "לא אושר",
 };
@@ -114,7 +114,7 @@ export function stagesOf(l: StageFields, files: ReaderFiles): Stage[] {
       ? stage("pay", "done", l.pay_amount == null ? "אושר" : l.paid_at ? "אושר ושולם" : "אושר, טרם שולם")
       : l.approval === "rejected"
         ? stage("pay", "problem", "לא אושר: לעדכן את הבקשה")
-        : stage("pay", "waiting", "ממתין לאישור המדריך/ה");
+        : stage("pay", "waiting", "ממתין לאישור");
   const msg = l.needs_reconfirm
     ? stage("msg", "problem", "השיעור השתנה: לעדכן את המרצה")
     : l.confirm_sent_at
@@ -162,7 +162,7 @@ export function reopenLoses(
   return out;
 }
 
-/** What the handler does next with a closed lesson — «המרצים שלי» groups by it (null: everything is in place). */
+/** What the handler does next with a closed lesson — «היום שלי» groups by it (null: everything is in place). */
 export type LessonStep = "payment" | "reconfirm" | "send" | "escort" | "sources";
 
 /**

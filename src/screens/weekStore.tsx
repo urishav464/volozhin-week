@@ -1,5 +1,5 @@
 // The edition everyone's screens are about, loaded once: the week (the grid),
-// «המרצים שלי» and the approvals queue read the same Week, so moving between
+// the pages («היום שלי», «ימים», «מרצים», the lesson's) and «אישורים» read the same Week, so moving between
 // them keeps the chosen edition and costs no reload — and the header's badge
 // (speakers waiting for approval) comes from it too. One live subscription per
 // edition, for as long as someone is signed in. Every successful load is handed to

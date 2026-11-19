@@ -5,12 +5,14 @@
 // edition at any time; logistics never sees the section (an opinion about a
 // person). Read when the panel opens and after a save — never part of the Week,
 // never in Realtime (CONTRACT «After the week»). The card's five dots stay as
-// they are: this section is the panel's only.
+// they are: this section is the panel's only. The reset, phase 3: the form is
+// `ReviewForm` (with `reviewFormProps`, what the viewer may do), shared with
+// «אחרי השבוע» (`/after`, src/screens/after/AfterScreen.tsx) — one form for both.
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import type { DataPort } from "../../data/port";
 import type { LessonReview, ReviewFields } from "../../data/reviews";
 import { byGender } from "../../domain/names";
-import { INVITE_LABEL, type InviteAgain, REVIEW_TEXT_MAX, reviewLine, reviewWindow } from "../../domain/reviews";
+import { INVITE_LABEL, type InviteAgain, REVIEW_TEXT_MAX, reviewLine, type ReviewWindow, reviewWindow } from "../../domain/reviews";
 import type { Lesson, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Button, Field, INPUT, useRunner } from "../settings/kit";
@@ -19,7 +21,7 @@ import type { Actor } from "../weekStore";
 import { Choice, memberName, Problem, StageSection, whenText } from "./parts";
 
 /** «15.2.2027» — an Israel date as the site writes dates. */
-function dateText(iso: string): string {
+export function dateText(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   return `${d}.${m}.${y}`;
 }
@@ -53,15 +55,9 @@ export function ReviewSection({
   }, [port, week.edition.id, l.id]);
   useEffect(() => void load(), [load]);
 
-  const win = reviewWindow(week.edition, l, new Date().toISOString());
-  const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
-  const speaker = lead ? week.speakers.find((s) => s.id === lead.speaker_id) : undefined;
-  const overranWord = byGender(speaker?.gender, "חרג מהזמן", "חרגה מהזמן", "חרג/ה מהזמן");
-  const mayWrite = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId && win.state === "open"));
+  const props = reviewFormProps(week, l, actor, handler, review ?? null, new Date().toISOString());
+  const { win, imported, overranWord } = props;
 
-  // an imported archive (last year's, from its tracking sheet): no one there handled a speaker in this app — its
-  // reviews are the instructor's to write, with or without a date
-  const imported = week.edition.kind === "archive";
   const state = review ? "done" : win.state === "open" ? "open" : "na";
   const note =
     review === undefined
@@ -88,47 +84,62 @@ export function ReviewSection({
       ) : review === undefined ? (
         <p className="text-sm text-ink-soft">טוען…</p>
       ) : (
-        <ReviewBody
-          key={`${review?.version ?? 0}`}
-          port={port}
-          week={week}
-          lesson={l}
-          review={review}
-          mayWrite={mayWrite}
-          win={win}
-          isAdmin={actor.isAdmin}
-          imported={imported}
-          handlerHere={handler != null && handler === actor.memberId}
-          overranWord={overranWord}
-          speakerChanged={!!review && review.speaker_id != null && review.speaker_id !== (lead?.speaker_id ?? null)}
-          notify={notify}
-          clear={clear}
-          reload={load}
-        />
+        <ReviewForm key={`${review?.version ?? 0}`} {...props} port={port} week={week} lesson={l} review={review} notify={notify} clear={clear} reload={load} />
       )}
     </StageSection>
   );
 }
 
-function ReviewBody({
-  port, week, lesson: l, review, mayWrite, win, isAdmin, imported, handlerHere, overranWord, speakerChanged, notify, clear, reload,
-}: {
+/** What the viewer may do with a lesson's «איך עבר», and its words — derived, so the panel and «אחרי השבוע» agree. */
+export interface ReviewAccess {
+  /** The viewer may write: an edition admin always; the handler once the window is open (never logistics). */
+  mayWrite: boolean;
+  win: ReviewWindow;
+  isAdmin: boolean;
+  /** An imported archive (last year's, from its tracking sheet): its reviews are the instructor's to write. */
+  imported: boolean;
+  /** The viewer handles the lesson's speaker. */
+  handlerHere: boolean;
+  /** «חרג מהזמן» in the lead speaker's gender. */
+  overranWord: string;
+  /** The review was written about the lesson's previous lead speaker. */
+  speakerChanged: boolean;
+}
+
+export interface ReviewFormProps extends ReviewAccess {
   port: DataPort;
   week: Week;
   lesson: Lesson;
   review: LessonReview | null;
-  mayWrite: boolean;
-  win: ReturnType<typeof reviewWindow>;
-  isAdmin: boolean;
-  /** An imported archive: the instructor writes its reviews. */
-  imported: boolean;
-  handlerHere: boolean;
-  overranWord: string;
-  speakerChanged: boolean;
   notify: Notify;
   clear: () => void;
+  /** Re-reads the reviews (after a save, and on a stale answer). */
   reload: () => Promise<void>;
-}) {
+  /** After a save that went through (the page moves on). */
+  onSaved?: () => void;
+}
+
+/** Pure: the access part of ReviewForm's props for a viewer (`handler`: the lesson's, src/domain/handler.ts). */
+export function reviewFormProps(week: Week, lesson: Lesson, actor: Actor, handler: number | null, review: LessonReview | null, nowIso: string): ReviewAccess {
+  const win = reviewWindow(week.edition, lesson, nowIso);
+  const lead = week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead");
+  const speaker = lead ? week.speakers.find((s) => s.id === lead.speaker_id) : undefined;
+  const handlerHere = handler != null && handler === actor.memberId;
+  return {
+    mayWrite: actor.canEdit && (actor.isAdmin || (handlerHere && win.state === "open")),
+    win,
+    isAdmin: actor.isAdmin,
+    imported: week.edition.kind === "archive",
+    handlerHere,
+    overranWord: byGender(speaker?.gender, "חרג מהזמן", "חרגה מהזמן", "חרג/ה מהזמן"),
+    speakerChanged: !!review && review.speaker_id != null && review.speaker_id !== (lead?.speaker_id ?? null),
+  };
+}
+
+/** The form (or, for a reader who may not write, the review as written): «מה עבד», «מה פחות», «להזמין שוב?», the time, a rating. */
+export function ReviewForm({
+  port, week, lesson: l, review, mayWrite, win, isAdmin, imported, handlerHere, overranWord, speakerChanged, notify, clear, reload, onSaved,
+}: ReviewFormProps) {
   const id = useId();
   const { busy, run } = useRunner(notify, clear);
   const [wentWell, setWentWell] = useState(review?.went_well ?? "");
@@ -198,13 +209,14 @@ function ReviewBody({
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
     setProblem(null);
-    await run("review", () => port.reviews.save(week.edition.id, l.id, review?.version ?? 0, fields), "«איך עבר» נשמר", (code) => {
+    const ok = await run("review", () => port.reviews.save(week.edition.id, l.id, review?.version ?? 0, fields), "«איך עבר» נשמר", (code) => {
       if (code === "stale") void reload();
       if (!code || !["review_empty", "review_closed", "bad_value", "stale"].includes(code)) return false;
       setProblem(errorMessage(code));
       return true;
     });
     await reload();
+    if (ok) onSaved?.();
   };
 
   return (

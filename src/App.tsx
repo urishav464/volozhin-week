@@ -1,9 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router";
-import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, type Gate, type Persona, personaOf } from "./data/gate";
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
+import { gateFor, gateForError, handlesLogistics, isSettingsAdmin, type Gate, type Persona, personaOf } from "./data/gate";
 import { makePort } from "./data";
 import type { Me } from "./data/types";
-import { lessonPath, pageStepOf, speakerPath } from "./domain/routes";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
 import { isNetworkError } from "./offline/network";
@@ -13,14 +12,12 @@ import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
 import { ScreenBoundary } from "./screens/ScreenBoundary";
 import { MyDayScreen } from "./screens/myday/MyDayScreen";
-import { navFor } from "./screens/nav";
+import { afterRedirect, mineRedirect, myDayRedirect, navFor } from "./screens/nav";
 import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
 import { Shell, UpdateBanner } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
-import { ApprovalsScreen } from "./screens/speakers/ApprovalsScreen";
-import { MineScreen } from "./screens/speakers/MineScreen";
-import { type WeekVisit, WeekScreen } from "./screens/WeekScreen";
+import { WeekScreen } from "./screens/WeekScreen";
 import { WeekCtx, type WeekStore, useWeekStoreState } from "./screens/weekStore";
 import type { DataPort } from "./data/port";
 
@@ -42,6 +39,10 @@ const SpeakersScreen = lazy(() => import("./screens/speakerPages/SpeakersScreen"
 const NewSpeakerScreen = lazy(() => import("./screens/speakerPages/NewSpeakerScreen").then((m) => ({ default: m.NewSpeakerScreen })));
 const SpeakerScreen = lazy(() => import("./screens/speakerPages/SpeakerScreen").then((m) => ({ default: m.SpeakerScreen })));
 const LessonScreen = lazy(() => import("./screens/lesson/LessonScreen").then((m) => ({ default: m.LessonScreen })));
+// The reset, phase 3 — the staff's pages: «ימים» (any day as a wide page), «אישורים» (staff and logistics), «אחרי השבוע»
+const DayScreen = lazy(() => import("./screens/myday/DayScreen").then((m) => ({ default: m.DayScreen })));
+const ApprovalsScreen = lazy(() => import("./screens/approvals/ApprovalsScreen").then((m) => ({ default: m.ApprovalsScreen })));
+const AfterScreen = lazy(() => import("./screens/after/AfterScreen").then((m) => ({ default: m.AfterScreen })));
 
 /** How long the first check may go unanswered before the device's snapshot is shown meanwhile (src/offline/). */
 const SLOW_FIRST_CHECK_MS = 8000;
@@ -163,7 +164,7 @@ export default function App() {
   const demo = port.mode === "demo";
   const signedIn = (state.kind === "gate" && state.gate.screen !== "signed_out") || state.kind === "offline";
   const me = state.kind === "gate" && state.gate.screen === "home" ? state.gate.me : null;
-  // One loaded edition for the week, «המרצים שלי» and the approvals queue (src/screens/weekStore.tsx); every
+  // One loaded edition for the week, the pages and «אישורים» (src/screens/weekStore.tsx); every
   // load is kept on the device for a day without internet.
   const store = useWeekStoreState(port, me ? me.email : null, offline ? (id, week) => void offline.saveWeek(id, week) : undefined);
   // The week itself could not be loaded for want of a connection: the snapshot, if there is one for this member.
@@ -188,7 +189,7 @@ export default function App() {
     <WeekCtx.Provider value={store}>
       <Shell
         demo={demo}
-        full={(!!me && ((path === "/" && persona !== "trainee") || path === "/tracking" || path === "/week" || path === "/grid")) || !!offlineMe}
+        full={(!!me && ((path === "/" && persona !== "trainee") || FULL_WIDTH.has(path) || path.startsWith("/logistics/transports"))) || !!offlineMe}
         user={header ? { name: header.display_name || header.email, roleLabel: ROLE_LABEL[topRole(header)] } : null}
         nav={me && persona ? navFor(me, persona, store.week) : undefined}
         onSignOut={signedIn && !demo ? () => void signOut() : undefined}
@@ -233,17 +234,24 @@ export default function App() {
   );
 }
 
-/**
- * A trainee's home (`/`): a visit sent to the week by an older screen («המרצים שלי», the outputs, the approvals) goes
- * to the page that does that work now — a lesson, at its step; a speaker to place, at «איפה אפשר לשבץ» — else
- * «היום שלי». Staff and logistics keep the week there.
- */
+/** The pages that draw on the whole width: the week (the staff's `/` too), the tracking table, the transport board. */
+const FULL_WIDTH = new Set(["/tracking", "/week", "/grid", "/logistics"]);
+
+/** `/`: a trainee's home is «היום שלי»; staff and logistics keep the writing grid there (the staff's overview). */
 function Home({ port, me, persona }: { port: DataPort; me: Me; persona: Persona | null }) {
-  const visit = useLocation().state as WeekVisit;
   if (persona !== "trainee") return <WeekScreen port={port} me={me} />;
-  if (visit?.lesson != null) return <Navigate replace to={lessonPath(visit.lesson, visit.stage ? pageStepOf(visit.stage) : null)} />;
-  if (visit?.place != null) return <Navigate replace to={speakerPath(visit.place, "placement")} />;
   return <MyDayScreen port={port} me={me} />;
+}
+
+/** An address another persona's (nav.ts): sent on, else its own page. */
+function redirectOr(to: string | null, page: ReactNode) {
+  return to ? <Navigate replace to={to} /> : page;
+}
+
+/** `/mine`, `/mine/team` — «המרצים שלי» is gone (the reset, phase 3): to «מרצים», at «שלי» or at «כל הצוות». */
+function MineRedirect() {
+  const { tab } = useParams();
+  return <Navigate replace to={mineRedirect(tab)} />;
 }
 
 function GateScreen(props: {
@@ -291,29 +299,32 @@ function GateScreen(props: {
         </Notice>
       );
     case "home":
-      // The gate above stays in front of every route. «הגדרות» is for admins
-      // only, the approvals queue for a global admin, «המרצים שלי» (both its tabs) for
-      // whoever handles speakers; anyone else who opens one lands on the week. The
-      // outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
-      // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
-      // edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and printed from
-      // «תוצרים» (/print/rota), which every member reads. The reset, phase 2: a trainee's `/` is «היום שלי» (Home);
-      // the trainee's pages — /myday, /week, /speakers…, /lesson/:id — are every member's by address (staff preview
-      // them; the commands decide what each may do), and the old grid stays at /grid.
+      // The gate above stays in front of every route. «הגדרות» is for admins only; «אישורים» for a global admin, an
+      // edition's admin and logistics (handlesLogistics — the page shows each what they may do); anyone else who opens
+      // one lands on `/`. The outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the
+      // designer's export an admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the
+      // screens also check the edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and
+      // printed from «תוצרים» (/print/rota), which every member reads. The reset, phase 2: a trainee's `/` is «היום
+      // שלי» (Home); the trainee's pages — /week, /speakers…, /lesson/:id — are every member's by address (the
+      // commands decide what each may do), and the old grid stays at /grid. Phase 3: the staff's «ימים» is /day/:d
+      // (DayScreen sends a trainee or logistics elsewhere by itself), /myday is a trainee's — staff go to /day,
+      // logistics home; «אחרי השבוע» (/after) is content's and admins', never logistics'; /mine only redirects.
       return (
         <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
           <Route path="/" element={<Home port={props.port} me={gate.me} persona={props.persona} />} />
-          <Route path="/myday" element={<MyDayScreen port={props.port} me={gate.me} />} />
+          <Route path="/myday" element={redirectOr(myDayRedirect(props.persona), <MyDayScreen port={props.port} me={gate.me} />)} />
+          <Route path="/day/:d?" element={<DayScreen port={props.port} me={gate.me} />} />
+          <Route path="/after" element={redirectOr(afterRedirect(props.persona), <AfterScreen port={props.port} me={gate.me} />)} />
           <Route path="/week" element={<ReadOnlyWeek port={props.port} me={gate.me} />} />
           <Route path="/grid" element={<WeekScreen port={props.port} me={gate.me} />} />
           <Route path="/speakers" element={<SpeakersScreen port={props.port} me={gate.me} />} />
           <Route path="/speakers/new" element={<NewSpeakerScreen port={props.port} me={gate.me} />} />
           <Route path="/speakers/:id" element={<SpeakerScreen port={props.port} me={gate.me} />} />
           <Route path="/lesson/:id" element={<LessonScreen port={props.port} me={gate.me} />} />
-          <Route path="/mine/:tab?" element={handlesSpeakers(gate.me) ? <MineScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
-          <Route path="/approvals" element={gate.me.global_admin ? <ApprovalsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
+          <Route path="/mine/:tab?" element={<MineRedirect />} />
+          <Route path="/approvals" element={handlesLogistics(gate.me) ? <ApprovalsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />
           <Route path="/print/rota" element={<RotaScreen port={props.port} me={gate.me} />} />

@@ -1,37 +1,29 @@
 // One lesson on the grid, drawn by its stage: a draft with candidates (each by
 // where the call stands), a closed lesson (its topic's stripe and name + five stage
 // dots, and a red dot «לעדכן את המרצה" when it changed after the message went out),
-// or a memorial slot. The progress lens paints a closed card by its sources, last
-// year's colours.
+// or a memorial slot. The «אחריות» lens (the reset, phase 3) marks «חריג» a lesson its day's pair does not handle: a
+// dashed gold outline, a chip, and the same word in its accessible name. «התקדמות» draws no card (it is a table,
+// src/screens/progress/ProgressTable.tsx), nor «תורנויות» (src/grid/RotaWeek.tsx).
 import { memorialCard } from "../domain/memorial";
 import { displayName } from "../domain/names";
-import { PROGRESS_LABEL, PROGRESS_TONE, type ProgressTone, progressOf } from "../domain/progress";
 import { readerFilesOf, stagesOf } from "../domain/stages";
 import { LRM, fmtRange } from "../domain/time";
-import { type ApproachStatus, type Gender, LIVE_PITCH, type Lesson } from "../domain/types";
+import { type ApproachStatus, LIVE_PITCH, type Lesson } from "../domain/types";
 import { statusLabel } from "../lib/labels";
 import { Chip, GenderDot, Initials, NO_TOPIC_COLOR, ReconfirmDot, StageDots } from "./bits";
-import { type Fit, type GridModel, fitText, pitchSpeaker } from "./model";
-import { lessonOwner } from "./owners";
+import { type GridModel, pitchSpeaker } from "./model";
+import { lessonOwner, ownerException } from "./owners";
 
-/** v16 (8.11): «תורנויות» draws the duties alone (src/grid/RotaWeek.tsx) — no card is drawn in it. */
+/** The week's lenses (WeekScreen): a card is drawn under «גיוון» and «אחריות»; «התקדמות» and «תורנויות» replace the grid. */
 export type Lens = "diversity" | "progress" | "owner" | "rota";
 /** The «אחריות» lens's colour per handler, and «רק של X» (v13): the others' cards fade. */
 export type CardOwners = { colorOf: Map<number, string>; only: number | "none" | null };
-export { PROGRESS_TONE };
 
 interface Props {
   model: GridModel;
   lesson: Lesson;
   lens: Lens;
   height: number;
-  /** Highlighted as the drop target under the pointer, or the cell being placed into. */
-  active?: boolean;
-  /** In placement mode: this draft accepts the speaker. */
-  placeable?: boolean;
-  /** v14: a draft coloured for a speaker being placed, dragged or looked at (GridDesktop) — and that speaker's gender, for the words. */
-  fit?: Fit | null;
-  fitGender?: Gender | null;
   /** A memorial slot's own time and room, as a line of its own (the day view, when the slot is not its row's alone). */
   where?: { range: string; room: string | null };
   owners?: CardOwners;
@@ -44,19 +36,10 @@ interface Props {
  */
 const CALL_ICON: Record<ApproachStatus, string> = { claimed: "○", no_answer: "↻", approached: "?", positive: "✓", declined: "✗" };
 
-/** A free cell coloured by a speaker's fit (GridDesktop, DayView): green «יכול/ה», red «לא», grey where they are already closed. */
-export const FIT_CELL: Record<Exclude<Fit, "neutral">, string> = {
-  can: "border-ok bg-emerald-50 text-emerald-900",
-  cannot: "border-bad/60 bg-red-50 text-red-800",
-  busy: "border-line bg-line/40 text-ink-soft",
-};
-const FIT_RING: Record<Fit, string> = { can: "ring-2 ring-ok", cannot: "ring-2 ring-bad", busy: "", neutral: "" };
-
-export function LessonCard({ model, lesson, lens, height, active, placeable, fit, fitGender = null, where, owners, onOpen }: Props) {
+export function LessonCard({ model, lesson, lens, height, where, owners, onOpen }: Props) {
   const compact = height < 64;
   const tiny = height < 40;
   const time = <bdi className="text-[10px] text-ink-faint tabular-nums">{fmtRange(lesson.start_min, lesson.end_min)}</bdi>;
-  const ring = active ? "ring-2 ring-accent" : (fit && FIT_RING[fit]) || (placeable ? "ring-2 ring-accent/40" : "");
   const warnings = model.warningCount.get(lesson.id) ?? 0;
   const parallel = lesson.parallel_reason ? <span title={lesson.parallel_reason}>∥</span> : null;
   const room = model.week.rooms.find((r) => r.id === lesson.room_id);
@@ -66,12 +49,21 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
   const ownerId = rawOwner != null && owners?.colorOf.has(rawOwner) ? rawOwner : null;
   const ownerColor = ownerId != null ? owners?.colorOf.get(ownerId) : undefined;
   const faded = lens === "owner" && owners?.only != null && lesson.kind === "lesson" && (owners.only === "none" ? ownerId != null : ownerId !== owners.only);
+  // «חריג»: handled by someone outside the day's pair (a day with no pair marks nothing — owners.ts)
+  const exception = lens === "owner" && ownerException(model, lesson);
+  const exceptionChip = exception && !tiny && (
+    <span aria-hidden className="shrink-0 rounded-full bg-gold/30 px-1 text-[10px] font-bold leading-4 text-navy-900">
+      חריג
+    </span>
+  );
   const common = {
     "data-lesson-id": lesson.id,
     "data-owner": lens === "owner" && lesson.kind === "lesson" ? (ownerId ?? "none") : undefined,
+    "data-exception": exception || undefined,
     onClick: onOpen,
-    className: `group absolute inset-0 m-0.5 overflow-hidden ${tiny ? "rounded-lg" : "rounded-xl"} text-start transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 ${ring} ${faded ? "opacity-30" : ""}`,
+    className: `group absolute inset-0 m-0.5 overflow-hidden ${tiny ? "rounded-lg" : "rounded-xl"} text-start transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 ${faded ? "opacity-30" : ""} ${exception ? "outline-2 -outline-offset-2 outline-dashed outline-gold" : ""}`,
   } as const;
+  const exceptionWords = exception ? ", חריג: בטיפול מי שאינו מהזוג של היום" : "";
 
   if (lesson.kind === "memorial") {
     // the yellow card (DESIGN «זיכרון»): the fallen's name, the family's status, the planned minutes — never a contact
@@ -109,7 +101,6 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
     const live = pitches.filter((p) => LIVE_PITCH.has(p.state));
     const declined = pitches.length - live.length;
     const shown = live.slice(0, tiny ? 1 : 2);
-    const said = fit ? fitText(fit, fitGender) : null;
     const who = live.map((p) => {
       const s = pitchSpeaker(model, p);
       return `${s ? displayName(s) : "?"} (${statusLabel(model.approachById.get(p.approach_id)?.status ?? "claimed", s?.gender ?? null)})`;
@@ -118,16 +109,14 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
       <button
         type="button"
         {...common}
-        data-drop={`lesson:${lesson.id}`}
-        data-fit={fit ?? undefined}
-        className={`${common.className} border-2 border-dashed border-ink-faint/60 ${lens === "progress" ? PROGRESS_TONE.draft : "bg-card/70"} px-1.5 py-1`}
+        className={`${common.className} border-2 border-dashed border-ink-faint/60 bg-card/70 px-1.5 py-1`}
         style={ownerColor ? { borderInlineStartStyle: "solid", borderInlineStartWidth: 8, borderInlineStartColor: ownerColor } : undefined}
-        aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${who.length ? `: ${who.join(", ")}` : pitches.length ? ", פנוי" : ", ללא מרצה"}${said ? `, ${said}` : ""}`}
+        aria-label={`טיוטה ${fmtRange(lesson.start_min, lesson.end_min)}${who.length ? `: ${who.join(", ")}` : pitches.length ? ", פנוי" : ", ללא מרצה"}${exceptionWords}`}
       >
         <span className="flex items-center gap-1">
           {parallel}
-          {said && <span className={`truncate text-[10px] font-semibold ${fit === "can" ? "text-ok" : fit === "cannot" ? "text-bad" : "text-ink-soft"}`}>{said}</span>}
-          {!said && !compact && room && lesson.parallel_reason && <span className="truncate text-[10px] text-ink-faint">{room.name}</span>}
+          {exceptionChip}
+          {!compact && room && lesson.parallel_reason && <span className="truncate text-[10px] text-ink-faint">{room.name}</span>}
           {!tiny && <span className="ms-auto">{time}</span>}
         </span>
         <span className={`mt-0.5 flex ${compact ? "flex-row gap-1" : "flex-col gap-0.5"}`}>
@@ -135,7 +124,7 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
             const s = pitchSpeaker(model, p);
             const owner = model.memberName.get(model.approachById.get(p.approach_id)?.owner_member_id ?? -1);
             return (
-              <span key={p.id} data-drag={`pitch:${p.id}`} data-drag-label={s ? displayName(s) : ""} className="flex items-center gap-1 rounded-full bg-paper px-1.5 text-[11px] leading-5">
+              <span key={p.id} className="flex items-center gap-1 rounded-full bg-paper px-1.5 text-[11px] leading-5">
                 <span aria-hidden>{CALL_ICON[model.approachById.get(p.approach_id)?.status ?? "claimed"]}</span>
                 <GenderDot gender={s?.gender ?? null} />
                 <span className="truncate">{s ? displayName(s) : "?"}</span>
@@ -161,7 +150,6 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
   const lead = model.leadOf.get(lesson.id);
   const cat = lesson.category_id != null ? model.categoryById.get(lesson.category_id) : undefined;
   const stages = stagesOf(lesson, readerFilesOf(model.week, lesson.id));
-  const progressBg = lens === "progress" ? PROGRESS_TONE[progressOf(lesson.sources_kind)] : "bg-card";
   const owner = ownerId != null ? model.memberName.get(ownerId) : undefined;
   // the stripe: the topic's colour (v13: in every lens), the handler's in «אחריות»
   const stripe = lens === "owner" ? (ownerColor ?? NO_TOPIC_COLOR) : (cat?.color ?? NO_TOPIC_COLOR);
@@ -172,15 +160,16 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
       {...common}
       data-drag={`lesson:${lesson.id}`}
       data-drag-label={lead ? displayName(lead) : ""}
-      className={`${common.className} border ${reconfirm ? "border-bad" : "border-line"} ${progressBg} px-1.5 py-1 shadow-sm`}
+      className={`${common.className} border ${reconfirm ? "border-bad" : "border-line"} bg-card px-1.5 py-1 shadow-sm`}
       style={{ borderInlineStartWidth: 8, borderInlineStartColor: stripe }}
       // the topic too: on a short card its stripe is all that shows of it
-      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}, ${cat?.name ?? "נושא: TBD"}${reconfirm ? ", לעדכן את המרצה" : ""}`}
+      aria-label={`${lead ? displayName(lead) : "שיעור"} — ${lesson.title ?? "ללא כותרת"}, ${fmtRange(lesson.start_min, lesson.end_min)}, ${cat?.name ?? "נושא: TBD"}${reconfirm ? ", לעדכן את המרצה" : ""}${exceptionWords}`}
     >
       <span className="flex items-center gap-1">
         <GenderDot gender={lead?.gender ?? null} />
         <span className="truncate text-xs font-bold text-navy">{lead ? displayName(lead) : "—"}</span>
         {parallel}
+        {exceptionChip}
         {reconfirm && <ReconfirmDot />}
         {warnings > 0 && (
           <span data-warning-count={warnings} className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">
@@ -212,6 +201,3 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
     </button>
   );
 }
-
-/** The legend under the toolbar while the progress lens is on (memorial slots keep their own yellow card). */
-export const PROGRESS_LEGEND: [ProgressTone, string][] = (["received", "presentation", "pending", "none", "draft"] as const).map((t) => [t, PROGRESS_LABEL[t]]);

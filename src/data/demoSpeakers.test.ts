@@ -1,12 +1,25 @@
 // The pool in demo mode: the same engine as the parity tests, plus what only
 // the demo has to get right — one speaker list across its editions, the
 // contacts across them, the timeline, the hand-over's team, and synthetic data
-// that shows every group of «המרצים שלי».
+// that shows every group a speaker can stand in (src/domain/mine.ts).
 import { describe, expect, it } from "vitest";
 import { timeline } from "../domain/activityText";
-import { MINE_GROUPS, mySpeakers, pendingSpeakers, waitingForApproval } from "../domain/mine";
+import { approvalsBadge } from "../domain/approvals";
+import { groupOf, MINE_GROUPS, pendingSpeakers } from "../domain/mine";
+import type { Week } from "../domain/types";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
+
+/** How many of member `me`'s rows stand in each group (one per closed lesson, as groupOf puts them). */
+const groupsOf = (week: Week, me: number): Map<string, number> => {
+  const out = new Map<string, number>();
+  for (const a of week.approaches.filter((x) => x.owner_member_id === me)) {
+    const s = week.speakers.find((x) => x.id === a.speaker_id)!;
+    const closed = week.lessons.filter((l) => l.state === "closed" && week.lessonSpeakers.some((x) => x.lesson_id === l.id && x.speaker_id === s.id));
+    for (const g of closed.length ? closed.map((l) => groupOf(week, a, s, l)) : [groupOf(week, a, s)]) out.set(g, (out.get(g) ?? 0) + 1);
+  }
+  return out;
+};
 
 const code = async (p: Promise<unknown>) => {
   try {
@@ -18,15 +31,17 @@ const code = async (p: Promise<unknown>) => {
 };
 
 describe("the demo's speaker pool", () => {
-  it("starts with a speaker in every group of «המרצים שלי», a hand-over for the demo user and a queue to approve", async () => {
+  it("starts with a speaker in every group, a hand-over for the demo user and a queue to approve", async () => {
     const port = new DemoPort();
     const week = await port.loadWeek(1);
-    const g = mySpeakers(week, 1);
-    // every group but the two a visitor reaches by acting: «מחכים לתשובה» (after a call) and «סירבו»
-    for (const { group } of MINE_GROUPS) if (group !== "awaiting" && group !== "declined") expect(g.get(group)!.length, group).toBeGreaterThan(0);
+    const g = groupsOf(week, 1);
+    // every group but the two a visitor reaches by acting: «מחכים לתשובה» (after a call) and «סירבו» — and «הוצעו לי»,
+    // an offer to the demo user (src/domain/myDay.ts offeredTo lists it)
+    for (const { group } of MINE_GROUPS) if (group !== "awaiting" && group !== "declined" && group !== "offered") expect(g.get(group) ?? 0, group).toBeGreaterThan(0);
+    expect(week.approaches.some((a) => a.offered_to === 1 && a.owner_member_id !== 1)).toBe(true);
     expect(pendingSpeakers(week).length).toBe(5);
     // v14: the badge counts who agreed and waits for the instructor (speaker 56) and the one payment request
-    expect(waitingForApproval(week)).toBe(2);
+    expect(approvalsBadge(week, { global: true, isAdmin: true, role: "admin" })).toBe(2);
     expect(JSON.stringify(week)).not.toMatch(/טלפון לדוגמה|example\.org/); // contacts never travel with a week
   });
 
@@ -71,7 +86,9 @@ describe("the demo's speaker pool", () => {
     await s.answerHandOver(1, a.id, true, "לקחתי");
     expect((await port.loadWeek(1)).approaches.find((x) => x.id === a.id)).toMatchObject({ owner_member_id: 1, offered_to: null });
     expect((await s.activity(13))[0].detail).toMatchObject({ owner: 1, note: "לקחתי" });
-    expect(mySpeakers(await port.loadWeek(1), 1).get("awaiting")!.some((r) => r.speaker.id === 13)).toBe(true);
+    const after = await port.loadWeek(1);
+    const a13 = after.approaches.find((a) => a.speaker_id === 13 && a.owner_member_id === 1)!;
+    expect(groupOf(after, a13, after.speakers.find((s) => s.id === 13)!)).toBe("awaiting");
   });
 
   it("hands over only to an active content member of the edition — the team follows «הגדרות»", async () => {

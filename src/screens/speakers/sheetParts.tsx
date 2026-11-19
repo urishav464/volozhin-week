@@ -1,5 +1,5 @@
-// Pieces of a speaker's record that the speaker sheet (SpeakerSheet.tsx, the grid's side panel) and the speaker page
-// (src/screens/speakerPages/SpeakerScreen.tsx, the reset's wide page) both draw: what a Week never carries (contacts,
+// Pieces of a speaker's record that the speaker page (src/screens/speakerPages/SpeakerScreen.tsx, the reset's wide page;
+// the grid's old side sheet went in phase 3) and the vetting chip draw: what a Week never carries (contacts,
 // past editions, the timeline — read one speaker at a time), the approach and the call's frame, a hand-over, the
 // contacts, the profile's edit form, the timeline and the vetting form. Every change is a port command; a refusal reads
 // in Hebrew.

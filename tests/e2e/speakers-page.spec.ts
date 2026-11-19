@@ -53,10 +53,15 @@ test.describe("demo build — a trainee", () => {
     await expect(row(page, 33)).toBeVisible();
     await expect(page.locator("[data-speaker-row]")).toHaveCount(1);
     await page.getByLabel("חיפוש", { exact: true }).fill("");
+    // the address changes at once and the list a render later (the router's updates are transitions): the cleared
+    // search is the whole list again before a filter is chosen — else «שלי» would be counted on the search's one row
+    await expect(page.locator("[data-speaker-row]")).toHaveCount(all);
 
     await filters(page, info);
     await page.getByLabel("מצב", { exact: true }).selectOption({ label: "שלי" });
     await expect(page).toHaveURL(/s=mine/);
+    // the select follows the address: once it reads «שלי», the rows on screen are «שלי»'s
+    await expect(page.getByLabel("מצב", { exact: true })).toHaveValue("mine");
     await expect.poll(() => page.locator("[data-speaker-row]").count()).toBeLessThan(all);
     const mine = await page.locator("[data-speaker-row]").count();
     expect(mine).toBeGreaterThan(0);

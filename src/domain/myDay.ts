@@ -1,13 +1,18 @@
 // «היום שלי» (the reset, phase 2): a trainee's home, derived from a loaded Week — the day (or days) an edition admin
 // gave them with a partner (v18 day owners), its slots in time order each with ONE next step, the lessons of the day
 // someone else handles («חדש» since the owner last looked: the notification the owner asked for), and the speakers
-// who said they can come to a free slot of it. Pure, so every device says the same.
+// who said they can come to a free slot of it. Pure, so every device says the same. The reset, phase 3: the staff's
+// «ימים» (`/day/:d`) is the same day in staff mode — every lesson gets its step, since staff may act on all of them —
+// and a day with no owners has no «חריגים».
 import { fitFor, type GridModel, openSlots, poolSection } from "../grid/model";
+import { outsidePair } from "../grid/owners";
+import { todayColumn } from "../offline/view";
+import { lessonHandler } from "./handler";
 import { groupOf, type MineGroup, nextStep } from "./mine";
 import { lessonPath, type PageStep, pageStepOf, type SlotRef, speakerPath, speakersPath } from "./routes";
 import { nextLessonStep, readerFilesOf } from "./stages";
 import { DAYS, type Day } from "./time";
-import type { ApproachStatus, Lesson, Week } from "./types";
+import type { Approach, ApproachStatus, Week } from "./types";
 import { LIVE_PITCH } from "./types";
 
 /** The days I own (one or more — a tab each), in the week's order. */
@@ -86,8 +91,17 @@ export interface MyDay {
 
 const distinct = (xs: (number | null | undefined)[]): number[] => [...new Set(xs.filter((x): x is number => x != null))];
 
-/** One day of «היום שלי», for member `me` (staff may preview a day they do not own: no partners then, nothing seen). */
-export function myDay(model: GridModel, day: Day, me: number): MyDay {
+export interface MyDayOptions {
+  /**
+   * The staff's «ימים»: every closed lesson opens at its step and a draft follows my candidate, else its first live
+   * one — staff may act on every lesson (the RPCs decide). Off («היום שלי»): another's lesson is theirs, to read.
+   */
+  staff?: boolean;
+}
+
+/** One day of «היום שלי», for member `me` (a day I do not own: its owners are all partners, nothing seen). */
+export function myDay(model: GridModel, day: Day, me: number, opts: MyDayOptions = {}): MyDay {
+  const staff = opts.staff === true;
   const { week } = model;
   const rows = (week.dayOwners ?? []).filter((o) => o.day === day);
   const owners = distinct(rows.map((o) => o.member_id)).sort((a, b) => a - b);
@@ -108,7 +122,7 @@ export function myDay(model: GridModel, day: Day, me: number): MyDay {
   const draftStep = (lessonId: number, candidates: SlotCandidate[], slot: SlotRef): SlotStep => {
     // the draft by its id: a parallel pair shares the day and the time, and the list must propose into this one
     if (candidates.length === 0) return { kind: "choose", to: speakersPath({ slot: { ...slot, lesson: lessonId } }) };
-    const mine = candidates.find((c) => c.handler === me);
+    const mine = candidates.find((c) => c.handler === me) ?? (staff ? candidates[0] : undefined);
     if (!mine) return { kind: "theirs", handlers: distinct(candidates.map((c) => c.handler)), to: lessonPath(lessonId) };
     switch (nextStep(mine.group)) {
       case "close":
@@ -119,11 +133,6 @@ export function myDay(model: GridModel, day: Day, me: number): MyDay {
         // «vet» (agreed, waiting for the approval) — and a declined approach pitched here again: their page
         return { kind: "speaker", speakerId: mine.speakerId, group: mine.group, to: speakerPath(mine.speakerId) };
     }
-  };
-
-  const closedHandler = (l: Lesson): number | null => {
-    const lead = model.leadOf.get(l.id);
-    return (lead && model.approachBySpeaker.get(lead.id)?.owner_member_id) ?? null;
   };
 
   const slots: SlotCard[] = openSlots(model, day).map((o) => {
@@ -147,9 +156,9 @@ export function myDay(model: GridModel, day: Day, me: number): MyDay {
   });
   for (const l of week.lessons) {
     if (l.day !== day || l.kind !== "lesson" || l.state !== "closed") continue;
-    const handler = closedHandler(l);
+    const handler = lessonHandler(week, l.id);
     const step: SlotStep =
-      handler != null && ours.has(handler)
+      staff || (handler != null && ours.has(handler))
         ? (() => {
             const next = nextLessonStep(l, readerFilesOf(week, l.id));
             const page = next ? pageStepOf(next) : null;
@@ -172,12 +181,14 @@ export function myDay(model: GridModel, day: Day, me: number): MyDay {
   slots.sort((a, b) => a.start - b.start || (a.lessonId ?? -1) - (b.lessonId ?? -1));
 
   // the notification: lessons of the day someone outside its owners handles (in the slots' order); «חדש» on a
-  // proposal made since I looked — a lesson keeps no time of its own, a pitch does
+  // proposal made since I looked — a lesson keeps no time of its own, a pitch does. A day nobody owns has no outside.
   const seen = seenAt == null ? null : Date.parse(seenAt);
   const others: OtherLesson[] = [];
   for (const c of slots) {
     if (c.lessonId == null) continue;
-    const outside = c.handlers.filter((h) => !owners.includes(h));
+    const lesson = week.lessons.find((l) => l.id === c.lessonId);
+    // the one «חריג» rule (src/grid/owners.ts outsidePair) — the grid's «אחריות» marks the same lessons
+    const outside = lesson ? outsidePair(model, lesson) : [];
     if (outside.length === 0) continue;
     const fresh = seen == null || Number.isNaN(seen) || week.pitches.some((p) => p.lesson_id === c.lessonId && Date.parse(p.at) > seen);
     others.push({ lessonId: c.lessonId, start: c.start, end: c.end, handlers: outside, fresh });
@@ -204,4 +215,18 @@ export function myDay(model: GridModel, day: Day, me: number): MyDay {
 /** «חדש» on any of them: the «ראיתי» button has something to clear. */
 export function hasFresh(d: Pick<MyDay, "others">): boolean {
   return d.others.some((o) => o.fresh);
+}
+
+/** The hand-overs offered to me («הוצעו לך»), waiting for my answer: by the speaker's name, then the approach. */
+export function offeredTo(week: Pick<Week, "approaches" | "speakers">, me: number): Approach[] {
+  const speakerById = new Map(week.speakers.map((s) => [s.id, s]));
+  const nameOf = (a: Approach) => speakerById.get(a.speaker_id)?.name ?? "";
+  return week.approaches
+    .filter((a) => a.offered_to === me && speakerById.has(a.speaker_id))
+    .sort((a, b) => nameOf(a).localeCompare(nameOf(b), "he") || a.id - b.id);
+}
+
+/** The day «ימים» opens at with none in its address: today's column during the week, else my first day, else Sunday. */
+export function staffDay(week: Pick<Week, "edition" | "dayOwners">, me: number, nowIso: string): Day {
+  return todayColumn(week.edition.start_date, nowIso) ?? ownedDays(week, me)[0] ?? 0;
 }

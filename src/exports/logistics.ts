@@ -90,10 +90,6 @@ export function transportRows(week: Week, details: readonly LessonTransport[] | 
     }));
 }
 
-export function transportCounts(rows: TransportRow[]): { total: number; arranged: number } {
-  return { total: rows.length, arranged: rows.filter((r) => r.details?.arranged).length };
-}
-
 /**
  * The transports' table. `personal`: «כולל כתובות וטלפונים» — the pickup address after the pickup time and the
  * driver's phone after the driver; off, neither column exists. The driver's name and «סודר» are the list itself.

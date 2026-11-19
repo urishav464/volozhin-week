@@ -2,8 +2,9 @@
 // admins' four lists, each from the loaded week (src/exports/logistics.ts), and
 // (milestone 7) «תורנויות», the campus duty roster (/logistics/rota/<view>,
 // src/screens/logistics/rota/):
-// הסעות (the approved transports, in one get_transports_for call; edited
-// through set_transport_details), תשלומים (the approved amounts, «שולם» by the
+// הסעות (the transport board, TransportBoard.tsx: the requests and the approved
+// transports by day on a time axis beside the staff shifts, decided and given a
+// driver there; it prints the approved ones), תשלומים (the approved amounts, «שולם» by the
 // existing command, the totals), ספרים (מכריכה לכריכה's book orders), הדפסות
 // (what is printed ahead or on the day, the files opened through a signed URL).
 // Each prints on A4 and downloads as xlsx or CSV — made in this browser, every
@@ -12,38 +13,31 @@
 // וטלפונים», off by default and off again in another edition.
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { NavLink, useParams } from "react-router";
-import { CommandError, type LessonTransport } from "../../data/commands";
+import { CommandError } from "../../data/commands";
 import type { KkData } from "../../data/kk";
 import type { DataPort } from "../../data/port";
-import { mergeTransport, EMPTY_TRANSPORT } from "../../data/stageRules";
 import type { Me } from "../../data/types";
 import { israelMoment } from "../../domain/israelTime";
 import { shekels } from "../../domain/stages";
 import { DAY_NAMES, DAYS, type Day } from "../../domain/time";
-import type { SourceFile, TransportDetails, Week } from "../../domain/types";
+import type { SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { csvBytes } from "../../exports/csv";
-import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
-import {
-  approvedTransport, bookRows, bookTable, pagesText, paymentRows, paymentTable, paymentTotals, printGroups, printRows, printTable, transportCounts,
-  type TransportRow, transportRows, transportTable,
-} from "../../exports/logistics";
-import type { Table } from "../../exports/table";
+import { bookRows, bookTable, pagesText, paymentRows, paymentTable, paymentTotals, printGroups, printRows, printTable } from "../../exports/logistics";
 import { israelDate } from "../../exports/tracking";
-import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { PRINT_WHEN_LABEL } from "../../domain/stages";
 import { Chip } from "../../grid/bits";
 import { BookOrder } from "../kk/BookOrder";
-import { Button, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH, useRunner } from "../settings/kit";
+import { Button, useRunner } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
-import { TransportForm } from "../stages/PaymentStage";
 import { fileKind } from "../stages/SourceFiles";
 import { archivedEdition } from "../stages/parts";
-import { PrintSetup } from "../outputs/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
+import { Bar, type LogisticsTab, PaperTable, type TabProps } from "./parts";
 import { RotaTab } from "./rota/RotaTab";
+import { TransportBoard } from "./TransportBoard";
 
-export type LogisticsTab = "transports" | "payments" | "books" | "prints" | "rota";
+export type { LogisticsTab } from "./parts";
+
 const TABS: [LogisticsTab, string][] = [
   ["transports", "הסעות"],
   ["payments", "תשלומים"],
@@ -51,7 +45,6 @@ const TABS: [LogisticsTab, string][] = [
   ["prints", "הדפסות"],
   ["rota", "תורנויות"],
 ];
-const TAB_FILE: Record<LogisticsTab, string> = { transports: "transports", payments: "payments", books: "books", prints: "prints", rota: "rota" };
 
 /** May this member open «לוגיסטיקה» in this edition: its logistics team and its admins. */
 export function mayLogistics(actor: Actor): boolean {
@@ -72,8 +65,8 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
   const label = TABS.find(([k]) => k === tab)![1];
 
   return (
-    // the rota's board takes the width of a computer's screen (five days side by side)
-    <div className={`mx-auto ${tab === "rota" ? "max-w-7xl" : "max-w-5xl"} space-y-4 pb-20`}>
+    // the rota's board (five days side by side) and the transport board (a day's time axis) take a computer's width
+    <div className={`mx-auto ${tab === "rota" || tab === "transports" ? "max-w-7xl" : "max-w-5xl"} space-y-4 pb-20`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
         <h2 className="font-display text-2xl font-extrabold text-navy">לוגיסטיקה</h2>
         <EditionSelect />
@@ -94,7 +87,7 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
               </NavLink>
             ))}
           </nav>
-          {tab === "transports" && <Transports key={week.edition.id} port={port} week={week} actor={actor} notify={notify} clear={clear} label={label} />}
+          {tab === "transports" && <TransportBoard key={week.edition.id} port={port} week={week} actor={actor} notify={notify} clear={clear} reload={store.reload} label={label} />}
           {tab === "payments" && <Payments port={port} week={week} actor={actor} notify={notify} clear={clear} reload={store.reload} label={label} />}
           {tab === "books" && <Books port={port} week={week} actor={actor} notify={notify} clear={clear} label={label} />}
           {tab === "prints" && <Prints port={port} week={week} notify={notify} label={label} />}
@@ -103,78 +96,6 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
       )}
       {node}
     </div>
-  );
-}
-
-interface TabProps {
-  port: DataPort;
-  week: Week;
-  actor: Actor;
-  notify: Notify;
-  clear: () => void;
-  label: string;
-}
-
-/** The tab's bar: what it holds, and print / xlsx / CSV of the very table the page prints. */
-function Bar({ week, tab, table, personal, notify, children, summary }: { week: Week; tab: LogisticsTab; table: () => Table; personal?: boolean; notify: Notify; children?: ReactNode; summary: ReactNode }) {
-  const save = (kind: "xlsx" | "csv") => {
-    const name = fileName(`${TAB_FILE[tab]}${personal ? "-with-addresses-phones" : ""}`, week.edition, israelDay(), kind);
-    if (kind === "xlsx") download(name, toXlsx([table()]), XLSX_MIME);
-    else download(name, csvBytes(table()), CSV_MIME);
-    notify("ok", personal ? "הקובץ ירד. יש בו כתובות וטלפונים: לא לשתף, ולמחוק כשמסיימים." : "הקובץ ירד.");
-  };
-  const empty = table().rows.length === 0;
-  return (
-    <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-xl border border-line bg-card p-3 shadow-sm print:hidden">
-      <p role="status" className="min-w-0 basis-full text-sm text-ink-soft sm:basis-auto">
-        {summary}
-      </p>
-      {children}
-      <div className="flex flex-wrap gap-2 sm:ms-auto">
-        <Button onClick={() => window.print()} disabled={empty}>
-          הדפסה
-        </Button>
-        <Button onClick={() => save("xlsx")} disabled={empty}>
-          הורדת xlsx
-        </Button>
-        <Button onClick={() => save("csv")} disabled={empty}>
-          הורדת CSV
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** On paper: the file's own table, with its title line — exactly what the xlsx and the CSV hold. */
-function PaperTable({ table, title, landscape = false }: { table: Table; title: string; landscape?: boolean }) {
-  return (
-    <>
-      <PrintSetup landscape={landscape} title={title}>
-        <p className="text-sm">הודפס ב-{israelDate(new Date().toISOString())}</p>
-      </PrintSetup>
-      <table className="hidden w-full border-collapse text-start text-xs print:table">
-        <thead>
-          <tr className={TABLE_HEAD}>
-            {table.headers.map((h) => (
-              <th key={h} scope="col" className={`${TABLE_TH} px-1.5 py-1`}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((r, i) => (
-            <tr key={i} className={`${TABLE_ROW} align-top`}>
-              {r.map((c, j) => (
-                <td key={j} className={`px-1.5 py-1 break-words ${j === 0 ? TABLE_KEY : ""}`}>
-                  {c}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
   );
 }
 
@@ -187,144 +108,6 @@ function DayList({ day, count, children }: { day: Day; count: number; children: 
       </h3>
       <ul className="grid items-start gap-2 md:grid-cols-2">{children}</ul>
     </section>
-  );
-}
-
-function Lines({ lines }: { lines: [string, ReactNode][] }) {
-  return (
-    <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
-      {lines.map(([k, v]) => (
-        <div key={k} className="contents">
-          <dt className="text-ink-soft">{k}</dt>
-          <dd className="min-w-0 break-words">{v}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-// ------------------------------------------------------------------ הסעות
-
-function Transports({ port, week, actor, notify, clear, label }: TabProps) {
-  const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
-  const [details, setDetails] = useState<LessonTransport[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  // «כולל כתובות וטלפונים»: off by default; this tab is keyed by the edition, so another edition starts it off again
-  const [personal, setPersonal] = useState(false);
-  const [editing, setEditing] = useState<number | null>(null);
-  const { busy, run } = useRunner(notify, clear);
-  const key = week.lessons.filter(approvedTransport).map((l) => `${l.id}:${l.version}`).join(",");
-  const load = useCallback(async () => {
-    try {
-      setDetails(await cmds.transports());
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [cmds]);
-  useEffect(() => void load(), [load, key]);
-
-  const rows = useMemo(() => transportRows(week, details), [week, details]);
-  const counts = transportCounts(rows);
-  const table = () => transportTable(rows, week.edition.label, personal);
-  const mayWrite = actor.isAdmin || !archivedEdition(week);
-
-  const save = async (r: TransportRow, loaded: TransportDetails, next: TransportDetails, ok: string, onRefused?: (code: string | null) => boolean) => {
-    const done = await run(`transport-${r.lesson.id}`, async () => cmds.setTransport(r.lesson.id, mergeTransport(loaded, next, await cmds.transport(r.lesson.id))), ok, onRefused);
-    await load();
-    return done;
-  };
-
-  return (
-    <>
-      <PaperTable table={table()} title={`${label} · שבוע וולוז'ין ${week.edition.label}${personal ? " · כולל כתובות וטלפונים: מידע אישי" : ""}`} landscape />
-      <Bar
-        week={week}
-        tab="transports"
-        table={table}
-        personal={personal}
-        notify={notify}
-        summary={details == null ? "טוען…" : rows.length === 0 ? "אין הסעות מאושרות." : `${rows.length === 1 ? "הסעה אחת מאושרת" : `${rows.length} הסעות מאושרות`} · סודרו ${counts.arranged}`}
-      >
-        <div className="min-w-0">
-          <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
-            <input type="checkbox" checked={personal} onChange={(e) => setPersonal(e.target.checked)} className="size-4 accent-navy" />
-            כולל כתובות וטלפונים
-          </label>
-          {personal && <p className="text-xs text-ink-soft">כתובות האיסוף והטלפונים של הנהגים הם מידע אישי: לא משתפים דף או קובץ שיש בו אותם, ומוחקים אותו כשמסיימים.</p>}
-        </div>
-      </Bar>
-      {failed && (
-        <div role="alert" className="rounded-lg border border-bad/30 bg-bad/5 p-3 text-sm print:hidden">
-          <p className="mb-2">לא הצלחנו לטעון את פרטי ההסעות.</p>
-          <Button onClick={() => void load()}>לנסות שוב</Button>
-        </div>
-      )}
-      <p className="text-sm text-ink-soft print:hidden">רק הסעות שאושרו. את ההסעה מבקשים בשלב «תשלום/הסעה» של השיעור.</p>
-      {details != null &&
-        DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
-          const ofDay = rows.filter((r) => r.day === d);
-          return (
-            <DayList key={d} day={d} count={ofDay.length}>
-              {ofDay.map((r) => {
-                const dd = r.details;
-                const lines: [string, ReactNode][] = [
-                  ["הסעה", r.legs],
-                  ["שעת איסוף", dd?.pickup_time || "—"],
-                  ...(personal ? ([["כתובת איסוף", dd?.pickup_address || "—"]] as [string, ReactNode][]) : []),
-                  ["נהג/ת", dd?.driver_name || "—"],
-                  ...(personal ? ([["טלפון הנהג/ת", dd?.driver_phone ? <bdi>{dd.driver_phone}</bdi> : "—"]] as [string, ReactNode][]) : []),
-                ];
-                return (
-                  <li key={r.lesson.id} data-transport-row={r.lesson.id} className="rounded-xl border border-line bg-card p-3 shadow-sm">
-                    <p className="font-bold text-navy">{r.speaker || "TBD"}</p>
-                    <p className="text-sm text-ink-soft">
-                      {r.dayLabel} <bdi dir="ltr">{r.time}</bdi> · {r.title}
-                    </p>
-                    {dd == null ? (
-                      <p className="mt-1 text-sm text-ink-soft">{errorMessage("transport_hidden")}</p>
-                    ) : editing === r.lesson.id ? (
-                      <div className="mt-2">
-                        <TransportForm
-                          id={`t${r.lesson.id}`}
-                          d={dd}
-                          busy={busy === `transport-${r.lesson.id}` ? "transport" : null}
-                          onCancel={() => setEditing(null)}
-                          onSave={(next, onRefused) => save(r, { ...EMPTY_TRANSPORT, ...dd }, next, "פרטי ההסעה נשמרו", onRefused)}
-                          onSaved={async () => setEditing(null)}
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <Lines lines={lines} />
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Chip tone={dd.arranged ? "ok" : "warn"}>{dd.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
-                          {mayWrite && (
-                            <>
-                              {/* set, the chip is the state: a quiet «ביטול» undoes it (its name still says what) */}
-                              <Button
-                                kind={dd.arranged ? "quiet" : "secondary"}
-                                busy={busy === `transport-${r.lesson.id}`}
-                                onClick={() => void save(r, { ...EMPTY_TRANSPORT, ...dd }, { ...EMPTY_TRANSPORT, ...dd, arranged: !dd.arranged }, dd.arranged ? "הסימון «סודר» בוטל" : "סומן שההסעה סודרה")}
-                                aria-label={dd.arranged ? "ביטול «סודר»" : undefined}
-                              >
-                                {dd.arranged ? "ביטול" : "סימון «סודר»"}
-                              </Button>
-                              <Button onClick={() => setEditing(r.lesson.id)} aria-label={`עריכת פרטי ההסעה: ${r.speaker || r.title}`}>
-                                עריכה
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </DayList>
-          );
-        })}
-    </>
   );
 }
 

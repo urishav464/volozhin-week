@@ -1,13 +1,12 @@
-// From placement to arrival (milestone 3) in a real browser. Demo build, every
-// width: a payment request approved from the queue, the summary message
-// (blocked without a template and while the date is TBD, then sent; a change
-// after it raises «לעדכן את המרצה», sending again clears it), an escort with
-// the gap warning, sources and their dot, a trainee's delete listing the lessons
-// they escort. Mock build: every new RPC goes out by the contract's parameter
-// names (tests/sql/stages.test.ts pins them in the database) with the member's
-// own token; a logistics member is offered «שולם» and approved transport only.
-// Synthetic people and wording only («נוסח לדוגמה»): the real template is the
-// instructor's.
+// From placement to arrival (milestone 3) in a real browser — the stages in the writing grid's lesson panel, which
+// stays the staff's (the reset, phase 3). Demo build, every width: a payment request approved (and another refused)
+// from «אישורים», the summary message (blocked without a template and while the date is TBD, then sent; a change after
+// it raises «לעדכן את המרצה», sending again clears it), an escort with the gap warning, sources and their dot, a
+// trainee's delete listing the lessons they escort; on «ימים» a closed lesson's next step — in the words «המרצים שלי»
+// had — opens its lesson page at that step. Mock build: every stage RPC goes out by the contract's parameter names
+// (tests/sql/stages.test.ts pins them in the database) with the member's own token; a logistics member is offered
+// «שולם» and the transport only, and decides nothing in a practice week. Synthetic people and wording only («נוסח
+// לדוגמה»): the real template is the instructor's. «אישורים» and the transport board themselves: approvals.spec.ts.
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
@@ -77,7 +76,7 @@ test.describe("demo build", () => {
     await expect(pay).toHaveAttribute("data-state", "waiting");
     await expect(pay).toContainText("150 ₪");
     // one primary action: the decision; the saved request waits behind «שינוי הבקשה»
-    await expect(pay.getByRole("group", { name: "החלטת המדריך/ה" })).toBeVisible();
+    await expect(pay.getByRole("group", { name: "החלטה על הבקשה" })).toBeVisible();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
     await pay.getByRole("button", { name: "שינוי הבקשה" }).click();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByLabel("סכום בשקלים")).toHaveValue("150");
@@ -100,7 +99,7 @@ test.describe("demo build", () => {
     await page.getByRole("group", { name: "דחיית הבקשה של פרופ׳ מרצה 04" }).getByLabel("למה? (לא חובה, גלוי לצוות)").fill("נתון לדוגמה: לבדוק שוב");
     await page.getByRole("button", { name: "לא לאשר" }).click();
     await expect(toast(page, "הבקשה לא אושרה")).toBeVisible();
-    await expect(page.getByText("אין בקשות לתשלום או להסעה שממתינות לאישור.")).toBeVisible();
+    await expect(page.getByText("אין בקשות שממתינות לאישור.")).toBeVisible();
     await expect(badge).toHaveAccessibleName("אישורים, 1 ממתין");
 
     // back on the week: approved — the card's first dot is done
@@ -271,28 +270,38 @@ test.describe("demo build", () => {
     await expect(card(page, "מרצה 19").locator('[data-stage="escort"]')).toHaveAttribute("data-state", "open");
   });
 
-  test("«המרצים שלי»: a closed lesson sits under its next step, and its button opens the lesson there", async ({ page }) => {
-    await page.goto(`${demoUrl()}/mine`);
-    const group = (name: string) => page.getByRole("region", { name, exact: true });
-    await expect(group("תשלום/הסעה")).toContainText("200 ₪ · הלוך ושוב");
-    await expect(group("תשלום/הסעה")).toContainText("ממתין לאישור"); // once, as the chip
-    await expect(group("תשלום/הסעה")).not.toContainText("ממתין לאישור המדריך/ה:");
-    await expect(group("לעדכן את המרצה")).toContainText("מרצה 08");
-    await expect(group("לשלוח סיכום")).toContainText("מרצה 12");
-    await expect(group("חסר מלווה")).toContainText("מרצה 24");
-    await expect(group("חסרים מקורות")).toContainText("מרצה 20");
-    await expect(group("נסגר")).toContainText("מרצה 16");
+  test("«ימים»: a closed lesson's next step in «המרצים שלי»'s words, and its link opens the lesson page there; a request decided there moves it on", async ({ page }) => {
+    await page.goto(`${demoUrl()}/day/1`);
+    const slot = (speaker: string) => page.locator("[data-slot-card]").filter({ hasText: speaker });
+    await expect(slot("מרצה 04")).toContainText("תשלום/הסעה");
+    await expect(slot("מרצה 08")).toContainText("לעדכן את המרצה");
+    await expect(slot("מרצה 12")).toContainText("לשלוח סיכום");
     await noSidewaysScroll(page);
 
-    // the global admin decides a waiting request right in the row
-    await group("תשלום/הסעה").getByRole("button", { name: "אישור הבקשה של פרופ׳ מרצה 04" }).click();
+    // the waiting request, on its lesson page: what was asked, «ממתין לאישור» once — the staff's or logistics' to decide
+    await slot("מרצה 04").getByRole("link", { name: "לשיעור" }).click();
+    await expect(page).toHaveURL(/\/lesson\/\d+\?step=pay$/);
+    const pay = page.locator('[data-page-step="pay"]');
+    await expect(pay).toContainText("200 ₪");
+    await expect(pay).toContainText("הלוך ושוב");
+    await expect(pay.locator("[data-approval]")).toHaveText("ממתין לאישור");
+    await expect(pay).not.toContainText("ממתין לאישור המדריך/ה");
+    await pay.getByRole("group", { name: "החלטה על הבקשה" }).getByRole("button", { name: "אישור הבקשה" }).click();
     await expect(toast(page, "הבקשה אושרה")).toBeVisible();
-    await expect(group("לשלוח סיכום")).toContainText("מרצה 04");
+    await nav(page).getByRole("link", { name: "ימים" }).click();
+    await page.getByRole("tablist", { name: "ימי השבוע" }).getByRole("tab", { name: /^שני/ }).click();
+    await expect(slot("מרצה 04")).toContainText("לשלוח סיכום");
 
-    await group("חסר מלווה").getByRole("button", { name: "לשיבוץ מלווה" }).click();
-    await expect(page).toHaveURL(/\/$/);
-    const panel = page.getByRole("dialog", { name: "שיעור סגור" });
-    await expect(panel.getByRole("region", { name: "מלווה", exact: true }).getByLabel("מלווה מרשימת החניכים")).toBeVisible();
+    // the other days' steps: «חסרים מקורות», «חסר מלווה» (its link at the escort's step), and one all in place
+    await page.getByRole("tablist", { name: "ימי השבוע" }).getByRole("tab", { name: /^רביעי/ }).click();
+    await expect(slot("מרצה 20")).toContainText("חסרים מקורות");
+    await page.getByRole("tablist", { name: "ימי השבוע" }).getByRole("tab", { name: /^שלישי/ }).click();
+    await expect(slot("מרצה 16")).toContainText("הכול מוכן");
+    await page.getByRole("tablist", { name: "ימי השבוע" }).getByRole("tab", { name: /^חמישי/ }).click();
+    await expect(slot("מרצה 24")).toContainText("חסר מלווה");
+    await slot("מרצה 24").getByRole("link", { name: "לשיעור" }).click();
+    await expect(page).toHaveURL(/\/lesson\/\d+\?step=escort$/);
+    await expect(page.locator('[data-page-step="escort"]').getByLabel("מלווה מרשימת החניכים")).toBeVisible();
   });
 });
 
@@ -421,7 +430,8 @@ test.describe("mock build", () => {
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
     await page.goto(mockUrl());
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]); // no «המרצים שלי», no approvals, no settings
+    // the staff's order without «ימים» and «מרצים», and no settings; «אישורים» reads the requests (a practice week's: nobody decides them)
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "אישורים", "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
     let panel = await openLesson(page, info, "שני", "מרצה 12");

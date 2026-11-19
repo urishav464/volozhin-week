@@ -7,7 +7,7 @@
 // no threshold says «too few» (none was decided). Print (A4) and xlsx, made in
 // this browser through the one writer (guardCell on every cell).
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
 import type { LessonReview, ReturningSpeaker } from "../../data/reviews";
 import type { Me } from "../../data/types";
@@ -15,7 +15,9 @@ import { download, fileName, israelDay } from "../../exports/download";
 import { editionSummary, INVITE_TITLE, NO_CATEGORY, type SummaryLesson, summaryTables, tally } from "../../exports/summary";
 import { israelDate } from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
-import type { InviteAgain } from "../../domain/reviews";
+import { lessonHandler } from "../../domain/handler";
+import { type InviteAgain, reviewsOpen } from "../../domain/reviews";
+import { afterPath, lessonPath } from "../../domain/routes";
 import type { Category } from "../../domain/types";
 import { DAY_NAMES } from "../../domain/time";
 import { NO_TOPIC_COLOR } from "../../grid/bits";
@@ -65,7 +67,17 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
     download(fileName("summary", week.edition, israelDay(), "xlsx"), toXlsx(summaryTables(s)), XLSX_MIME);
     notify("ok", "הקובץ ירד. יש בו «איך עבר» — דעות על מרצים: לא לשתף מחוץ לצוות.");
   };
-  const open = (id: number) => navigate("/", { state: { lesson: id } });
+  // a lesson opens at its «איך עבר» on «אחרי השבוע» (the reset, phase 3: never the old grid's panel) — where that page
+  // lists it: an admin's «כל השיעורים», a trainee's own lessons once a review can open; any other lesson opens its
+  // lesson page (a trainee's «אחרי השבוע» holds their own lessons only — AfterScreen drops `all` for them)
+  const open = (id: number) =>
+    navigate(
+      actor.isAdmin
+        ? afterPath({ all: true, lesson: id })
+        : lessonHandler(week, id) === actor.memberId && reviewsOpen(week.edition, new Date().toISOString())
+          ? afterPath({ lesson: id })
+          : lessonPath(id),
+    );
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 pb-20">
@@ -167,6 +179,9 @@ export function SummaryScreen({ port, me }: { port: DataPort; me: Me }) {
 
       <Panel title="איך עבר" aside={`${s.reviews.done} מתוך ${s.reviews.total} נכתבו`}>
         <div className="space-y-3 text-sm">
+          <Link to={afterPath({ all: actor.isAdmin })} className="inline-flex min-h-11 items-center font-semibold text-navy underline underline-offset-2 hover:bg-accent-soft print:hidden">
+            לכתיבת "איך עבר"
+          </Link>
           {(["yes", "no", "maybe"] as InviteAgain[]).map((k) => (
             <div key={k}>
               <h4 className="font-bold text-navy">

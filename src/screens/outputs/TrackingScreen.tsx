@@ -10,6 +10,7 @@ import type { Me } from "../../data/types";
 import { csvBytes } from "../../exports/csv";
 import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
 import { PROGRESS_TONE } from "../../domain/progress";
+import { lessonPath } from "../../domain/routes";
 import { DAY_NAMES, DAYS, type Day } from "../../domain/time";
 import {
   filterTracking, israelDate, STAGE_FILTER_LABEL, TRACKING_HEADERS, type TrackingRow, type TrackingStage, trackingRows, trackingTable, trackingWidths,
@@ -51,7 +52,8 @@ export function TrackingScreen({ port, me }: { port: DataPort; me: Me }) {
     else download(name("csv"), csvBytes(table()), CSV_MIME);
     notify("ok", showPhones ? "הקובץ ירד. יש בו טלפונים: לא לשתף, ולמחוק כשמסיימים." : "הקובץ ירד.");
   };
-  const open = (id: number) => navigate("/", { state: { lesson: id } });
+  // a row opens its lesson's page (the reset, phase 3: never the old grid's panel)
+  const open = (id: number) => navigate(lessonPath(id));
   const days = DAYS.filter((d) => rows.some((r) => r.day === d));
   const filtered = day != null || stage != null || mine;
   const printed = `הודפס ב-${israelDate(new Date().toISOString())}`;
@@ -192,7 +194,7 @@ function DayTable({ rows, phones, onOpen, day }: { rows: TrackingRow[]; phones: 
         {rows.map((r) => (
           <tr key={r.lesson.id} data-lesson-row={r.lesson.id} data-tone={r.tone} className={`${TABLE_ROW} align-top ${PROGRESS_TONE[r.tone]}`}>
             <td className={`px-2 py-1.5 ${TABLE_KEY}`}>
-              <button type="button" onClick={() => onOpen(r.lesson.id)} className="text-start underline decoration-navy/30 underline-offset-2 hover:decoration-navy print:no-underline" aria-label={`${r.speaker || r.title}: פתיחת השיעור בשבוע`}>
+              <button type="button" onClick={() => onOpen(r.lesson.id)} className="text-start underline decoration-navy/30 underline-offset-2 hover:decoration-navy print:no-underline" aria-label={`${r.speaker || r.title}: לדף השיעור`}>
                 {r.speaker || r.title}
               </button>
             </td>
@@ -229,7 +231,7 @@ function RowCard({ row: r, phone, onOpen }: { row: TrackingRow; phone: string | 
   if (phone != null) lines.unshift(["טלפון", phone]);
   return (
     <li data-lesson-row={r.lesson.id} data-tone={r.tone} className={`rounded-xl border border-line p-3 shadow-sm ${PROGRESS_TONE[r.tone]}`}>
-      <button type="button" onClick={onOpen} className="block w-full min-h-11 text-start" aria-label={`${r.speaker || r.title}: פתיחת השיעור בשבוע`}>
+      <button type="button" onClick={onOpen} className="block w-full min-h-11 text-start" aria-label={`${r.speaker || r.title}: לדף השיעור`}>
         <span className="block font-bold text-navy">{r.speaker || r.title}</span>
         <span className="block text-sm text-ink-soft">
           {r.dayLabel} <bdi dir="ltr">{r.time}</bdi>
