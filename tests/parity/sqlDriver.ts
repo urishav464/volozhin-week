@@ -8,8 +8,8 @@ import {
   answers, APPROACHES, type At, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
   FOREIGN_TRAINEE, kkGroupLine, type KkStepFields, planLine, purgeRead, reviewLine,
-  lessonKey, lessonLine, linkLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
-  prefsRow, slotLine, SLOTS, type Step, transportLine, transportRead,
+  lessonKey, lessonLine, linkLine, logLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, ownerLine, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
+  prefsRow, slotLine, SLOTS, type Step, transportRead, transportRowLine, transportsLine,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -516,8 +516,40 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         );
         return call(step.as, "select public.get_transports_for($1)", [ed], (v) => {
           const keys = new Map(lessonKeys);
-          return (v as (Parameters<typeof transportLine>[1] & { lesson_id: number })[]).map((t) => transportLine(keys.get(Number(t.lesson_id)) ?? `#${t.lesson_id}`, t)).sort().join(" ; ") || "none";
+          return (v as (Parameters<typeof transportsLine>[1] & { lesson_id: number })[]).map((t) => transportsLine(keys.get(Number(t.lesson_id)) ?? `#${t.lesson_id}`, t)).sort().join(" ; ") || "none";
         });
+      }
+      // ---- v18: day owners, availability by ranges, transport in two parts
+      if ("owners" in step) {
+        // «nobody»: an id past every member's
+        const ids = step.members == null ? null : step.members.map((k) => (k === "nobody" ? 999 : memberId(k)));
+        return call(step.as, "select public.set_day_owners($1, $2, $3::bigint[])", [ed, step.owners, ids]);
+      }
+      if ("seen" in step) return call(step.as, "select public.mark_day_seen($1, $2)", [ed, step.seen]);
+      if ("readOwners" in step) {
+        return call(step.as, "select public.load_week($1)", [ed], (v) =>
+          (v as { dayOwners: { day: number; member_id: number; seen_at: string | null }[] }).dayOwners.map((o) => ownerLine(o, memberKey(o.member_id))).join(" ; ") || "none",
+        );
+      }
+      if ("ranges" in step) {
+        return call(
+          step.as, "select public.set_availability_ranges($1, $2, $3::integer[], $4::jsonb, $5)",
+          [ed, await speakerId(step.ranges), step.days, step.list === undefined ? null : JSON.stringify(step.list), step.rest ?? null],
+          (v) => `marked=${v}`,
+        );
+      }
+      if ("transportRequest" in step) {
+        return call(step.as, "select public.set_transport_request($1, $2::jsonb)", [(await at(step.transportRequest)).id, step.fields === undefined ? null : JSON.stringify(step.fields)]);
+      }
+      if ("transportDriver" in step) {
+        return call(step.as, "select public.set_transport_driver($1, $2::jsonb)", [(await at(step.transportDriver)).id, step.fields === undefined ? null : JSON.stringify(step.fields)]);
+      }
+      if ("log" in step) {
+        // the activity table as its owner reads it (nobody's session): oldest first, who by key
+        const rows = (await db.query("select actor, entity, entity_id, kind, detail from public.activity where kind = any ($1::text[]) order by id", [step.log])).rows;
+        const [spk, keys] = [await speakerNames(), await lessonKeyMap()];
+        const names = { speaker: spk, lesson: (id: number) => keys.get(id) ?? `#${id}`, member: memberKey, edition: (id: unknown) => (Number(id) === ed ? "here" : `#${id}`) };
+        return rows.map((r) => logLine(r, memberKey(r.actor), names)).join(" ; ") || "none";
       }
       // ---- after the week
       if ("review" in step) {
@@ -632,6 +664,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const plans = (await db.query("select * from public.memorial_plans where edition_id = $1", [ed])).rows;
       const reviews = (await db.query("select r.*, s.name, s.disambiguator from public.lesson_reviews r left join public.speakers s on s.id = r.speaker_id where r.edition_id = $1", [ed])).rows;
       const purged = (await one("select purged_at from public.editions where id = $1", [ed])).purged_at != null;
+      const owners = (await db.query("select day, member_id, seen_at from public.day_owners where edition_id = $1", [ed])).rows;
       const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
       const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
       const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
@@ -645,7 +678,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         pool: pool.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
         availability: availability.map((v) => slotLine(speakerLabel(v), v, member(v.updated_by))).sort(),
-        transport: transport.map((t) => transportLine(byId.get(Number(t.lesson_id))!, t)).sort(),
+        transport: transport.map((t) => transportRowLine(byId.get(Number(t.lesson_id))!, t)).sort(),
         edition: editionLines(settings, cover, purged),
         links: links
           .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
@@ -671,6 +704,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         reviews: reviews
           .map((r) => reviewLine(byId.get(Number(r.lesson_id))!, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) }))
           .sort(),
+        owners: owners.map((o) => ownerLine(o, member(o.member_id))).sort(),
       };
     },
 

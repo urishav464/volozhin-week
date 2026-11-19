@@ -1,4 +1,4 @@
-# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, after the week (milestone 6), and the speakers rethought (schema v14)
+# The grid contract (Phase 1), the speaker pool (milestone 2), from placement to arrival (milestone 3), outputs and knowledge (milestone 4), links and מכריכה לכריכה (milestone 5a), sources and the reader (milestone 5ב-1), memorial times and logistics (milestone 5ב-2), the import of 5786, after the week (milestone 6), the speakers rethought (schema v14), and the reset's data foundation (schema v18)
 
 The commands the grid issues, and exactly what each does. **Two implementations must agree on
 every line of this file:** the SQL RPCs in `supabase/schema.sql` (the real thing) and
@@ -12,9 +12,12 @@ Types are those of `src/domain/types.ts`. Times are minutes since the day column
 ## Actors and permission
 
 Every command runs as a signed-in member of the edition (`app.my_role(edition)` not null), else
-`not_member`. Roles: `admin`, `content`, `logistics`. **Logistics may not issue any command in
-this file** (`forbidden`). An `archive`-kind or `archived`-status edition refuses every command
-from non-admins (`archived`).
+`not_member`. Roles: `admin`, `content`, `logistics`. **Logistics may not issue any command of the
+grid or the pool** (`forbidden`) — what logistics may do is said where it is: `set_paid`, a
+transport's details (`get/set_transport_details` — since v18 from the request on, while it is
+`pending` or `approved`; before, approved only), the rota, and since v18 `decide_payments` and
+`set_transport_driver`. An `archive`-kind or `archived`-status
+edition refuses every command from non-admins (`archived`).
 
 `actor` = the caller's `members.id`. "Owner or admin" = the approach's `owner_member_id` is the
 actor, or the actor is admin of the edition. An approach nobody holds (`owner_member_id` null — an
@@ -352,6 +355,11 @@ and lesson row in play, `cannot` when a «לא» range overlaps the row, else `c
 whole row, else nothing; the range's note copied onto each row; no activity row written. Then the old table and
 `set_availability` were dropped.
 
+**Since v18 a call is no longer one slot only.** `setAvailabilityRanges` — `set_availability_ranges` («v18», at the end
+of this file) writes whole days at once from time ranges, by the conversion's rule above: the same rows, the one
+store. It logs one `approaches · availability` line per call, with another detail (`{speaker, days, ranges, marked,
+rest}`); `activity` returns both shapes (it matches `detail.speaker`). `set_slot_availability` is as it was.
+
 ## Errors (the pool)
 
 `speaker_exists disambiguator_required speaker_similar not_handler lesson_closed bad_member
@@ -375,13 +383,15 @@ contacts_hidden bad_phone bad_contact_email name_required bad_value` — plus th
 | `hand_over` | `p_approach bigint, p_to bigint, p_note text` | `void` |
 | `answer_handover` | `p_approach bigint, p_accept boolean, p_note text` | `void` |
 | `set_slot_availability` | `p_edition bigint, p_speaker bigint, p_day integer, p_row bigint, p_kind text, p_note text` (default null) — v14, in place of `set_availability` | `void` |
+| `set_availability_ranges` | `p_edition bigint, p_speaker bigint, p_days integer[], p_ranges jsonb, p_rest text` (default null) — v18 («v18», below) | `integer` |
 
 `load_week` (v6) also returns each speaker's `disambiguator contact_pref vetted_by vetted_note
 version` and each approach's `offered_to` — still never a contact detail.
 
 # From placement to arrival (milestone 3, schema v7)
 
-A closed lesson's stages: payment and transport (with the instructor's approval), the summary
+A closed lesson's stages: payment and transport (with an approval — the instructor's, and since v18
+also the edition's admins' or its logistics members': one is enough), the summary
 message to the speaker, the escort, the sources. The same two implementations: the SQL functions
 of `supabase/schema.sql` «Milestone 3» and `src/data/engine.ts` (behind `DemoPort`); the cleaning
 rules are `src/data/stageRules.ts` in the browser. `tests/parity` runs the same scenarios on both.
@@ -421,7 +431,7 @@ flags nothing: no message carried one.
 | escort | a `roster` row **of the lesson's edition**, or null; `self_intro` a boolean; note a block ≤ 300 | `bad_escort` / `bad_value` |
 | sources | kind `pending sheet presentation sheet_presentation sheet_video none other`; print_when `none before same_day`; note a block ≤ 500; `in_reader` a boolean, stored **false** for `pending`, `none` and `presentation` (nothing to print) | `bad_value` |
 | presentation_url | null, or one line ≤ 500 matching `^https?://[^ ]+$` (case-insensitive) | `bad_url` |
-| transport details | pickup_address ≤ 200, pickup_time ≤ 60 (as the team writes it), driver_name ≤ 80 — one line each; driver_phone ≤ 40 with ≥ 6 digits; `arranged` true/false (null = false) | `bad_value` / `bad_phone` |
+| transport details | pickup_address ≤ 200, pickup_time ≤ 60 (as the team writes it), driver_name ≤ 80 — one line each; driver_phone ≤ 40 with ≥ 6 digits; `arranged` true/false (null = false); v18: `pickup_min` null or a whole number 0–1830 (`set_transport_request` only) | `bad_value` / `bad_phone` |
 | template | a block ≤ 4000; empty removes it | `bad_value` |
 | duty phrases | a JSON array of `{when, text}`: `when` ∈ `always self_intro escort_intro transport memorial`, `text` one line ≤ 200; empty texts and repeats (the first kept) dropped; at most 30; empty removes them | `bad_value` |
 
@@ -437,17 +447,34 @@ logistics or an admin), so a new amount is never shown as paid; the transport ma
 Otherwise: `pay_amount`, `transport`;
 `approval` := `none` when nothing is asked (amount null and transport `none`), else `pending`;
 `approval_note`, `approved_by`, `approved_at` := null. So changing an approved request sends it
-back to the instructor, and asking a rejected one again re-opens it. Transport `none` deletes the
+back for approval, and asking a rejected one again re-opens it. Transport `none` deletes the
 lesson's transport details (and so does `reopen_lesson`: they were the speaker's).
 
 ### `decidePayments(items[{lesson, version}], decision, note)` — `decide_payments` → `void`
 
-A global admin (`forbidden`); decision (`bad_value`); `p_lessons` and `p_versions` of one length
-(`bad_value`). Each item in ascending (lesson, version) order, all or nothing: the lesson missing,
-at another version, not `pending`, or not `closed` → `stale` (the queue on screen is out of date;
-an amount changed since is never approved unseen; a draft's request is no one's — `reopen_lesson`
-clears it, so only a hand edit leaves one). Sets `approval`, `approval_note`, `approved_by` (the
-global admin's row), `approved_at`.
+**Who (v18; a global admin only before):** a global admin, in any edition — or, lesson by lesson, an
+**admin or a logistics member of that lesson's own edition** while the edition is `real` and not
+`archived`. One approval is enough; nothing asks for a second. In this order:
+1. no active membership at all → `not_member`;
+2. not a global admin, and no active member row of the caller's with role `admin` or `logistics`
+   (a content member) → `forbidden`;
+3. decision (`bad_value`); `p_lessons` and `p_versions` of one length (`bad_value`); the note;
+4. each item in ascending (lesson, version) order, all or nothing: the lesson missing → `stale`;
+   the caller not a global admin and not admin or logistics **of this lesson's edition**, or that
+   edition a practice, demo, archive or archived one → `forbidden` (so the staff of another edition,
+   and an archived edition's own admin, are refused here); then the lesson at another version, not
+   `pending`, or not `closed` → `stale` (the queue on screen is out of date; an amount changed since
+   is never approved unseen; a draft's request is no one's — `reopen_lesson` clears it, so only a
+   hand edit leaves one).
+
+Sets `approval`, `approval_note`, `approved_by` and `updated_by` (the caller's member row **for that
+lesson's edition** — `app.my_member_id`), `approved_at`; `version + 1`. That is a change for one
+caller: a global admin who also has a member row in the lesson's edition is recorded by that row
+now (before v18, `approved_by` was always their all-editions row; `updated_by` already was the
+edition's), so the payment stage may name them by the edition row's `display_name`. Nothing else about it changed
+in v18: `set_payment` still sends a changed request back to `pending`, `mark_confirm_sent` still
+waits for the decision, `reopen_lesson`'s `approved_locked` is still lifted by an admin of the
+edition only. (The approvals screen is still the global admins': v18 changed the rule, no screen.)
 
 ### `markConfirmSent(lesson, version)` — `mark_confirm_sent` → `void`
 
@@ -475,20 +502,28 @@ now / null.
 ### Transport details — `get_transport_details` / `set_transport_details`
 
 Personal data (an address, a driver's phone): `transport_details(lesson_id PK, pickup_address,
-pickup_time, driver_name, driver_phone, arranged)`, never in `load_week`, never in Realtime.
-`app.may_see_transport(lesson)`: a **global admin**; or, in a **real, non-archived** edition, the
-lesson's **handler** (content or admin there) — and that edition's **logistics** members once the
-lesson's transport is not `none` and `approval = 'approved'`. Nobody else: not another content
-member, not the edition's admin who is not the handler, not a practice or demo week's team, not
-last year's. Because the handler is whoever handles the lesson's *current* lead speaker, the row
-never outlives that speaker: `reopen_lesson` deletes it with the other stages.
+pickup_time, driver_name, driver_phone, arranged, pickup_min)` (`pickup_min` since v18), never in
+`load_week`, never in Realtime.
+`app.may_see_transport(lesson)` (v18): a **global admin**; or, in a **real, non-archived** edition,
+an **admin of the edition** (v18 — before, only when the handler), the lesson's **handler** (a
+content member there) — and that edition's **logistics** members while the lesson's transport is
+not `none` and `approval` is `pending` or `approved` (v18: from the moment a transport is asked —
+before, only once approved; never when nothing is asked or the request was rejected). Nobody else:
+not another content member, not a practice or demo week's team, not last year's, and in an
+`archive` edition a global admin alone, as before (so `lesson_import_notes`, which shares the
+predicate, is unchanged). Because the handler is whoever handles the lesson's *current* lead
+speaker, the row never outlives that speaker: `reopen_lesson` deletes it with the other stages.
 - `transport(lesson)` — `get_transport_details(p_lesson)`, `SECURITY INVOKER` (read through the
   policy `transport_details_read`, whose predicate is the same function): null when hidden; no row
   yet → four nulls and `arranged: false`.
 - `setTransport(lesson, details)` — any member (`not_member`); the lesson exists (`stale`);
   `may_see_transport` (`transport_hidden`); `transport <> 'none'` (`no_transport`); values (above).
-  All five replaced; nothing changed → no-op; logged (`lessons transport {fields}`) with the field
-  names only, never a value. Since v9 the escort's link writes `pickup_address` too
+  All five replaced (`pickup_min` is never touched by it); nothing changed → no-op; logged (`lessons
+  transport {fields}`) with the field names only, never a value. Its body is as it was: v18's wider
+  predicate is what lets an edition's admin, and logistics on a pending request, through. The same
+  row is also written in two parts since v18 — `set_transport_request` (the pickup, by the handler,
+  before the approval) and `set_transport_driver` (the driver, by logistics, after it): «v18», at
+  the end of this file. Since v9 the escort's link writes `pickup_address` too
   (`escort_pickup`), so the lesson panel saves the fields its form changed over the details read
   again at the moment of saving (`mergeTransport`, `src/data/stageRules.ts`), never a stale copy.
 
@@ -524,6 +559,7 @@ no_transport transport_hidden payment_not_approved paid_locked bad_phone bad_val
 | `set_paid` | `p_lesson bigint, p_paid boolean` | `void` |
 | `get_transport_details` | `p_lesson bigint` (invoker) | `jsonb` or null |
 | `set_transport_details` | `p_lesson bigint, p_pickup_address text, p_pickup_time text, p_driver_name text, p_driver_phone text, p_arranged boolean` (default false) | `void` |
+| `set_transport_request`, `set_transport_driver` | `p_lesson bigint, p_fields jsonb` — v18 («v18», below) | `void` |
 | `set_confirm_template` | `p_edition bigint, p_body text` | `void` |
 | `set_duty_phrases` | `p_edition bigint, p_phrases jsonb` | `void` |
 | `set_call_template` | `p_edition bigint, p_body text` — v14 | `void` |
@@ -1205,12 +1241,21 @@ it is in that edition's log and archive. A global admin with no such plan: no ed
 or waits for the write and then deletes the fallen with their contact; a rename does not wait.
 
 ## The logistics screen's transports — `transports()` — `get_transports_for(p_edition)` → `jsonb`
-Invoker. The edition's closed lessons with `transport <> 'none'` and `approval = 'approved'`, each
-`{lesson_id, pickup_address, pickup_time, driver_name, driver_phone, arranged}` exactly as
-`get_transport_details` shows it (no row yet → nulls and `arranged` false), and **only** the lessons
-`app.may_see_transport` lets the caller see — never more than the one-lesson call. Ordered by lesson
+Invoker. The edition's closed lessons with `transport <> 'none'` and `approval` **`pending` or
+`approved`** (v18; `approved` only before), each `{lesson_id, pickup_address, pickup_time,
+driver_name, driver_phone, arranged}` exactly as `get_transport_details` shows it (no row yet →
+nulls and `arranged` false) and, since v18, **`approval`** (the lesson's: `pending` or `approved`)
+and **`pickup_min`** (null when not set, or no row) — and **only** the lessons
+`app.may_see_transport` lets the caller see — never more than the one-lesson call. A rejected
+request, and a lesson that asks for no transport, are never in the list. Ordered by lesson
 id. Never in a Week or Realtime. Edited through `setTransport` (`set_transport_details`), as in the
 lesson panel.
+
+**«לוגיסטיקה ← הסעות» still shows the approved transports only.** The filter is the builder's
+(`transportRows`, `src/exports/logistics.ts`): the Week's lessons decide the rows (closed, a
+transport asked, `approval = 'approved'`), and of the read only a row whose `approval` is
+`approved` gives its details — the five fields, never `approval` or `pickup_min`. A missing
+`approval` (an answer of before v18) is read as `approved`.
 
 The four lists themselves are browser code over a loaded Week (`src/exports/logistics.ts`): הסעות
 (the pickup address and the driver's phone only behind «כולל כתובות וטלפונים»), תשלומים (approved
@@ -1716,3 +1761,248 @@ rota_contact_hidden`, and `stale not_member forbidden in_use bad_value bad_phone
 only (not granted). Anon gets nothing new: its reach stays the six link functions. The Security Advisor's count of
 signed-in definer functions grows by two (`set_rota_contact`, `set_rota_shifts`). `on delete set null (group_id)`
 needs PostgreSQL 15 or later (Supabase's).
+
+# v18 — day owners, availability by ranges, transport in two parts (the reset, phase 1; schema v18)
+
+What the reset's new screens will ask of the data (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»): a pair of
+trainees per day, availability typed as time ranges, a transport's request apart from its driver, and approvals
+by the staff of both teams. **No screen was rebuilt in this phase**, and none calls the five new functions
+yet; a few sentences of wording were corrected with the rules they state — the lesson panel's line for logistics
+whose details are closed (`src/screens/stages/PaymentStage.tsx`), beside `transport_hidden`'s text
+(`src/errors.ts`), the approvals queue's note on who sees, «לוגיסטיקה»'s «רק הסעות / סכומים שאושרו» (who approves is
+no longer the instructor alone: `ApprovalsScreen.tsx`, `LogisticsScreen.tsx`), and «עזרה» (`docs/GUIDE.he.md`). What an old screen reads through
+a rule that changed, changes with the rule (below): the lesson panel's transport details now open for an edition's
+admin who is not the handler, and for logistics on a pending request; and «לוגיסטיקה ← הסעות», which still lists
+the **approved** transports only (`transportRows`), now shows an edition's admin who handles none of them every
+row's details (the pickup time and the driver; the address and the phone behind «כולל כתובות וטלפונים»), its
+«סימון «סודר»» and «עריכה» (`set_transport_details`, which now lets that admin through), the «סודרו N» count and
+the files with personal data — where before every row read `transport_hidden`'s text.
+
+The same two implementations: `supabase/schema.sql` and `src/data/engine.ts` (behind `DemoPort`), held together by
+`tests/parity`; the permissions per role, every refusal and the visibility matrix are `tests/sql/reset.test.ts`.
+**No new refusal code and no new role**: `members.role` stays `admin`, `content`, `logistics` (in the reset the
+trainees are `content`, the two content staff are admins, the logistics staff are `logistics`). Checks run in the
+order written; the first failure wins.
+
+## Day owners — `day_owners`
+
+A pair of trainees answers for each day of the week. `day_owners(edition_id → editions on delete cascade, day
+smallint 0–4, member_id → members on delete cascade, seen_at timestamptz, primary key (edition_id, day,
+member_id))`: at most two members a day (the function's rule, not a constraint); a member may own several days;
+`seen_at` is when that owner last looked at the day's notices (null = never).
+
+- **Read:** the edition's whole team — RLS on, one policy, `day_owners_read`: SELECT for `authenticated` where
+  `app.can_see_edition(edition_id)`. `authenticated` has SELECT only (no INSERT, UPDATE or DELETE grant: both
+  writes are functions); anon nothing.
+- **In a Week:** `load_week` returns `dayOwners: [{day, member_id, seen_at}]`, ordered by day, then member id
+  (`Week.dayOwners`, `DayOwner` in `src/domain/types.ts`; `seen_at` an ISO UTC string as the escorts' ticks are, or
+  null). Ids and times only, so it is in the device's offline copy with the rest (`WEEK_KEYS`).
+- **Not in Realtime** (on the never-publish list): the week reloads after the write.
+- `start_edition` copies no owners (a new year, a new team); deleting a member deletes their rows (the foreign
+  key; `DemoSettings.deleteMember` the same); `app.member_has_history` does not count them. The demo starts with none.
+
+### `setDayOwners(day, members[])` — `set_day_owners(p_edition, p_day, p_members bigint[])` → `void`
+
+Definer. In this order:
+1. an admin of the edition, a global admin included (`app.require_edition_admin`, as `set_grid_rules`): no role
+   there, or no such edition → `not_member`; not an admin → `forbidden`. No `archived` refusal — `set_grid_rules`
+   has none: an archived edition's admin passes;
+2. `p_day` 0–4 (`bad_value`; null too);
+3. `p_members` (null = none): more than two, a null element, a repeat, or a member who cannot handle speakers in
+   this edition — `app.can_handle(member, edition)`: an **active** member with role `content` or `admin`, of this
+   edition or of every edition — → `bad_value`.
+
+Then, one change to an edition's owners at a time (an advisory lock per edition): the same set as stored →
+nothing written, nothing logged. Else the day's owners are **replaced**: the rows of members not listed are
+deleted, a member already there keeps their `seen_at`, a new one starts at null. Logged once: `editions ·
+day_owners`, `entity_id` the edition, detail `{day, members: [ids, ascending]}`.
+
+A member is checked when the day is set: an owner deactivated later, or moved to logistics, keeps the row until
+the day is set again.
+
+### `markDaySeen(day)` — `mark_day_seen(p_edition, p_day)` → `void`
+
+Definer. In this order:
+1. no role in the edition (`app.my_role` null) → `not_member`;
+2. `p_day` 0–4 (`bad_value`);
+3. the caller is one of that day's owners — the row of their member id for this edition (`app.my_member_id`) —
+   else `forbidden`.
+
+Sets that row's `seen_at = now()`. Not logged. No `archived` refusal: an owner of an archived edition's day passes.
+
+## Availability as time ranges — an input method
+
+`slot_availability` stays the one store («The speaker pool», `setSlotAvailability`): a range is never saved, only
+the slots it decides. Lesson rows are mostly 90 minutes, so a range and a row seldom meet edge to edge — the rule
+below is the v6→v14 conversion's, word for word.
+
+### `setAvailabilityRanges(edition, speaker, days[], ranges[], rest)` — `set_availability_ranges(p_edition, p_speaker, p_days integer[], p_ranges jsonb, p_rest text default null)` → `integer`
+
+Definer; who, and which speaker, exactly as `set_slot_availability`. In this order:
+1. editor of the edition (`app.require_editor`: `not_member` / `forbidden` for logistics / `archived` for a
+   non-admin of an archive or archived edition);
+2. the speaker exists and is not retired (`speaker_retired`);
+3. `p_days`: one to five days, each 0–4, no repeat — the days this call REPLACES (`bad_value`; null or empty too);
+4. `p_ranges` (null or a JSON null = none): a JSON array of at most 40 (`LIMITS.avail_ranges`) objects
+   `{day, start, end, kind}` — exactly these four keys; `day` a whole number, one of `p_days`; `start` and `end`
+   whole numbers 0–1830 (minutes from the day's 00:00, the grid's convention — the grid itself runs 390–1830; a
+   multiple of 5 is not asked), `start < end`; `kind` `can` or `cannot`. Anything else → `bad_value`;
+5. `p_rest`: null, `can` or `cannot` (`bad_value`) — what a lesson row of those days that NO range decides
+   becomes (null = no mark).
+
+Effect, one replacement at a time per edition and speaker (an advisory lock). For each day of `p_days` the
+speaker's `slot_availability` rows of that day in this edition are deleted — every one, a row the window no longer
+has included, their notes with them. Then every lesson row in play that day (`app.lesson_rows` ≡
+`activeLessonRows`) gets a verdict, in this order:
+- `cannot` if ANY `cannot` range of that day overlaps the row at all (`start < row.end_min and end > row.start_min`);
+- else `can` if ONE `can` range of that day covers the row whole (`start ≤ row.start_min and end ≥ row.end_min` —
+  two ranges never add up to a row);
+- else `p_rest`.
+
+A verdict that is not null is a row: `note` null, `updated_by` the actor. The other days are untouched. Returns
+the number of rows written. So on the template's grid «יכול/ה 17:00–19:00» marks 17:30–19:00 alone (16:00–17:30
+is only partly covered: no mark, or `p_rest`), while «לא 17:00–19:00» marks both.
+
+**Logged always, once per call** — also when nothing was marked, or the rows came out as they were: `approaches ·
+availability`, `entity_id` the speaker's approach in this edition (or null), detail `{speaker, days: [ascending],
+ranges: <how many were given>, marked: <rows written>, rest}` — never a note, never a line per slot. `activity`
+returns it (it matches `detail.speaker`); `timeline()` (`src/domain/activityText.ts`) reads a numeric `marked` as
+«עודכנה הזמינות — N משבצות» («משבצת אחת» for 1), and the per-slot shape as before.
+
+The pure twin is `rangesToSlots(rows, edition, days, ranges, rest)` (`src/domain/availability.ts`, beside
+`coveredRows`): `{day, row_id, kind}[]`, by day, then the row's start; no validation. The engine writes what it
+returns, and a screen may preview with it. The browser cleans first with `cleanAvailabilityRanges`
+(`src/data/speakerRules.ts`, ≡ steps 3–5). `port.speakers.setAvailabilityRanges(edition, speaker, days, ranges,
+rest?)` answers the count.
+
+`set_slot_availability` is unchanged: a slot marked through it on a replaced day stands until the next replacement.
+
+## Transport in two parts
+
+`transport_details.pickup_min` (v18; added by `add column if not exists`): an integer, null or 0–1830 — the
+pickup time as minutes from 00:00 of the lesson's grid day (the grid's convention: 24:30 is 1470), for a board
+drawn along a time line. `pickup_time`, as typed, stays. It is the row's — personal data like the rest: never in
+`load_week`, Realtime or the offline copy (`pickup_min` is a `PERSONAL_KEYS` key, `src/offline/snapshot.ts`), and
+gone with the row (`set_payment` to `none`, `reopen_lesson`, the purge). Written by `set_transport_request` alone
+(`set_transport_details` never touches it). Read by whoever may see the row — through `get_transports_for`, or the
+table itself, whose SELECT grant and policy (`transport_details_read`, `app.may_see_transport`) cover the new column
+as the rest (a direct `select pickup_min from transport_details`; the same people either way). `get_transport_details`
+still answers its five fields, and the archive's personal-data file keeps its five (`supabaseOutputs.ts` names them).
+
+Both functions PATCH. `p_fields` is a JSON object: a key that is there is written (a text cleaned and limited as
+`set_transport_details` does — one line, empty → null), a key that is not there stays as it is, any other key →
+`bad_value`. Neither takes a version or raises the lesson's (as `set_transport_details`). Nothing changed → no-op,
+nothing logged; else logged as `set_transport_details` logs: `lessons · transport`, detail `{fields: [the changed
+field names]}` — the names only, never a value. In the browser: `TransportRequestPatch`, `TransportDriverPatch`
+(`src/data/commands.ts`), cleaned by `cleanTransportRequest` / `cleanTransportDriver` (`src/data/stageRules.ts`;
+`STAGE_LIMITS.pickup_min_max` = 1830) — an `undefined` value is an absent key.
+
+### `setTransportRequest(lesson, patch)` — `set_transport_request(p_lesson, p_fields jsonb)` → `void`
+
+The request's part — where and when to collect the speaker. Definer; who as `set_payment`. In this order:
+1. the lesson exists and is not cancelled (`stale`); it is locked;
+2. editor of its edition (`app.require_editor`: `not_member` / `forbidden` for logistics / `archived` for a non-admin);
+3. the lesson closed (`not_closed`), and the caller its handler or an admin of the edition (`not_handler`) —
+   `app.require_handler`;
+4. `transport <> 'none'` (`no_transport`);
+5. the caller may read the row back — `app.may_see_transport` (below), as `set_transport_details` asks — else
+   `transport_hidden`: who writes a pickup is who reads it. So a practice or demo week's handler and admin, and an
+   archived edition's own admin (before the purge and after it — a purged edition's row stays gone), write none; a
+   global admin still does;
+6. `p_fields` an object (null, an array, a string → `bad_value`); its keys among `pickup_address`, `pickup_time`,
+   `pickup_min` (`bad_value`); each text a JSON string or null (`bad_value`); `pickup_min` null or a whole number
+   0–1830 (`bad_value`); `pickup_address` ≤ 200, `pickup_time` ≤ 60 (`bad_value`).
+
+**Whatever the approval says** — `pending`, `approved` or `rejected`: the request is filled BEFORE it is approved.
+The changed names are logged in the order `pickup_address`, `pickup_time`, `pickup_min`. (`set_payment` itself has
+no gate on the edition's kind — an amount and the word «הסעה» are not personal data; the pickup is.)
+
+### `setTransportDriver(lesson, patch)` — `set_transport_driver(p_lesson, p_fields jsonb)` → `void`
+
+The driver's part. Definer; who as `set_paid`. In this order:
+1. the lesson exists and is not cancelled (`stale`); it is locked;
+2. logistics or an admin of its edition (`app.require_logistics`: `not_member`; a content member `forbidden`;
+   `archived` for a non-admin of an archive or archived edition);
+3. `transport <> 'none'` (`no_transport`);
+4. `approval = 'approved'`, and the caller may read the row back (`app.may_see_transport`); either fault is
+   `transport_hidden` — before the approval there is no driver to arrange (the code `set_transport_details` gave
+   logistics before v18), and a practice or demo week's logistics and admin, or an archived edition's own admin,
+   read no driver, so write none (a global admin still does);
+5. `p_fields` an object; its keys among `driver_name`, `driver_phone`, `arranged`; a name or a phone a JSON string
+   or null; `arranged` a JSON boolean (a null is refused) → `bad_value`; `driver_name` ≤ 80, `driver_phone` ≤ 40
+   (`bad_value`); a phone with fewer than 6 digits → `bad_phone`.
+
+The changed names are logged in the order `driver_name`, `driver_phone`, `arranged`. A first write with no row yet
+makes one, `arranged` false unless given.
+
+**`set_transport_details` stays as it is** — the old screens call it, all five fields at once. Through it the
+handler and the edition's admins, and since v18 logistics on a pending request, may still write the driver before
+the approval and the pickup after it: the split is the new screens' to keep, the two functions' to enforce for
+them, and not yet a rule of the row.
+
+## Who sees a lesson's transport details — `app.may_see_transport` (v18)
+
+In a `real` edition that is not `archived`:
+
+| caller | no transport asked (`transport = 'none'`) | asked, `pending` | asked, `approved` | asked, `rejected` |
+|---|---|---|---|---|
+| a global admin | yes | yes | yes | yes |
+| an admin of the edition (v18) | yes | yes | yes | yes |
+| the lesson's handler (content) | yes | yes | yes | yes |
+| another content member | no | no | no | no |
+| logistics of the edition | no | **yes** (v18) | yes | no |
+
+In a practice, demo, archive or archived edition: a global admin alone, as before. «yes» with no transport asked
+is the read's five nulls; a write there is `no_transport`. The one predicate is the policy `transport_details_read`,
+`get_transport_details`, every writer of the row — `set_transport_details`, `set_transport_request` and
+`set_transport_driver` (each `transport_hidden` for a caller it does not admit: nobody writes a pickup or a driver
+they cannot read back) — every row of `get_transports_for` (pending and approved, each
+with `approval` and `pickup_min` — «The logistics screen's transports», above) and `lesson_import_notes`
+(`get_import_note`: on an archive's lessons, a global admin alone — unchanged). The escort's link is unchanged:
+`escort_view` shows the driver once the transport is approved and arranged, never the pickup; `escort_pickup`
+writes the address and reads nothing.
+
+## Approvals by the staff of both teams — `decide_payments`
+
+Stated where it lives («From placement to arrival», `decidePayments`): a global admin as before, or — lesson by
+lesson — an admin or a logistics member of that lesson's own real, non-archived edition. One approval is enough.
+
+## Who is refused, where the roles differ
+
+| caller | `set_day_owners` | `mark_day_seen` | ranges | request | driver | `decide_payments` |
+|---|---|---|---|---|---|---|
+| logistics of ANOTHER edition | `not_member` | `not_member` | `not_member` | `not_member` | `not_member` | `forbidden` (at the lesson) |
+| an archived edition's member, not an admin | `forbidden` | an owner passes | content `archived`, logistics `forbidden` | content `archived`, logistics `forbidden` | logistics `archived`, content `forbidden` | `forbidden` |
+| an archived edition's own admin (not global) | passes | an owner passes | passes | `transport_hidden` | `transport_hidden` | `forbidden` (at the lesson) |
+| a practice or demo week's team | its admin passes | an owner passes | content, admin pass | handler, admin `transport_hidden` | logistics, admin `transport_hidden` | `forbidden` |
+
+## Errors (v18)
+
+No new code: `bad_value forbidden not_member archived stale speaker_retired not_closed not_handler no_transport
+transport_hidden bad_phone`. `transport_hidden`'s Hebrew (`src/errors.ts`) now says who sees: the handler, the
+instructor, and the logistics staff from the moment a transport is asked — and that the driver is set after the
+approval. It is also the two new writers' answer to a caller who may not read the row back (step 5 / step 4 above).
+
+## RPC signatures (v18)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `set_day_owners` | `p_edition bigint, p_day integer, p_members bigint[]` | `void` | authenticated |
+| `mark_day_seen` | `p_edition bigint, p_day integer` | `void` | authenticated |
+| `set_availability_ranges` | `p_edition bigint, p_speaker bigint, p_days integer[], p_ranges jsonb, p_rest text default null` | `integer` | authenticated |
+| `set_transport_request` | `p_lesson bigint, p_fields jsonb` | `void` | authenticated |
+| `set_transport_driver` | `p_lesson bigint, p_fields jsonb` | `void` | authenticated |
+
+Changed under the same signatures: `decide_payments`, `get_transports_for` (invoker), `load_week` (invoker) and
+`app.may_see_transport`. `get_transport_details`, `set_transport_details` and `set_slot_availability` are as they were.
+
+The five are SECURITY DEFINER with `search_path = ''`, each checking its caller. No new `app.*` function is a
+browser's to run; anon gets nothing new — its reach stays `ping` and the six link functions. The Security Advisor's
+count of signed-in definer functions grows by five, 68 → 73 (80 warnings in all: 73 + 6 + 1); `tests/sql/schema.test.ts`
+pins the list, `day_owners`' one policy and its grants. Nothing saved changes in the run: `tests/sql/upgrade.test.ts`
+re-runs the file on five bases, v13–v17 (v17 = `035f6fa`, what production runs), and compares the catalog with a
+fresh install.
+
+On both ports for phases 2–3, called by no screen yet: `WeekCommands.setDayOwners`, `markDaySeen`,
+`setTransportRequest`, `setTransportDriver` (`src/data/commands.ts`) and `port.speakers.setAvailabilityRanges`
+(`src/data/speakers.ts`).

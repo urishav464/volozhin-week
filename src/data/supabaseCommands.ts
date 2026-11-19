@@ -91,6 +91,9 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
         p_driver_phone: d.driver_phone,
         p_arranged: d.arranged,
       })),
+    // v18: the two halves — the patch itself is the JSON object (a key left out, or undefined, is not sent: left as it is)
+    setTransportRequest: async (lessonId, patch) => void (await call("set_transport_request", { p_lesson: lessonId, p_fields: patch })),
+    setTransportDriver: async (lessonId, patch) => void (await call("set_transport_driver", { p_lesson: lessonId, p_fields: patch })),
 
     // ---- milestone 5ב-2 (CONTRACT.md «Memorial times and logistics»)
     transports: async () =>
@@ -101,6 +104,9 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
         driver_name: (t.driver_name as string | null) ?? null,
         driver_phone: (t.driver_phone as string | null) ?? null,
         arranged: t.arranged === true,
+        // v18: pending or approved; a database from before it lists the approved ones alone, and says nothing
+        approval: t.approval === "pending" ? ("pending" as const) : ("approved" as const),
+        pickup_min: t.pickup_min == null ? null : Number(t.pickup_min),
       })),
     addMemorialSlot: async (day, start, end, roomId) =>
       Number(await call("add_memorial_slot", { p_edition: editionId, p_day: day, p_start: start, p_end: end, p_room: roomId })),
@@ -118,5 +124,9 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
       })),
     setGridRules: async (rules) =>
       void (await call("set_grid_rules", { p_edition: editionId, p_gender_tolerance: rules.gender_tolerance, p_max_category_per_day: rules.max_category_per_day })),
+
+    // ---- v18 (CONTRACT.md «v18 — day owners, availability by ranges, transport in two parts»)
+    setDayOwners: async (day, memberIds) => void (await call("set_day_owners", { p_edition: editionId, p_day: day, p_members: memberIds })),
+    markDaySeen: async (day) => void (await call("mark_day_seen", { p_edition: editionId, p_day: day })),
   };
 }

@@ -44,10 +44,14 @@ create schema if not exists app;
 -- v15: מכריכה לכריכה by the week — a group is one book, its leaders and one
 -- place for every session; one sign-up per trainee for the week. v16: תורנויות —
 -- the campus duty roster (cohorts, groups, duties, shifts, staff, preparations).
+-- v17: titles — «עו״ד» and the two together. v18: the reset's data foundation —
+-- a pair of trainees per day (day_owners), availability written as time ranges,
+-- transport in two parts (the request, the driver) with a pickup time in
+-- minutes, and approvals by the edition's admins and logistics as well.
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 17 $$;
+  as $$ select 18 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -2201,6 +2205,99 @@ create or replace function public.set_slot_availability(
   end
   $$;
 
+-- v18: the same marks, written as time ranges — an INPUT method; the rows of
+-- slot_availability stay the one store, and set_slot_availability is as it was.
+-- Who and which speaker: as set_slot_availability. p_days: one to five distinct
+-- days (0–4) — the days this call REPLACES. p_ranges: at most 40 of
+-- {day, start, end, kind} — a day of p_days, minutes from the day's 00:00 in the
+-- grid's convention (0 … 1830, start < end), kind can | cannot. p_rest: what a
+-- lesson row no range decides becomes (can, cannot, or NULL — no mark).
+-- For each of those days the speaker's marks there are deleted (their notes go
+-- with them) and every lesson row the edition's window allows (app.lesson_rows)
+-- is decided by the v6→v14 conversion's rule, above: «לא» if ANY cannot-range
+-- touches the row at all; else «יכול/ה» if ONE can-range covers it whole (two
+-- ranges never add up to a row); else p_rest. Returns how many rows were marked.
+-- One line in the log, under the speaker's approach here (so speaker_activity
+-- finds it): the days, how many ranges, how many rows, the rest — never a note
+-- and never a line per slot.
+create or replace function public.set_availability_ranges(
+  p_edition bigint, p_speaker bigint, p_days integer[], p_ranges jsonb, p_rest text default null)
+  returns integer
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me     bigint := app.require_editor(p_edition);
+    v_days   integer[];
+    v_ranges jsonb := case when p_ranges is null or jsonb_typeof(p_ranges) = 'null' then '[]'::jsonb else p_ranges end;
+    e        jsonb;
+    v_day    integer;
+    v_from   integer;
+    v_to     integer;
+    v_rd     integer[] := '{}';   -- the ranges, read once: day, start, end, kind
+    v_rs     integer[] := '{}';
+    v_re     integer[] := '{}';
+    v_rk     text[]    := '{}';
+    v_n      integer;
+  begin
+    if not exists (select 1 from public.speakers where id = p_speaker and not retired) then perform app.refuse('speaker_retired'); end if;
+    select coalesce(array_agg(u.d order by u.d), '{}') into v_days from unnest(coalesce(p_days, '{}')) as u(d);
+    if cardinality(v_days) not between 1 and 5
+       or exists (select 1 from unnest(v_days) as u(d) where u.d is null or u.d not between 0 and 4)
+       or (select count(distinct u.d) from unnest(v_days) as u(d)) <> cardinality(v_days) then
+      perform app.refuse('bad_value');
+    end if;
+    -- (each test its own statement: the next one may only run on what the one before let through)
+    if jsonb_typeof(v_ranges) <> 'array' then perform app.refuse('bad_value'); end if;
+    if jsonb_array_length(v_ranges) > 40 then perform app.refuse('bad_value'); end if;
+    for e in select t.x from jsonb_array_elements(v_ranges) with ordinality as t(x, o) order by t.o loop
+      if jsonb_typeof(e) <> 'object' then perform app.refuse('bad_value'); end if;
+      if exists (select 1 from jsonb_object_keys(e) as k(k) where k.k not in ('day', 'start', 'end', 'kind'))
+         or not (e ?& array['day', 'start', 'end', 'kind']) then
+        perform app.refuse('bad_value');
+      end if;
+      v_day  := app.json_int(e -> 'day', 0, 4);
+      v_from := app.json_int(e -> 'start', 0, 1830);
+      v_to   := app.json_int(e -> 'end', 0, 1830);
+      if v_day is null or not (v_day = any (v_days)) or v_from is null or v_to is null or v_from >= v_to
+         or jsonb_typeof(e -> 'kind') <> 'string' or e ->> 'kind' not in ('can', 'cannot') then
+        perform app.refuse('bad_value');
+      end if;
+      v_rd := v_rd || v_day;
+      v_rs := v_rs || v_from;
+      v_re := v_re || v_to;
+      v_rk := v_rk || (e ->> 'kind');
+    end loop;
+    if p_rest is not null and p_rest not in ('can', 'cannot') then perform app.refuse('bad_value'); end if;
+
+    -- one replacement at a time per speaker and edition: two of them at once would leave a mix of both
+    perform pg_advisory_xact_lock(hashtext('availability'), hashtext(p_edition::text || ':' || p_speaker::text));
+    delete from public.slot_availability
+     where edition_id = p_edition and speaker_id = p_speaker and day = any (v_days);
+    insert into public.slot_availability (edition_id, speaker_id, day, row_id, kind, note, updated_by)
+    select p_edition, p_speaker, d.day, r.id, v.kind, null, v_me
+      from unnest(v_days) as d(day)
+      cross join lateral app.lesson_rows(p_edition, d.day) r
+      cross join lateral (
+        select case
+                 when exists (select 1 from unnest(v_rd, v_rs, v_re, v_rk) as g(day, from_min, to_min, kind)
+                               where g.day = d.day and g.kind = 'cannot' and g.from_min < r.end_min and g.to_min > r.start_min) then 'cannot'
+                 when exists (select 1 from unnest(v_rd, v_rs, v_re, v_rk) as g(day, from_min, to_min, kind)
+                               where g.day = d.day and g.kind = 'can' and g.from_min <= r.start_min and g.to_min >= r.end_min) then 'can'
+                 else p_rest
+               end as kind) v
+     where v.kind is not null
+    -- a single slot marked (set_slot_availability) between the delete and here: this call's verdict stands
+    on conflict (edition_id, speaker_id, day, row_id) do update
+      set kind = excluded.kind, note = null, updated_by = excluded.updated_by, updated_at = now();
+    get diagnostics v_n = row_count;
+    perform app.log_event(p_edition, 'approaches',
+                          (select a.id from public.approaches a where a.edition_id = p_edition and a.speaker_id = p_speaker), 'availability',
+                          jsonb_build_object('speaker', p_speaker, 'days', to_jsonb(v_days), 'ranges', jsonb_array_length(v_ranges),
+                                             'marked', v_n, 'rest', p_rest));
+    return v_n;
+  end
+  $$;
+
 -- =============================================================================
 -- Milestone 3 (v7) — from placement to arrival. Semantics: docs/CONTRACT.md
 -- «From placement to arrival»; the in-memory twin is src/data/engine.ts, and
@@ -2210,13 +2307,18 @@ create or replace function public.set_slot_availability(
 --   set_payment           the handler (or an admin) asks for an amount and/or
 --                         transport → approval 'pending'; nothing asked → 'none'
 --   decide_payments       a global admin approves or rejects — one or a batch,
---                         each at the version they saw, with a note
+--                         each at the version they saw, with a note; since v18
+--                         an admin or a logistics member of the lesson's own
+--                         (real, live) edition as well — one approval is enough
 --   mark_confirm_sent     «סומן כנשלח»: confirm_sent_at/by, clears needs_reconfirm
 --   set_escort            any editor: a roster trainee, self_intro, a note
 --   set_sources           any editor: kind, print_when, note, presentation URL, in_reader
 --   set_paid              logistics (or an admin): paid_at, once a payment is approved
 --   get/set_transport_details   pickup and driver — personal data: their own
 --                         table, app.may_see_transport, never in load_week or Realtime
+--   set_transport_request, set_transport_driver   (v18) the same row in two
+--                         parts: the pickup, asked by the handler before the
+--                         approval; the driver, set by logistics after it
 --   set_confirm_template, set_duty_phrases (and v14's set_call_template)
 --                         an admin of the edition: the instructor's own
 --                         wording, kept in editions.settings
@@ -2309,6 +2411,12 @@ create table if not exists public.transport_details (
   driver_phone   text,
   arranged       boolean not null default false
 );
+-- v18: the pickup time as minutes from 00:00 of the lesson's grid day (the
+-- grid's convention, so 24:30 is 1470) — for a board drawn along a time line.
+-- pickup_time, as typed, stays. Read through get_transports_for only; like the
+-- rest of the row, never in load_week, Realtime or a device's offline copy.
+alter table public.transport_details
+  add column if not exists pickup_min integer check (pickup_min between 0 and 1830);
 alter table public.transport_details enable row level security;
 
 -- Who handles the lesson: the owner of its lead speaker's approach there.
@@ -2324,19 +2432,22 @@ create or replace function app.lesson_handler(p_lesson bigint) returns bigint
   $$;
 
 -- Who may see (and write) a lesson's transport details: a global admin; in a
--- real edition that is not archived, whoever handles the lesson (content or
--- admin there) — and that edition's logistics members, only once the transport
--- is approved. Practice, demo and archived editions give no access (the rule
--- of app.may_see_contacts). public/privacy.html says exactly this.
+-- real edition that is not archived, that edition's admins (v18), the content
+-- member who handles the lesson — and that edition's logistics members from the
+-- moment a transport is asked: while the request is pending or approved (v18;
+-- before, only once approved), never when none is asked or it was rejected.
+-- Practice, demo and archived editions — an imported archive among them, so
+-- lesson_import_notes, which shares this predicate, is as it was — give no
+-- access (the rule of app.may_see_contacts). public/privacy.html says exactly this.
 create or replace function app.may_see_transport(p_lesson bigint) returns boolean
   language sql stable security definer set search_path = ''
   as $$
     select app.is_global_admin() or exists (
       select 1 from public.lessons l join public.editions e on e.id = l.edition_id
        where l.id = p_lesson and e.kind = 'real' and e.status <> 'archived'
-         and (   (app.my_role(l.edition_id) in ('admin', 'content')
-                  and app.lesson_handler(l.id) = app.my_member_id(l.edition_id))
-              or (app.my_role(l.edition_id) = 'logistics' and l.transport <> 'none' and l.approval = 'approved')))
+         and (   app.my_role(l.edition_id) = 'admin'
+              or (app.my_role(l.edition_id) = 'content' and app.lesson_handler(l.id) = app.my_member_id(l.edition_id))
+              or (app.my_role(l.edition_id) = 'logistics' and l.transport <> 'none' and l.approval in ('pending', 'approved'))))
   $$;
 
 drop policy if exists transport_details_read on public.transport_details;
@@ -2370,7 +2481,8 @@ create or replace function app.require_handler(p_lesson public.lessons, p_me big
   end
   $$;
 
--- Logistics (or an admin) of the edition: paid_at. Content members: forbidden.
+-- Logistics (or an admin) of the edition: paid_at, and since v18 the driver's
+-- part of a transport. Content members: forbidden.
 create or replace function app.require_logistics(p_edition bigint) returns bigint
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -2491,19 +2603,29 @@ create or replace function public.set_payment(p_lesson bigint, p_version integer
   end
   $$;
 
--- The instructor's decision: one lesson or a batch, each at the version on the
+-- The decision on a request: one lesson or a batch, each at the version on the
 -- screen (an amount changed since is `stale`, never approved unseen). All or nothing.
+-- Who (v18): a global admin, as before — or, lesson by lesson, an admin or a
+-- logistics member of that lesson's own edition while it is real and not
+-- archived. One approval is enough; approved_by is the caller's member row for
+-- that edition. A content member, and staff of another edition: forbidden.
 create or replace function public.decide_payments(p_lessons bigint[], p_versions integer[], p_decision text, p_note text default null)
   returns void
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_note text;
-    v_l    public.lessons;
-    x      record;
+    v_global boolean;
+    v_note   text;
+    v_l      public.lessons;
+    v_me     bigint;
+    x        record;
   begin
     if not app.is_member() then perform app.refuse('not_member'); end if;
-    if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
+    v_global := app.is_global_admin();
+    if not v_global and not exists (select 1 from public.members m
+                                     where m.active and m.email = app.my_email() and m.role in ('admin', 'logistics')) then
+      perform app.refuse('forbidden');
+    end if;
     if p_decision is null or p_decision not in ('approved', 'rejected')
        or coalesce(cardinality(p_lessons), 0) <> coalesce(cardinality(p_versions), 0) then
       perform app.refuse('bad_value');
@@ -2511,11 +2633,18 @@ create or replace function public.decide_payments(p_lessons bigint[], p_versions
     v_note := app.clean_line(p_note, 300);
     for x in select u.l, u.v from unnest(coalesce(p_lessons, '{}'), coalesce(p_versions, '{}')) as u(l, v) order by u.l, u.v loop
       select * into v_l from public.lessons where id = x.l for update;
+      if v_l.id is null then perform app.refuse('stale'); end if;
+      if not v_global and not (coalesce(app.my_role(v_l.edition_id) in ('admin', 'logistics'), false)
+                               and exists (select 1 from public.editions e
+                                            where e.id = v_l.edition_id and e.kind = 'real' and e.status <> 'archived')) then
+        perform app.refuse('forbidden');
+      end if;
       -- a request belongs to a closed lesson's speaker: a draft's is no one's to approve
-      if v_l.id is null or v_l.version is distinct from x.v or v_l.approval <> 'pending' or v_l.state <> 'closed' then perform app.refuse('stale'); end if;
+      if v_l.version is distinct from x.v or v_l.approval <> 'pending' or v_l.state <> 'closed' then perform app.refuse('stale'); end if;
+      v_me := app.my_member_id(v_l.edition_id);
       update public.lessons
-         set approval = p_decision, approval_note = v_note, approved_by = app.my_member_id(null), approved_at = now(),
-             version = version + 1, updated_by = app.my_member_id(v_l.edition_id)
+         set approval = p_decision, approval_note = v_note, approved_by = v_me, approved_at = now(),
+             version = version + 1, updated_by = v_me
        where id = v_l.id;
     end loop;
   end
@@ -2670,6 +2799,114 @@ create or replace function public.set_transport_details(
     on conflict (lesson_id) do update
       set pickup_address = excluded.pickup_address, pickup_time = excluded.pickup_time, driver_name = excluded.driver_name,
           driver_phone = excluded.driver_phone, arranged = excluded.arranged;
+    perform app.log_event(v_l.edition_id, 'lessons', p_lesson, 'transport', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- v18: the same row, in two parts (set_transport_details, above, is as it was —
+-- the old screens call it). Both take a JSON object and PATCH: a key that is
+-- there is written (a text cleaned and limited as above; empty → NULL), a key
+-- that is not stays as it is, any other key is `bad_value`. The log says which
+-- fields changed, never to what; nothing changed, nothing logged.
+
+-- The request's part — where and when to collect the speaker: pickup_address,
+-- pickup_time (as typed) and pickup_min (a whole number 0–1830: minutes from
+-- 00:00 of the lesson's grid day; or null). The lesson's handler or an admin of
+-- its edition (set_payment's rule), on a closed lesson that asks for transport —
+-- whatever the approval says: the request is filled BEFORE it is approved.
+-- Whoever writes it can read it back: app.may_see_transport too, as
+-- set_transport_details checks it (`transport_hidden`) — so a practice or demo
+-- week's team, and an archived edition's own admin (after the purge too), write
+-- no pickup that only a global admin could read (public/privacy.html).
+create or replace function public.set_transport_request(p_lesson bigint, p_fields jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l      public.lessons := app.stage_lesson(p_lesson);
+    v_me     bigint := app.require_editor(v_l.edition_id);
+    v_old    public.transport_details;
+    v_addr   text;
+    v_time   text;
+    v_min    integer;
+    v_fields text[];
+  begin
+    perform app.require_handler(v_l, v_me);
+    if v_l.transport = 'none' then perform app.refuse('no_transport'); end if;
+    if not app.may_see_transport(p_lesson) then perform app.refuse('transport_hidden'); end if;
+    if p_fields is null or jsonb_typeof(p_fields) <> 'object' then perform app.refuse('bad_value'); end if;
+    if exists (select 1 from jsonb_object_keys(p_fields) as k(k) where k.k not in ('pickup_address', 'pickup_time', 'pickup_min'))
+       or jsonb_typeof(p_fields -> 'pickup_address') not in ('string', 'null')
+       or jsonb_typeof(p_fields -> 'pickup_time') not in ('string', 'null') then
+      perform app.refuse('bad_value');
+    end if;
+    v_min  := app.json_int(p_fields -> 'pickup_min', 0, 1830);
+    v_addr := app.clean_line(p_fields ->> 'pickup_address', 200);
+    v_time := app.clean_line(p_fields ->> 'pickup_time', 60);
+
+    select * into v_old from public.transport_details where lesson_id = p_lesson for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when p_fields ? 'pickup_address' and v_addr is distinct from v_old.pickup_address then 'pickup_address' end,
+        case when p_fields ? 'pickup_time' and v_time is distinct from v_old.pickup_time then 'pickup_time' end,
+        case when p_fields ? 'pickup_min' and v_min is distinct from v_old.pickup_min then 'pickup_min' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    insert into public.transport_details as t (lesson_id, pickup_address, pickup_time, pickup_min)
+    values (p_lesson, v_addr, v_time, v_min)
+    on conflict (lesson_id) do update
+      set pickup_address = case when p_fields ? 'pickup_address' then excluded.pickup_address else t.pickup_address end,
+          pickup_time    = case when p_fields ? 'pickup_time' then excluded.pickup_time else t.pickup_time end,
+          pickup_min     = case when p_fields ? 'pickup_min' then excluded.pickup_min else t.pickup_min end;
+    perform app.log_event(v_l.edition_id, 'lessons', p_lesson, 'transport', jsonb_build_object('fields', to_jsonb(v_fields)));
+  end
+  $$;
+
+-- The driver's part: driver_name, driver_phone and arranged (a JSON boolean).
+-- Logistics or an admin of the lesson's edition (set_paid's rule), and only
+-- once the transport is approved — before that there is no driver to arrange
+-- (`transport_hidden`, what set_transport_details gave logistics before v18) —
+-- and only by who may read it back (app.may_see_transport, the same refusal):
+-- never a practice or demo week's team, never an archived edition's own admin.
+create or replace function public.set_transport_driver(p_lesson bigint, p_fields jsonb) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_l      public.lessons := app.stage_lesson(p_lesson);
+    v_me     bigint := app.require_logistics(v_l.edition_id);
+    v_old    public.transport_details;
+    v_name   text;
+    v_phone  text;
+    v_arr    boolean;
+    v_fields text[];
+  begin
+    if v_l.transport = 'none' then perform app.refuse('no_transport'); end if;
+    if v_l.approval <> 'approved' or not app.may_see_transport(p_lesson) then perform app.refuse('transport_hidden'); end if;
+    if p_fields is null or jsonb_typeof(p_fields) <> 'object' then perform app.refuse('bad_value'); end if;
+    if exists (select 1 from jsonb_object_keys(p_fields) as k(k) where k.k not in ('driver_name', 'driver_phone', 'arranged'))
+       or jsonb_typeof(p_fields -> 'driver_name') not in ('string', 'null')
+       or jsonb_typeof(p_fields -> 'driver_phone') not in ('string', 'null')
+       or jsonb_typeof(p_fields -> 'arranged') <> 'boolean' then
+      perform app.refuse('bad_value');
+    end if;
+    v_name  := app.clean_line(p_fields ->> 'driver_name', 80);
+    v_phone := app.clean_line(p_fields ->> 'driver_phone', 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    v_arr := (p_fields ->> 'arranged')::boolean;
+
+    select * into v_old from public.transport_details where lesson_id = p_lesson for update;
+    select coalesce(array_agg(u.f order by u.o), '{}') into v_fields
+      from unnest(array[
+        case when p_fields ? 'driver_name' and v_name is distinct from v_old.driver_name then 'driver_name' end,
+        case when p_fields ? 'driver_phone' and v_phone is distinct from v_old.driver_phone then 'driver_phone' end,
+        case when p_fields ? 'arranged' and v_arr is distinct from coalesce(v_old.arranged, false) then 'arranged' end]) with ordinality as u(f, o)
+     where u.f is not null;
+    if cardinality(v_fields) = 0 then return; end if;
+    insert into public.transport_details as t (lesson_id, driver_name, driver_phone, arranged)
+    values (p_lesson, v_name, v_phone, coalesce(v_arr, false))
+    on conflict (lesson_id) do update
+      set driver_name  = case when p_fields ? 'driver_name' then excluded.driver_name else t.driver_name end,
+          driver_phone = case when p_fields ? 'driver_phone' then excluded.driver_phone else t.driver_phone end,
+          arranged     = case when p_fields ? 'arranged' then excluded.arranged else t.arranged end;
     perform app.log_event(v_l.edition_id, 'lessons', p_lesson, 'transport', jsonb_build_object('fields', to_jsonb(v_fields)));
   end
   $$;
@@ -4518,22 +4755,26 @@ create or replace function public.get_fallen_contacts(p_fallen bigint) returns j
     end
   $$;
 
--- «הסעות» in the logistics screen: the edition's closed lessons whose transport
--- was asked and approved, each with its details exactly as get_transport_details
--- would show them — invoker: lessons and transport_details are read through
--- their policies, and every lesson also passes app.may_see_transport, the very
--- predicate of get_transport_details. A lesson the caller may not see the
--- details of is not in the list at all. Never in a Week, never in Realtime.
+-- The transports of an edition: its closed lessons whose transport was asked
+-- and is pending or approved (v18; before, approved only — «לוגיסטיקה ← הסעות»
+-- still lists the approved ones, the filter is its builder's), each with its
+-- details exactly as get_transport_details would show them, and since v18 the
+-- request's approval and the pickup time in minutes — invoker: lessons and
+-- transport_details are read through their policies, and every lesson also
+-- passes app.may_see_transport, the very predicate of get_transport_details.
+-- A lesson the caller may not see the details of is not in the list at all.
+-- Never in a Week, never in Realtime.
 create or replace function public.get_transports_for(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
     select coalesce(jsonb_agg(jsonb_build_object(
              'lesson_id', l.id, 'pickup_address', t.pickup_address, 'pickup_time', t.pickup_time,
-             'driver_name', t.driver_name, 'driver_phone', t.driver_phone, 'arranged', coalesce(t.arranged, false))
+             'driver_name', t.driver_name, 'driver_phone', t.driver_phone, 'arranged', coalesce(t.arranged, false),
+             'approval', l.approval, 'pickup_min', t.pickup_min)
              order by l.id), '[]'::jsonb)
       from public.lessons l
       left join public.transport_details t on t.lesson_id = l.id
-     where l.edition_id = p_edition and l.state = 'closed' and l.transport <> 'none' and l.approval = 'approved'
+     where l.edition_id = p_edition and l.state = 'closed' and l.transport <> 'none' and l.approval in ('pending', 'approved')
        and app.may_see_transport(l.id)
   $$;
 
@@ -4851,6 +5092,78 @@ create or replace function public.set_grid_rules(p_edition bigint, p_gender_tole
   end
   $$;
 
+-- =============================================================================
+-- v18 — day owners. A pair of trainees answers for each day of the week: at
+-- most two members per edition and day, each one able to handle speakers there
+-- (app.can_handle — content or admin, active). A member may own several days.
+-- seen_at is when that owner last looked at the day's notices (NULL = never).
+-- The whole team of the edition reads the rows (RLS, load_week); every write is
+-- a function: set_day_owners (an admin of the edition) and mark_day_seen (an
+-- owner, their own row). Ids and times only — but not in Realtime: the week
+-- reloads after the write. start_edition carries none over (a new year, a new
+-- team); deleting a member takes their rows with it.
+-- =============================================================================
+
+create table if not exists public.day_owners (
+  edition_id bigint not null references public.editions (id) on delete cascade,
+  day        smallint not null check (day between 0 and 4),
+  member_id  bigint not null references public.members (id) on delete cascade,
+  seen_at    timestamptz,
+  primary key (edition_id, day, member_id)
+);
+create index if not exists day_owners_member on public.day_owners (member_id);
+alter table public.day_owners enable row level security;
+drop policy if exists day_owners_read on public.day_owners;
+create policy day_owners_read on public.day_owners for select to authenticated using (app.can_see_edition(edition_id));
+
+-- The owners of one day, replaced: NULL or {} leaves the day with none; more
+-- than two, a repeat, or someone who cannot handle speakers in this edition is
+-- `bad_value`. A member who stays keeps their seen_at; a new one starts at NULL.
+-- The same pair again: nothing written, nothing logged. An admin of the edition.
+create or replace function public.set_day_owners(p_edition bigint, p_day integer, p_members bigint[]) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_new bigint[];
+    v_old bigint[];
+  begin
+    perform app.require_edition_admin(p_edition);
+    if p_day is null or p_day not between 0 and 4 then perform app.refuse('bad_value'); end if;
+    select coalesce(array_agg(u.m order by u.m), '{}') into v_new from unnest(coalesce(p_members, '{}')) as u(m);
+    if cardinality(v_new) > 2
+       or exists (select 1 from unnest(v_new) as u(m) where u.m is null)
+       or (select count(distinct u.m) from unnest(v_new) as u(m)) <> cardinality(v_new)
+       or exists (select 1 from unnest(v_new) as u(m) where not app.can_handle(u.m, p_edition)) then
+      perform app.refuse('bad_value');
+    end if;
+    -- one change to an edition's owners at a time: two admins at once would leave a day with both pairs
+    perform pg_advisory_xact_lock(hashtext('day_owners'), p_edition::integer);
+    select coalesce(array_agg(o.member_id order by o.member_id), '{}') into v_old
+      from public.day_owners o where o.edition_id = p_edition and o.day = p_day;
+    if v_old = v_new then return; end if;
+    delete from public.day_owners
+     where edition_id = p_edition and day = p_day and not (member_id = any (v_new));
+    insert into public.day_owners (edition_id, day, member_id)
+    select p_edition, p_day, u.m from unnest(v_new) as u(m)
+    on conflict (edition_id, day, member_id) do nothing;
+    perform app.log_event(p_edition, 'editions', p_edition, 'day_owners', jsonb_build_object('day', p_day, 'members', to_jsonb(v_new)));
+  end
+  $$;
+
+-- «ראיתי»: the caller, one of that day's owners, has looked at its notices —
+-- their own row's seen_at, now. Anyone else: `forbidden`. Not logged.
+create or replace function public.mark_day_seen(p_edition bigint, p_day integer) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  begin
+    if app.my_role(p_edition) is null then perform app.refuse('not_member'); end if;
+    if p_day is null or p_day not between 0 and 4 then perform app.refuse('bad_value'); end if;
+    update public.day_owners set seen_at = now()
+     where edition_id = p_edition and day = p_day and member_id = app.my_member_id(p_edition);
+    if not found then perform app.refuse('forbidden'); end if;
+  end
+  $$;
+
 -- Everything the grid needs, in one round trip, as the caller's RLS allows —
 -- invoker, so it can never show more than the tables would. Never a contact
 -- detail and never a transport detail (their own tables). v7 adds the
@@ -4858,7 +5171,8 @@ create or replace function public.set_grid_rules(p_edition bigint, p_gender_tole
 -- sources' files (their rows — the bytes are in Storage, fetched by signed URL);
 -- v11 the memorial plans and the names of the fallen they are for — never a
 -- family's contact (fallen_contacts is read one fallen at a time, by admins);
--- v14 availability per slot instead of v6's per approach and part of a day.
+-- v14 availability per slot instead of v6's per approach and part of a day;
+-- v18 the days' owners (member ids and when each last looked).
 create or replace function public.load_week(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
@@ -4902,7 +5216,10 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
           'materials_note', p.materials_note, 'version', p.version) order by p.id)
           from public.memorial_plans p where p.edition_id = p_edition), '[]'),
       'fallen', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'gender', f.gender) order by f.id)
-          from public.fallen f where exists (select 1 from public.memorial_plans p where p.fallen_id = f.id and p.edition_id = p_edition)), '[]')
+          from public.fallen f where exists (select 1 from public.memorial_plans p where p.fallen_id = f.id and p.edition_id = p_edition)), '[]'),
+      'dayOwners', coalesce((select jsonb_agg(jsonb_build_object('day', o.day, 'member_id', o.member_id,
+          'seen_at', to_char(o.seen_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) order by o.day, o.member_id)
+          from public.day_owners o where o.edition_id = p_edition), '[]')
     )
     where app.can_see_edition(p_edition)
   $$;
@@ -6541,6 +6858,7 @@ grant execute on function public.set_approach_status(bigint, integer, text, text
 grant execute on function public.hand_over(bigint, bigint, text) to authenticated;
 grant execute on function public.answer_handover(bigint, boolean, text) to authenticated;
 grant execute on function public.set_slot_availability(bigint, bigint, integer, bigint, text, text) to authenticated;   -- v14
+grant execute on function public.set_availability_ranges(bigint, bigint, integer[], jsonb, text) to authenticated;       -- v18
 
 -- From placement to arrival (v7): lessons stays SELECT-only (above); every
 -- stage write is a function. transport_details is read through its policy,
@@ -6549,6 +6867,8 @@ grant select on public.transport_details to authenticated;
 grant execute on function app.may_see_transport(bigint) to authenticated;
 grant execute on function public.get_transport_details(bigint) to authenticated;
 grant execute on function public.set_transport_details(bigint, text, text, text, text, boolean) to authenticated;
+grant execute on function public.set_transport_request(bigint, jsonb) to authenticated;   -- v18: the pickup, by the handler
+grant execute on function public.set_transport_driver(bigint, jsonb) to authenticated;    -- v18: the driver, by logistics
 grant execute on function public.set_payment(bigint, integer, numeric, text) to authenticated;
 grant execute on function public.decide_payments(bigint[], integer[], text, text) to authenticated;
 grant execute on function public.mark_confirm_sent(bigint, integer) to authenticated;
@@ -6678,6 +6998,12 @@ grant execute on function public.get_rota_contacts(bigint) to authenticated;
 grant execute on function public.set_rota_contact(bigint, text) to authenticated;
 grant execute on function public.set_rota_shifts(bigint, jsonb) to authenticated;
 
+-- Day owners (v18): read under RLS (the edition's team — load_week is invoker),
+-- written only by the two functions. No new app.* function is a browser's to run.
+grant select on public.day_owners to authenticated;
+grant execute on function public.set_day_owners(bigint, integer, bigint[]) to authenticated;
+grant execute on function public.mark_day_seen(bigint, integer) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
 -- supabase_realtime publication (created empty in every project). These six
@@ -6698,7 +7024,8 @@ grant execute on function public.set_rota_shifts(bigint, jsonb) to authenticated
 -- «איך עבר» (opinions about a person; read when the panel or the summary opens),
 -- and the imported lessons' notes (last year's transport words; read one lesson
 -- at a time); v16 every table of «תורנויות» (the group heads' phones among them;
--- the screens reload after each write).
+-- the screens reload after each write); v18 the days' owners (the week reloads
+-- after the write; nobody needs «ראיתי» live).
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -6718,7 +7045,7 @@ begin
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
                            'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes',
                            'rota_cohorts', 'rota_presence', 'rota_groups', 'rota_group_contacts', 'rota_duties', 'rota_assignments',
-                           'rota_staff_shifts', 'rota_prep_tasks'] loop
+                           'rota_staff_shifts', 'rota_prep_tasks', 'day_owners'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

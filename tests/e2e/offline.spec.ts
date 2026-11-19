@@ -201,17 +201,21 @@ test.describe("mock build", () => {
   });
 
   test("loaded once online, the week opens offline from the snapshot: the day view, read-only, with the banner — and live again when the connection returns", async ({ context, page }, info) => {
-    const { sb, offline } = await signedIn(context, page);
+    const { sb, week, offline } = await signedIn(context, page);
+    // load_week as a database from before v18 answers it — no `dayOwners`: the week opens all the same, the list read as none
+    const { dayOwners: _none, ...before18 } = week;
+    sb.answers.set("load_week", before18);
     await page.goto(mockUrl());
     await expect(lens(page)).toBeVisible();
     await readyOffline(page);
     const saved = await stored(page);
     expect(saved.week!.userId).toBe(fakeSession().user.id);
-    // only the Week is kept: its own keys, and no contact or transport detail anywhere in it
+    // only the Week is kept: its own keys (v18: the days' owners among them), and no contact or transport detail anywhere in it
     expect(Object.keys(saved.week!.week).sort()).toEqual(
-      ["approaches", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "slotAvailability", "sourceFiles", "speakers", "team"].sort(),
+      ["approaches", "categories", "dayOwners", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "slotAvailability", "sourceFiles", "speakers", "team"].sort(),
     );
-    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
+    expect(saved.week!.week.dayOwners).toEqual([]);
+    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|pickup_min|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
 
     offline.on = true;
     await noConnection(context, true);

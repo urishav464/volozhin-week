@@ -106,6 +106,15 @@ describe("SupabasePort, without a connection", () => {
     expect(await failure(port([[401, { code: "PGRST301", message: "JWT expired" }]], session(3600)).p.editions())).toBe("PortError:PGRST301");
   });
 
+  it("a Week from a database that is a version behind lacks the newer lists: each reads as none — v18's day owners among them", async () => {
+    const old = await port([[200, { edition: { id: 1 }, lessons: [] }]], session(3600)).p.loadWeek(1);
+    expect(old).toMatchObject({ roster: [], escortTicks: [], sourceFiles: [], memorialPlans: [], fallen: [], slotAvailability: [], dayOwners: [] });
+    const owners = [{ day: 1, member_id: 4, seen_at: null }, { day: 1, member_id: 6, seen_at: "2026-11-18T10:00:00.000Z" }];
+    const { p, sent } = port([[200, { edition: { id: 1 }, lessons: [], dayOwners: owners }]], session(3600));
+    expect((await p.loadWeek(1)).dayOwners).toEqual(owners);
+    expect(sent).toContain("POST /rest/v1/rpc/load_week");
+  });
+
   it("sign-out removes the stored session — also offline, with an expired token auth-js gives up on", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { p, storage } = port([], session(-3600));

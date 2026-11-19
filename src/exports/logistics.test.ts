@@ -36,16 +36,40 @@ function file(lessonId: number, speakerId: number | null, o: Partial<SourceFile>
 describe("the transports", () => {
   it("list the closed lessons whose transport was approved, in grid order — never one waiting, never a draft's", () => {
     const { w, ride, paidRide } = week();
-    const rows = transportRows(w, [{ lesson_id: ride.id, pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: true }]);
+    const rows = transportRows(w, [{ lesson_id: ride.id, pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: true, approval: "approved", pickup_min: 435 }]);
     expect(rows.map((r) => r.lesson.id)).toEqual([ride.id, paidRide.id]);
     expect(rows[0]).toMatchObject({ dayLabel: "ראשון", speaker: "פלוני לדוגמה", title: "שיעור ב", legs: "הלוך" });
     expect(rows[1]).toMatchObject({ speaker: "ד״ר פלונית לדוגמה", legs: "הלוך ושוב", details: null }); // nothing came back for it
     expect(transportCounts(rows)).toEqual({ total: 2, arranged: 1 });
   });
 
+  it("v18: the read lists pending requests too — the tab and its file still show the approved ones only, with the five fields", () => {
+    const { w, ride, paidRide, waiting } = week();
+    const five = { pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: true };
+    const details: LessonTransport[] = [
+      { lesson_id: waiting.id, ...five, pickup_address: "כתובת ממתינה לדוגמה", approval: "pending", pickup_min: 420 },
+      { lesson_id: ride.id, ...five, approval: "approved", pickup_min: 435 },
+      // a request asked again after the Week was loaded: the read says «pending» — its details are not shown as approved
+      { lesson_id: paidRide.id, ...five, pickup_address: "כתובת שנשאלה שוב לדוגמה", approval: "pending", pickup_min: null },
+    ];
+    const rows = transportRows(w, details);
+    expect(rows.map((r) => r.lesson.id)).toEqual([ride.id, paidRide.id]); // the waiting lesson has no row
+    expect(rows[0].details).toEqual(five); // exactly the five: no approval, no pickup_min
+    expect(rows[1].details).toBeNull();
+    expect(transportCounts(rows)).toEqual({ total: 2, arranged: 1 });
+    for (const personal of [false, true]) {
+      const t = transportTable(rows, "הדגמה", personal);
+      expect(t.rows).toHaveLength(2);
+      expect(JSON.stringify(t)).not.toMatch(/ממתינה|שנשאלה שוב|pickup_min|435|420/);
+    }
+    expect(transportRows(w, null).map((r) => [r.lesson.id, r.details])).toEqual([[ride.id, null], [paidRide.id, null]]);
+  });
+
   it("leave the pickup address and the driver's phone out of the file unless «כולל כתובות וטלפונים» — and guard every cell", () => {
     const { w, ride } = week();
-    const details: LessonTransport[] = [{ lesson_id: ride.id, pickup_address: "כתובת לדוגמה", pickup_time: "=אחרי השיעור", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: false }];
+    const details: LessonTransport[] = [
+      { lesson_id: ride.id, pickup_address: "כתובת לדוגמה", pickup_time: "=אחרי השיעור", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: false, approval: "approved", pickup_min: null },
+    ];
     const rows = transportRows(w, details);
     const plain = transportTable(rows, "הדגמה", false);
     expect(plain.headers).toEqual(["יום ושעה", "מרצה", "כותרת", "הסעה", "שעת איסוף", "נהג/ת", "סודר"]);

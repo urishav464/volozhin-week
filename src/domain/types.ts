@@ -175,6 +175,8 @@ export const LESSON_STAGE_DEFAULTS = {
 /**
  * Pickup and driver — personal data: transport_details, reached only through
  * the port's transport calls (app.may_see_transport), never in a Week or Realtime.
+ * (v18's `pickup_min`, the pickup time in the day's minutes, comes only with the
+ * transports read — LessonTransport, src/data/commands.ts.)
  */
 export interface TransportDetails {
   pickup_address: string | null;
@@ -310,6 +312,16 @@ export interface Edition {
   purged_at?: string | null;
 }
 
+/**
+ * v18: one of a day's owners — the pair of trainees (at most two members who handle speakers) an edition admin gave the
+ * day to — and when this owner last looked at the day's notices (null: never). No contact detail.
+ */
+export interface DayOwner {
+  day: Day;
+  member_id: number;
+  seen_at: string | null;
+}
+
 /** Everything the grid screen needs for one edition, loaded at once (~150 lessons: small). */
 export interface Week {
   edition: Edition;
@@ -334,6 +346,8 @@ export interface Week {
   memorialPlans: MemorialPlan[];
   /** The names of the fallen those plans are for (v11). */
   fallen: FallenName[];
+  /** v18: each day's owners, by day and member (public.day_owners) — written through set_day_owners / mark_day_seen. */
+  dayOwners: DayOwner[];
 }
 
 /** The four types the sources bucket takes. */

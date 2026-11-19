@@ -3,6 +3,7 @@
 // logs exactly what production would. Speakers are one list across the demo's
 // editions (as in the database): after each command the engine that ran it
 // hands its list to the others. Synthetic people only.
+import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, SpeakerContacts, Vetting } from "../domain/types";
 import type { Engine, PoolShared } from "./engine";
@@ -105,5 +106,9 @@ export class DemoSpeakers implements SpeakerPort {
 
   setSlotAvailability(editionId: number, speakerId: number, day: Day, rowId: number, kind: "can" | "cannot" | null, note?: string | null) {
     return this.run(this.p.engine(editionId), (e) => e.setSlotAvailability(speakerId, day, rowId, kind, note ?? null));
+  }
+
+  setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest?: SlotKind | null) {
+    return this.run(this.p.engine(editionId), (e) => e.setAvailabilityRanges(speakerId, days, ranges, rest ?? null));
   }
 }

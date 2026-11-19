@@ -37,6 +37,23 @@ describe("demo settings", () => {
     expect((await s.members(1)).some((m) => m.id === fresh.id)).toBe(false);
   });
 
+  it("owning a day is no history: a deleted member's days lose them (day_owners … on delete cascade); a new edition starts with no owners", async () => {
+    const port = new DemoPort();
+    const s = port.settings;
+    const fresh = await s.addMember({ email: "fresh@example.org", display_name: "חדש/ה", gender: null, role: "content", edition_id: 1 });
+    await port.commands(1).setDayOwners(3, [fresh.id, 2]);
+    await port.commands(1).setDayOwners(4, [fresh.id]);
+    expect((await port.loadWeek(1)).dayOwners.map((o) => [o.day, o.member_id])).toEqual([[3, 2], [3, fresh.id], [4, fresh.id]]);
+    expect(await code(s.deleteMember(fresh.id))).toBe("ok");
+    expect((await port.loadWeek(1)).dayOwners).toEqual([{ day: 3, member_id: 2, seen_at: null }]);
+    // a member who left the team (not deleted) keeps the row; they just cannot be given another day
+    await s.updateMember(2, { active: false });
+    expect((await port.loadWeek(1)).dayOwners).toEqual([{ day: 3, member_id: 2, seen_at: null }]);
+    expect(await code(port.commands(1).setDayOwners(1, [2]))).toBe("bad_value");
+    const next = await s.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: null });
+    expect((await port.loadWeek(next)).dayOwners).toEqual([]);
+  });
+
   it("never lets an admin lock themselves out, and sets their own name everywhere", async () => {
     const port = new DemoPort();
     const s = port.settings;

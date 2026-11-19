@@ -21,6 +21,12 @@
 // Week holds the edition's plans and the names they are for. And «איך עבר» and
 // the purge after the week (CONTRACT.md «After the week», milestone 6): the
 // reviews are kept in `shared`, never in a Week, as the database keeps them apart.
+// And v18 (CONTRACT.md «v18 — day owners, availability by ranges, transport in two
+// parts»): each day's owners are in the Week (`dayOwners`); availability typed as
+// ranges becomes the same slots (rangesToSlots); a transport's request and driver are
+// two commands on the one row in `shared.transport`, whose `pickup_min` only the
+// transports read shows; and a request is decided by the staff of both teams.
+import { rangesToSlots, type SlotKind } from "../domain/availability";
 import { dutyNotes } from "../domain/escorts";
 import { kkSessions, offered } from "../domain/kk";
 import { addDays, israelDate } from "../domain/israelTime";
@@ -42,10 +48,13 @@ import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
 import { gridOrder } from "../exports/tracking";
 import { rowActive } from "../grid/layout";
-import { type CellTarget, CommandError, type EscortPatch, type GridRules, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch } from "./commands";
+import {
+  type CellTarget, CommandError, type EscortPatch, type GridRules, type LessonPatch, type LessonTransport, type PaymentItem, type ReshapeOp, type SourcesPatch,
+  type TransportDriverPatch, type TransportRequestPatch,
+} from "./commands";
 import { cleanFallen, cleanFallenContacts, cleanPlanPatch, cleanPolicy, EMPTY_FALLEN_CONTACTS, type Fallen, type FallenContacts, type FallenFields, type PlanPatch } from "./memorial";
 import {
-  cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
+  cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
 } from "./speakerRules";
 import { type BookOrder, type CleanGroup, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup } from "./kk";
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
@@ -60,7 +69,8 @@ import type { PurgeReport } from "./settings";
 import type { RotaAssignment, RotaCohort, RotaDuty, RotaGroup, RotaPrepTask, RotaPresence, RotaStaffShift } from "./rota";
 import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
 import {
-  cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport, readerKind, STAGE_LIMITS,
+  cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanTransportDriver, cleanTransportRequest, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport,
+  readerKind, STAGE_LIMITS,
 } from "./stageRules";
 
 export interface Actor {
@@ -106,7 +116,7 @@ export interface PoolShared {
   /** The pool commands' activity rows (the grid's own commands are not logged in memory). */
   log: ActivityEntry[];
   /** transport_details, by `${edition id}:${lesson id}` (the demo's editions number their lessons apart). */
-  transport: Record<string, TransportDetails>;
+  transport: Record<string, StoredTransport>;
   /** share_links (v9). */
   links: DemoLink[];
   /** share_link_hits: the rate limit, by token and caller (`${token} ${linkClient(…)}`). */
@@ -131,6 +141,17 @@ export interface PoolShared {
   /** rota_group_contacts (v16), by group id: a group head's phone — never in a Week or load_rota; the purge deletes it. */
   rotaContacts: Record<number, string>;
 }
+
+/**
+ * A transport_details row: the five fields and, v18, `pickup_min` (the pickup time in the day's minutes; absent = NULL)
+ * — which only the transports read shows (transportsOf), never transportOf.
+ */
+export type StoredTransport = TransportDetails & { pickup_min?: number | null };
+
+/** A row as get_transport_details shows it: the five fields. */
+const fiveOf = ({ pickup_address, pickup_time, driver_name, driver_phone, arranged }: TransportDetails): TransportDetails => ({
+  pickup_address, pickup_time, driver_name, driver_phone, arranged,
+});
 
 /** A stored object as the Storage API records it: metadata.mimetype, metadata.size, owner_id. */
 export interface StoredObject {
@@ -681,6 +702,34 @@ export class Engine {
     });
   }
 
+  /**
+   * public.set_availability_ranges (v18): availability typed as time ranges — an input method, the slots stay the one
+   * store. Who and the speaker as setSlotAvailability; then the input (cleanAvailabilityRanges: every fault
+   * `bad_value`). For each of the days the speaker's slots are deleted (their notes with them) and every lesson row in
+   * play gets what `rangesToSlots` says. Returns how many slots were marked; ALWAYS logged once, under the speaker's
+   * approach when there is one — counts only, never one per slot.
+   */
+  setAvailabilityRanges(speakerId: number, days: number[], ranges: unknown, rest: SlotKind | null = null): number {
+    return this.tx(() => {
+      this.requireEditor();
+      const s = this.week.speakers.find((x) => x.id === speakerId);
+      if (!s || s.retired) fail("speaker_retired");
+      const c = cleanAvailabilityRanges(days, ranges, rest);
+      this.week.slotAvailability = this.week.slotAvailability.filter((v) => !(v.speaker_id === speakerId && c.days.includes(v.day)));
+      const marked = rangesToSlots(this.week.rows, this.week.edition, c.days, c.ranges, c.rest);
+      for (const m of marked) {
+        this.week.slotAvailability.push({
+          id: this.nextId(this.week.slotAvailability), speaker_id: speakerId, day: m.day, row_id: m.row_id, kind: m.kind, note: null, updated_by: this.actor.memberId,
+        });
+      }
+      const a = this.week.approaches.find((x) => x.speaker_id === speakerId);
+      this.log(this.week.edition.id, "approaches", a?.id ?? null, "availability", {
+        speaker: speakerId, days: c.days, ranges: c.ranges.length, marked: marked.length, rest: c.rest,
+      });
+      return marked.length;
+    });
+  }
+
   // ---------------------------------------------------------------- from placement to arrival (CONTRACT.md, milestone 3)
 
   /** public.set_payment: the handler (or an admin) asks the instructor for an amount and/or transport. */
@@ -703,16 +752,24 @@ export class Engine {
     });
   }
 
-  /** public.decide_payments: a global admin, one lesson or a batch, each at the version seen; all or nothing. */
+  /**
+   * public.decide_payments: one lesson or a batch, each at the version seen; all or nothing. A global admin — or, v18,
+   * an admin or a logistics member of the lesson's edition, a real one that is not archived (a content member:
+   * `forbidden` at once; anyone but a global admin outside such an edition: `forbidden` at the lesson). One approval
+   * is enough; approved_by is whoever gave it.
+   */
   decidePayments(items: PaymentItem[], decision: "approved" | "rejected", note: string | null = null): void {
     this.tx(() => {
-      if (!this.actor.global) fail("forbidden");
+      if (!this.actor.global && this.actor.role === "content") fail("forbidden");
       if (decision !== "approved" && decision !== "rejected") fail("bad_value");
       const n = cleanLine(note, STAGE_LIMITS.decision_note);
       const now = this.now();
+      const e = this.week.edition;
       for (const it of [...items].sort((a, b) => a.lesson_id - b.lesson_id || a.version - b.version)) {
         const l = this.week.lessons.find((x) => x.id === it.lesson_id);
-        if (!l || l.version !== it.version || l.approval !== "pending" || l.state !== "closed") fail("stale");
+        if (!l) fail("stale");
+        if (!this.actor.global && (e.kind !== "real" || e.status === "archived")) fail("forbidden");
+        if (l!.version !== it.version || l!.approval !== "pending" || l!.state !== "closed") fail("stale");
         Object.assign(l!, {
           approval: decision, approval_note: n, approved_by: this.actor.memberId, approved_at: now, version: l!.version + 1, updated_by: this.actor.memberId,
         });
@@ -787,15 +844,17 @@ export class Engine {
   }
 
   /**
-   * app.may_see_transport: a global admin; in a real edition that is not archived, the lesson's handler
-   * (content or admin) — and its logistics members once the transport is approved.
+   * app.may_see_transport: a global admin; in a real edition that is not archived, an admin of the edition (v18), the
+   * lesson's handler — and its logistics members from the request on: while the transport waits for the instructor
+   * or was approved (v18; before, only once approved). A practice, demo, archive or archived edition: the global admin alone.
    */
   mayTransport(lessonId: number): boolean {
     if (this.actor.global) return true;
     const l = this.week.lessons.find((x) => x.id === lessonId);
     const e = this.week.edition;
     if (!l || e.kind !== "real" || e.status === "archived") return false;
-    if (this.actor.role === "logistics") return l.transport !== "none" && l.approval === "approved";
+    if (this.actor.role === "admin") return true;
+    if (this.actor.role === "logistics") return l.transport !== "none" && (l.approval === "pending" || l.approval === "approved");
     return this.handlerOf(l) === this.actor.memberId;
   }
 
@@ -805,10 +864,10 @@ export class Engine {
     return this.shared.importNotes[this.transportKey(lessonId)] ?? null;
   }
 
-  /** public.get_transport_details: null when they are not the caller's to see. */
+  /** public.get_transport_details: null when they are not the caller's to see; the five fields (never pickup_min). */
   transportOf(lessonId: number): TransportDetails | null {
     if (!this.mayTransport(lessonId)) return null;
-    return { ...(this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT) };
+    return fiveOf(this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT);
   }
 
   /** public.set_transport_details: the same people; all five replaced; the log names the fields, never the values. */
@@ -818,12 +877,59 @@ export class Engine {
       if (!this.mayTransport(lessonId)) fail("transport_hidden");
       if (l.transport === "none") fail("no_transport");
       const next = cleanTransportDetails(d);
-      const old = this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT;
+      const old: StoredTransport = this.shared.transport[this.transportKey(lessonId)] ?? EMPTY_TRANSPORT;
       const fields = (["pickup_address", "pickup_time", "driver_name", "driver_phone", "arranged"] as const).filter((k) => old[k] !== next[k]);
       if (fields.length === 0) return;
-      this.shared.transport[this.transportKey(lessonId)] = next;
+      this.shared.transport[this.transportKey(lessonId)] = { ...next, ...(old.pickup_min != null ? { pickup_min: old.pickup_min } : {}) }; // the five only: pickup_min stays
       this.log(this.week.edition.id, "lessons", lessonId, "transport", { fields });
     });
+  }
+
+  /**
+   * public.set_transport_request (v18), the request's half — pickup_address, pickup_time, pickup_min: the lesson
+   * (`stale`), an editor, its handler or an admin on a closed lesson (`not_closed`, `not_handler`) that asked for
+   * transport (`no_transport`) — whatever the instructor's decision — and who may read it back (mayTransport,
+   * `transport_hidden`: never a practice, demo or archived edition's own team, as setTransport); then the patch
+   * (cleanTransportRequest: `bad_value`). Only the keys present are written; nothing changed → nothing; the log names
+   * the fields, never the values. The lesson's version stays.
+   */
+  setTransportRequest(lessonId: number, patch: TransportRequestPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireEditor();
+      this.requireHandler(l);
+      if (l.transport === "none") fail("no_transport");
+      if (!this.mayTransport(lessonId)) fail("transport_hidden");
+      this.patchTransport(lessonId, cleanTransportRequest(patch), ["pickup_address", "pickup_time", "pickup_min"]);
+    });
+  }
+
+  /**
+   * public.set_transport_driver (v18), the driver's half — driver_name, driver_phone, arranged: the lesson (`stale`),
+   * logistics or an admin of the edition (requireLogistics), a transport asked for (`no_transport`) and approved, by
+   * who may read it back (mayTransport; either fault `transport_hidden`); then the patch (cleanTransportDriver:
+   * `bad_value`, `bad_phone`). Only the keys present are written; nothing changed → nothing; the log names the fields.
+   */
+  setTransportDriver(lessonId: number, patch: TransportDriverPatch): void {
+    this.tx(() => {
+      const l = this.stageLesson(lessonId);
+      this.requireLogistics();
+      if (l.transport === "none") fail("no_transport");
+      if (l.approval !== "approved" || !this.mayTransport(lessonId)) fail("transport_hidden");
+      this.patchTransport(lessonId, cleanTransportDriver(patch), ["driver_name", "driver_phone", "arranged"]);
+    });
+  }
+
+  /** The two halves' write: the present keys that differ from the row (no row: all empty), in `order`; none → nothing. */
+  private patchTransport(lessonId: number, patch: Partial<StoredTransport>, order: readonly (keyof StoredTransport)[]) {
+    const key = this.transportKey(lessonId);
+    const old: StoredTransport = { ...EMPTY_TRANSPORT, pickup_min: null, ...this.shared.transport[key] };
+    const fields = order.filter((k) => k in patch && (patch[k] ?? null) !== (old[k] ?? null));
+    if (fields.length === 0) return;
+    const next: StoredTransport = { ...old, ...patch };
+    if (next.pickup_min == null) delete next.pickup_min;
+    this.shared.transport[key] = next;
+    this.log(this.week.edition.id, "lessons", lessonId, "transport", { fields });
   }
 
   /** public.set_confirm_template: an admin of the edition; the instructor's own wording (empty removes it). */
@@ -1218,12 +1324,53 @@ export class Engine {
     });
   }
 
-  /** public.get_transports_for: the closed lessons with an approved transport the caller may see the details of — each as transportOf shows it. */
+  /**
+   * public.get_transports_for: the closed lessons whose transport waits for the instructor or was approved (v18: pending
+   * too) that the caller may see the details of — each as transportOf shows it, with its approval and its pickup_min.
+   */
   transportsOf(): LessonTransport[] {
     return this.week.lessons
-      .filter((l) => l.state === "closed" && l.transport !== "none" && l.approval === "approved" && this.mayTransport(l.id))
+      .filter((l) => l.state === "closed" && l.transport !== "none" && (l.approval === "pending" || l.approval === "approved") && this.mayTransport(l.id))
       .sort((a, b) => a.id - b.id)
-      .map((l) => ({ lesson_id: l.id, ...(this.shared.transport[this.transportKey(l.id)] ?? EMPTY_TRANSPORT) }));
+      .map((l) => {
+        const t: StoredTransport = this.shared.transport[this.transportKey(l.id)] ?? EMPTY_TRANSPORT;
+        return { lesson_id: l.id, ...fiveOf(t), approval: l.approval as "pending" | "approved", pickup_min: t.pickup_min ?? null };
+      });
+  }
+
+  // ---------------------------------------------------------------- day owners (CONTRACT.md «v18»)
+
+  /**
+   * public.set_day_owners (v18): an admin of the edition (archived or not, as set_grid_rules); a day 0–4 and at most
+   * two different members who handle speakers here (`bad_value`). Replaces the day's owners — a member already there
+   * keeps their seen_at, a new one has none; the same set again is nothing. Logged once, the ids ascending.
+   */
+  setDayOwners(day: number, memberIds: number[] | null): void {
+    this.tx(() => {
+      this.requireEditionAdmin();
+      if (!Number.isInteger(day) || day < 0 || day > 4) fail("bad_value");
+      const ids = memberIds ?? [];
+      if (!Array.isArray(ids) || ids.length > 2 || ids.some((m) => typeof m !== "number" || !Number.isInteger(m))) fail("bad_value");
+      if (new Set(ids).size !== ids.length || ids.some((m) => !this.canHandle(m))) fail("bad_value");
+      const all = this.week.dayOwners ?? [];
+      const old = all.filter((o) => o.day === day);
+      const members = [...ids].sort((a, b) => a - b);
+      if (old.length === members.length && members.every((m) => old.some((o) => o.member_id === m))) return;
+      this.week.dayOwners = [
+        ...all.filter((o) => o.day !== day || members.includes(o.member_id)),
+        ...members.filter((m) => !old.some((o) => o.member_id === m)).map((m) => ({ day: day as Day, member_id: m, seen_at: null })),
+      ].sort((a, b) => a.day - b.day || a.member_id - b.member_id);
+      this.log(this.week.edition.id, "editions", this.week.edition.id, "day_owners", { day, members });
+    });
+  }
+
+  /** public.mark_day_seen (v18): a day 0–4 (`bad_value`); one of its owners (`forbidden`) — their own seen_at is now. Not logged. */
+  markDaySeen(day: number): void {
+    this.tx(() => {
+      if (!Number.isInteger(day) || day < 0 || day > 4) fail("bad_value");
+      const mine = (this.week.dayOwners ?? []).find((o) => o.day === day && o.member_id === this.actor.memberId) ?? fail("forbidden");
+      mine.seen_at = this.now();
+    });
   }
 
   /** The Week's names of the fallen: those its plans are for (load_week's `fallen`). */
@@ -1888,7 +2035,7 @@ export class Engine {
               edition: { id: host.nextEditionId(), label, kind: "archive", start_date: start, first_day_from: null, last_day_until: ARCHIVE_LAST_DAY_UNTIL, status: "archived", settings: {} },
               rows: structuredClone(TEMPLATE_2026), rooms: [{ id: host.nextRoomId(), name: ARCHIVE_ROOM, sort: 1, is_default: true }], categories: structuredClone(this.week.categories),
               speakers: this.week.speakers, approaches: [], slotAvailability: [], lessons: [], lessonSpeakers: [], pitches: [], team: [], roster: [], escortTicks: [], sourceFiles: [],
-              memorialPlans: [], fallen: [],
+              memorialPlans: [], fallen: [], dayOwners: [],
             };
         if (existing?.week) {
           replaced = existing.week.lessons.length;

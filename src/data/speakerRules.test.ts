@@ -2,7 +2,7 @@
 // (tests/parity sends the same inputs through both).
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
-import { cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, DEFAULT_TITLES, pickContactPref, pickGender, pickTitle, titlesOf } from "./speakerRules";
+import { cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, DEFAULT_TITLES, LIMITS, pickContactPref, pickGender, pickTitle, titlesOf } from "./speakerRules";
 
 const code = (fn: () => unknown) => {
   try {
@@ -55,5 +55,71 @@ describe("speaker rules", () => {
     expect(cleanContactEmail("Speaker@Example.org")).toBe("Speaker@Example.org");
     expect(code(() => cleanContactEmail("speaker@example"))).toBe("bad_contact_email");
     expect(code(() => cleanContactEmail("a b@example.org"))).toBe("bad_contact_email");
+  });
+});
+
+describe("availability by ranges (v18): what set_availability_ranges takes", () => {
+  const r = (day: number, start: number, end: number, kind: unknown = "can") => ({ day, start, end, kind });
+  const bad = (days: unknown, ranges: unknown, rest?: unknown) => code(() => cleanAvailabilityRanges(days, ranges, rest));
+
+  it("keeps the ranges as given, the days ascending, the rest — no ranges and no rest are an empty list and null", () => {
+    expect(cleanAvailabilityRanges([3, 1], [r(3, 600, 690), r(1, 0, 1830, "cannot")], "cannot")).toEqual({
+      days: [1, 3],
+      ranges: [{ day: 3, start: 600, end: 690, kind: "can" }, { day: 1, start: 0, end: 1830, kind: "cannot" }],
+      rest: "cannot",
+    });
+    expect(cleanAvailabilityRanges([0], null, null)).toEqual({ days: [0], ranges: [], rest: null });
+    expect(cleanAvailabilityRanges([4, 3, 2, 1, 0], undefined, undefined)).toEqual({ days: [0, 1, 2, 3, 4], ranges: [], rest: null });
+    // a key given as undefined is not there (JSON drops it): the four keys are all that count
+    expect(cleanAvailabilityRanges([2], [{ ...r(2, 510, 600), note: undefined }], "can").ranges).toEqual([{ day: 2, start: 510, end: 600, kind: "can" }]);
+  });
+
+  it("refuses the days: none, more than five, a repeat, one outside 0–4, a fraction, a string, not a list", () => {
+    expect(bad([], [])).toBe("bad_value");
+    expect(bad(null, [])).toBe("bad_value");
+    expect(bad([0, 1, 2, 3, 4, 0], [])).toBe("bad_value");
+    expect(bad([1, 1], [])).toBe("bad_value");
+    expect(bad([5], [])).toBe("bad_value");
+    expect(bad([-1], [])).toBe("bad_value");
+    expect(bad([1.5], [])).toBe("bad_value");
+    expect(bad(["1"], [])).toBe("bad_value");
+    expect(bad([null], [])).toBe("bad_value");
+    expect(bad(1, [])).toBe("bad_value");
+  });
+
+  it("refuses the ranges: not a list, more than forty, not an object, a key missing or extra, a day not listed, minutes that are not whole or out of 0–1830, start not before end, a kind", () => {
+    expect(bad([1], {})).toBe("bad_value");
+    expect(bad([1], "510-600")).toBe("bad_value");
+    expect(LIMITS.avail_ranges).toBe(40);
+    expect(bad([1], Array.from({ length: 40 }, () => r(1, 510, 600)))).toBe("ok");
+    expect(bad([1], Array.from({ length: 41 }, () => r(1, 510, 600)))).toBe("bad_value");
+    expect(bad([1], [null])).toBe("bad_value");
+    expect(bad([1], [[1, 510, 600, "can"]])).toBe("bad_value");
+    expect(bad([1], ["can"])).toBe("bad_value");
+    expect(bad([1], [{ day: 1, start: 510, end: 600 }])).toBe("bad_value"); // no kind
+    expect(bad([1], [{ day: 1, start: 510, kind: "can" }])).toBe("bad_value"); // no end
+    expect(bad([1], [{ ...r(1, 510, 600), kind: undefined }])).toBe("bad_value"); // undefined is absent
+    expect(bad([1], [{ ...r(1, 510, 600), note: "הערה לדוגמה" }])).toBe("bad_value"); // never a note
+    expect(bad([1], [r(2, 510, 600)])).toBe("bad_value"); // a day of the grid, but not one of this call's
+    expect(bad([1], [r(7, 510, 600)])).toBe("bad_value");
+    expect(bad([1], [{ ...r(1, 510, 600), day: "1" }])).toBe("bad_value");
+    expect(bad([1], [{ ...r(1, 510, 600), day: null }])).toBe("bad_value");
+    expect(bad([1], [r(1, 510.5, 600)])).toBe("bad_value");
+    expect(bad([1], [r(1, -5, 600)])).toBe("bad_value");
+    expect(bad([1], [r(1, 510, 1831)])).toBe("bad_value");
+    expect(bad([1], [{ ...r(1, 510, 600), start: "510" }])).toBe("bad_value");
+    expect(bad([1], [{ ...r(1, 510, 600), end: null }])).toBe("bad_value");
+    expect(bad([1], [r(1, 600, 600)])).toBe("bad_value");
+    expect(bad([1], [r(1, 690, 600)])).toBe("bad_value");
+    expect(bad([1], [r(1, 510, 600, "maybe")])).toBe("bad_value");
+    expect(bad([1], [r(1, 510, 600, null)])).toBe("bad_value");
+    expect(bad([1], [r(1, 510, 600), r(1, 600, 590)])).toBe("bad_value"); // one bad range refuses them all
+  });
+
+  it("refuses a rest that is not can, cannot or nothing", () => {
+    expect(bad([1], [], "maybe")).toBe("bad_value");
+    expect(bad([1], [], true)).toBe("bad_value");
+    expect(bad([1], [], "")).toBe("bad_value");
+    expect(bad([1], [], "can")).toBe("ok");
   });
 });

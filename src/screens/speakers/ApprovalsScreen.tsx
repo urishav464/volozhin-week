@@ -394,7 +394,7 @@ function Payments({ port, week, busy, run, reload }: { port: DataPort; week: Wee
         <p className="text-ink-soft">אין בקשות לתשלום או להסעה שממתינות לאישור.</p>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-ink-soft">מי שמטפל/ת במרצה ביקש/ה. אחרי האישור אפשר לשלוח למרצה את הודעת הסיכום, והצוות הלוגיסטי רואה את פרטי ההסעה.</p>
+          <p className="text-sm text-ink-soft">מי שמטפל/ת במרצה ביקש/ה. אחרי האישור אפשר לשלוח למרצה את הודעת הסיכום, והצוות הלוגיסטי קובע נהג/ת. במחזור אמיתי הוא רואה את פרטי ההסעה כבר מרגע הבקשה.</p>
           <Field id={noteId} label="הערה לאישור (לא חובה, גלויה לצוות)">
             <input id={noteId} value={note} maxLength={STAGE_LIMITS.decision_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
           </Field>

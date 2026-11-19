@@ -3,6 +3,7 @@
 // contacts across them, the timeline, the hand-over's team, and synthetic data
 // that shows every group of «המרצים שלי».
 import { describe, expect, it } from "vitest";
+import { timeline } from "../domain/activityText";
 import { MINE_GROUPS, mySpeakers, pendingSpeakers, waitingForApproval } from "../domain/mine";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
@@ -108,6 +109,30 @@ describe("the demo's speaker pool", () => {
     expect(await code(other.speakers.setSlotAvailability(1, 32, 3, 13, "can"))).toBe("outside_grid"); // dinner
     expect((await port.speakers.history(1)).map((h) => h.edition_label)).toEqual(["מחזור קודם (לדוגמה)"]);
     expect(await port.speakers.history(2)).toEqual([]);
+  });
+
+  it("availability by ranges (v18): replaces the day's slots, says how many it marked, and the timeline has ONE line for it", async () => {
+    const port = new DemoPort();
+    const day0 = async () => (await port.loadWeek(1)).slotAvailability.filter((v) => v.speaker_id === 9 && v.day === 0).map((v) => [v.row_id, v.kind, v.note]);
+    expect(await day0()).toHaveLength(3); // the demo's three «לא» on Sunday morning
+    const before = (await port.speakers.activity(9)).length;
+    expect(await port.speakers.setAvailabilityRanges(1, 9, [0], [{ day: 0, start: 510, end: 780, kind: "can" }, { day: 0, start: 1200, end: 1260, kind: "cannot" }])).toBe(4);
+    expect(await day0()).toEqual([[4, "can", null], [5, "can", null], [6, "can", null], [14, "cannot", null]]);
+    const log = await port.speakers.activity(9);
+    expect(log).toHaveLength(before + 1);
+    expect(log[0]).toMatchObject({ entity: "approaches", kind: "availability", actor: 1, detail: { speaker: 9, days: [0], ranges: 2, marked: 4, rest: null } });
+    expect(timeline(log, { name: () => "חבר/ת צוות לדוגמה", gender: null })[0].text).toBe("עודכנה הזמינות — 4 משבצות");
+    // any content member, as a single slot; a refusal changes nothing
+    const other = new DemoPort({ memberId: 2, role: "content" });
+    expect(await other.speakers.setAvailabilityRanges(1, 32, [2, 1], [], "cannot")).toBe(24);
+    expect(await code(port.speakers.setAvailabilityRanges(1, 9, [0], [{ day: 1, start: 510, end: 600, kind: "can" }]))).toBe("bad_value");
+    expect(await code(port.speakers.setAvailabilityRanges(1, 9, [], []))).toBe("bad_value");
+    expect(await code(new DemoPort({ memberId: 5, role: "logistics" }).speakers.setAvailabilityRanges(1, 9, [0], []))).toBe("forbidden");
+    expect(await day0()).toHaveLength(4);
+    // no ranges and no rest: the day is cleared — still one line
+    expect(await port.speakers.setAvailabilityRanges(1, 9, [0], [])).toBe(0);
+    expect(await day0()).toEqual([]);
+    expect((await port.speakers.activity(9))[0].detail).toMatchObject({ marked: 0, ranges: 0 });
   });
 
   it("a sandbox's closed lesson pins nothing; a live real edition's does — and shows in the history only to whoever sees that edition", async () => {

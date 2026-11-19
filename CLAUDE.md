@@ -93,7 +93,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   availability per slot (v14). SupabaseSpeakers calls the RPCs; DemoSpeakers runs them on the engine (CONTRACT
   «The speaker pool»). `src/domain/trigram.ts` is pg_trgm's similarity, held equal to the extension.
 - **From placement to arrival (milestone 3, schema v7):** a closed lesson's stages — payment and
-  transport (the handler asks, a global admin decides), the summary message, escorts, sources —
+  transport (the handler asks; a global admin decides — since v18 the edition's admins and logistics too), the summary message, escorts, sources —
   are `WeekCommands` (`src/data/commands.ts`), SQL functions in `schema.sql` «Milestone 3» and the
   engine (CONTRACT «From placement to arrival»); cleaning rules in `src/data/stageRules.ts`.
   `needs_reconfirm` is ONE rule: the trigger `app.lessons_reconfirm` / `Engine.reconfirm` (and
@@ -271,7 +271,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on four bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe) and v16 (bcab571, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on five bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe), v16 (bcab571) and v17 (035f6fa, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -339,6 +339,35 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `settings.titles` (its dry run says so: `titles`); the import reads «עו"ד» and two-word titles in a sheet's spellings
   (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
   DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
+- **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — no screen was rebuilt and none calls
+  the five new functions yet; what an old screen shows changes only through the wider transport visibility below — the lesson
+  panel's transport block opens for an edition admin and for logistics on a pending request, and «לוגיסטיקה ← הסעות» shows an
+  edition admin every approved row's details — plus a few sentences of wording (the hints, «עזרה») (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»: five phases, the screens rebuilt per role — trainees,
+  staff, logistics; the database, the SQL rules, the engine, parity and the exports stay). No new role (trainees = `content`, the
+  two content staff = admins, logistics = `logistics`) and no new refusal code. **Day owners:** `day_owners` (edition, day,
+  member, `seen_at`) — the team reads it in `load_week` as `dayOwners` (`WEEK_KEYS`), never in Realtime; `set_day_owners` (an
+  edition admin: at most two members who `app.can_handle`, replaced as a set) and `mark_day_seen` (an owner, their own row);
+  `start_edition` copies none. **Availability as time ranges is an INPUT method** — `slot_availability` stays the one store:
+  `set_availability_ranges` (`port.speakers.setAvailabilityRanges`) replaces whole days by the v6→v14 conversion's rule («לא»
+  if ANY «לא» range touches a row, else «יכול/ה» only if ONE «יכול/ה» range covers it whole, else `rest`); the pure twin `rangesToSlots`
+  (`src/domain/availability.ts`) is what the engine writes with; ONE activity line per call (`marked` — `timeline()` in
+  `src/domain/activityText.ts` labels both shapes). **Transport in two parts:** `set_transport_request` (pickup address, time and
+  `pickup_min`; the handler or an edition admin, BEFORE the approval) and `set_transport_driver` (driver, phone, arranged;
+  `app.require_logistics`, only once approved — `transport_hidden`), both a JSON PATCH that logs field names, and both refuse
+  `transport_hidden` to anyone `app.may_see_transport` would not let read the row (who writes can read: never a practice or demo
+  week's team, never an archived edition's own admin; a global admin always);
+  `set_transport_details` stays as it is for the old screens. `transport_details.pickup_min` is a `PERSONAL_KEYS` key, read
+  under `transport_details`' own policy (the same `app.may_see_transport`) and returned by `get_transports_for`; never in a Week,
+  Realtime or the offline copy. `app.may_see_transport`: a global admin; in a real live edition its admins, the handler,
+  and logistics while the request is `pending` or `approved` (before: approved only) — `public/privacy.html` says so.
+  `get_transports_for` returns pending and approved, each with `approval` and `pickup_min`; «לוגיסטיקה ← הסעות» still lists
+  the approved only (`transportRows`, `src/exports/logistics.ts`). `decide_payments`: a global admin, or an admin or a logistics
+  member of the lesson's own real live edition — one approval is enough (the approvals screen is still the global admins').
+  `WeekCommands.setDayOwners / markDaySeen / setTransportRequest / setTransportDriver`; cleaners `cleanAvailabilityRanges`
+  (`src/data/speakerRules.ts`), `cleanTransportRequest` / `cleanTransportDriver` (`src/data/stageRules.ts`). Anon unchanged; five
+  more definer functions for `authenticated` (Advisor 80). CONTRACT «v18 — day owners, availability by ranges, transport in two
+  parts»; tests `tests/sql/reset.test.ts`, parity's v18 scenarios (a parity step can pin its answer with `is`, so a twin that
+  agrees with the other on a WRONG answer still fails).
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

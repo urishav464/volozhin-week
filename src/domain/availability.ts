@@ -2,6 +2,7 @@
 // nothing said (no row: «לא ידוע»). Every reader asks here, so the grid's colouring, the chooser, the warnings, the
 // pool's strip and the speaker sheet agree. A lesson or a cell that spans several rows (a merged night, a time split
 // across rows) is judged over every row it covers: «לא» if any of them is «לא», «יכול/ה» only if all of them are.
+// v18: a day's slots can also be typed as time ranges — `rangesToSlots` turns them into the same slots.
 import { rowActive } from "../grid/layout";
 import type { Day } from "./time";
 import type { Edition, GridRow, SlotAvailability } from "./types";
@@ -23,6 +24,47 @@ export function activeLessonRows(rows: readonly GridRow[], edition: Edition, day
 /** The day's active lesson rows that a range [start, end) touches. */
 export function coveredRows(rows: readonly GridRow[], edition: Edition, day: Day, start: number, end: number): GridRow[] {
   return activeLessonRows(rows, edition, day).filter((r) => r.start_min < end && r.end_min > start);
+}
+
+/**
+ * v18: availability typed as a time range — an INPUT method only (the slots stay the one store): «יכול/ה» or «לא»
+ * from `start` to `end`, minutes of the grid's day (06:30 = 390 … 06:30 the next morning = 1830; a night hour belongs
+ * to the day before it).
+ */
+export interface AvailabilityRange {
+  day: Day;
+  start: number;
+  end: number;
+  kind: SlotKind;
+}
+
+/**
+ * What a set of ranges marks, row by row (≡ public.set_availability_ranges, and the v6→v14 conversion's rule): for
+ * every lesson row in play on each of `days`, «לא» if ANY cannot-range touches the row at all; else «יכול/ה» if ONE
+ * can-range covers the row whole (two adjacent ranges never unite); else `rest` — and no mark when that is null. A range
+ * of a day outside `days` is not looked at. No validation (cleanAvailabilityRanges, src/data/speakerRules.ts, is the
+ * command's); by day, then the row's start.
+ */
+export function rangesToSlots(
+  rows: readonly GridRow[],
+  edition: Edition,
+  days: readonly Day[],
+  ranges: readonly AvailabilityRange[],
+  rest: SlotKind | null,
+): { day: Day; row_id: number; kind: SlotKind }[] {
+  const out: { day: Day; row_id: number; kind: SlotKind }[] = [];
+  for (const day of [...new Set(days)].sort((a, b) => a - b)) {
+    const mine = ranges.filter((r) => r.day === day);
+    for (const row of activeLessonRows(rows, edition, day)) {
+      const kind: SlotKind | null = mine.some((r) => r.kind === "cannot" && r.start < row.end_min && r.end > row.start_min)
+        ? "cannot"
+        : mine.some((r) => r.kind === "can" && r.start <= row.start_min && r.end >= row.end_min)
+          ? "can"
+          : rest;
+      if (kind != null) out.push({ day, row_id: row.id, kind });
+    }
+  }
+  return out;
 }
 
 /** Every speaker's slots, once per load. */

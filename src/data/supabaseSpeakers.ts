@@ -4,6 +4,7 @@
 // the contract's code — never a raw Postgres message. Contacts are fetched
 // one speaker at a time, through the contacts policy (get_speaker_contacts).
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, SpeakerContacts, Vetting } from "../domain/types";
 import { CommandError } from "./commands";
@@ -93,5 +94,11 @@ export class SupabaseSpeakers implements SpeakerPort {
 
   async setSlotAvailability(editionId: number, speakerId: number, day: Day, rowId: number, kind: "can" | "cannot" | null, note: string | null = null): Promise<void> {
     await this.rpc("set_slot_availability", { p_edition: editionId, p_speaker: speakerId, p_day: day, p_row: rowId, p_kind: kind, p_note: note });
+  }
+
+  /** v18: the ranges as {day, start, end, kind} objects — nothing else of what the caller holds goes on the wire. Returns the slots marked. */
+  async setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest: SlotKind | null = null): Promise<number> {
+    const p_ranges = ranges.map(({ day, start, end, kind }) => ({ day, start, end, kind }));
+    return num(await this.rpc("set_availability_ranges", { p_edition: editionId, p_speaker: speakerId, p_days: days, p_ranges, p_rest: rest }));
   }
 }

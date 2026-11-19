@@ -38,7 +38,8 @@ describe("memorial times and logistics on the wire", () => {
       [200, 501], [204, null], [200, 9], [204, null], [204, null], [204, null], [204, null],
     ]);
     const c = supabaseCommands(sb, 7);
-    expect(await c.transports()).toEqual([{ lesson_id: 41, pickup_address: null, pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: true }]);
+    // (the answer of a database from before v18: no approval, no pickup_min — read as approved, no minute)
+    expect(await c.transports()).toEqual([{ lesson_id: 41, pickup_address: null, pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: true, approval: "approved", pickup_min: null }]);
     expect(await c.addMemorialSlot(0, 780, 795, null)).toBe(501);
     await c.removeMemorialSlot(501);
     expect(await c.addMemorialPlan(3)).toBe(9);

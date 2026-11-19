@@ -69,6 +69,24 @@ describe("a speaker's timeline", () => {
     expect(timeline([log[0]], ctx(null))[0].text).toBe(`זמינות: ראשון ${LRM}08:30–10:00 — לא יכול/ה`);
   });
 
+  it("availability by ranges (v18): one line for the whole update — how many slots it marked; the per-slot rows beside it read as before", () => {
+    const log = [
+      row("approaches", "availability", { speaker: 4, days: [1, 3], ranges: 2, marked: 7, rest: "cannot" }),
+      row("approaches", "availability", { speaker: 4, days: [2], ranges: 1, marked: 1, rest: null }),
+      row("approaches", "availability", { speaker: 4, days: [2], ranges: 0, marked: 0, rest: null }),
+      row("approaches", "availability", { speaker: 4, day: 0, start: 510, end: 600, kind: "can" }),
+      row("approaches", "availability", { speaker: 4, day: 1, part: "evening", kind: "cannot" }),
+    ];
+    for (const g of ["m", "f", null] as const) {
+      expect(timeline(log, ctx(g)).slice(0, 3).map((l) => l.text)).toEqual(["עודכנה הזמינות — 7 משבצות", "עודכנה הזמינות — משבצת אחת", "עודכנה הזמינות — 0 משבצות"]);
+    }
+    expect(timeline(log, ctx("f")).slice(3).map((l) => l.text)).toEqual([`זמינות: ראשון ${LRM}08:30–10:00 — יכולה`, "זמינות: שני ערב — לא יכולה"]);
+    expect(timeline(log, ctx("f"))[0]).toMatchObject({ who: "חניך/ה א׳", note: null }); // never a note in this event
+    // a count that came as text (bigint columns do) reads the same; one that is no number falls back to the old line
+    expect(timeline([row("approaches", "availability", { speaker: 4, days: [1], ranges: 1, marked: "12", rest: null })], ctx("m"))[0].text).toBe("עודכנה הזמינות — 12 משבצות");
+    expect(timeline([row("approaches", "availability", { speaker: 4, days: [1], marked: null })], ctx("m"))[0].text).toBe("זמינות עודכנה");
+  });
+
   it("a row logged before v14 (a part of a day) still reads; one it cannot place says only that it changed", () => {
     const log = [
       row("approaches", "availability", { speaker: 4, day: 1, part: "evening", kind: "can" }),

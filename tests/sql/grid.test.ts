@@ -114,7 +114,9 @@ describe("the grid's tables and functions", () => {
   it("load_week returns the whole Week shape, without contact details", async () => {
     await as(db, "authenticated", google(B), async (q) => {
       const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
-      expect(Object.keys(w).sort()).toEqual(["approaches", "categories", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "rooms", "roster", "rows", "slotAvailability", "sourceFiles", "speakers", "team"]);
+      // v18: the days' owners
+      expect(Object.keys(w).sort()).toEqual(["approaches", "categories", "dayOwners", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "rooms", "roster", "rows", "slotAvailability", "sourceFiles", "speakers", "team"]);
+      expect(w.dayOwners).toEqual([]);
       expect(w.rows).toHaveLength(21);
       expect(w.lessons).toHaveLength(1);
       expect(JSON.stringify(w)).not.toContain("synthetic-phone");

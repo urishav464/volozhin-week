@@ -221,6 +221,7 @@ export function demoWeek(): Week {
       { id: 3, fallen_id: 3, lesson_id: null, family_status: "not_contacted", speaker_text: null, planned_minutes: null, hard_stop: false, materials_note: null, version: 1 },
     ],
     fallen: DEMO_FALLEN.slice(0, 3).map(({ id, name, gender }) => ({ id, name, gender })),
+    dayOwners: [], // v18: the demo starts with no day owners
   };
 }
 

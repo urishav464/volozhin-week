@@ -6,7 +6,7 @@
 // (src/data/engine.ts) refuses exactly what production refuses — tests/parity
 // runs the same inputs through both.
 import type { DutyPhrase, DutyWhen, PrintWhen, SourcesKind, Transport, TransportDetails } from "../domain/types";
-import { CommandError } from "./commands";
+import { CommandError, type TransportDriverPatch, type TransportRequestPatch } from "./commands";
 import { cleanLine, cleanPhone } from "./speakerRules";
 
 const fail = (code: string): never => {
@@ -27,6 +27,8 @@ export const STAGE_LIMITS = {
   pickup_address: 200,
   pickup_time: 60,
   driver_name: 80,
+  /** v18: transport_details.pickup_min — minutes from 00:00 of the lesson's grid day, 0 … 1830. */
+  pickup_min_max: 1830,
 } as const;
 
 export const TRANSPORTS: readonly Transport[] = ["none", "one_way", "round_trip"];
@@ -97,6 +99,58 @@ export function cleanTransportDetails(d: Partial<TransportDetails>): TransportDe
     driver_phone: cleanPhone(d.driver_phone),
     arranged: d.arranged === true,
   };
+}
+
+/** A JSON object's keys as the database sees them: one whose value is undefined is not there (JSON drops it). */
+function presentKeys(v: unknown): [string, unknown][] {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) fail("bad_value");
+  return Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined);
+}
+
+const isText = (x: unknown): x is string | null => x === null || typeof x === "string";
+
+/**
+ * public.set_transport_request (v18): the request's half of the details — any of pickup_address, pickup_time (one line
+ * each, empty → null) and pickup_min (a whole minute 0…1830, or null). Only the keys present come back; any other key,
+ * a text that is neither a string nor null, a minute that is not one: `bad_value`.
+ */
+export function cleanTransportRequest(v: unknown): TransportRequestPatch {
+  const entries = presentKeys(v);
+  for (const [k, x] of entries) {
+    if (k === "pickup_address" || k === "pickup_time") {
+      if (!isText(x)) fail("bad_value");
+    } else if (k === "pickup_min") {
+      if (x !== null && !(typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= STAGE_LIMITS.pickup_min_max)) fail("bad_value");
+    } else fail("bad_value");
+  }
+  const p = Object.fromEntries(entries) as { pickup_address?: string | null; pickup_time?: string | null; pickup_min?: number | null };
+  const out: TransportRequestPatch = {};
+  if ("pickup_address" in p) out.pickup_address = cleanLine(p.pickup_address, STAGE_LIMITS.pickup_address);
+  if ("pickup_time" in p) out.pickup_time = cleanLine(p.pickup_time, STAGE_LIMITS.pickup_time);
+  if ("pickup_min" in p) out.pickup_min = p.pickup_min ?? null;
+  return out;
+}
+
+/**
+ * public.set_transport_driver (v18): the driver's half — any of driver_name, driver_phone (one line each, empty → null;
+ * a phone of at least 6 digits, else `bad_phone`) and arranged (a boolean). The shape first — any other key, a text
+ * that is neither a string nor null, an `arranged` that is not true or false: `bad_value` — then the values.
+ */
+export function cleanTransportDriver(v: unknown): TransportDriverPatch {
+  const entries = presentKeys(v);
+  for (const [k, x] of entries) {
+    if (k === "driver_name" || k === "driver_phone") {
+      if (!isText(x)) fail("bad_value");
+    } else if (k === "arranged") {
+      if (typeof x !== "boolean") fail("bad_value");
+    } else fail("bad_value");
+  }
+  const p = Object.fromEntries(entries) as { driver_name?: string | null; driver_phone?: string | null; arranged?: boolean };
+  const out: TransportDriverPatch = {};
+  if ("driver_name" in p) out.driver_name = cleanLine(p.driver_name, STAGE_LIMITS.driver_name);
+  if ("driver_phone" in p) out.driver_phone = cleanPhone(p.driver_phone);
+  if ("arranged" in p) out.arranged = p.arranged === true;
+  return out;
 }
 
 export const EMPTY_TRANSPORT: TransportDetails = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };

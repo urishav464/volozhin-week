@@ -70,6 +70,22 @@ describe("SupabaseSpeakers on the wire", () => {
     expect(sent.every((r) => r.method === "POST")).toBe(true);
   });
 
+  it("v18: availability by ranges goes by its parameter names — the ranges as {day, start, end, kind} alone — and answers how many slots it marked", async () => {
+    const { s, sent } = port([[200, 3], [200, "0"], [400, { code: "P0001", message: "bad_value", details: null, hint: null }], [400, { code: "P0001", message: "speaker_retired", details: null, hint: null }]]);
+    const ranges = [{ day: 1 as const, start: 510, end: 780, kind: "can" as const }, { day: 1 as const, start: 650, end: 700, kind: "cannot" as const }];
+    expect(await s.setAvailabilityRanges(7, 41, [1], ranges, "cannot")).toBe(3);
+    // what an editor's row might carry besides (an id, a label) never goes on the wire: an extra key would be refused
+    expect(await s.setAvailabilityRanges(7, 41, [3, 1], [{ ...ranges[0], id: "r1", label: "בוקר" } as never])).toBe(0);
+    expect(await code(s.setAvailabilityRanges(7, 41, [1], [{ day: 2, start: 510, end: 600, kind: "can" }]))).toBe("bad_value");
+    expect(await code(s.setAvailabilityRanges(7, 41, [1], []))).toBe("speaker_retired");
+    expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
+      ["set_availability_ranges", { p_edition: 7, p_speaker: 41, p_days: [1], p_ranges: [{ day: 1, start: 510, end: 780, kind: "can" }, { day: 1, start: 650, end: 700, kind: "cannot" }], p_rest: "cannot" }],
+      ["set_availability_ranges", { p_edition: 7, p_speaker: 41, p_days: [3, 1], p_ranges: [{ day: 1, start: 510, end: 780, kind: "can" }], p_rest: null }],
+      ["set_availability_ranges", { p_edition: 7, p_speaker: 41, p_days: [1], p_ranges: [{ day: 2, start: 510, end: 600, kind: "can" }], p_rest: null }],
+      ["set_availability_ranges", { p_edition: 7, p_speaker: 41, p_days: [1], p_ranges: [], p_rest: null }],
+    ]);
+  });
+
   it("reads contacts as four fields, and the matches, history and timeline as numbers where ids are", async () => {
     const { s } = port([
       [200, { phone: "555 0100 99", email: null, secretary_note: "דרך המזכירות", notes: null }],
