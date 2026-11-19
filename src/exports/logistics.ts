@@ -18,7 +18,7 @@
 // «למלא», is saved only on «שמירה», and never reaches a file.
 import type { LessonTransport } from "../data/commands";
 import type { KkData, KkGroup } from "../data/kk";
-import { fromPreviousSpeaker } from "../data/sourceRules";
+import { fromPreviousSpeaker, isPresentation } from "../data/sourceRules";
 import { groupName, LEADER_KIND_LABEL, leaderName, leadersOf } from "../domain/kk";
 import { displayName } from "../domain/names";
 import { PRINT_WHEN_LABEL, TRANSPORT_LABEL } from "../domain/stages";
@@ -256,7 +256,7 @@ export function printRows(week: Week): PrintRow[] {
     .map((l) => {
       const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id ?? null;
       // the current speaker's files to print — never a presentation (v19: shown in the room, not printed)
-      const files = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id && !fromPreviousSpeaker(f, lead) && f.kind !== "presentation").sort((a, b) => a.id - b.id);
+      const files = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id && !fromPreviousSpeaker(f, lead) && !isPresentation(f)).sort((a, b) => a.id - b.id);
       const speaker = speakersOf(week, l.id) || "TBD";
       return {
         lesson: l,

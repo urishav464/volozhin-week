@@ -28,8 +28,6 @@ export const BUCKET_MIMES: readonly SourceMime[] = [PDF, "image/png", "image/jpe
 /** What the file picker offers (accept=…). */
 export const SOURCE_ACCEPT = ".pdf,.docx,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg," + DOCX;
 export const COVER_ACCEPT = ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg";
-/** v19: what a presentation's picker offers — any of the five. */
-export const PRESENTATION_ACCEPT = ".pptx,.pdf,.docx,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg," + DOCX + "," + PPTX;
 
 const EXT: Record<SourceMime, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", [DOCX]: "docx", [PPTX]: "pptx" };
 

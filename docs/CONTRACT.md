@@ -2145,9 +2145,11 @@ order of «Sources and the reader» above, with the type check widened and three
 - then the display name and the pages (`bad_value`), as before.
 
 A retry (a row already at the path) answers that row whatever `p_kind` says. A presentation: on a lesson its slides —
-any of the five types (`speaker_id` the lead, `page_count` as for a source: a PDF's pages, a picture 1, else null);
-on the cover path the week's own («המצגת המלווה לשבוע»: the cover path is the edition's admins', as the poster —
-`app.source_refusal` is unchanged and refuses Word alone there). **A presentation never touches the lesson** —
+any of the five types; it keeps the lesson's lead as `speaker_id`, exactly as a source does (so a reopen shows it «מהמרצה
+הקודם» too), and its `page_count` as for a source (a PDF's pages, a picture 1, else null); on the cover path the week's
+own («המצגת המלווה לשבוע»: the cover path is the edition's admins', as the poster — `app.source_refusal` is unchanged
+and refuses Word alone there) — an EDITION-LEVEL presentation is exactly `lesson_id` null, `cover` false (and
+`speaker_id` / `fallen_id` null), whatever the edition's cover is. **A presentation never touches the lesson** —
 `sources_kind`, `in_reader`, `version` — **is never the reader's cover** (`cover` false; `set_reader_cover` refuses it,
 `bad_value`) **and is never in the reader** (`readerFilesOf`, `readerManifest`, `unreadForReader`, `printRows` skip
 it). The current speaker's «first file» counts sources only: a lesson whose first file was a presentation still goes
@@ -2166,8 +2168,9 @@ of the block is as it was (it never rewrites the size, it always makes the bucke
   first. The guard (`app.rota_cohorts_guard`), after `sort`: a null flag → `bad_value` (before the NOT NULL).
   Column grants: INSERT and UPDATE of both.
 - `rota_prep_tasks.kind` (`task` / `item`) and `qty`: the guard (`app.rota_prep_guard`), after the text: `kind` null or
-  unknown → `bad_value`; a task's `qty` := null whatever was sent; an item's `app.rota_no_contact(app.clean_line(qty,
-  40))` (`bad_value` / `rota_contact_in_text`). «נקנה» is `done`. Column grants: INSERT and UPDATE of both.
+  unknown → `bad_value`; then `qty` := `app.rota_no_contact(app.clean_line(qty, 40))` (`bad_value` /
+  `rota_contact_in_text`) WHATEVER the kind — a phone sent in a task's quantity refuses too — and a task's := null.
+  «נקנה» is `done`. Column grants: INSERT and UPDATE of both.
   `addPrepTasks(edition, rows, kind)` is still ONE insert, its sort continuing the edition's last over both kinds.
 - `load_rota`: cohorts exactly `id edition_id letter name diets sort helps_rota can_drive`; prep exactly `id edition_id
   text group_id done sort kind qty`.

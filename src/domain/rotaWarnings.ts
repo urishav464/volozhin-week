@@ -5,8 +5,8 @@
 // shift the week no longer has stays, warned about, until someone moves it. A cohort that does not help (v19
 // `helpsRota`) still has its presence asked for — it feeds the meal counts — but its groups are out of the fairness,
 // and a duty given to one of them by hand is the `not_helping` warning.
-import type { RotaAssignment, RotaCohort, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
-import { groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
+import type { RotaAssignment, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import { byCohortOrder, groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presenceMarked, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
 import { overNeed, ROTA_LOAD_TOLERANCE } from "./rotaSuggest";
 import { type Day, DAY_NAMES } from "./time";
 import type { Edition } from "./types";
@@ -41,8 +41,6 @@ export interface RotaWarning {
 export type RotaWarningData = Pick<RotaData, "cohorts" | "presence" | "groups" | "duties" | "assignments"> & Partial<Pick<RotaData, "staff">>;
 type WeekEdges = Pick<Edition, "first_day_from" | "last_day_until" | "settings">;
 
-const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
 /**
  * Every warning of the rota. `staff` (default: the data's) is what «אחראי/ת משמרת» is looked for in: without it, the
  * shifts' leads are not checked.
@@ -51,7 +49,7 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   const out: RotaWarning[] = [];
   const labels = rotaShiftsOf(edition).labels;
   const when = (day: number, shift: number) => `יום ${DAY_NAMES[day as Day]} · משמרת ${labels[shift]}`;
-  const cohorts = [...data.cohorts].sort((a: RotaCohort, b: RotaCohort) => a.sort - b.sort || cmpStr(a.letter, b.letter) || a.id - b.id);
+  const cohorts = [...data.cohorts].sort(byCohortOrder);
   const cohortOf = new Map(cohorts.map((c) => [c.id, c]));
   const rank = new Map(cohorts.map((c, i) => [c.id, i]));
   const groups = [...data.groups].sort((a, b) => (rank.get(a.cohort_id) ?? 1e9) - (rank.get(b.cohort_id) ?? 1e9) || a.number - b.number || a.id - b.id);
@@ -71,7 +69,7 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   // ---- the cohorts and the groups
   for (const c of cohorts) {
     const mine = groups.filter((g) => g.cohort_id === c.id).map((g) => g.id);
-    if (!data.presence.some((p) => p.cohort_id === c.id)) {
+    if (!presenceMarked(data, c.id)) {
       // a cohort that does not help: the suggestion would not place its groups anyway — only its presence is missing
       const message = helpsRota(c) ? `לא סומן מתי ${c.name} בקמפוס — ההצעה לא משבצת את הקבוצות שלה` : `לא סומן מתי ${c.name} בקמפוס`;
       out.push({ key: `presence_unknown:${c.id}`, kind: "presence_unknown", severity: "warn", groupIds: mine, message });

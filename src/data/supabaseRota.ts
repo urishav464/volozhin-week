@@ -284,9 +284,12 @@ export class SupabaseRota implements RotaPort {
   async updatePrepTask(id: number, patch: PrepPatch): Promise<void> {
     const p: Record<string, unknown> = {};
     if (patch.text !== undefined) p.text = cleanPrepText(patch.text);
-    // v19: the kind, then the quantity — cleaned whatever the kind (the guard then sets a task's to null)
+    // v19: the kind, then the quantity — cleaned whatever the kind (a phone refuses), a task's then sent as null
     if (patch.kind !== undefined) p.kind = cleanPrepKind(patch.kind);
-    if (patch.qty !== undefined) p.qty = cleanQty(patch.qty);
+    if (patch.qty !== undefined) {
+      const qty = cleanQty(patch.qty);
+      p.qty = p.kind === "task" ? null : qty;
+    }
     if (patch.group_id !== undefined) p.group_id = patch.group_id;
     if (patch.done !== undefined) p.done = cleanBool(patch.done);
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);

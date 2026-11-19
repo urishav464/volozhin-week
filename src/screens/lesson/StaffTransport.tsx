@@ -7,11 +7,12 @@
 // while leaving its minute behind. The grid's panel keeps that one (PaymentStage TransportBlock).
 import { useRef, useState } from "react";
 import type { TransportDriverPatch } from "../../data/commands";
+import { mayLogisticsWrite } from "../../domain/approvals";
 import { Chip } from "../../grid/bits";
 import { DriverForm } from "../logistics/DriverForm";
 import { Button, useFocusBack, useFocusRescue } from "../settings/kit";
 import { transportHiddenText, TransportView } from "../stages/PaymentStage";
-import { archivedEdition, LINK_BUTTON, type StageCtx } from "../stages/parts";
+import { LINK_BUTTON, type StageCtx } from "../stages/parts";
 import { useTransportDetails } from "./TransportRequest";
 
 /** Before the decision: the driver waits for it. */
@@ -19,7 +20,7 @@ export const DRIVER_AFTER_APPROVAL = "את הנהג/ת קובעים אחרי ה�
 
 /** set_transport_driver's people (app.require_logistics): logistics or an admin; an archive the admins' only. */
 export function mayArrangeDriver(actor: Pick<StageCtx["actor"], "role" | "isAdmin">, week: StageCtx["week"]): boolean {
-  return (actor.role === "logistics" || actor.isAdmin) && (actor.isAdmin || !archivedEdition(week));
+  return mayLogisticsWrite(actor, week.edition);
 }
 
 export function StaffTransport({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {

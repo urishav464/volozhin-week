@@ -280,7 +280,7 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(sent[4].body).toEqual({ group_id: 11, done: true });
   });
 
-  it("v19: a shopping list — ONE insert of items with their quantities after the last of both lists; a task's quantity never sent", async () => {
+  it("v19: a shopping list — ONE insert of items with their quantities after the last of both lists; a task's quantity never sent (but cleaned)", async () => {
     const { r, sent } = port([[200, [{ sort: 4 }]], [201, [{ id: 5 }, { id: 6 }]], [200, [{ id: 5 }]], [200, [{ id: 5 }]], [200, [{ id: 5 }]]]);
     await r.addPrepTasks(7, [{ text: " פריט לדוגמה 1 ", qty: " 2 (לדוגמה) " }, "פריט לדוגמה 2"], "item");
     await r.updatePrepTask(5, { qty: "3" });
@@ -290,6 +290,7 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(await code(r.addPrepTasks(7, [{ text: "פריט", qty: "א".repeat(41) }], "item"))).toBe("bad_value");
     expect(await code(r.addPrepTasks(7, ["פריט"], "thing" as never))).toBe("bad_value");
     expect(await code(r.updatePrepTask(5, { kind: null as never }))).toBe("bad_value");
+    expect(await code(r.updatePrepTask(5, { kind: "task", qty: "טל' 1234567" }))).toBe("rota_contact_in_text"); // ≡ the guard
     expect(sent.map((s) => [s.method, s.path])).toEqual([["GET", "rota_prep_tasks"], ["POST", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"]]);
     expect(sent[1].body).toEqual([
       { edition_id: 7, text: "פריט לדוגמה 1", kind: "item", qty: "2 (לדוגמה)", group_id: null, done: false, sort: 5 },

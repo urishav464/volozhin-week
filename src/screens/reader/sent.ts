@@ -2,20 +2,17 @@
 // The mark is the edition's settings.reader_sent {at, by}; files uploaded after it are filesAfterSent
 // (src/reader/model.ts). Who may mark it is app.require_logistics: the edition's logistics team and its admins; an
 // archived edition (or an archive) its admins only. Everyone else who opens /reader reads the state.
-import { israelDate, israelMoment } from "../../domain/israelTime";
-import type { Edition, TeamMember, Week } from "../../domain/types";
-import type { Actor } from "../weekStore";
+import { mayLogisticsWrite } from "../../domain/approvals";
+import { israelMoment } from "../../domain/israelTime";
+import type { TeamMember, Week } from "../../domain/types";
 
-/** app.require_logistics in the browser. */
-export function maySendReader(actor: Pick<Actor, "isAdmin" | "role">, edition: Pick<Edition, "kind" | "status">): boolean {
-  if (actor.isAdmin) return true;
-  return actor.role === "logistics" && edition.kind !== "archive" && edition.status !== "archived";
-}
+/** app.require_logistics in the browser — the driver's rule too (src/domain/approvals.ts). */
+export const maySendReader = mayLogisticsWrite;
 
-/** «7.2.2027» and «18:05», in Israel. */
+/** «7.2.2027» and «18:05», in Israel (israelMoment's two parts). */
 function dayAndTime(iso: string): { day: string; time: string } {
-  const [y, m, d] = israelDate(iso).split("-").map(Number);
-  return { day: `${d}.${m}.${y}`, time: israelMoment(iso).split(" ")[1] ?? "" };
+  const [day, time = ""] = israelMoment(iso).split(" ");
+  return { day, time };
 }
 
 /** The panel's line: not marked, or when and by whom (a member who left the team: no name). */

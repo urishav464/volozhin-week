@@ -12,14 +12,15 @@
 // manifest) — nothing here decides anything of its own.
 import type { LessonTransport } from "../../data/commands";
 import type { KkData } from "../../data/kk";
-import { prepKindOf, type RotaCohort, type RotaData } from "../../data/rota";
-import { daysToWeek, israelDate } from "../../domain/israelTime";
+import type { RotaData } from "../../data/rota";
+import { daysToWeek, israelMoment } from "../../domain/israelTime";
 import { kkWindowState } from "../../domain/kkWindow";
 import { pendingPayments } from "../../domain/mine";
-import { canDrive, helpsRota } from "../../domain/rota";
+import { byCohortOrder, canDrive, helpsRota, presenceMarked } from "../../domain/rota";
 import { rotaWarnings } from "../../domain/rotaWarnings";
 import type { Week } from "../../domain/types";
 import { paymentRows, printRows } from "../../exports/logistics";
+import { prepCounts } from "../../exports/rota";
 import { filesAfterSent, readerManifest, readerRows } from "../../reader/model";
 import { boardCounts } from "./lanes";
 
@@ -81,14 +82,8 @@ export function weekLine(days: number | null): string {
 /** «1 → the singular phrase, N → the plural one». */
 const count = (n: number, one: string, many: (n: number) => string) => (n === 1 ? one : many(n));
 
-/** «20.2.2027» — an instant's date in Israel. */
-function dmy(iso: string): string {
-  const [y, m, d] = israelDate(iso).split("-").map(Number);
-  return `${d}.${m}.${y}`;
-}
-
-const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const byCohort = (a: RotaCohort, b: RotaCohort) => a.sort - b.sort || cmpStr(a.letter, b.letter) || a.id - b.id;
+/** «20.2.2027» — an instant's date in Israel (israelMoment's date). */
+const dmy = (iso: string): string => israelMoment(iso).split(" ")[0];
 
 type Base = Pick<Task, "key" | "title" | "to">;
 const task = (base: Base, state: TaskState, line: string): Task => ({ ...base, state, line });
@@ -99,10 +94,10 @@ const task = (base: Base, state: TaskState, line: string): Task => ({ ...base, s
 function presenceTask(rota: RotaData | null): Task {
   const base: Base = { key: "presence", title: "נוכחות המכינות", to: "/logistics/rota/setup" };
   if (!rota) return task(base, "unknown", NOT_LOADED);
-  const cohorts = [...rota.cohorts].sort(byCohort);
+  const cohorts = [...rota.cohorts].sort(byCohortOrder);
   if (cohorts.length === 0) return task(base, "empty", "עוד לא הוזנו מכינות");
   // presence_unknown's rule: no presence row at all for the cohort (never assumed)
-  const unmarked = cohorts.filter((c) => !rota.presence.some((p) => p.cohort_id === c.id));
+  const unmarked = cohorts.filter((c) => !presenceMarked(rota, c.id));
   if (unmarked.length > 0) return task(base, "open", `לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`);
   const n = count(cohorts.length, "מכינה אחת", (k) => `${k} מכינות`);
   return task(base, "done", `${n} · עוזרות בתורנויות: ${cohorts.filter(helpsRota).length} · יכולות להסיע: ${cohorts.filter(canDrive).length}`);
@@ -128,9 +123,7 @@ function assignTask(rota: RotaData | null, week: Week): Task {
   const noLead = shifts("no_lead");
   const under = shifts("under");
   const over = shifts("over");
-  const notHelping = new Set(rota.cohorts.filter((c) => !helpsRota(c)).map((c) => c.id));
-  const cohortOf = new Map(rota.groups.map((g) => [g.id, g.cohort_id]));
-  const byHand = rota.assignments.filter((a) => notHelping.has(cohortOf.get(a.group_id) ?? -1)).length;
+  const byHand = of("not_helping").length; // one warning per assignment
   const parts = [
     sizeless && count(sizeless, "קבוצה אחת בלי גודל", (n) => `${n} קבוצות בלי גודל`),
     headless && count(headless, "קבוצה אחת בלי ראש/ת קבוצה", (n) => `${n} קבוצות בלי ראש/ת קבוצה`),
@@ -218,15 +211,13 @@ function readerTask(week: Week): Task {
 function prepTask(rota: RotaData | null): Task {
   const base: Base = { key: "prep", title: "מוצ״ש", to: "/logistics/rota/prep" };
   if (!rota) return task(base, "unknown", NOT_LOADED);
-  const tasks = rota.prep.filter((t) => prepKindOf(t) === "task");
-  const items = rota.prep.filter((t) => prepKindOf(t) === "item");
-  if (tasks.length === 0 && items.length === 0) return task(base, "empty", "עוד אין משימות או קניות");
-  const done = (xs: typeof tasks) => xs.filter((t) => t.done).length;
+  const c = prepCounts(rota);
+  if (c.tasks === 0 && c.items === 0) return task(base, "empty", "עוד אין משימות או קניות");
   const parts = [
-    ...(tasks.length > 0 ? [`${done(tasks)}/${tasks.length} משימות בוצעו`] : []),
-    ...(items.length > 0 ? [`${done(items)}/${items.length} פריטים נקנו`] : []),
+    ...(c.tasks > 0 ? [`${c.tasksDone}/${c.tasks} משימות בוצעו`] : []),
+    ...(c.items > 0 ? [`${c.itemsBought}/${c.items} פריטים נקנו`] : []),
   ];
-  return task(base, rota.prep.every((t) => t.done) ? "done" : "open", parts.join(" · "));
+  return task(base, c.tasksDone === c.tasks && c.itemsBought === c.items ? "done" : "open", parts.join(" · "));
 }
 
 /** The home's three groups, always all three, each task in one of its four states. */

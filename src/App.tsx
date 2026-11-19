@@ -310,7 +310,8 @@ function GateScreen(props: {
       // The gate above stays in front of every route. «הגדרות» is for admins only; «אישורים» for a global admin, an
       // edition's admin and logistics (handlesLogistics — the page shows each what they may do); anyone else who opens
       // one lands on `/`. The outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the
-      // designer's export an admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the
+      // designer's export an admin's; the reader (v19) every member's — content and admins build it whole, logistics
+      // build, download and mark «נשלח לדפוס» — «לוגיסטיקה» logistics' and admins' (the
       // screens also check the edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and
       // printed from «תוצרים» (/print/rota), which every member reads. The reset, phase 2: a trainee's `/` is «היום
       // שלי» (Home); the trainee's pages — /week, /speakers…, /lesson/:id — are every member's by address (the

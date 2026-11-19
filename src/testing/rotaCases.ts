@@ -8,7 +8,9 @@
 // v19: a cohort's two flags (`helps_rota`, `can_drive` — addCohort's and updateCohort's args, sent as the columns), and
 // `addPrepRows` — one insert of rows of one `kind` («task» or «item», sent as it is: the guard checks it) with their
 // quantities (`qty`, an item's); its `prep`, on an "ok", is the edition's whole list afterwards (the fixture has none),
-// in order — what the guard wrote: a task's quantity is null, whatever was sent.
+// in order — what the guard wrote: a task's quantity is null. A quantity is cleaned whatever the kind (a phone in a
+// task's refuses too). `updatePrep`: one row «פריט לדוגמה» of `kind` (quantity «1») is there before the case starts
+// (written as the owner, through the guard); the case updates it with `args`.
 import type { NewAssignment, NewCohort, NewDuty, NewGroup, NewStaffShift, PrepKind, RotaShiftsSetting } from "../data/rota";
 
 export const ROTA_FIXTURE = {
@@ -48,6 +50,7 @@ export type RotaCase =
       expect: string;
       prep?: { text: string; kind: PrepKind; qty: string | null }[];
     }
+  | { name: string; op: "updatePrep"; kind: PrepKind; args: { qty: string | null }; expect: string; prep?: { text: string; kind: PrepKind; qty: string | null }[] }
   | { name: string; op: "setShifts"; args: RotaShiftsSetting | null; expect: string }
   | { name: string; op: "setContact"; ref: Ref; args: string | null; expect: string };
 
@@ -113,9 +116,13 @@ export const ROTA_CASES: RotaCase[] = [
     prep: [{ text: "פריט לדוגמה 1", kind: "item", qty: "2 (לדוגמה)" }, { text: "פריט לדוגמה 2", kind: "item", qty: null }],
   },
   {
-    name: "a task's quantity is dropped, a phone in it too", op: "addPrepRows", kind: "task", args: [{ text: "משימה לדוגמה", qty: "הקפצת מרצה, טל' 1234567" }], expect: "ok",
+    name: "a task's quantity is dropped", op: "addPrepRows", kind: "task", args: [{ text: "משימה לדוגמה", qty: "3" }], expect: "ok",
     prep: [{ text: "משימה לדוגמה", kind: "task", qty: null }],
   },
+  { name: "a phone in a task's quantity", op: "addPrepRows", kind: "task", args: [{ text: "משימה לדוגמה", qty: "הקפצת מרצה, טל' 1234567" }], expect: "rota_contact_in_text" },
+  { name: "an item's quantity, updated", op: "updatePrep", kind: "item", args: { qty: " 4 " }, expect: "ok", prep: [{ text: "פריט לדוגמה", kind: "item", qty: "4" }] },
+  { name: "a task's quantity, updated: dropped", op: "updatePrep", kind: "task", args: { qty: "3" }, expect: "ok", prep: [{ text: "פריט לדוגמה", kind: "task", qty: null }] },
+  { name: "a phone in a task's quantity, updated", op: "updatePrep", kind: "task", args: { qty: "טל' 1234567" }, expect: "rota_contact_in_text" },
   { name: "an unknown kind", op: "addPrepRows", kind: "thing", args: [{ text: "פריט לדוגמה" }], expect: "bad_value" },
   { name: "no kind", op: "addPrepRows", kind: null, args: [{ text: "פריט לדוגמה" }], expect: "bad_value" },
   { name: "an empty row before an unknown kind (the text first)", op: "addPrepRows", kind: "thing", args: [{ text: "   " }], expect: "name_required" },

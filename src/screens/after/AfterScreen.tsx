@@ -4,7 +4,7 @@
 // «כל השיעורים» (`?all=1`) with «נכתב / עוד לא נכתב». The data is the loaded Week and ONE read of the edition's reviews
 // (port.reviews.ofEdition — again after each save, never one per lesson). `?lesson=` opens that row and takes the focus
 // there (from «סיכום המחזור»). Before any review can open a trainee sees one calm line. Content and admins only: logistics
-// never reads an opinion about a person (App sends them home; so does this page).
+// never reads an opinion about a person (App sends them to their home, /logistics; so does this page).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import type { DataPort } from "../../data/port";
@@ -16,6 +16,7 @@ import { afterPath, parseAfterQuery } from "../../domain/routes";
 import { reviewLine, reviewsOpen, reviewsOpenOn } from "../../domain/reviews";
 import { DAY_NAMES, fmtRange } from "../../domain/time";
 import type { Week } from "../../domain/types";
+import { LOGISTICS_HOME } from "../nav";
 import { Button, useFocusRescue } from "../settings/kit";
 import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { dateText, ReviewForm, reviewFormProps } from "../stages/ReviewStage";
@@ -31,7 +32,7 @@ export function AfterScreen({ port, me }: { port: DataPort; me: Me }) {
   if (store.problem === "none") body = <p className="mt-6 text-ink-soft">עוד לא נפתח מחזור.</p>;
   else if (store.problem === "error") body = <p className="mt-10 text-center text-bad">לא הצלחנו לטעון את השבוע. כדאי לרענן את הדף.</p>;
   else if (!week) body = <p className="mt-10 text-center text-ink-soft">טוען…</p>;
-  else if (actor.role === "logistics") return <Navigate replace to="/" />;
+  else if (actor.role === "logistics") return <Navigate replace to={LOGISTICS_HOME} />;
   else body = <Body key={week.edition.id} port={port} me={me} week={week} notify={notify} clear={clear} />;
 
   return (

@@ -16,7 +16,7 @@ import type { RotaCohort, RotaData, RotaStaffShift } from "../../data/rota";
 import { lessonHandler } from "../../domain/handler";
 import { teachMinutes } from "../../domain/message";
 import { pickupMin } from "../../domain/pickup";
-import { canDrive } from "../../domain/rota";
+import { byCohortOrder, canDrive } from "../../domain/rota";
 import { DAY_END, DAY_START, type Day, DAYS, fmt } from "../../domain/time";
 import type { Lesson, TransportDetails, Week } from "../../domain/types";
 import { speakersOf } from "../../exports/logistics";
@@ -121,8 +121,6 @@ function laneOf(week: BoardWeek, l: Lesson, details: Map<number, LessonTransport
   };
 }
 
-const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
 /** The cohorts whose staff can drive, for one day: on campus that day first, then by sort, letter and id. */
 export function driveCohorts(rota: Pick<RotaData, "cohorts" | "presence"> | null, day: Day): DriveCohort[] {
   if (!rota) return [];
@@ -130,7 +128,7 @@ export function driveCohorts(rota: Pick<RotaData, "cohorts" | "presence"> | null
   return rota.cohorts
     .filter(canDrive)
     .map((cohort) => ({ cohort, present: here.has(cohort.id) }))
-    .sort((a, b) => Number(b.present) - Number(a.present) || a.cohort.sort - b.cohort.sort || cmpStr(a.cohort.letter, b.cohort.letter) || a.cohort.id - b.cohort.id);
+    .sort((a, b) => Number(b.present) - Number(a.present) || byCohortOrder(a.cohort, b.cohort));
 }
 
 /**

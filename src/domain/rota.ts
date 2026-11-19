@@ -106,6 +106,16 @@ export function helpingGroups<G extends Pick<RotaGroup, "cohort_id">>(data: { co
   return data.groups.filter((g) => !notHelping.has(g.cohort_id));
 }
 
+/** The cohorts' order everywhere they are listed: their `sort`, then the letter, then the id. */
+export function byCohortOrder(a: Pick<RotaCohort, "sort" | "letter" | "id">, b: Pick<RotaCohort, "sort" | "letter" | "id">): number {
+  return a.sort - b.sort || (a.letter < b.letter ? -1 : a.letter > b.letter ? 1 : 0) || a.id - b.id;
+}
+
+/** Is the cohort marked on campus in any shift of the week (no row at all: `presence_unknown`, never assumed). */
+export function presenceMarked(data: Pick<RotaData, "presence">, cohortId: number): boolean {
+  return data.presence.some((p) => p.cohort_id === cohortId);
+}
+
 /** Is the cohort marked on campus in this shift (no row = not marked: never assumed). */
 export function presentAt(data: Pick<RotaData, "presence">, cohortId: number, day: number, shift: number): boolean {
   return data.presence.some((p) => p.cohort_id === cohortId && p.day === day && p.shift === shift);

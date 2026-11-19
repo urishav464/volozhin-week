@@ -23,6 +23,14 @@ export function mayDecide(actor: DecideActor, edition: Pick<Edition, "kind" | "s
 }
 
 /**
+ * app.require_logistics in the browser — who writes the driver (set_transport_driver) and marks «נשלח לדפוס»
+ * (set_reader_sent): logistics or an admin of the edition; an archived edition (or an archive) its admins only.
+ */
+export function mayLogisticsWrite(actor: Pick<DecideActor, "isAdmin" | "role">, edition: Pick<Edition, "kind" | "status">): boolean {
+  return actor.isAdmin || (actor.role === "logistics" && edition.kind !== "archive" && edition.status !== "archived");
+}
+
+/**
  * The header's badge, per viewer: a global admin counts the speakers who agreed and wait for the vetting and the
  * requests; an admin or a logistics member of a live real edition, the requests only; anyone else nothing.
  */

@@ -357,13 +357,17 @@ export function cleanPrepRows(rows: readonly NewPrepRow[], kind: unknown): { tex
  * task's («2 שולחנות לחדר האוכל»). A line with a phone or an e-mail refuses the whole paste (rota_contact_in_text).
  */
 export function parsePrepList(text: string): string[] {
+  return pastedLines(text).map(cleanPrepText);
+}
+
+/** A paste's lines, each without its numbering, empty ones dropped — at most ROTA_LIMITS.prepPaste (else bad_value). */
+function pastedLines(text: string): string[] {
   const lines = text
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map((l) => l.replace(/^\s*\d{1,3}(?:\s*[.)\-–:]|\t)\s*/, "").trim())
     .filter(Boolean);
-  if (lines.length > ROTA_LIMITS.prepPaste) return fail("bad_value");
-  return lines.map(cleanPrepText);
+  return lines.length > ROTA_LIMITS.prepPaste ? fail("bad_value") : lines;
 }
 
 /**
@@ -371,13 +375,7 @@ export function parsePrepList(text: string): string[] {
  * its quantity (a spreadsheet's second column; blank → null). A phone or an e-mail in either refuses the whole paste.
  */
 export function parsePrepItems(text: string): { text: string; qty: string | null }[] {
-  const lines = text
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((l) => l.replace(/^\s*\d{1,3}(?:\s*[.)\-–:]|\t)\s*/, "").trim())
-    .filter(Boolean);
-  if (lines.length > ROTA_LIMITS.prepPaste) return fail("bad_value");
-  return lines.map((l) => {
+  return pastedLines(text).map((l) => {
     const tab = l.indexOf("\t");
     return tab < 0 ? { text: cleanPrepText(l), qty: null } : { text: cleanPrepText(l.slice(0, tab)), qty: cleanQty(l.slice(tab + 1)) };
   });

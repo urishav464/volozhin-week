@@ -1012,7 +1012,7 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
       });
     });
 
-    it("keeps a task or an item: an item's quantity cleaned (one line ≤ 40, no phone), a task's dropped; the kind checked after the text", async () => {
+    it("keeps a task or an item: a quantity cleaned whatever the kind (one line ≤ 40, no phone), a task's then dropped; the kind checked after the text", async () => {
       await inTx(async (run) => {
         const add = (text: string, kind: unknown, qty: unknown) =>
           run(L, "insert into public.rota_prep_tasks (edition_id, text, kind, qty) values ($1, $2, $3, $4) returning id", [ed, text, kind, qty]);
@@ -1026,7 +1026,9 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
         expect(await code(add("   ", "thing", null))).toBe("name_required"); // the text first
         expect(await code(add("פריט לדוגמה", "item", "א".repeat(41)))).toBe("bad_value");
         expect(await code(add("פריט לדוגמה", "item", "טל' 1234567"))).toBe("rota_contact_in_text");
-        expect(await code(add("פריט לדוגמה", "task", "טל' 1234567"))).toBe("ok"); // a task's quantity is dropped unread
+        expect(await code(add("פריט לדוגמה", "task", "טל' 1234567"))).toBe("rota_contact_in_text"); // a task's too, before it is dropped
+        expect(await code(add("פריט לדוגמה", "task", "א".repeat(41)))).toBe("bad_value");
+        expect(await code(run(L, "update public.rota_prep_tasks set qty = 'טל'' 1234567' where id = $1", [t2]))).toBe("rota_contact_in_text");
         // a task made an item takes a quantity; an item made a task loses it
         await run(L, "update public.rota_prep_tasks set kind = 'item', qty = '5' where id = $1", [t]);
         await run(L, "update public.rota_prep_tasks set kind = 'task' where id = $1", [i]);

@@ -217,6 +217,9 @@ describe("תורנויות (v16)", () => {
            select $1, r.x ->> 'text', $3, r.x ->> 'qty', $4 + r.o from jsonb_array_elements($2::jsonb) with ordinality as r(x, o) returning id`,
           [edition, JSON.stringify(c.args.map((a) => ({ text: a.text, qty: a.qty ?? null }))), c.kind, last]));
       }
+      case "updatePrep":
+        // v19: the row the case starts with (written before `state`), updated as SupabaseRota.updatePrepTask sends it
+        return attempt("rota_prep_tasks", run(who, "update public.rota_prep_tasks set qty = $2 where id = $1 returning id", [ids.P, c.args.qty]), { row: true });
       case "setShifts":
         return attempt("editions", run(who, "select public.set_rota_shifts($1, $2::jsonb)", [edition, c.args == null ? null : JSON.stringify(c.args)]));
       case "setContact":
@@ -288,11 +291,14 @@ describe("תורנויות (v16)", () => {
       it(`as logistics in a live real edition: ${c.name} → ${c.expect}`, async () => {
         await inTx(async (run) => {
           const ids = await fixture(run, ed.live);
+          if (c.op === "updatePrep") {
+            ids.P = await num(run, "owner", "insert into public.rota_prep_tasks (edition_id, text, kind, qty, sort) values ($1, 'פריט לדוגמה', $2, '1', 1) returning id", [ed.live, c.kind]);
+          }
           const before = await state(run, ed.live);
           expect(await perform(run, L, ed.live, ids, c)).toBe(c.expect);
           if (c.expect !== "ok") expect(await state(run, ed.live), "a refusal changes nothing").toEqual(before);
           // v19: what the guard wrote — the edition's whole list of preparations, in order
-          if (c.op === "addPrepRows" && c.prep) {
+          if ((c.op === "addPrepRows" || c.op === "updatePrep") && c.prep) {
             expect((await run("owner", "select text, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id", [ed.live])).rows).toEqual(c.prep);
           }
         });

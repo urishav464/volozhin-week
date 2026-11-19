@@ -25,8 +25,8 @@
 // ROTA_LOAD_TOLERANCE shifts («הצעה»); then a suggested night of a group two or more nights above another changes places
 // with a suggested day shift of that other (the loads stay). No move makes a new pair of shifts in a row, takes a duty
 // under its minimum or makes a cell «too many»; never an assignment that was there.
-import type { NewAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, ShiftIndex } from "../data/rota";
-import { type GroupLoad, helpingGroups, loadsOf, needOf, rotaSlots, slotIndex, type RotaSlot } from "./rota";
+import type { NewAssignment, RotaData, RotaDuty, RotaGroup, ShiftIndex } from "../data/rota";
+import { byCohortOrder, type GroupLoad, helpingGroups, loadsOf, needOf, rotaSlots, slotIndex, type RotaSlot } from "./rota";
 import type { Day } from "./time";
 import type { Edition } from "./types";
 
@@ -73,8 +73,6 @@ interface G {
   /** slotIndex → busy (any assignment, the week's or not). */
   busy: Set<number>;
 }
-
-const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Too many groups on a duty in a shift (the board's «over»): more than its need, unless every one of them is needed
@@ -130,7 +128,7 @@ export interface RotaSuggestOptions {
 export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions = {}): RotaSuggestion {
   const polish = options.polish ?? true;
   const { data, edition } = input;
-  const cohorts = [...data.cohorts].sort((a: RotaCohort, b: RotaCohort) => a.sort - b.sort || cmpStr(a.letter, b.letter) || a.id - b.id);
+  const cohorts = [...data.cohorts].sort(byCohortOrder);
   const cohortRank = new Map(cohorts.map((c, i) => [c.id, i]));
   const helps = new Set(helpingGroups(data).map((g) => g.id));
   const groups = [...data.groups]
