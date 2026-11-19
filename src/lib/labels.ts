@@ -22,7 +22,7 @@ export function topRole(me: Me): Role {
 
 /**
  * Where the approach stands (v14: the call is the first step) — the one source of these words: the lesson panel's card,
- * the speaker sheet, «המרצים שלי», the team's board, the pool.
+ * the speakers' list and page, «כל הצוות», «היום שלי».
  */
 export function statusLabel(s: ApproachStatus, g: Gender | null): string {
   switch (s) {

@@ -7,7 +7,10 @@ import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoRota, seedDemoRota } from "./demoRota";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
-import { DEMO_FALLEN, demoContacts, demoDayOwners, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import {
+  DEMO_FALLEN, demoContacts, demoDayOwners, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoLogistics,
+  seedDemoSources,
+} from "./demoWeek";
 import { DemoReviews } from "./demoReviews";
 import type { SpeakerReview } from "./reviews";
 import { DemoMemorial } from "./demoMemorial";
@@ -28,6 +31,9 @@ const DEMO_EMAIL = "demo@example.org";
 /** `?as=trainee` (src/lib/config.ts demoAs): the demo user is «חניך/ה א׳», member 2 — content, of the demo's edition. */
 export const DEMO_TRAINEE: Actor = { memberId: 2, role: "content", global: false };
 
+/** `?as=logistics` (the reset, phase 3): the demo user is «לוגיסטיקה (הדגמה)», member 5 — logistics, of the demo's edition. */
+export const DEMO_LOGISTICS: Actor = { memberId: 5, role: "logistics", global: false };
+
 export interface DemoOptions {
   /**
    * The demo user is the trainee DEMO_TRAINEE names (demo@example.org is member 2; member 1, the instructor, gets
@@ -36,6 +42,13 @@ export interface DemoOptions {
    * production's rules (contacts, transport details).
    */
   trainee?: boolean;
+  /**
+   * The demo user is the logistics member DEMO_LOGISTICS names (demo@example.org is member 5; member 1, the instructor,
+   * gets team.d@example.org); the edition is `real`, so deciding a request and setting a driver meet production's rules;
+   * and the transport board has something to draw — pickup times and two more staff shifts (seedDemoLogistics). The
+   * other demos keep no pickup_min.
+   */
+  logistics?: boolean;
 }
 
 // Synthetic data only — never a real name, phone or address. The grid's
@@ -43,7 +56,8 @@ export interface DemoOptions {
 // the demo behaves like production; nothing leaves the browser tab. Each
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
-// the database. The demo user is the global admin (member 1) — or, with `trainee` (`?as=trainee`), «חניך/ה א׳» (member 2).
+// the database. The demo user is the global admin (member 1) — or, with `trainee` (`?as=trainee`), «חניך/ה א׳» (member 2);
+// with `logistics` (`?as=logistics`), «לוגיסטיקה (הדגמה)» (member 5).
 export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore, DemoImportStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
@@ -89,13 +103,13 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     opts: DemoOptions = {},
   ) {
     const week = demoWeek();
+    if (opts.trainee || opts.logistics) week.edition.kind = "real";
     if (opts.trainee) {
-      week.edition.kind = "real";
       week.dayOwners = demoDayOwners();
       week.slotAvailability.push(...demoTraineeAvailability(Math.max(0, ...week.slotAvailability.map((v) => v.id)) + 1));
     }
-    // whose address the demo signs in with: the instructor's (member 1), or the trainee's (DEMO_TRAINEE)
-    const me = opts.trainee ? DEMO_TRAINEE.memberId : 1;
+    // whose address the demo signs in with: the instructor's (member 1), the trainee's (DEMO_TRAINEE) or logistics' (DEMO_LOGISTICS)
+    const me = opts.trainee ? DEMO_TRAINEE.memberId : opts.logistics ? DEMO_LOGISTICS.memberId : 1;
     const seeded = seedDemoSources(week);
     for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
     this.shared = {
@@ -106,10 +120,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
-    // The demo team, with placeholder addresses (example.org never delivers); the trainee's demo swaps the first two.
+    // The demo team, with placeholder addresses (example.org never delivers); the trainee's and logistics' demos give
+    // the instructor (member 1) the address the demo user would have had.
     this.members = week.team.map((t, i) => ({
       ...t,
-      // the trainee's demo: the instructor (member 1) takes the address the trainee had (team.a)
+      // the trainee's demo: the instructor (member 1) takes the address the trainee had (team.a); logistics': team.d
       email: t.id === me ? DEMO_EMAIL : `team.${String.fromCharCode(96 + (t.id === 1 ? me - 1 : i))}@example.org`,
       edition_id: t.role === "admin" ? null : week.edition.id,
       active: true,
@@ -134,6 +149,8 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     // «תורנויות» (v16): cohorts, groups, presence, last year's duties, staff shifts, preparations — no assignments
     const logistics = this.members.find((m) => m.role === "logistics" && m.edition_id === week.edition.id) ?? null;
     seedDemoRota(this.shared, this.engine(week.edition.id).week.edition, logistics);
+    // `?as=logistics`: the transport board's pickup times and two more staff shifts, after the rota's own
+    if (opts.logistics) seedDemoLogistics(this.shared, this.engine(week.edition.id).week, logistics);
   }
 
   private newEngine(week: Week, actor: Actor = this.actor): Engine {

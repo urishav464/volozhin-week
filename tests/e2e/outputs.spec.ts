@@ -139,6 +139,14 @@ test.describe("demo build", () => {
       expect(Math.abs(h - 595.3), `height ${h}`).toBeLessThan(3);
     }
     await page.emulateMedia({ media: "screen" });
+
+    // a row opens its lesson page — and says so to a screen reader (not «the lesson in the week»)
+    const first = all[0];
+    const opener = page.getByRole("button", { name: `${first.speaker || first.title}: לדף השיעור`, exact: true }).first();
+    await expect(opener).toBeVisible();
+    await expect(page.getByRole("button", { name: /פתיחת השיעור בשבוע$/ })).toHaveCount(0);
+    await opener.click();
+    await expect(page).toHaveURL(new RegExp(`/lesson/${first.lesson.id}$`));
   });
 
   test("the escorts' list: by escort in their gender, who introduces the speaker, the instructor's phrases, a page each", async ({ page }) => {
@@ -318,9 +326,9 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
-    // the instructor's ten sections: every one inside the screen, none cut off or behind a sideways scroll
+    // the instructor's eleven sections (the reset, phase 3): every one inside the screen, none cut off or behind a sideways scroll
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveText(["השבוע", "המרצים שלי", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", /^אישורים/, "הגדרות", "עזרה"]);
+    await expect(links).toHaveText(["השבוע", "ימים", "מרצים", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
     const width = page.viewportSize()!.width;
     for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
       expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
@@ -332,7 +340,8 @@ test.describe("demo build", () => {
     await expect(nav(page).getByRole("link", { name: "עזרה" })).toBeInViewport({ ratio: 1 });
     const guide = page.getByRole("article", { name: "מדריך קצר לצוות" });
     await expect(guide.getByRole("heading", { level: 2, name: "מדריך קצר לצוות" })).toBeVisible();
-    for (const h of ["כניסה", "הרשת", "המרצים שלי", "כרטיס המרצה", "שלבי השיעור", "הודעת הסיכום", "תוצרים"]) {
+    // the staff's sections as the reset's phase 3 has them («המרצים שלי» and the speaker sheet are gone)
+    for (const h of ["כניסה", "הרשת", "ימים", "מרצים", "אישורים", "עמוד המרצה", "שלבי השיעור", "הודעת הסיכום", "תוצרים", "לוגיסטיקה", "אחרי השבוע"]) {
       await expect(guide.getByRole("heading", { level: 3, name: h, exact: true })).toBeVisible();
     }
     await noSidewaysScroll(page);
@@ -359,13 +368,13 @@ test.describe("mock build", () => {
     sb.token = session.access_token;
     return { sb, week, session };
   };
-  test("the header of an admin of every edition: all ten sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
+  test("the header of an admin of every edition: all eleven sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "the widths are set here");
     await signedIn(page, { role: "admin", global: true, member: 1, name: "שם ארוך מאוד של מדריך/ה לדוגמה" });
     await page.goto(mockUrl());
     await expect(page.getByRole("button", { name: "התנתקות" })).toBeVisible();
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveCount(10);
+    await expect(links).toHaveCount(11);
     for (const width of [1024, 1100, 1150, 1180, 1280]) {
       await page.setViewportSize({ width, height: 800 });
       const navBox = (await nav(page).boundingBox())!;
@@ -373,6 +382,7 @@ test.describe("mock build", () => {
         // inside the nav's own box: not behind its sideways scroll (headless Chromium hides the scrollbar itself)
         expect(box.left, `${width}: ${box.text}`).toBeGreaterThanOrEqual(navBox.x - 0.5);
         expect(box.right, `${width}: ${box.text}`).toBeLessThanOrEqual(navBox.x + navBox.width + 0.5);
+        expect(box.width, `${width}: ${box.text} — a finger's 44px, «ימים» and «ידע» too`).toBeGreaterThanOrEqual(44);
       }
       expect((await page.getByRole("banner").boundingBox())!.height, String(width)).toBeLessThanOrEqual(56); // one row: the week's grid height holds
     }
@@ -476,7 +486,7 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "תוצרים", "לוגיסטיקה", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
     await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים", "תורנויות"]);
@@ -562,7 +572,7 @@ test.describe("mock build", () => {
     const alert = page.getByRole("alert").filter({ hasText: "הקובץ ירד, אבל הייצוא לא נשמר להשוואה" });
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("אפשר לייצא שוב.");
-    await expect(alert).toContainText("הפעולה הזו שמורה למדריך/ה."); // the refusal's own words
+    await expect(alert).toContainText("אין הרשאה לפעולה הזו."); // the refusal's own words (the reset, phase 3: neutral — the staff or logistics decide, not only the instructor)
     await expect(toast(page, "הייצוא נשמר להשוואה")).toHaveCount(0);
     await expect(page.getByText("עוד לא ייצאו את הלו״ז למעצבת.")).toBeVisible(); // nothing to compare with yet
   });

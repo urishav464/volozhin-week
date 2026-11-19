@@ -75,4 +75,34 @@ describe("markdown-lite", () => {
     expect(line).toContain("ולצוות הלוגיסטי מרגע שהתבקשה הסעה");
     expect(line).not.toContain("ולצוות הלוגיסטי אחרי האישור");
   });
+
+  it("«עזרה» after the reset's phase 3: one approval by the staff or logistics, the transport board's driver, no «המרצים שלי»", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    const pay = guide.split("\n").find((l) => l.startsWith("- **תשלום והסעה:**"));
+    expect(pay).toContain("צוות המחזור או הצוות הלוגיסטי");
+    expect(pay).toContain("אישור אחד מספיק");
+    expect(pay).not.toContain("המדריך/ה מאשר/ת");
+    // the header as each persona sees it, and the pages that replaced the old sheet and «המרצים שלי»
+    const header = guide.split("\n").find((l) => l.startsWith("- בראש המסך יש את האזורים"));
+    expect(header).toContain("השבוע · ימים · מרצים · אישורים · לוגיסטיקה");
+    expect(guide).not.toContain("המרצים שלי");
+    for (const h of ["## ימים", "## מרצים", "## אישורים", "## עמוד המרצה", "## אחרי השבוע"]) expect(guide).toContain(`\n${h}\n`);
+    // the driver is the board's, and «סודר» is what the escort's page shows
+    expect(guide).toContain("כשמסמנים «סודר», דף המלווה מציג את השם והטלפון של הנהג/ת.");
+  });
+
+  it("«עזרה» says what «מרצים ← שלי» and the transport board show, as the screens do", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    // «שלי» is poolSection's: a speaker with a closed lesson is under «נסגרו»; a row says where the call stands (statusLabel)
+    const mine = guide.split("\n").find((l) => l.startsWith("- **«מרצים»**") && l.includes("«שלי»"));
+    expect(mine).toContain("שעוד לא נסגר להם שיעור");
+    expect(mine).toContain("«נסגרו»");
+    expect(mine).toContain("איפה השיחה עומדת");
+    expect(mine).not.toContain("הצעד הבא");
+    // the board's axis is drawn from 768px (a tablet), and its return is the teaching's end (app.teach_end)
+    const board = guide.split("\n").find((l) => l.startsWith("- **הסעות — לוח ההסעות:**"));
+    expect(board).toContain("בטאבלט ובמחשב — ציר זמן");
+    expect(board).toContain("בסוף זמן הלימוד");
+  });
 });
+

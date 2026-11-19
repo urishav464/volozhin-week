@@ -1,17 +1,19 @@
-// «תשלום/הסעה» on a closed lesson: what was asked and the instructor's word;
-// the handler's (or an admin's) request; a global admin's decision right here
-// (the approvals queue has the same, in a batch); «שולם» for logistics; and
+// «תשלום/הסעה» on a closed lesson: what was asked and the decision on it;
+// the handler's (or an admin's) request; the decision right here for whoever
+// decide_payments lets decide (src/domain/approvals.ts mayDecide — the approvals
+// page has the same, in a batch); «שולם» for logistics; and
 // the transport's pickup and driver — personal data, fetched one lesson at a
 // time and only for whom app.may_see_transport names (CONTRACT «Transport details»).
 // Nothing here ever fills in an amount: no amount means no payment was asked.
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { mergeTransport, STAGE_LIMITS, TRANSPORTS } from "../../data/stageRules";
+import { mayDecide } from "../../domain/approvals";
 import { telHref } from "../../domain/contactLinks";
 import { APPROVAL_LABEL, IMPORTED_PAY, requestText, shekels, TRANSPORT_LABEL } from "../../domain/stages";
 import type { Lesson, Transport, TransportDetails } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Chip } from "../../grid/bits";
-import { Button, Field, INPUT } from "../settings/kit";
+import { Button, Confirm, Field, INPUT, useFocusBack } from "../settings/kit";
 import { type Act, archivedEdition, Choice, LINK_BUTTON, memberName, Problem, type StageCtx, whenText } from "./parts";
 
 export function PaymentStage(ctx: StageCtx) {
@@ -22,7 +24,8 @@ export function PaymentStage(ctx: StageCtx) {
   const [changingAt, setChangingAt] = useState<number | null>(null);
   const formOpen = asked == null || l.approval === "rejected" || changingAt === l.version;
   const formShown = week.edition.kind !== "archive" && mine && formOpen;
-  const deciding = actor.global && l.approval === "pending";
+  const decides = mayDecide(actor, week.edition);
+  const deciding = decides && l.approval === "pending";
   const decider = l.approval === "approved" || l.approval === "rejected" ? memberName(week, l.approved_by) : null;
   const tone = l.approval === "approved" ? "ok" : l.approval === "rejected" ? "bad" : l.approval === "pending" ? "warn" : "plain";
   // The summary says only what nothing below says: the open form shows the amount and the transport, the decision
@@ -86,14 +89,14 @@ export function PaymentStage(ctx: StageCtx) {
             busy={busy}
             act={act}
             setPayment={cmds.setPayment}
-            decider={actor.global}
+            decider={decides}
             onCancel={asked != null && l.approval !== "rejected" ? () => setChangingAt(null) : undefined}
           />
         ) : (
           <Button onClick={() => setChangingAt(l.version)}>שינוי הבקשה</Button>
         )
       ) : (
-        actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או המדריך/ה.</p>
+        actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או צוות המחזור.</p>
       )}
 
       {l.transport !== "none" && <TransportBlock {...ctx} />}
@@ -115,26 +118,45 @@ export function PaidButton({ week, lesson: l, actor, cmds, busy, act }: StageCtx
   );
 }
 
-/** A global admin approves or rejects this one request, with an optional note, at the version on screen. */
+/** Whoever may decide (mayDecide) approves or rejects this one request, with an optional note, at the version on screen. */
+/** «דחייה» asks once: a decision is final for whoever made it (decide_payments takes a pending request only). */
+export const REJECT_CONFIRM = "לא לאשר את הבקשה? אחר כך אפשר רק לבקש שוב.";
+
 export function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string | null; act: Act; decide: StageCtx["cmds"]["decidePayments"] }) {
   const id = useId();
   const [note, setNote] = useState("");
+  // «דחייה» → one question, as «אישורים» asks it («לא לאשר» / «ביטול», the focus back to «דחייה»)
+  const [rejecting, setRejecting] = useState(false);
+  const focus = useFocusBack();
   const go = (decision: "approved" | "rejected") =>
     void act(`decide:${decision}`, () => decide([{ lesson_id: l.id, version: l.version }], decision, note.trim() || null), decision === "approved" ? "הבקשה אושרה" : "הבקשה לא אושרה");
   return (
-    <div role="group" aria-label="החלטת המדריך/ה" className="space-y-2 rounded-xl border border-navy/30 bg-accent-soft p-3">
+    <div role="group" aria-label="החלטה על הבקשה" className="space-y-2 rounded-xl border border-navy/30 bg-accent-soft p-3">
       <p className="text-sm font-bold text-navy">הבקשה מחכה להחלטה שלך.</p>
       <Field id={`${id}-note`} label="הערה (לא חובה, גלויה לצוות)">
         <input id={`${id}-note`} value={note} maxLength={STAGE_LIMITS.decision_note} onChange={(e) => setNote(e.target.value)} className={INPUT} />
       </Field>
-      <div className="flex flex-wrap gap-2">
-        <Button kind="primary" busy={busy === "decide:approved"} onClick={() => go("approved")}>
-          אישור הבקשה
-        </Button>
-        <Button busy={busy === "decide:rejected"} onClick={() => go("rejected")}>
-          דחייה
-        </Button>
-      </div>
+      {rejecting ? (
+        <Confirm
+          text={REJECT_CONFIRM}
+          confirm="לא לאשר"
+          busy={busy === "decide:rejected"}
+          onConfirm={() => go("rejected")}
+          onCancel={() => {
+            setRejecting(false);
+            focus.back("reject");
+          }}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button kind="primary" busy={busy === "decide:approved"} onClick={() => go("approved")}>
+            אישור הבקשה
+          </Button>
+          <Button ref={focus.ref("reject")} onClick={() => setRejecting(true)}>
+            דחייה
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -153,7 +175,7 @@ export function amountValue(kind: "none" | "paid", raw: string): AmountValue {
 
 /**
  * The handler's request: no payment (a volunteer) or an amount typed in whole shekels, and the transport.
- * `decider`: a global admin, who decides it herself above — so it is saved, not «sent to the instructor».
+ * `decider`: one who may decide it (mayDecide) and does so above — so it is saved, not «sent for approval».
  * A paid amount stays what was paid (paid_locked) until «שולם» is undone; the transport may still change.
  */
 function RequestForm({
@@ -179,8 +201,8 @@ function RequestForm({
   const value = amountValue(kind, amount);
   const same = value === l.pay_amount && transport === l.transport;
   const asks = value !== null || transport !== "none";
-  const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : decider ? "שמירת הבקשה" : "שליחה לאישור המדריך/ה";
-  const sentText = decider ? "נשמר. הבקשה ממתינה לאישור שלך: «אישור הבקשה» למעלה" : "הבקשה נשלחה לאישור המדריך/ה";
+  const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : decider ? "שמירת הבקשה" : "שליחה לאישור";
+  const sentText = decider ? "נשמר. הבקשה ממתינה לאישור שלך: «אישור הבקשה» למעלה" : "הבקשה נשלחה לאישור";
   const paid = l.paid_at != null;
 
   const submit = async (e: FormEvent) => {
@@ -232,7 +254,7 @@ function RequestForm({
       {paid && <p className="text-xs text-ink-soft">שולם — כדי לשנות את הסכום, קודם מבטלים «שולם».</p>}
       <Choice name={`${id}-transport`} legend="הסעה" value={transport} options={TRANSPORTS.map((t) => [t, TRANSPORT_LABEL[t]] as const)} onChange={setTransport} />
       {problem && <Problem>{problem}</Problem>}
-      {l.approval === "approved" && !same && <p className="text-xs text-ink-soft">שינוי בבקשה שאושרה מחזיר אותה לאישור המדריך/ה.</p>}
+      {l.approval === "approved" && !same && <p className="text-xs text-ink-soft">שינוי בבקשה שאושרה מחזיר אותה לאישור.</p>}
       {transport === "none" && l.transport !== "none" && <p className="text-xs text-ink-soft">בלי הסעה: פרטי ההסעה של השיעור יימחקו.</p>}
       <div className="flex flex-wrap gap-2">
         <Button kind="primary" type="submit" disabled={same && l.approval !== "rejected"} busy={busy === "pay"} busyLabel="שולח…">
@@ -247,6 +269,17 @@ function RequestForm({
 const EMPTY: TransportDetails = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
 
 /** Pickup and driver: read through app.may_see_transport (null = not the caller's to see), written by the same people. */
+/** Why the pickup and the driver are not shown (cmds.transport answered null: app.may_see_transport). */
+export function transportHiddenText(actor: Pick<StageCtx["actor"], "role">, l: Pick<Lesson, "approval">): string {
+  return actor.role === "logistics" && l.approval !== "approved"
+    ? "פרטי ההסעה גלויים לצוות הלוגיסטי של מחזור אמיתי שלא הועבר לארכיון, כל עוד בקשת ההסעה ממתינה לאישור או אושרה; בקשה שנדחתה נסגרת עד שמבקשים אותה שוב."
+    : errorMessage("transport_hidden");
+}
+
+/**
+ * The old screens' «פרטי ההסעה» (the grid's panel, an archive's lesson): the five fields in one write
+ * (set_transport_details). The lesson page's staff block is StaffTransport (src/screens/lesson/) — the driver's half only.
+ */
 export function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   const id = useId();
   const [d, setD] = useState<TransportDetails | null | undefined>(undefined);
@@ -260,13 +293,10 @@ export function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) 
       setFailed(true);
     }
   }, [cmds, l.id]);
-  // Again when what decides who sees them changes (the request, the instructor's word).
+  // Again when what decides who sees them changes (the request, the decision on it).
   useEffect(() => void load(), [load, l.transport, l.approval]);
 
-  const hidden =
-    actor.role === "logistics" && l.approval !== "approved"
-      ? "פרטי ההסעה גלויים לצוות הלוגיסטי של מחזור אמיתי שלא הועבר לארכיון, כל עוד בקשת ההסעה ממתינה לאישור או אושרה; בקשה שנדחתה נסגרת עד שמבקשים אותה שוב."
-      : errorMessage("transport_hidden");
+  const hidden = transportHiddenText(actor, l);
 
   return (
     <div role="group" aria-label="פרטי ההסעה" className="space-y-2 not-first:border-t not-first:border-line not-first:pt-3">
@@ -309,7 +339,7 @@ export function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) 
 }
 
 /** Pickup and driver as saved (whether it is arranged: a chip in the block's heading). */
-function TransportView({ d }: { d: TransportDetails }) {
+export function TransportView({ d }: { d: TransportDetails }) {
   const empty = !d.pickup_address && !d.pickup_time && !d.driver_name && !d.driver_phone;
   const tel = telHref(d.driver_phone);
   return empty ? (

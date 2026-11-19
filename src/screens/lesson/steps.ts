@@ -1,7 +1,7 @@
 // The lesson page's stepper (the reset, phase 2): a lesson's whole way in six steps, in order — שיבוץ → סגירה → תשלום
 // והסעה → הודעת סיכום → מקורות ומצגת → מלווה — each with where it stands. A draft is the first two (the candidates and
 // the call, then what closing waits for); a closed lesson is its five stages (src/domain/stages.ts — the card's dots,
-// «המרצים שלי» and the tracking table say the same), the sources and the reader read as one step. Pure.
+// «ימים», «התקדמות» and the tracking table say the same), the sources and the reader read as one step. Pure.
 import { displayName } from "../../domain/names";
 import type { PageStep } from "../../domain/routes";
 import { readerFilesOf, type Stage, type StageState, stagesOf } from "../../domain/stages";

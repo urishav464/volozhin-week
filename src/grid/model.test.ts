@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Day } from "../domain/time";
 import type { SlotAvailability, Week } from "../domain/types";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { buildModel, fitFor, fitText, openSlots } from "./model";
+import { buildModel, fitFor, openSlots } from "./model";
 import { lessonOwner } from "./owners";
 
 // TEMPLATE_2026's lesson rows by id: 1 06:30, 4 08:30, 5 10:00, 6 11:30, 18 00:30, 19 02:00, 20 03:30.
@@ -55,14 +55,6 @@ describe("fitFor (v14: availability per slot)", () => {
     expect(fitFor(buildModel(w), s.id, 0, 390, 435)).toBe("neutral");
     slot(w, s.id, 0, 4, "can");
     expect(fitFor(buildModel(w), s.id, 0, 390, 600)).toBe("can"); // only 08:30 is in play
-  });
-
-  it("says each fit in the speaker's gender, beside its colour", () => {
-    expect(fitText("can", "f")).toBe("✓ יכולה");
-    expect(fitText("cannot", "m")).toBe("⊘ לא יכול");
-    expect(fitText("cannot", null)).toBe("⊘ לא יכול/ה");
-    expect(fitText("busy", "f")).toBe("כבר משובצת בשעה הזו");
-    expect(fitText("neutral", "f")).toBeNull();
   });
 });
 

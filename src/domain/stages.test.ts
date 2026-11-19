@@ -20,7 +20,7 @@ describe("a closed lesson's five stages", () => {
   it("payment and transport: not asked, waiting, approved (paid or not), rejected", () => {
     const pay = (over: Partial<Lesson>) => stagesOf(lesson(over))[0];
     expect(pay({})).toMatchObject({ state: "na", note: "לא התבקשו" });
-    expect(pay({ pay_amount: 200, approval: "pending" })).toMatchObject({ state: "waiting", note: "ממתין לאישור המדריך/ה" });
+    expect(pay({ pay_amount: 200, approval: "pending" })).toMatchObject({ state: "waiting", note: "ממתין לאישור" });
     expect(pay({ transport: "one_way", approval: "approved" })).toMatchObject({ state: "done", note: "אושר" });
     expect(pay({ pay_amount: 200, approval: "approved" })).toMatchObject({ state: "done", note: "אושר, טרם שולם" });
     expect(pay({ pay_amount: 200, approval: "approved", paid_at: "2026-11-01T10:00:00Z" })).toMatchObject({ state: "done", note: "אושר ושולם" });

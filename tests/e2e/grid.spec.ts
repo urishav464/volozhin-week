@@ -1,6 +1,9 @@
 // The grid in a real browser, on the demo build (the same engine production
 // semantics run on — docs/CONTRACT.md). Desktop drags with a mouse; phone and
-// tablet tap. These are the decision gate's tasks.
+// tablet tap. These are the decision gate's tasks. The reset, phase 3: no pool
+// and no placing mode — a speaker is proposed from a cell's chooser or from
+// their page (/speakers/:id, «איפה אפשר לשבץ»), and what they said about a slot
+// is the chooser's word beside them; a lesson still moves by drag.
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { noSidewaysScroll } from "./helpers";
 import { LRM } from "../../src/domain/time";
@@ -24,10 +27,28 @@ async function drag(page: Page, from: Locator, to: Locator) {
   await page.mouse.up();
 }
 
-const toast = (page: Page, text: string) => page.getByRole("status").filter({ hasText: text });
+const toast = (page: Page, text: string | RegExp) => page.getByRole("status").filter({ hasText: text });
+const nav = (page: Page) => page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" });
 
 const cell = (page: Page, day: number, start: number, end: number) => page.locator(`[data-drop="cell:${day}:${start}:${end}"]`);
-const speaker = (page: Page, id: number) => page.locator(`[data-speaker-id="${id}"]`);
+
+/** A free cell's panel, its chooser searched for one speaker. */
+async function chooser(page: Page, c: Locator, name: string) {
+  await c.click();
+  const dialog = page.getByRole("dialog", { name: "משבצת פנויה" });
+  await dialog.getByLabel("חיפוש מרצה למשבצת").fill(name);
+  return dialog;
+}
+
+/** The speaker's page, «איפה אפשר לשבץ»: a day's fold opened, «להציע כאן» on one slot. */
+async function placeFromPage(page: Page, speakerId: number, day: number, start: number) {
+  await page.goto(`${demoUrl()}/speakers/${speakerId}#placement`);
+  const d = page.locator(`#placement [data-place-day="${day}"]`);
+  const option = d.locator(`[data-place-option="${day}:${start}"]`);
+  if (!(await option.isVisible())) await d.locator("summary").click();
+  await option.getByRole("button", { name: "להציע כאן" }).click();
+  await expect(toast(page, /הוצע\S* למשבצת/)).toBeVisible();
+}
 
 test.describe("desktop", () => {
   test.beforeEach(async ({ page }, info) => {
@@ -36,9 +57,10 @@ test.describe("desktop", () => {
     await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();
   });
 
-  test("dragging a speaker onto a free cell proposes them; «ביטול» takes it back", async ({ page }) => {
+  test("a free cell's chooser proposes a speaker; «ביטול» takes it back (the pool's drag went with the pool)", async ({ page }) => {
     const target = cell(page, 4, 510, 600);
-    await drag(page, speaker(page, 41), target);
+    const dialog = await chooser(page, target, "מרצה 41");
+    await dialog.locator('[data-chooser-speaker="41"]').getByRole("button", { name: "הצע", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "סומן/ה למשבצת" })).toBeVisible();
     const card = page.locator('[data-day="4"] [data-lesson-id]').filter({ hasText: "מרצה 41" });
     await expect(card).toBeVisible();
@@ -48,11 +70,10 @@ test.describe("desktop", () => {
     await noSidewaysScroll(page);
   });
 
-  test("«שבץ» then a cell places without dragging", async ({ page }) => {
-    await speaker(page, 42).getByRole("button", { name: "שבץ" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "משבצים את" })).toBeVisible();
-    await cell(page, 4, 600, 690).click();
-    await expect(page.locator('[data-day="4"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toBeVisible();
+  test("a speaker's page places without dragging (the grid's placing mode went with the pool): the week shows the draft in its cell", async ({ page }) => {
+    await placeFromPage(page, 42, 4, 600);
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    await expect(page.locator('[data-day="4"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toHaveAttribute("aria-label", /^טיוטה .*10:00–11:30/);
   });
 
   test("the day's need counts its CLOSED lessons, said once in its header: a woman proposed changes nothing; she agrees on the call, the lesson closes, and it does (v14; the reset, phase 2)", async ({ page }) => {
@@ -60,11 +81,11 @@ test.describe("desktop", () => {
     const need = page.locator('[data-day-header="3"] [data-need]');
     await expect(need).toHaveAttribute("data-need", "even"); // Wednesday: one woman and one man closed
     await expect(page.locator("[data-drop][data-need], [data-free-cell][data-need]")).toHaveCount(0);
-    await speaker(page, 42).getByRole("button", { name: "שבץ" }).click();
-    await cell(page, 3, 1200, 1290).click();
+    const free = await chooser(page, cell(page, 3, 1200, 1290), "מרצה 42");
+    await free.locator('[data-chooser-speaker="42"]').getByRole("button", { name: "הצע", exact: true }).click();
     await expect(page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toBeVisible();
     await expect(need).toHaveAttribute("data-need", "even"); // a candidate is not a lesson
-    await page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "מרצה 42" }).click();
+    // the panel is the new draft's: the candidate, where the call begins
     const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "מרצה 42" });
     await expect(card).toContainText("לפני שיחה"); // placed is not called
     await card.getByRole("group", { name: "תוצאת השיחה" }).getByRole("button", { name: "הסכימה", exact: true }).click();
@@ -75,30 +96,20 @@ test.describe("desktop", () => {
     await expect(need).toHaveAttribute("data-need", "m"); // two women closed, one man
   });
 
-  test("a dragged speaker colours the grid by what they said, and so does their sheet beside it (v14)", async ({ page }) => {
-    await page.getByRole("complementary", { name: "מאגר" }).getByRole("tab", { name: /בטיפול אחרים/ }).click();
-    const src = speaker(page, 30); // «יכולה» on Tuesday from 20:00 through the night
-    const late = cell(page, 2, 1350, 1440);
-    const said = page.locator('[data-day="2"] [data-lesson-id]').filter({ hasText: "מרצה 56" }); // the draft at Tuesday 20:00
-    const nothing = cell(page, 3, 1350, 1440); // Wednesday: nothing said
-    await expect(late).not.toHaveAttribute("data-fit");
-    await carry(page, src, late);
-    await expect(late).toHaveAttribute("data-fit", "can");
-    await expect(late).toContainText("✓ יכולה");
-    await expect(said).toHaveAttribute("data-fit", "can");
-    await expect(nothing).toHaveAttribute("data-fit", "neutral");
-    await page.keyboard.press("Escape"); // the drag called off: nothing proposed, the colours gone
-    await page.mouse.up();
-    await expect(late).not.toHaveAttribute("data-fit");
-    await expect(late).toBeEnabled();
-
-    await src.getByRole("button", { name: "כרטיס הרבנית מרצה 30" }).click();
-    const sheet = page.getByRole("dialog", { name: "הרבנית מרצה 30" });
-    await expect(sheet).toBeVisible();
-    await expect(late).toHaveAttribute("data-fit", "can");
-    await expect(nothing).toHaveAttribute("data-fit", "neutral");
-    await sheet.getByRole("button", { name: "סגירה", exact: true }).click();
-    await expect(late).not.toHaveAttribute("data-fit");
+  test("a cell's chooser says what a speaker said about that slot (v14): «זמין/ה» where they can, nothing where nothing was said", async ({ page }) => {
+    // speaker 30 said «יכולה» on Tuesday from 20:00 through the night (the grid's drag colouring went with the pool)
+    let dialog = await chooser(page, cell(page, 2, 1350, 1440), "מרצה 30");
+    const row = dialog.locator('[data-chooser-speaker="30"]');
+    await expect(row).toContainText("זמין/ה");
+    await expect(row).toContainText("בטיפול: חניך/ה ב׳"); // someone else's: offered to them
+    await expect(row.getByRole("button", { name: "הצע לחניך/ה ב׳" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    // Wednesday 22:30: nothing said — offered, and no word about it
+    dialog = await chooser(page, cell(page, 3, 1350, 1440), "מרצה 30");
+    await expect(dialog.locator('[data-chooser-speaker="30"]')).toBeVisible();
+    await expect(dialog.locator('[data-chooser-speaker="30"]')).not.toContainText("זמין/ה");
+    await expect(dialog.locator('[data-chooser-speaker="30"]')).not.toContainText("שלא");
   });
 
   test("splitting a row into two parallel lessons needs a reason", async ({ page }) => {
@@ -184,13 +195,13 @@ test.describe("phone and tablet", () => {
     await noSidewaysScroll(page);
   });
 
-  test("pool → «שבץ» → back to the day to choose the cell", async ({ page }) => {
-    await page.getByRole("navigation", { name: "ניווט" }).getByRole("button", { name: "מאגר" }).click();
-    await speaker(page, 43).getByRole("button", { name: "שבץ" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "משבצים את" })).toBeVisible();
+  test("no pool tab: a speaker's page proposes a slot, and the day view shows the new draft there", async ({ page }) => {
+    await expect(page.getByRole("navigation", { name: "ניווט" }).getByRole("button", { name: "מאגר" })).toHaveCount(0);
+    await placeFromPage(page, 43, 4, 510);
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
     await page.getByRole("tab", { name: "חמישי" }).click();
-    await cell(page, 4, 510, 600).click();
-    await expect(page.locator("[data-lesson-id]").filter({ hasText: "מרצה 43" })).toBeVisible();
+    await expect(page.locator("[data-lesson-id]").filter({ hasText: "מרצה 43" })).toHaveAttribute("aria-label", /^טיוטה .*08:30–10:00/);
+    await noSidewaysScroll(page);
   });
 
   test("the night merge reads as one lesson with its continuation", async ({ page }) => {

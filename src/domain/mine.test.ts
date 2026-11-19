@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addApproach, addLesson, addSpeaker, addTrainee, closeWith, emptyWeek, pitch } from "../testing/week";
-import { agreedPending, groupOf, MINE_GROUPS, type MineRow, mySpeakers, nextStep, pendingPayments, pendingSpeakers, pendingWhoTaught, teamBoard, waitingForApproval } from "./mine";
+import { agreedPending, groupOf, MINE_GROUPS, type MineGroup, type MineRow, nextStep, pendingPayments, pendingSpeakers, pendingWhoTaught, teamBoard } from "./mine";
 import type { Week } from "./types";
 
 const team = (w: Week) => {
@@ -13,10 +13,24 @@ const team = (w: Week) => {
 };
 const names = (rows: MineRow[]) => rows.map((r) => r.speaker.name);
 
-describe("«המרצים שלי»", () => {
-  it("groups my speakers by where the call stands, the approval before closing, and puts an offer to me first", () => {
+/** Member 1's approaches, each by groupOf — one entry per closed lesson — as «name:group», or «name:group:day». */
+const groupsOf = (w: Week, me = 1): Map<MineGroup, string[]> => {
+  const out = new Map<MineGroup, string[]>();
+  const put = (g: MineGroup, v: string) => out.set(g, [...(out.get(g) ?? []), v].sort((x, y) => x.localeCompare(y, "he")));
+  for (const a of w.approaches.filter((x) => x.owner_member_id === me)) {
+    const s = w.speakers.find((x) => x.id === a.speaker_id)!;
+    const closed = w.lessons.filter((l) => l.state === "closed" && w.lessonSpeakers.some((x) => x.lesson_id === l.id && x.speaker_id === s.id));
+    if (closed.length === 0) put(groupOf(w, a, s), s.name);
+    for (const l of closed) put(groupOf(w, a, s, l), `${s.name}:${l.day}`);
+  }
+  return out;
+};
+
+describe("where a speaker stands", () => {
+  it("groups by where the call stands, the approval before closing — and a team block's rows keep their live pitches by time", () => {
     const w = emptyWeek();
-    const [claimed, approached, noAnswer, agreed, rejected, positive, closed, declined, others, offered] = ["י", "ט", "ח", "ז", "ו", "ה", "ד", "ג", "ב", "א"].map((n) => addSpeaker(w, "f", n));
+    team(w);
+    const [claimed, approached, noAnswer, agreed, rejected, positive, closed, declined, others] = ["י", "ט", "ח", "ז", "ו", "ה", "ד", "ג", "ב"].map((n) => addSpeaker(w, "f", n));
     addApproach(w, claimed, "claimed");
     addApproach(w, approached, "approached");
     addApproach(w, noAnswer, "no_answer");
@@ -28,27 +42,23 @@ describe("«המרצים שלי»", () => {
     addApproach(w, closed, "positive");
     addApproach(w, declined, "declined");
     Object.assign(addApproach(w, others, "approached"), { owner_member_id: 2 });
-    Object.assign(addApproach(w, offered, "approached"), { owner_member_id: 2, offered_to: 1 });
     closeWith(w, addLesson(w, 1, 510, 600), closed);
     const later = pitch(w, addLesson(w, 3, 510, 600), pos, "candidate");
     const sooner = pitch(w, addLesson(w, 2, 870, 960), pos, "candidate");
     pitch(w, addLesson(w, 0, 510, 600), pos, "declined");
 
-    const g = mySpeakers(w, 1);
-    expect([...g.keys()]).toEqual(MINE_GROUPS.map((x) => x.group));
-    const at = (k: Parameters<typeof g.get>[0]) => names(g.get(k)!);
-    expect(at("offered")).toEqual(["א"]);
-    expect(at("to_call")).toEqual(["י"]);
-    expect(at("retry")).toEqual(["ח"]);
-    expect(at("awaiting")).toEqual(["ט"]);
-    expect(at("agreed")).toEqual(["ו", "ז"]); // the rejected one too: its row says «לא אושר/ה»
-    expect(at("to_schedule")).toEqual(["ה"]);
-    expect(g.get("to_schedule")![0].live).toEqual([sooner, later]); // live only, by the lesson's time
-    expect(at("send")).toEqual(["ד"]); // closed, the summary message not yet sent
-    expect(g.get("send")![0].closed).toHaveLength(1);
-    expect(g.get("send")![0].lesson?.day).toBe(1);
-    expect(at("declined")).toEqual(["ג"]);
-    expect([...g.values()].flat().some((r) => r.speaker.name === "ב")).toBe(false);
+    const g = groupsOf(w);
+    expect(g.get("to_call")).toEqual(["י"]);
+    expect(g.get("retry")).toEqual(["ח"]);
+    expect(g.get("awaiting")).toEqual(["ט"]);
+    expect(g.get("agreed")).toEqual(["ו", "ז"]); // the rejected one too: its row says «לא אושר/ה»
+    expect(g.get("to_schedule")).toEqual(["ה"]);
+    expect(g.get("send")).toEqual(["ד:1"]); // closed, the summary message not yet sent
+    expect(g.get("declined")).toEqual(["ג"]);
+    expect([...g.values()].flat().some((r) => r.startsWith("ב"))).toBe(false);
+    const mine = teamBoard(w).owners.find((o) => o.id === 1)!.rows;
+    expect(mine.find((r) => r.speaker.name === "ה")!.live).toEqual([sooner, later]); // live only, by the lesson's time
+    expect(mine.find((r) => r.speaker.name === "ד")!.closed).toHaveLength(1);
   });
 
   it("groupOf: an approach's status, the approval once they agreed — and a closed lesson's own step", () => {
@@ -113,18 +123,19 @@ describe("«המרצים שלי»", () => {
     closeWith(w, addLesson(w, 1, 600, 690, { ...sent, self_intro: true, sources_kind: "sheet" }), s[4]); // all in place
     closeWith(w, addLesson(w, 3, 510, 600, { pay_amount: 100, approval: "rejected" }), s[5]); // the same speaker, twice (later first)
     closeWith(w, addLesson(w, 2, 510, 600, { ...sent, escort_roster_id: t.id, sources_kind: "none" }), s[5]);
-    const g = mySpeakers(w, 1);
-    const at = (k: Parameters<typeof g.get>[0]) => g.get(k)!.map((r) => `${r.speaker.name}:${r.lesson?.day}`);
-    expect(at("payment")).toEqual(["א:0", "ו:3"]);
-    expect(at("reconfirm")).toEqual(["ב:0"]);
-    expect(at("escort")).toEqual(["ג:0"]);
-    expect(at("sources")).toEqual(["ד:1"]);
-    expect(at("closed")).toEqual(["ה:1", "ו:2"]);
-    expect(at("send")).toEqual([]);
-    expect(g.get("closed")!.find((r) => r.speaker.name === "ו")!.closed.map((l) => l.day)).toEqual([2, 3]); // by time
+    const g = groupsOf(w);
+    expect(g.get("payment")).toEqual(["א:0", "ו:3"]);
+    expect(g.get("reconfirm")).toEqual(["ב:0"]);
+    expect(g.get("escort")).toEqual(["ג:0"]);
+    expect(g.get("sources")).toEqual(["ד:1"]);
+    expect(g.get("closed")).toEqual(["ה:1", "ו:2"]);
+    expect(g.get("send")).toBeUndefined();
+    team(w);
+    const twice = teamBoard(w).owners.find((o) => o.id === 1)!.rows.find((r) => r.speaker.name === "ו" && r.group === "closed")!;
+    expect(twice.closed.map((l) => l.day)).toEqual([2, 3]); // by time
   });
 
-  it("the approvals queue's requests: closed lessons waiting for the instructor, by time, with the speaker and the handler", () => {
+  it("the requests: closed lessons waiting for a decision, by time, with the speaker and the handler", () => {
     const w = emptyWeek();
     const [a, b] = [addSpeaker(w, "m", "א"), addSpeaker(w, "f", "ב")];
     Object.assign(addApproach(w, a, "positive"), { owner_member_id: 4 });
@@ -139,23 +150,6 @@ describe("«המרצים שלי»", () => {
     ]);
   });
 
-  it("the badge counts the requests and who agreed and waits for approval — not every speaker waiting for it", () => {
-    const w = emptyWeek();
-    const s = addSpeaker(w, "f", "א");
-    addApproach(w, s, "positive");
-    closeWith(w, addLesson(w, 0, 870, 960, { pay_amount: 300, approval: "pending" }), s);
-    expect(waitingForApproval(w)).toBe(1);
-    const [agreed, toCall] = [addSpeaker(w, "f", "ב"), addSpeaker(w, "m", "ג")];
-    Object.assign(addSpeaker(w, null, "ד"), { vetted: "pending" }); // no approach this edition
-    agreed.vetted = toCall.vetted = "pending";
-    const a = addApproach(w, agreed, "approached");
-    addApproach(w, toCall, "claimed");
-    expect(waitingForApproval(w)).toBe(1); // nobody of them agreed yet
-    a.status = "positive";
-    expect(waitingForApproval(w)).toBe(2);
-    agreed.vetted = "approved";
-    expect(waitingForApproval(w)).toBe(1);
-  });
 });
 
 describe("«כל הצוות»", () => {

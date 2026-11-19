@@ -1,5 +1,5 @@
-// The trainee's pages' addresses (the reset, phase 2): one place that writes them and reads them back, so «היום שלי»,
-// the speakers' pages and the lesson page link to each other the same way. Pure; a bad value in an address is dropped,
+// The pages' addresses (the reset, phases 2–3): one place that writes them and reads them back, so «היום שלי», «ימים»,
+// the speakers' pages, the lesson page and «אחרי השבוע» link to each other the same way. Pure; a bad value in an address is dropped,
 // never guessed.
 import type { PoolSection } from "../grid/model";
 import type { LessonStep, StageKey } from "./stages";
@@ -35,6 +35,8 @@ export interface SpeakersQuery {
   day?: Day;
   slot?: SlotRef;
   sort?: "name" | "status";
+  /** «כל הצוות» (the reset, phase 3): the team's board instead of the list — a block per handler. */
+  view?: "team";
 }
 
 const POOL_SECTIONS: readonly PoolSection[] = ["mine", "free", "others", "closed", "declined"];
@@ -58,7 +60,7 @@ export function newSpeakerPath(name?: string | null): string {
 /** «0:960-1050» — a slot as the address writes it. */
 const slotText = (s: SlotRef) => `${s.day}:${s.start}-${s.end}`;
 
-/** `/speakers?slot=0:960-1050&lesson=34&day=0&q=…&cat=3&g=f&s=mine&sort=name` — only what is set, in that order. */
+/** `/speakers?slot=0:960-1050&lesson=34&day=0&q=…&cat=3&g=f&s=mine&sort=name&view=team` — only what is set, in that order. */
 export function speakersPath(q: SpeakersQuery = {}): string {
   const parts: string[] = [];
   if (q.slot) parts.push(`slot=${slotText(q.slot)}`);
@@ -70,6 +72,7 @@ export function speakersPath(q: SpeakersQuery = {}): string {
   if (q.g) parts.push(`g=${q.g}`);
   if (q.s) parts.push(`s=${q.s}`);
   if (q.sort) parts.push(`sort=${q.sort}`);
+  if (q.view) parts.push(`view=${q.view}`);
   return parts.length ? `/speakers?${parts.join("&")}` : "/speakers";
 }
 
@@ -109,7 +112,34 @@ export function parseSpeakersQuery(search: string): SpeakersQuery {
   }
   const sort = p.get("sort");
   if (sort === "name" || sort === "status") out.sort = sort;
+  if (p.get("view") === "team") out.view = "team";
   return out;
+}
+
+/** The staff's day page (the reset, phase 3): `/day` (the default day), `/day/2`. */
+export function dayPath(d?: Day | null): string {
+  return d == null ? "/day" : `/day/${d}`;
+}
+
+/** A day from an address («2» of `/day/2`, `?day=2`): one of the five, else null. */
+export function parseDay(v?: string | null): Day | null {
+  const n = v != null && /^\d$/.test(v) ? Number(v) : null;
+  return n != null && isDay(n) ? n : null;
+}
+
+/** «אחרי השבוע»'s address: `/after`, `/after?all=1` (an admin's every lesson), `/after?all=1&lesson=7` (open at one). */
+export function afterPath(q: { all?: boolean; lesson?: number } = {}): string {
+  const parts: string[] = [];
+  if (q.all) parts.push("all=1");
+  if (q.lesson != null) parts.push(`lesson=${q.lesson}`);
+  return parts.length ? `/after?${parts.join("&")}` : "/after";
+}
+
+/** «אחרי השבוע»'s query back: `all` only as «1», a lesson only as a whole number above 0. */
+export function parseAfterQuery(search: string): { all: boolean; lesson: number | null } {
+  const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const lesson = wholeNumber(p.get("lesson"));
+  return { all: p.get("all") === "1", lesson: lesson != null && lesson > 0 ? lesson : null };
 }
 
 /** The lesson page's step from its address (`?step=pay`); null when there is none, or it is not a step. */
@@ -124,7 +154,7 @@ export function parseSpeakerSection(hash: string): SpeakerSection | null {
   return (SPEAKER_SECTIONS as readonly string[]).includes(v) ? (v as SpeakerSection) : null;
 }
 
-/** A closed lesson's next step («המרצים שלי»), or a stage of the card, as the lesson page's step. */
+/** A closed lesson's next step («היום שלי»), or a stage of the card, as the lesson page's step. */
 export function pageStepOf(k: LessonStep | StageKey): PageStep {
   switch (k) {
     case "payment":

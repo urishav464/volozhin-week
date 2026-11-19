@@ -50,7 +50,7 @@ describe("the tracking table", () => {
       "ד״ר פלונית לדוגמה", `ראשון ${LRM}08:30–09:45`, "שיעור א", "תנ\"ך", "דף מקורות · להדפיס מראש", "1,500 ₪ · הלוך ושוב · אושר · שולם", "מלווה לדוגמה", "חניך/ה לדוגמה · 11.11.2026",
     ]);
     // a request waiting, the speaker to be told again, self-introduction
-    expect([rb.payment, rb.confirmed, rb.escort, rb.sources]).toEqual(["בלי תשלום · הלוך · ממתין לאישור המדריך/ה", "לעדכן (השיעור השתנה אחרי ההודעה)", "הצגה עצמית", "מצגת"]);
+    expect([rb.payment, rb.confirmed, rb.escort, rb.sources]).toEqual(["בלי תשלום · הלוך · ממתין לאישור", "לעדכן (השיעור השתנה אחרי ההודעה)", "הצגה עצמית", "מצגת"]);
     expect([rc.speaker, rc.title, rc.payment]).toEqual(["טרם נסגר · מועמדים: מועמדת לדוגמה", "TBD", ""]);
     expect([rm.speaker, rm.title, rm.confirmed]).toEqual(["", "זמן זיכרון", ""]);
     expect([rn.dayLabel, rn.time, rn.confirmed, rn.escort, rn.payment]).toEqual(["ליל שני–שלישי", "00:30–01:45", "לעדכן", "חסר/ה", "לא התבקשו"]);

@@ -2,10 +2,17 @@
 // like the database, keeps transport details out of the Week and the
 // instructor's wording (template, duty phrases) unwritten.
 import { describe, expect, it } from "vitest";
+import { DAYS } from "../domain/time";
 import { transportRows } from "../exports/logistics";
 import { warningsFor } from "../rules/warnings";
+import { boardCounts, pickupText, transportLanes } from "../screens/logistics/lanes";
 import { CommandError } from "./commands";
-import { DemoPort } from "./demoPort";
+import { DEMO_LOGISTICS, DemoPort } from "./demoPort";
+import { demoTransport, demoWeek, seedDemoLogistics } from "./demoWeek";
+import { emptyRota } from "./engine";
+import { mergeTransport } from "./stageRules";
+
+const EMPTY_DETAILS = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
 
 const code = async (p: Promise<unknown>) => {
   try {
@@ -144,5 +151,75 @@ describe("the demo and schema v18", () => {
     const trainee = new DemoPort({ memberId: 2, role: "content" });
     const p = (await trainee.loadWeek(1)).lessons.find((l) => l.approval === "pending")!;
     expect(await code(trainee.commands(1).decidePayments([{ lesson_id: p.id, version: p.version }], "approved"))).toBe("forbidden");
+  });
+});
+
+describe("the logistics demo's seed (`?as=logistics` only): what the transport board draws", () => {
+  const at = (week: ReturnType<typeof demoWeek>, day: number, start: number) => week.lessons.find((l) => l.kind === "lesson" && l.state === "closed" && l.day === day && l.start_min === start)!;
+
+  it("gives the three transports synthetic pickup times — placeholder words, a 06:10 before the board's 06:30 — and two staff shifts", () => {
+    const week = demoWeek();
+    const shared = { transport: demoTransport(week), rota: emptyRota() };
+    const before = structuredClone(shared.transport);
+    seedDemoLogistics(shared, week, { id: 5, display_name: "לוגיסטיקה (הדגמה)" });
+    const row = (day: number, start: number) => shared.transport[`1:${at(week, day, start).id}`];
+    expect(row(0, 510)).toEqual({ ...before[`1:${at(week, 0, 510).id}`], pickup_time: "07:15", pickup_min: 435 }); // its driver and «סודר» kept
+    expect(row(1, 510)).toEqual({ pickup_address: "כתובת לדוגמה", pickup_time: "06:10", pickup_min: 370, driver_name: null, driver_phone: null, arranged: false });
+    expect(row(3, 600)).toEqual({ pickup_address: "כתובת לדוגמה", pickup_time: "08:45", pickup_min: 525, driver_name: null, driver_phone: null, arranged: false });
+    expect(Object.keys(shared.transport)).toHaveLength(3);
+    expect(shared.rota.staff).toEqual([
+      { id: 1, edition_id: 1, day: 1, start_min: 390, end_min: 720, member_id: null, name: "איש/אשת צוות לדוגמה ב׳", cohort_id: null, kind: "shift", note: null },
+      { id: 2, edition_id: 1, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, kind: "lead", note: null },
+    ]);
+    // no logistics member to lead: the typed shift alone
+    const bare = { transport: demoTransport(week), rota: emptyRota() };
+    seedDemoLogistics(bare, week, null);
+    expect(bare.rota.staff.map((s) => s.name)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
+    // synthetic only: no digits in a pickup address, and the times are what the board needs
+    expect(Object.values(shared.transport).every((t) => !/\d/.test(t.pickup_address ?? ""))).toBe(true);
+  });
+
+  it("on the board, as the logistics demo reads it: Sunday arranged, Monday's round trip waiting and clamped, Wednesday approved and led", async () => {
+    const port = new DemoPort(DEMO_LOGISTICS, { logistics: true });
+    const week = await port.loadWeek(1);
+    const read = await port.commands(1).transports();
+    const rota = await port.rota.load(1);
+    const day = (d: (typeof DAYS)[number]) => transportLanes(week, read, rota, d);
+    expect(day(0).transports.map((t) => [t.state, t.outbound])).toEqual([["arranged", { kind: "bar", from: 435, to: 510, clamped: false }]]);
+    // the return from the teaching's end, 09:45 (08:30 + 75) — the escort's page and the speaker's message say the same
+    expect(day(1).transports.map((t) => [t.state, t.outbound, t.returnAt])).toEqual([["pending", { kind: "bar", from: 390, to: 510, clamped: true }, 585]]);
+    expect(day(3).transports.map((t) => [t.state, t.outbound, t.returnAt])).toEqual([["approved", { kind: "bar", from: 525, to: 600, clamped: false }, null]]);
+    expect(day(3).shifts.map((s) => [s.who, s.lead])).toEqual([["לוגיסטיקה (הדגמה)", true]]);
+    expect(day(1).shifts.map((s) => [s.who, s.lead])).toEqual([
+      ["איש/אשת צוות לדוגמה ב׳", false],
+      ["צוות מכינה לדוגמה נ", false],
+    ]);
+    expect(day(2)).toEqual({ day: 2, transports: [], shifts: [] });
+    expect(boardCounts(week, read)).toEqual({ pending: 1, approved: 2, arranged: 1 });
+    // the default demo draws the same transports with no pickup time known: markers at the lessons' starts
+    const plain = new DemoPort();
+    const w = await plain.loadWeek(1);
+    const r = await plain.commands(1).transports();
+    const lanes = DAYS.flatMap((d) => transportLanes(w, r, null, d).transports);
+    expect(lanes.map((t) => [t.lesson.day, t.outbound])).toEqual([
+      [0, { kind: "marker", at: 510, known: false }],
+      [1, { kind: "marker", at: 510, known: false }],
+      [3, { kind: "marker", at: 600, known: false }],
+    ]);
+  });
+
+  it("a pickup changed through the old screens' form (set_transport_details keeps pickup_min): the board shows the new time, as the files do", async () => {
+    const port = new DemoPort(DEMO_LOGISTICS, { logistics: true });
+    const cmds = port.commands(1);
+    const week = await port.loadWeek(1);
+    const wed = at(week, 3, 600);
+    // the grid's panel saves as TransportBlock does: the whole five over what is there
+    await cmds.setTransport(wed.id, mergeTransport(EMPTY_DETAILS, { ...EMPTY_DETAILS, pickup_address: "כתובת לדוגמה", pickup_time: "07:30" }, await cmds.transport(wed.id)));
+    const read = await cmds.transports();
+    expect(read.find((t) => t.lesson_id === wed.id)).toMatchObject({ pickup_time: "07:30", pickup_min: 525 }); // the minute left behind
+    const [lane] = transportLanes(week, read, null, 3).transports;
+    expect(pickupText(lane)).toEqual({ time: "07:30", early: false, words: null });
+    expect(lane.outbound).toEqual({ kind: "bar", from: 450, to: 600, clamped: false });
+    expect(transportRows(week, read).find((r) => r.lesson.id === wed.id)?.details?.pickup_time).toBe("07:30"); // the tab's own print says the same
   });
 });

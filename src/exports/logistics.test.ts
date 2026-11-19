@@ -7,7 +7,7 @@ import type { KkData } from "../data/kk";
 import type { SourceFile } from "../domain/types";
 import { addLesson, addSpeaker, addTrainee, closeWith, emptyWeek } from "../testing/week";
 import { toCsv } from "./csv";
-import { bookRows, bookTable, pagesText, paymentRows, paymentTable, paymentTotals, printGroups, printRows, printTable, transportCounts, transportRows, transportTable } from "./logistics";
+import { bookRows, bookTable, pagesText, paymentRows, paymentTable, paymentTotals, printGroups, printRows, printTable, transportRows, transportTable } from "./logistics";
 import { LRM } from "./table";
 
 function week() {
@@ -40,7 +40,7 @@ describe("the transports", () => {
     expect(rows.map((r) => r.lesson.id)).toEqual([ride.id, paidRide.id]);
     expect(rows[0]).toMatchObject({ dayLabel: "ראשון", speaker: "פלוני לדוגמה", title: "שיעור ב", legs: "הלוך" });
     expect(rows[1]).toMatchObject({ speaker: "ד״ר פלונית לדוגמה", legs: "הלוך ושוב", details: null }); // nothing came back for it
-    expect(transportCounts(rows)).toEqual({ total: 2, arranged: 1 });
+    expect(rows.filter((r) => r.details?.arranged)).toHaveLength(1);
   });
 
   it("v18: the read lists pending requests too — the tab and its file still show the approved ones only, with the five fields", () => {
@@ -56,7 +56,7 @@ describe("the transports", () => {
     expect(rows.map((r) => r.lesson.id)).toEqual([ride.id, paidRide.id]); // the waiting lesson has no row
     expect(rows[0].details).toEqual(five); // exactly the five: no approval, no pickup_min
     expect(rows[1].details).toBeNull();
-    expect(transportCounts(rows)).toEqual({ total: 2, arranged: 1 });
+    expect(rows.filter((r) => r.details?.arranged)).toHaveLength(1);
     for (const personal of [false, true]) {
       const t = transportTable(rows, "הדגמה", personal);
       expect(t.rows).toHaveLength(2);

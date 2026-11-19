@@ -308,9 +308,11 @@ test.describe("demo build", () => {
       await expect(page.getByText("את המקראה בונים במחשב: הקבצים גדולים, והבנייה כבדה לטלפון ולטאבלט.")).toBeVisible();
     }
     await noSidewaysScroll(page);
-    // a row opens its lesson in the week, at «מקורות»
+    // a row opens its lesson's page at «מקורות ומצגת» (the reset, phase 3: the staff's wide pages, not the grid's panel)
+    const needsPdf = m.rows.find((r) => r.status === "needs_pdf")!;
     await page.locator('[data-status="needs_pdf"]').getByRole("button").click();
-    await expect(page.getByRole("dialog", { name: "שיעור סגור" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/lesson/${needsPdf.lesson.id}\\?step=sources$`));
+    await expect(page.locator('[data-page-step="sources"] h3 button')).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByRole("group", { name: "קבצי המקורות" })).toContainText("מקורות לדוגמה.docx");
   });
 

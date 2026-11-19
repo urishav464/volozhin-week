@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildModel } from "../grid/model";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { hasFresh, myDay, ownedDays } from "./myDay";
+import { hasFresh, myDay, offeredTo, ownedDays, staffDay } from "./myDay";
 import type { Day } from "./time";
 import type { Approach, SlotAvailability, Week } from "./types";
 
@@ -301,5 +301,90 @@ describe("myDay: the speakers who can come", () => {
     const s = addSpeaker(w, "f");
     can(w, s.id, 1, 10);
     expect(myDay(buildModel(w), 1, ME).speakers[0].fits).toEqual([{ day: 1, start: 870, end: 960 }]);
+  });
+});
+
+describe("myDay: a day with no owners", () => {
+  it("has no «חריגים» — never every handled lesson", () => {
+    const w = week();
+    const s = addSpeaker(w, "m");
+    own(addApproach(w, s, "positive"), OTHER);
+    closeWith(w, addLesson(w, 2, 510, 600), s);
+    const draft = addLesson(w, 2, 870, 960);
+    pitch(w, draft, own(addApproach(w, addSpeaker(w, "f"), "claimed"), ME), "candidate");
+    const d = myDay(buildModel(w), 2, 1, { staff: true });
+    expect(d.owners).toEqual([]);
+    expect(d.others).toEqual([]);
+    expect(hasFresh(d)).toBe(false);
+  });
+});
+
+describe("myDay: staff mode («ימים»)", () => {
+  it("every closed lesson opens at its step, whoever handles it", () => {
+    const w = week();
+    const s = addSpeaker(w, "m");
+    own(addApproach(w, s, "positive"), OTHER);
+    const l = closeWith(w, addLesson(w, 1, 510, 600), s);
+    const nobody = closeWith(w, addLesson(w, 1, 600, 690), addSpeaker(w, "f"));
+    const d = myDay(buildModel(w), 1, 1, { staff: true });
+    expect(d.slots.find((x) => x.lessonId === l.id)!.step).toEqual({ kind: "lesson", lessonId: l.id, step: "msg", to: `/lesson/${l.id}?step=msg` });
+    expect(d.slots.find((x) => x.lessonId === nobody.id)!.step).toMatchObject({ kind: "lesson", lessonId: nobody.id });
+    // the same lessons without staff mode are someone else's
+    expect(myDay(buildModel(w), 1, 1).slots.find((x) => x.lessonId === l.id)!.step).toMatchObject({ kind: "theirs" });
+    // and the exceptions are still named: the day's pair does not handle them
+    expect(d.others.map((o) => o.lessonId)).toEqual([l.id]);
+  });
+
+  it("a draft follows my candidate, else its first live one", () => {
+    const w = week();
+    const l = addLesson(w, 1, 870, 960);
+    const theirs = addSpeaker(w, "f");
+    const later = addSpeaker(w, "m");
+    pitch(w, l, own(addApproach(w, theirs, "approached"), PARTNER), "candidate");
+    pitch(w, l, own(addApproach(w, later, "claimed"), OTHER), "candidate");
+    const step = (viewer: number) => myDay(buildModel(w), 1, viewer, { staff: true }).slots.find((x) => x.lessonId === l.id)!.step;
+    expect(step(1)).toEqual({ kind: "speaker", speakerId: theirs.id, group: "awaiting", to: `/speakers/${theirs.id}#call` });
+    const mine = addSpeaker(w, "f");
+    pitch(w, l, own(addApproach(w, mine, "positive"), 1), "candidate");
+    expect(step(1)).toEqual({ kind: "lesson", lessonId: l.id, step: "close", to: `/lesson/${l.id}?step=close` });
+    // a draft nobody is pitched in: choose a speaker, as everywhere
+    const bare = addLesson(w, 1, 960, 1050);
+    expect(myDay(buildModel(w), 1, 1, { staff: true }).slots.find((x) => x.lessonId === bare.id)!.step).toMatchObject({ kind: "choose" });
+  });
+
+  it("I am not an owner: no «seen», the owners are all partners", () => {
+    const d = myDay(buildModel(week()), 1, 1, { staff: true });
+    expect(d).toMatchObject({ owners: [2, 3], partners: [2, 3], seenAt: null });
+  });
+});
+
+describe("offeredTo", () => {
+  it("the hand-overs offered to me, by the speaker's name; a speaker not in the week is left out", () => {
+    const w = week();
+    const b = addSpeaker(w, "f", "ב מרצה");
+    const a = addSpeaker(w, "m", "א מרצה");
+    const toB = addApproach(w, b, "claimed");
+    const toA = addApproach(w, a, "approached");
+    toB.offered_to = ME;
+    toA.offered_to = ME;
+    addApproach(w, addSpeaker(w, "f"), "claimed").offered_to = OTHER;
+    w.approaches.push({ id: 1, speaker_id: 424242, owner_member_id: 1, status: "claimed", avail_note: null, offered_to: ME, version: 1 });
+    expect(offeredTo(w, ME).map((x) => x.id)).toEqual([toA.id, toB.id]);
+    expect(offeredTo(w, OTHER)).toHaveLength(1);
+    expect(offeredTo(w, PARTNER)).toEqual([]);
+  });
+});
+
+describe("staffDay", () => {
+  it("today's column during the week, else my first day, else Sunday", () => {
+    const w = week(); // the week starts on 2027-02-14
+    expect(staffDay(w, ME, "2027-02-16T10:00:00Z")).toBe(2);
+    // 05:00 in Israel is still the night of the day before
+    expect(staffDay(w, ME, "2027-02-16T03:00:00Z")).toBe(1);
+    expect(staffDay(w, ME, "2026-11-19T10:00:00Z")).toBe(1);
+    expect(staffDay(w, OTHER, "2026-11-19T10:00:00Z")).toBe(0);
+    expect(staffDay(w, 1, "2026-11-19T10:00:00Z")).toBe(0);
+    w.edition.start_date = null;
+    expect(staffDay(w, PARTNER, "2027-02-16T10:00:00Z")).toBe(1);
   });
 });

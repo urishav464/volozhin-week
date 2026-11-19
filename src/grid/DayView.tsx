@@ -3,22 +3,19 @@
 // `readOnly` (the offline snapshot, src/screens/OfflineWeek.tsx, and a trainee's «השבוע»,
 // src/screens/ReadOnlyWeek.tsx): a free cell is only a label, never a button; a card still opens, to read.
 // The reset, phase 2: a free cell says «פנוי» — what the day is short of (its CLOSED lessons) is said once, by its
-// chip's dot and its header, never on a cell.
+// chip's dot and its header, never on a cell. Phase 3: no placing mode — a free cell opens its panel (its chooser).
 import { DAYS, DAY_NAMES, type Day, dayRange, fmt, fmtRange, overlaps } from "../domain/time";
-import type { GridRow, Lesson, Speaker } from "../domain/types";
+import type { GridRow, Lesson } from "../domain/types";
 import { DayHeader, needText } from "./DayHeader";
-import { type CardOwners, FIT_CELL, type Lens, LessonCard } from "./LessonCard";
+import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
 import { rowActive } from "./layout";
-import { type GridModel, fitFor, fitText, lessonsOfDay, memorialRowFree } from "./model";
+import { type GridModel, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
   lens: Lens;
   day: Day;
   onDay: (d: Day) => void;
-  placing: Speaker | null;
-  /** v14: a speaker the day is coloured for without placing them (a mouse drag on a narrow window — GridDesktop's rule). */
-  lookAt?: Speaker | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (id: number) => void;
   /** An edition admin's: a memorial row with no slot yet makes one (v13 — both rows alike). */
@@ -34,10 +31,9 @@ interface Props {
 
 const ROW_PX = 92;
 
-export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false, mine }: Props) {
+export function DayView({ model, lens, day, onDay, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false, mine }: Props) {
   const { edition } = model.week;
   const lessons = lessonsOfDay(model, day);
-  const need = model.days[day].balance.need;
   const roomSort = (l: Lesson) => model.week.rooms.find((r) => r.id === l.room_id)?.sort ?? 0;
 
   return (
@@ -65,7 +61,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
         })}
       </div>
 
-      <DayHeader model={model} dm={model.days[day]} compact mine={mine?.has(day)} glow={!readOnly && !!placing?.gender && need === placing.gender} onOpen={onDayPanel && !readOnly ? () => onDayPanel(day) : undefined} />
+      <DayHeader model={model} dm={model.days[day]} compact mine={mine?.has(day)} pairLine={lens === "owner"} onOpen={onDayPanel && !readOnly ? () => onDayPanel(day) : undefined} />
 
       <ol className="space-y-1" aria-label={`יום ${DAY_NAMES[day]}`} data-day={day}>
         {model.layout.bands.map(({ row }) => {
@@ -119,7 +115,7 @@ export function DayView({ model, lens, day, onDay, placing, lookAt = null, onCel
               </li>
             );
           }
-          return <LessonRow key={row.id} model={model} lens={lens} owners={owners} day={day} row={row} lessons={lessons} placing={readOnly ? null : placing} who={readOnly ? null : (placing ?? lookAt)} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
+          return <LessonRow key={row.id} model={model} lens={lens} owners={owners} day={day} row={row} lessons={lessons} onCell={onCell} onLesson={onLesson} readOnly={readOnly} />;
         })}
       </ol>
     </div>
@@ -133,8 +129,6 @@ function LessonRow({
   day,
   row,
   lessons,
-  placing,
-  who,
   onCell,
   onLesson,
   readOnly,
@@ -145,9 +139,6 @@ function LessonRow({
   day: Day;
   row: GridRow;
   lessons: Lesson[];
-  placing: Speaker | null;
-  /** The speaker the cells are coloured for: the one placed, else the one looked at. */
-  who: Speaker | null;
   onCell: (d: Day, r: GridRow) => void;
   onLesson: (id: number) => void;
   readOnly: boolean;
@@ -162,9 +153,7 @@ function LessonRow({
 
   if (here.length === 0) {
     const key = `cell:${day}:${row.start_min}:${row.end_min}`;
-    const fit = who && !readOnly ? fitFor(model, who.id, day, row.start_min, row.end_min) : null;
-    const said = fit && who ? fitText(fit, who.gender) : null;
-    const tint = fit && fit !== "neutral" ? FIT_CELL[fit] : "bg-card/70 border-line text-ink-faint";
+    const tint = "bg-card/70 border-line text-ink-faint";
     if (readOnly) {
       return (
         <li className="flex gap-2">
@@ -184,12 +173,10 @@ function LessonRow({
         <button
           type="button"
           data-drop={key}
-          data-fit={fit ?? undefined}
-          disabled={!!placing && fit === "busy"}
           onClick={() => onCell(day, row)}
-          className={`min-h-16 flex-1 rounded-xl border text-sm transition-colors hover:border-navy/40 disabled:opacity-40 ${tint}`}
+          className={`min-h-16 flex-1 rounded-xl border text-sm transition-colors hover:border-navy/40 ${tint}`}
         >
-          {said ?? "פנוי"}
+          פנוי
           {row.label && <span className="block text-[11px] text-ink-faint">{row.label}</span>}
         </button>
       </li>
@@ -226,9 +213,6 @@ function LessonRow({
                     lens={lens}
                     owners={owners}
                     height={l.end_min > row.end_min ? ROW_PX : h}
-                    placeable={!!placing && l.state === "draft"}
-                    fit={who && !readOnly && l.state === "draft" ? fitFor(model, who.id, day, l.start_min, l.end_min) : null}
-                    fitGender={who?.gender ?? null}
                     onOpen={() => onLesson(l.id)}
                   />
                 </div>

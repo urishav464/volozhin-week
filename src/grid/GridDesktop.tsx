@@ -1,21 +1,18 @@
 // The full week on a wide screen: the hours down the right edge, the five days
 // flowing right-to-left, every row a band, every lesson a box (layout.ts).
-// The reset, phase 2: a free cell says «פנוי» (and a speaker's fit while placing or looking) — never what the day
-// is short of; that is the day header's one line. `readOnly` («השבוע» of a trainee, src/screens/ReadOnlyWeek.tsx):
-// a free cell is a label, no memorial «+», no placing — a card still opens.
+// The reset, phase 2: a free cell says «פנוי» — never what the day is short of; that is the day header's one line.
+// `readOnly` («השבוע» of a trainee, src/screens/ReadOnlyWeek.tsx): a free cell is a label, no memorial «+» — a card
+// still opens. Phase 3: no placing mode — a free cell opens its panel (its chooser), a lesson card is dragged to move.
 import { DAYS, type Day, dayRange, fmt, overlaps } from "../domain/time";
-import type { GridRow, Speaker } from "../domain/types";
+import type { GridRow } from "../domain/types";
 import { DayHeader } from "./DayHeader";
-import { type CardOwners, FIT_CELL, type Lens, LessonCard } from "./LessonCard";
+import { type CardOwners, type Lens, LessonCard } from "./LessonCard";
 import { freeCells, placeDay, rowActive } from "./layout";
-import { type Fit, type GridModel, fitFor, fitText, lessonsOfDay, memorialRowFree } from "./model";
+import { type GridModel, lessonsOfDay, memorialRowFree } from "./model";
 
 interface Props {
   model: GridModel;
   lens: Lens;
-  placing: Speaker | null;
-  /** v14: a speaker the grid is coloured for without placing them — dragged by the mouse, or their sheet open beside it. */
-  lookAt?: Speaker | null;
   overKey: string | null;
   onCell: (day: Day, row: GridRow) => void;
   onLesson: (lessonId: number) => void;
@@ -33,12 +30,9 @@ interface Props {
 
 const COLS = "3.25rem repeat(5, minmax(0, 1fr))";
 
-export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false, mine }: Props) {
+export function GridDesktop({ model, lens, overKey, onCell, onLesson, onMemorial, owners, onDayPanel, readOnly = false, mine }: Props) {
   const { layout } = model;
   const { edition } = model.week;
-  // green where they said «יכול/ה», red where «לא» — while placing, dragging, or with their sheet open; only placing
-  // shuts a cell they are already closed at (in look mode a click still opens the cell)
-  const who = readOnly ? null : (placing ?? lookAt);
 
   return (
     <div role="grid" aria-label="רשת השבוע" className="min-w-[46rem]">
@@ -49,8 +43,8 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
             key={dm.day}
             model={model}
             dm={dm}
-            glow={!readOnly && !!placing?.gender && dm.balance.need === placing.gender}
             mine={mine?.has(dm.day)}
+            pairLine={lens === "owner"}
             onOpen={onDayPanel && !readOnly ? () => onDayPanel(dm.day) : undefined}
           />
         ))}
@@ -103,7 +97,7 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
                 );
               })}
 
-              {/* empty lesson cells — drop targets, tinted only by a speaker's fit (what the day is short of is its header's) */}
+              {/* empty lesson cells — a lesson's drop targets; what the day is short of is its header's */}
               {free.map((c) => {
                 const key = `cell:${day}:${c.row.start_min}:${c.row.end_min}`;
                 if (readOnly) {
@@ -121,22 +115,17 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
                     </div>
                   );
                 }
-                const fit: Fit | null = who ? fitFor(model, who.id, day, c.row.start_min, c.row.end_min) : null;
-                const said = fit && who ? fitText(fit, who.gender) : null;
-                const tint = fit && fit !== "neutral" ? FIT_CELL[fit] : "bg-card/70 border-line";
                 return (
                   <button
                     key={key}
                     type="button"
                     data-drop={key}
-                    data-fit={fit ?? undefined}
-                    disabled={!!placing && fit === "busy"}
                     onClick={() => onCell(day, c.row)}
                     style={{ top: c.top, height: c.height }}
-                    className={`absolute inset-x-0 m-0.5 rounded-lg border text-center text-[11px] transition-colors hover:border-navy/40 disabled:cursor-not-allowed disabled:opacity-40 ${tint} ${overKey === key ? "ring-2 ring-accent" : ""}`}
-                    aria-label={`${fmt(c.row.start_min)} — פנוי${said ? `, ${said}` : ""}`}
+                    className={`absolute inset-x-0 m-0.5 rounded-lg border border-line bg-card/70 text-center text-[11px] transition-colors hover:border-navy/40 ${overKey === key ? "ring-2 ring-accent" : ""}`}
+                    aria-label={`${fmt(c.row.start_min)} — פנוי`}
                   >
-                    {said ? <span>{said}</span> : <span className="text-ink-faint">פנוי</span>}
+                    <span className="text-ink-faint">פנוי</span>
                     {c.row.label && <span className="block text-[10px] text-ink-faint">{c.row.label}</span>}
                   </button>
                 );
@@ -144,16 +133,13 @@ export function GridDesktop({ model, lens, placing, lookAt = null, overKey, onCe
 
               {/* lessons */}
               {placed.map((p) => {
-                const key = `lesson:${p.lesson.id}`;
-                const draft = !readOnly && p.lesson.state === "draft" && p.lesson.kind === "lesson";
-                const fit = draft && who ? fitFor(model, who.id, day, p.lesson.start_min, p.lesson.end_min) : null;
                 return (
                   <div
                     key={p.lesson.id}
                     className="absolute"
                     style={{ top: p.top, height: p.height, insetInlineStart: `${(p.lane / p.lanes) * 100}%`, width: `${100 / p.lanes}%` }}
                   >
-                    <LessonCard model={model} lesson={p.lesson} lens={lens} owners={owners} height={p.height} active={overKey === key} placeable={!!placing && draft} fit={fit} fitGender={who?.gender ?? null} onOpen={() => onLesson(p.lesson.id)} />
+                    <LessonCard model={model} lesson={p.lesson} lens={lens} owners={owners} height={p.height} onOpen={() => onLesson(p.lesson.id)} />
                   </div>
                 );
               })}

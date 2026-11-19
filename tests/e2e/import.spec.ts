@@ -269,10 +269,12 @@ test.describe("demo build — the import of 5786", () => {
     const batch = page.getByRole("group", { name: 'אישור באצווה: מי שלימד/ה ב-תשפ"ו לדוגמה' });
     await expect(batch).toContainText("5 מרצים שממתינים לאישור לימדו שיעור");
     if (info.project.name === "desktop") {
-      // «לימד/ה אצלנו» on the sheet shows the archive
-      await rest.getByRole("button", { name: "ארכיון בית", exact: true }).click();
-      await expect(page.getByRole("dialog", { name: "ארכיון בית" })).toContainText('תשפ"ו לדוגמה');
-      await page.keyboard.press("Escape");
+      // «לימד/ה אצלנו» on the speaker's page (the reset, phase 3: a waiting speaker's name is the link to it) shows the archive
+      await rest.getByRole("link", { name: /^ארכיון בית/ }).click();
+      await expect(page).toHaveURL(/\/speakers\/\d+$/);
+      await expect(page.getByRole("region", { name: "שיעורים במחזורים" })).toContainText('תשפ"ו לדוגמה');
+      await page.goBack();
+      await page.locator("summary", { hasText: "עוד ממתינים לאישור" }).click();
     }
     await batch.getByRole("button", { name: 'אישור 5 מרצים שלימדו ב-תשפ"ו לדוגמה' }).click();
     await expect(batch).toContainText("ל-4 מהם חסר מגדר");

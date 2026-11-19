@@ -3,9 +3,10 @@
 // placed on a slot with the picker (no drag needed), and the week's yellow card
 // with the name, the family's status and the minutes; the family's contact
 // person behind its button and nowhere on the week; the policy «ממתין להחלטת
-// ישיבת הצוות» until set. «לוגיסטיקה»: the approved transports — the pickup
-// address and the driver's phone only behind «כולל כתובות וטלפונים», in the
-// page and in the CSV alike — the payments' totals and «שולם», the book orders,
+// ישיבת הצוות» until set. «לוגיסטיקה»: the transport board (the reset, phase 3:
+// its counts, «סודר» in the driver's form; the files the approved ones alone) —
+// the pickup address and the driver's phone only behind «כולל כתובות וטלפונים»,
+// in the page and in the CSV alike — the payments' totals and «שולם», the book orders,
 // the prints by «מתי» and day with «אין קבצים»; the archive with kk.json,
 // memorial.json, sources.json and, when asked, the source files in their day's
 // folder. Mock build: logistics reads the transports in one get_transports_for
@@ -325,9 +326,12 @@ test.describe("demo build", () => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: "לוגיסטיקה" }).click();
     await expect(page).toHaveURL(/\/logistics$/);
-    const rows = page.locator("[data-transport-row]");
-    await expect(rows).toHaveCount(2);
-    await expect(page.getByText("2 הסעות מאושרות · סודרו 1")).toBeVisible();
+    // the transport board (the reset, phase 3): the requests that wait and the approved ones, a day at a time —
+    // Sunday's, arranged, first; the files and the print keep the approved ones alone, as before
+    const rows = page.locator("li[data-transport-row]");
+    await expect(page.locator("[data-board-counts]")).toHaveText("ממתינות לאישור 1 · אושרו 2 · סודרו 1");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toHaveAttribute("data-state", "arranged");
     await expect(rows.first()).toContainText("נהג/ת לדוגמה");
     await expect(page.getByText("כתובת לדוגמה")).toHaveCount(0);
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
@@ -344,10 +348,14 @@ test.describe("demo build", () => {
     expect(full.d.suggestedFilename()).toMatch(/^volozhin-transports-with-addresses-phones-/);
     expect(full.bytes.toString("utf8")).toContain("כתובת לדוגמה");
     await expect(toast(page, "יש בו כתובות וטלפונים")).toBeVisible();
-    // «סודר» on the second
-    await rows.nth(1).getByRole("button", { name: "סימון «סודר»" }).click();
-    await expect(toast(page, "סומן שההסעה סודרה")).toBeVisible();
-    await expect(page.getByText("2 הסעות מאושרות · סודרו 2")).toBeVisible();
+    // «סודר» on the other approved one (Wednesday's): the driver's half only, on the board
+    await page.getByRole("button", { name: "יום רביעי: הסעה אחת" }).click();
+    await rows.first().getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    await rows.first().getByRole("checkbox", { name: "סודר" }).check();
+    await rows.first().getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "פרטי הנהג/ת נשמרו")).toBeVisible();
+    await expect(page.locator("[data-board-counts]")).toHaveText("ממתינות לאישור 1 · אושרו 2 · סודרו 2");
+    await expect(rows.first()).toHaveAttribute("data-state", "arranged");
     // the print view: the file's own table, addresses included only because the toggle is on
     await page.emulateMedia({ media: "print" });
     await expect(page.locator("table").filter({ hasText: "כתובת איסוף" })).toBeVisible();
@@ -448,12 +456,14 @@ test.describe("mock build", () => {
     const ride = week.lessons.find((l) => l.state === "closed" && l.transport !== "none" && l.approval === "approved")!;
     sb.answers.set("get_transports_for", [{ lesson_id: ride.id, pickup_address: "כתובת מהשרת לדוגמה", pickup_time: "07:00", driver_name: "נהג/ת מהשרת", driver_phone: null, arranged: false }]);
     await page.goto(`${mockUrl()}/logistics`);
-    await expect(page.locator(`[data-transport-row="${ride.id}"]`)).toContainText("נהג/ת מהשרת");
+    await expect(page.locator(`li[data-transport-row="${ride.id}"]`)).toContainText("נהג/ת מהשרת");
     expect(sb.rpc.get("get_transports_for")).toEqual([{ p_edition: 7 }]);
     expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/get_transports_for")!.auth).toBe(`Bearer ${session.access_token}`);
-    // a lesson whose details did not come back says so — nothing is made up
-    const other = page.locator("[data-transport-row]").filter({ hasNotText: "נהג/ת מהשרת" }).first();
-    await expect(other).toContainText("פרטי ההסעה גלויים רק");
+    // a lesson whose details did not come back says so — nothing is made up, and no driver is offered for it
+    await page.getByRole("button", { name: "יום רביעי: הסעה אחת" }).click();
+    const other = page.locator("li[data-transport-row]").first();
+    await expect(other).toContainText("פרטי ההסעה לא גלויים לך.");
+    await expect(other.getByRole("button", { name: /^עריכת הנהג\/ת/ })).toHaveCount(0);
     expect(sb.rpc.get("get_transport_details")).toBeUndefined(); // never one lesson at a time here
 
     await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();

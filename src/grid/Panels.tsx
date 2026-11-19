@@ -1,9 +1,14 @@
 // The side panel (a bottom sheet on a phone): what a lesson or an empty cell
 // offers — candidates, the call and closing, the lesson's details, its stages after it
 // closed (payment, the message, the escort, sources: src/screens/stages/,
-// handed in by the week as `stages`), and reshaping the cell.
+// handed in by the week as `stages`), and reshaping the cell. The reset, phase 3: the
+// staff's writing grid keeps it (shaping, moving, the grid's rules), and a lesson's panel
+// leads to the lesson's own page («לדף השיעור», /lesson/:id).
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
+import { lessonHandler } from "../domain/handler";
 import { byGender, displayName } from "../domain/names";
+import { lessonPath } from "../domain/routes";
 import { DAY_NAMES, type Day, fmt, fmtRange, overlaps } from "../domain/time";
 import { type Approach, type ApproachStatus, type Category, type Gender, type GridRow, LIVE_PITCH, type Lesson, type Pitch, type Speaker } from "../domain/types";
 import type { CellTarget, LessonPatch, ReshapeOp } from "../data/commands";
@@ -33,7 +38,7 @@ export interface PanelActions {
   reopen: (lessonId: number) => void;
   update: (lessonId: number, version: number, patch: LessonPatch) => void;
   reshape: (day: Day, rowStart: number, op: ReshapeOp) => void;
-  /** The speaker sheet (src/screens/speakers/SpeakerSheet.tsx). */
+  /** The speaker's page (/speakers/:id; the lesson page's own actions do the same). */
   openSpeaker: (speakerId: number) => void;
 }
 
@@ -208,7 +213,7 @@ export function LessonPanel(props: LessonPanelProps) {
   const free = recruiting && live.length === 0;
   const name = l.kind === "memorial" ? "זמן זיכרון" : l.state === "closed" ? "שיעור סגור" : free ? "משבצת פנויה" : "משבצת בתהליך";
   const lead = l.state === "closed" ? model.leadOf.get(l.id) : undefined;
-  const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
+  const owner = l.state === "closed" ? lessonHandler(model.week, l.id) : null;
   const topic = l.kind === "lesson" && l.category_id != null ? model.categoryById.get(l.category_id) : undefined;
   const merged = l.kind === "lesson" && row != null && cellOf(model, l.day, row).merged;
   const { need, deficit } = model.days[l.day].balance;
@@ -247,6 +252,16 @@ export function LessonPanel(props: LessonPanelProps) {
         </>
       }
     >
+      {/* the lesson's whole way on one wide page: its steps, each with its own action */}
+      {l.kind === "lesson" && (
+        <div>
+          <Link to={lessonPath(l.id)} data-lesson-page className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-navy px-4 text-sm font-bold text-white transition-colors hover:bg-navy-800">
+            לדף השיעור
+            <span aria-hidden>‹</span>
+          </Link>
+        </div>
+      )}
+
       {warnings.length > 0 && <WarningList items={warnings} />}
 
       {recruiting &&
@@ -273,7 +288,7 @@ export function LessonPanel(props: LessonPanelProps) {
   );
 }
 
-/** A closed lesson's heading: its speaker, who opens their sheet (the dialog keeps the name «שיעור סגור»). */
+/** A closed lesson's heading: its speaker, who opens their page (the dialog keeps the name «שיעור סגור»). */
 function SpeakerTitle({ speaker: s, onOpen }: { speaker: Speaker; onOpen: () => void }) {
   return (
     <span className="flex items-center gap-2">
@@ -511,8 +526,7 @@ export function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, a
 }
 
 function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages }: LessonPanelProps) {
-  const lead = model.leadOf.get(l.id);
-  const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
+  const owner = lessonHandler(model.week, l.id);
   const mine = isAdmin || owner === me;
   const row = l.kind === "lesson" ? rowOf(model, l) : undefined;
 
@@ -668,7 +682,7 @@ export function LessonDetails({ model, lesson: l, canEdit, onSave }: { model: Gr
 /**
  * «פתיחה מחדש»: the lesson goes back to a draft, and its stages — the speaker's — start over
  * (CONTRACT reopen_lesson). When any stage holds something, it says what goes before doing it.
- * Paid money is never erased (paid_locked); an approved request is the instructor's to reopen.
+ * Paid money is never erased (paid_locked); an approved request is the edition's admins' to reopen.
  */
 export function Reopen({ lesson: l, isAdmin, files, onReopen }: { lesson: Lesson; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
@@ -679,7 +693,7 @@ export function Reopen({ lesson: l, isAdmin, files, onReopen }: { lesson: Lesson
     return <p className="text-sm text-ink-soft">שולם — כדי לפתוח מחדש, קודם מבטלים «שולם» בשלב התשלום.</p>;
   }
   if (l.approval === "approved" && !isAdmin) {
-    return <p className="text-sm text-ink-soft">הבקשה אושרה — רק המדריך/ה פותח/ת מחדש.</p>;
+    return <p className="text-sm text-ink-soft">הבקשה אושרה — רק צוות המחזור פותח מחדש.</p>;
   }
   if (asking) {
     return (

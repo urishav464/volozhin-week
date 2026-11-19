@@ -47,7 +47,7 @@ export function useTransportDetails(cmds: StageCtx["cmds"], l: Pick<Lesson, "id"
 
 /**
  * The handler's (or an admin's) request. `details`: also show the pickup and the driver read-only once sent — the
- * staff see them in «פרטי ההסעה» (TransportBlock) instead, where they edit them.
+ * staff see them in «פרטי ההסעה» (StaffTransport) instead, where they set the driver once approved.
  */
 export function TransportRequest({ details, ...ctx }: StageCtx & { details: boolean }) {
   const { lesson: l, cmds } = ctx;

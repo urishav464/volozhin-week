@@ -10,21 +10,30 @@ export const supabaseConfig: { url: string; key: string } | null = url && key ? 
 export const demoRequested = new URLSearchParams(window.location.search).has("demo");
 
 /**
- * `?as=trainee` (demo builds only, read once when the page loads): the demo acts as a trainee who owns days with a
- * partner — the persona the reset's phase 2 is for; the PR's Cloudflare preview opens with it. A configured build
- * ignores it (src/data/index.ts uses it only for the demo). The tab remembers it (sessionStorage), so a reload or an
- * address typed later stays the trainee's; `?as=` with anything else (`?as=staff`) goes back to the instructor.
+ * `?as=trainee` / `?as=logistics` (demo builds only, read once when the page loads): the demo acts as a trainee who owns
+ * days with a partner (the reset's phase 2), or as the edition's logistics member (phase 3: «אישורים» and the transport
+ * board) — the PR's Cloudflare preview opens with either. A configured build ignores it (src/data/index.ts uses it only
+ * for the demo). The tab remembers it (sessionStorage), so a reload or an address typed later stays the same persona;
+ * `?as=` with anything else (`?as=staff`) goes back to the instructor.
  */
-export const demoAs: "trainee" | null = readDemoAs(new URLSearchParams(window.location.search).get("as"));
+export type DemoAs = "trainee" | "logistics";
+export const demoAs: DemoAs | null = readDemoAs(new URLSearchParams(window.location.search).get("as"));
 
-function readDemoAs(asked: string | null): "trainee" | null {
+// a function declaration, hoisted: `demoAs` above calls it while the module is still being evaluated
+function isDemoAs(v: string | null): v is DemoAs {
+  return v === "trainee" || v === "logistics";
+}
+
+function readDemoAs(asked: string | null): DemoAs | null {
   const KEY = "volozhin-demo-as";
   try {
-    if (asked === "trainee") window.sessionStorage.setItem(KEY, "trainee");
+    if (isDemoAs(asked)) window.sessionStorage.setItem(KEY, asked);
     else if (asked != null) window.sessionStorage.removeItem(KEY);
-    return asked === "trainee" || (asked == null && window.sessionStorage.getItem(KEY) === "trainee") ? "trainee" : null;
+    if (isDemoAs(asked)) return asked;
+    const kept = asked == null ? window.sessionStorage.getItem(KEY) : null;
+    return isDemoAs(kept) ? kept : null;
   } catch {
     // no storage here (a private window, blocked site data): the address alone decides
-    return asked === "trainee" ? "trainee" : null;
+    return isDemoAs(asked) ? asked : null;
   }
 }

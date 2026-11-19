@@ -3,11 +3,13 @@
 // day's closed women and men are further apart than the tolerance.
 // The reset, phase 2: its one line («חסרה מרצה») is the only place the day says what its CLOSED lessons are short
 // of — no free cell is tinted for it; `mine`: the viewer owns the day («היום שלי», a navy ring).
+// The reset, phase 3: `pairLine` (the «אחריות» lens) names the day's pair — «אין זוג ליום» when an admin has not set it.
 import { DAY_NAMES, type Day, dateOf, hebrewDate, shortDate } from "../domain/time";
 import type { Gender } from "../domain/types";
 import { DEFAULT_GENDER_TOLERANCE, unbalanced } from "../rules/balance";
 import type { DayModel, GridModel } from "./model";
 import { SeverityMark } from "./bits";
+import { dayPair, NO_PAIR_LABEL, pairText } from "./owners";
 import { TopicAxis } from "./TopicAxis";
 
 const n = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
@@ -18,7 +20,22 @@ export function needText(need: Gender | null, deficit: number): string {
   return need === "f" ? (k === 1 ? "חסרה מרצה" : `חסרות ${k} מרצות`) : k === 1 ? "חסר מרצה" : `חסרים ${k} מרצים`;
 }
 
-export function DayHeader({ model, dm, glow, compact = false, mine = false, onOpen }: { model: GridModel; dm: DayModel; glow?: boolean; compact?: boolean; mine?: boolean; onOpen?: () => void }) {
+export function DayHeader({
+  model,
+  dm,
+  compact = false,
+  mine = false,
+  pairLine = false,
+  onOpen,
+}: {
+  model: GridModel;
+  dm: DayModel;
+  compact?: boolean;
+  mine?: boolean;
+  /** The «אחריות» lens: a line naming the day's pair. */
+  pairLine?: boolean;
+  onOpen?: () => void;
+}) {
   const date = dateOf(model.week.edition.start_date, dm.day as Day);
   const b = dm.balance;
   // «לא מאוזן» has a line of its own: the warnings' count is the rest
@@ -26,11 +43,12 @@ export function DayHeader({ model, dm, glow, compact = false, mine = false, onOp
   const needTone = b.unreachable ? "text-bad" : b.need === "f" ? "text-pink-700" : b.need === "m" ? "text-sky-700" : "text-ok";
   const off = unbalanced(b.closed, model.week.edition.settings.gender_tolerance ?? DEFAULT_GENDER_TOLERANCE);
   const Tag = onOpen ? "button" : "div";
+  const pair = pairLine ? pairText(model, dm.day as Day) : null;
 
   return (
     <Tag
-      {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}${mine ? " (היום שלי)" : ""}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)} — פרטי היום` } : {})}
-      className={`block w-full rounded-xl border bg-card px-2.5 py-1.5 text-start shadow-sm ${onOpen ? "cursor-pointer transition-shadow hover:shadow-md" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : mine ? "border-navy ring-2 ring-navy/40" : off ? "border-bad/60" : `border-line ${onOpen ? "hover:border-navy/30" : ""}`}`}
+      {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}${mine ? " (היום שלי)" : ""}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)}${pair ? `, ${pair}` : ""} — פרטי היום` } : {})}
+      className={`block w-full rounded-xl border bg-card px-2.5 py-1.5 text-start shadow-sm ${onOpen ? "cursor-pointer transition-shadow hover:shadow-md" : ""} ${mine ? "border-navy ring-2 ring-navy/40" : off ? "border-bad/60" : `border-line ${onOpen ? "hover:border-navy/30" : ""}`}`}
       data-day-header={dm.day}
       data-mine-day={mine ? dm.day : undefined}
     >
@@ -55,6 +73,11 @@ export function DayHeader({ model, dm, glow, compact = false, mine = false, onOp
         {needText(b.need, b.deficit)}
         {b.unreachable && " — לא ייסגר מאוזן"}
       </span>
+      {pair && (
+        <span data-day-pair={dayPair(model, dm.day as Day).join(",")} className={`block truncate text-[11px] ${pair === NO_PAIR_LABEL ? "text-ink-faint" : "font-semibold text-navy"}`}>
+          {pair}
+        </span>
+      )}
       <span className="mt-1 flex items-center gap-1.5">
         <span className="min-w-0 flex-1">
           <TopicAxis model={model} day={dm.day as Day} size="thin" />

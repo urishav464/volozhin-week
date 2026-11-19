@@ -1,9 +1,10 @@
-// «המרצים שלי», the team's board and the approvals queue, derived from a loaded Week (pure, so every device groups
-// the same way). The groups follow the next step (v14: the call comes first): להתקשר → לנסות שוב / מחכים לתשובה →
-// הסכימו — ממתינים לאישור (the instructor's approval waits only for closing) → לסגור שעה; then, for each closed
-// lesson, its own next step (src/domain/stages.ts): תשלום/הסעה → לעדכן את המרצה → לשלוח סיכום → חסר מלווה → חסרים
-// מקורות → נסגר. A hand-over waiting for me comes first.
+// Where each speaker stands, derived from a loaded Week (pure, so every device groups the same way): «היום שלי», the
+// team's board («מרצים ← כל הצוות») and the approvals page read it. The groups follow the next step (v14: the call
+// comes first): להתקשר → לנסות שוב / מחכים לתשובה → הסכימו — ממתינים לאישור (the instructor's approval waits only for
+// closing) → לסגור שעה; then, for each closed lesson, its own next step (src/domain/stages.ts): תשלום/הסעה → לעדכן את
+// המרצה → לשלוח סיכום → חסר מלווה → חסרים מקורות → נסגר. A hand-over waiting for me comes first («הוצעו לי»).
 import { ownerColors } from "../grid/owners";
+import { lessonHandler } from "./handler";
 import { type LessonStep, nextLessonStep, readerFilesOf } from "./stages";
 import type { Approach, Lesson, Pitch, Speaker, Week } from "./types";
 import { LIVE_PITCH } from "./types";
@@ -82,11 +83,10 @@ export function groupOf(week: Week, a: Approach, s: Speaker, lesson?: Lesson): M
   }
 }
 
-/** One approach's rows: one per closed lesson, else one by where it stands; `offered`: a hand-over waiting for me. */
-function rowsOf(week: Week, ix: Index, a: Approach, speaker: Speaker, offered: boolean): MineRow[] {
+/** One approach's rows: one per closed lesson, else one by where it stands. */
+function rowsOf(week: Week, ix: Index, a: Approach, speaker: Speaker): MineRow[] {
   const closed = ix.closedBySpeaker.get(a.speaker_id) ?? [];
   const live = ix.liveByApproach.get(a.id) ?? [];
-  if (offered) return [{ speaker, approach: a, group: "offered", closed, live }];
   if (closed.length > 0) return closed.map((lesson) => ({ speaker, approach: a, group: groupOf(week, a, speaker, lesson), closed, live, lesson }));
   return [{ speaker, approach: a, group: groupOf(week, a, speaker), closed, live }];
 }
@@ -120,22 +120,6 @@ function indexOf(week: Week): Index {
 const byName = (x: MineRow, y: MineRow) =>
   x.speaker.name.localeCompare(y.speaker.name, "he") || x.speaker.id - y.speaker.id || (x.lesson && y.lesson ? byTime(x.lesson, y.lesson) : 0);
 
-/** My speakers this edition, by next step; a speaker offered to me (not yet mine, waiting for my answer) under «הוצעו לי». */
-export function mySpeakers(week: Week, me: number): Map<MineGroup, MineRow[]> {
-  const out = new Map<MineGroup, MineRow[]>(MINE_GROUPS.map((g) => [g.group, []]));
-  const ix = indexOf(week);
-  for (const a of week.approaches) {
-    const mine = a.owner_member_id === me;
-    const offered = a.offered_to === me && !mine;
-    if (!mine && !offered) continue;
-    const speaker = ix.speakerById.get(a.speaker_id);
-    if (!speaker) continue;
-    for (const row of rowsOf(week, ix, a, speaker, offered)) out.get(row.group)!.push(row);
-  }
-  for (const rows of out.values()) rows.sort(byName);
-  return out;
-}
-
 /** One handler's block on the team's board: their colour of the «אחריות» lens (src/grid/owners.ts), their rows. */
 export interface TeamBlock {
   id: number;
@@ -157,7 +141,7 @@ export function teamBoard(week: Week): { owners: TeamBlock[]; unowned: MineRow[]
   for (const a of week.approaches) {
     const speaker = ix.speakerById.get(a.speaker_id);
     if (!speaker) continue;
-    const rows = rowsOf(week, ix, a, speaker, false);
+    const rows = rowsOf(week, ix, a, speaker);
     (blockById.get(a.owner_member_id ?? -1)?.rows ?? unowned).push(...rows);
   }
   const byGroup = (x: MineRow, y: MineRow) => GROUP_ORDER.get(x.group)! - GROUP_ORDER.get(y.group)! || byName(x, y);
@@ -166,7 +150,7 @@ export function teamBoard(week: Week): { owners: TeamBlock[]; unowned: MineRow[]
   return { owners, unowned };
 }
 
-/** A payment/transport request waiting for the instructor, with who teaches it and who handles it. */
+/** A payment/transport request waiting for a decision (the staff's or logistics'), with who teaches it and who handles it. */
 export interface PaymentRow {
   lesson: Lesson;
   /** The lead speaker. */
@@ -175,7 +159,7 @@ export interface PaymentRow {
   handler: number | null;
 }
 
-/** The approvals queue's payment and transport requests: closed lessons whose request waits (`pending`), by time. */
+/** The payment and transport requests: closed lessons whose request waits (`pending`), by time (src/domain/approvals.ts). */
 export function pendingPayments(week: Week): PaymentRow[] {
   const speakerById = new Map(week.speakers.map((s) => [s.id, s]));
   return week.lessons
@@ -184,22 +168,13 @@ export function pendingPayments(week: Week): PaymentRow[] {
     .map((lesson) => {
       const lead = week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead");
       const speaker = lead ? (speakerById.get(lead.speaker_id) ?? null) : null;
-      const handler = speaker ? (week.approaches.find((a) => a.speaker_id === speaker.id)?.owner_member_id ?? null) : null;
-      return { lesson, speaker, handler };
+      return { lesson, speaker, handler: lessonHandler(week, lesson.id) };
     });
-}
-
-/**
- * The header's badge: what holds the team up until a global admin acts — speakers who agreed and wait for approval
- * before their time can be closed, and payment/transport requests. Other speakers waiting for approval are not counted.
- */
-export function waitingForApproval(week: Week): number {
-  return agreedPending(week).length + pendingPayments(week).length;
 }
 
 const speakerByName = (a: Speaker, b: Speaker) => a.name.localeCompare(b.name, "he") || a.id - b.id;
 
-/** The approvals queue's speakers (a global admin's): waiting for vetting, not retired, by name. */
+/** The speakers waiting for the vetting (a global admin's), not retired, by name. */
 export function pendingSpeakers(week: Week): Speaker[] {
   return week.speakers.filter((s) => s.vetted === "pending" && !s.retired).sort(speakerByName);
 }
@@ -220,7 +195,7 @@ export function pendingWhoTaught(pending: Speaker[], edition: Pick<Week, "lesson
   return pending.filter((s) => taught.has(s.id));
 }
 
-/** The one primary action of a «המרצים שלי» row. */
+/** The one primary action of a speaker's row («היום שלי»). */
 export type MineStep = "accept" | "call" | "vet" | "close" | LessonStep | "lesson" | null;
 
 export function nextStep(group: MineGroup): MineStep {
@@ -230,19 +205,19 @@ export function nextStep(group: MineGroup): MineStep {
     case "to_call":
     case "retry":
     case "awaiting":
-      return "call"; // the sheet, open at the call: its points and its result
+      return "call"; // the speaker's page, at the call: its points and its result
     case "agreed":
       return "vet"; // a chip — and «אישור» for the global admin
     case "to_schedule":
-      return "close"; // to the first cell they are pitched in, else placing them on the week
+      return "close"; // to the first cell they are pitched in, else where they may be placed
     case "payment":
     case "reconfirm":
     case "send":
     case "escort":
     case "sources":
-      return group; // to the lesson, at that stage (a global admin decides a waiting request right there)
+      return group; // to the lesson, at that stage (whoever may decide a waiting request does it right there)
     case "closed":
-      return "lesson"; // to the lesson on the week
+      return "lesson"; // to the lesson's page
     case "declined":
       return null;
   }

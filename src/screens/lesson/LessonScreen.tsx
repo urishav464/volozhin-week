@@ -12,6 +12,8 @@ import { Link, useLocation, useParams } from "react-router";
 import { personaOf } from "../../data/gate";
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
+import { mayDecide } from "../../domain/approvals";
+import { lessonHandler } from "../../domain/handler";
 import { byGender, displayName } from "../../domain/names";
 import { type PageStep, parsePageStep, speakerPath, speakersPath } from "../../domain/routes";
 import { type StageState } from "../../domain/stages";
@@ -25,11 +27,12 @@ import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { BACK_LINK, namesOf, otherDayText, weekProblem } from "../speakerPages/page";
 import { EscortStage, ImportNote, MessageStage, ReaderStage, SourcesStage } from "../stages/LessonStages";
 import { type Act, LINK_BUTTON, type StageCtx } from "../stages/parts";
-import { Decide, PaidButton, PaymentStage, TransportBlock } from "../stages/PaymentStage";
+import { Decide, PaidButton, PaymentStage } from "../stages/PaymentStage";
 import { DraftFiles, SourceFiles } from "../stages/SourceFiles";
 import { actorIn, useWeekStore } from "../weekStore";
 import { useLessonActions } from "./actions";
 import { AFTER_CLOSING, firstOpenStep, pageSteps, type PageStepView } from "./steps";
+import { StaffTransport } from "./StaffTransport";
 import { RequestSummary, TransportRequest } from "./TransportRequest";
 
 export function LessonScreen({ port, me }: { port: DataPort; me: Me }) {
@@ -78,8 +81,7 @@ function Body({ port, me, week, lesson: l, reload, notify, clear }: { port: Data
     await reload();
     return done;
   };
-  const lead = model.leadOf.get(l.id) ?? null;
-  const handler = lead ? (model.approachBySpeaker.get(lead.id)?.owner_member_id ?? null) : null;
+  const handler = lessonHandler(week, l.id);
   const mine = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
   const ctx: StageCtx = { week, lesson: l, actor, cmds, busy, act, handler, mine };
   const steps = pageSteps(model, l);
@@ -482,7 +484,8 @@ function CloseClosed({ model, ctx, actions }: StepBodyProps) {
 /**
  * «תשלום והסעה»: the handler's (or an admin's) request the trainee's way — sent for approval, then only where it
  * stands; anyone else reads what was asked. The staff add their own parts: the decision (who may decide —
- * decide_payments), «שולם», and «פרטי ההסעה» (the pickup and the driver). An archive's lesson: the panel's stage as it was.
+ * decide_payments), «שולם», and «פרטי ההסעה» (StaffTransport: the pickup read-only, the driver through
+ * set_transport_driver once approved). An archive's lesson: the panel's stage as it was.
  */
 function PayStep({ ctx }: StepBodyProps) {
   const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
@@ -495,8 +498,7 @@ function PayStep({ ctx }: StepBodyProps) {
     );
   }
   const staff = actor.isAdmin || actor.role === "logistics";
-  const live = week.edition.kind === "real" && week.edition.status !== "archived";
-  const mayDecide = actor.global || ((actor.isAdmin || actor.role === "logistics") && live);
+  const decides = mayDecide(actor, week.edition);
   return (
     <>
       {mine ? (
@@ -504,14 +506,15 @@ function PayStep({ ctx }: StepBodyProps) {
       ) : (
         <div className="space-y-2">
           {l.approval === "none" ? <p className="text-sm">לא התבקשו תשלום או הסעה.</p> : <RequestSummary lesson={l} />}
-          {actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או המדריך/ה.</p>}
+          {actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או צוות המחזור.</p>}
         </div>
       )}
-      {mayDecide && l.approval === "pending" && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
+      {decides && l.approval === "pending" && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
       <PaidButton {...ctx} />
       {staff && l.transport !== "none" && (
         <div className="border-t border-line pt-3">
-          <TransportBlock {...ctx} />
+          {/* the pickup read-only, the driver once approved (set_transport_driver) — never the old whole-details form */}
+          <StaffTransport {...ctx} />
         </div>
       )}
     </>

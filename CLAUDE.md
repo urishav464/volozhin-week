@@ -105,9 +105,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   message from the instructor's template (`editions.settings.confirm_template` — never seeded;
   every TBD blocks); `src/domain/escorts.ts` the escorts' load and duty notes.
   `src/domain/stages.ts` derives the five stage dots and a closed lesson's next step — the card,
-  the lesson panel, «המרצים שלי» and the progress lens all read it. Screens: `src/screens/stages/`
-  (the lesson panel's five sections, handed to `LessonPanel` as `stages`; `MessageComposer` is
-  also in the speaker sheet), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
+  the lesson panel, the lesson page and «היום שלי» / «ימים» all read it. Screens: `src/screens/stages/`
+  (the lesson panel's five sections, handed to `LessonPanel` as `stages`; the lesson page reuses them), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
   a live preview, the duty phrases), and the approvals queue's payment section. The escort
   picker warns through `escortClashes` (`src/rules/warnings.ts`), the same rule as `escort_gap`.
 - **Outputs and knowledge (milestone 4, schema v8):** `src/exports/` — pure, unit-tested builders of
@@ -263,8 +262,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   admin, or admin/content of a live real edition; past years + the reader's own live one; never who wrote it).
   `port.reviews` (`src/data/reviews.ts`, `supabaseReviews.ts`, `demoReviews.ts`; the engine's `saveReview` /
   `speakerReviews` / `returning` / `purgePrivate`, parity-tested). Screens: the lesson panel's sixth section
-  (`src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged), the speaker sheet's
-  `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
+  (`src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged; «אחרי השבוע» since phase 3 of the reset), the speaker
+  page's `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
   `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
   Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
   every link, deletes the edition's `lesson_import_notes`, sets `editions.purged_at` (guarded by `app.editions_purged_guard`), logs counts only, idempotent; what it
@@ -295,12 +294,12 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **The speakers rethought (schema v14):** the call is the first step. `propose` makes a `claimed` approach and a `candidate`
   pitch (never «פנו»); the call's result is `set_approach_status` (the card follows the APPROACH, labels from one place:
   `statusLabel`); the instructor's vetting gates only `close_lesson` (`not_vetted`); `set_pitch` reviving a declined pitch
-  also returns a declined approach to `claimed`. The badge (`waitingForApproval`) = agreed-and-pending + payments.
+  also returns a declined approach to `claimed`. The badge is per viewer since phase 3 of the reset (`approvalsBadge`).
   «נקודות לשיחה»: `src/domain/callPoints.ts` (the instructor's text verbatim as the default; `settings.call_template` /
   `set_call_template` to edit; never blocks), shared UI `src/screens/speakers/call.tsx`. Availability per slot:
   `slot_availability` (edition, speaker, day, lesson row; can/cannot; any content member; `set_slot_availability`),
-  converted from v6's table in the schema run; every reader goes through `src/domain/availability.ts`. «המרצים שלי»
-  has a «כל הצוות» tab (`/mine/:tab?`, `TeamBoard.tsx`, `teamBoard` in `src/domain/mine.ts`). DECISIONS «המרצים מחדש — גרסה 14».
+  converted from v6's table in the schema run; every reader goes through `src/domain/availability.ts`. «כל הצוות»
+  (`teamBoard` in `src/domain/mine.ts`) is `/speakers?view=team` since phase 3 of the reset. DECISIONS «המרצים מחדש — גרסה 14».
 - **מכריכה לכריכה לפי שבוע (schema v15):** a group is the whole week's — its leaders, ONE book (`title` null until
   chosen), one place as typed (`place_key` = `app.name_key`, unique per edition: `place_taken`; the rooms only suggested) —
   and meets at every kk session, which is never stored: `app.kk_rows` ≡ `kkSessions` (`src/domain/kk.ts`, with
@@ -339,8 +338,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `settings.titles` (its dry run says so: `titles`); the import reads «עו"ד» and two-word titles in a sheet's spellings
   (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
   DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
-- **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — phase 1 rebuilt no screen (phase 2's
-  pages call four of the five new functions; `set_transport_driver` waits for phase 3's transport board); what an old screen shows changes only through the wider transport visibility below — the lesson
+- **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — phase 1 rebuilt no screen (phases
+  2–3 call all five new functions; `set_transport_driver` from phase 3's transport board and the lesson page's `StaffTransport`); what an old screen shows changes only through the wider transport visibility below — the lesson
   panel's transport block opens for an edition admin and for logistics on a pending request, and «לוגיסטיקה ← הסעות» shows an
   edition admin every approved row's details — plus a few sentences of wording (the hints, «עזרה») (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»: five phases, the screens rebuilt per role — trainees,
   staff, logistics; the database, the SQL rules, the engine, parity and the exports stay). No new role (trainees = `content`, the
@@ -360,9 +359,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   under `transport_details`' own policy (the same `app.may_see_transport`) and returned by `get_transports_for`; never in a Week,
   Realtime or the offline copy. `app.may_see_transport`: a global admin; in a real live edition its admins, the handler,
   and logistics while the request is `pending` or `approved` (before: approved only) — `public/privacy.html` says so.
-  `get_transports_for` returns pending and approved, each with `approval` and `pickup_min`; «לוגיסטיקה ← הסעות» still lists
-  the approved only (`transportRows`, `src/exports/logistics.ts`). `decide_payments`: a global admin, or an admin or a logistics
-  member of the lesson's own real live edition — one approval is enough (the approvals screen is still the global admins').
+  `get_transports_for` returns pending and approved, each with `approval` and `pickup_min`; the print and xlsx/CSV of
+  «לוגיסטיקה ← הסעות» list the approved only (`transportRows`, `src/exports/logistics.ts`; the board shows pending too). `decide_payments`: a global admin, or an admin or a logistics
+  member of the lesson's own real live edition — one approval is enough (phase 3's `mayDecide` is the same rule on screen).
   `WeekCommands.setDayOwners / markDaySeen / setTransportRequest / setTransportDriver`; cleaners `cleanAvailabilityRanges`
   (`src/data/speakerRules.ts`), `cleanTransportRequest` / `cleanTransportDriver` (`src/data/stageRules.ts`). Anon unchanged; five
   more definer functions for `authenticated` (Advisor 80). CONTRACT «v18 — day owners, availability by ranges, transport in two
@@ -371,14 +370,14 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
 - **The reset, phase 2 — the trainee's screens (no schema change):** a content member who is not an admin is a trainee
   (`personaOf(me, editionId)` in `src/data/gate.ts`: a global admin is staff, else the role of `actorIn`'s membership);
   the header is `navFor` (`src/screens/nav.ts`) — a trainee's four sections «היום שלי» `/` · «מרצים» `/speakers` · «השבוע»
-  `/week` · «עזרה»; staff and logistics keep theirs until phases 3–4 and may open the new pages by address. The old screens
-  stay reachable (the writing grid at `/grid`, `/mine`); guards come in phase 5. Addresses are built and parsed in ONE place,
+  `/week` · «עזרה» (and «אחרי השבוע» from phase 3); the staff's header is phase 3's, logistics' home phase 4's. The writing
+  grid stays reachable at `/grid`; guards come in phase 5. Addresses are built and parsed in ONE place,
   `src/domain/routes.ts` (`lessonPath(id, step)`, `speakerPath(id, section)`, `speakersPath(query)` — filters live in the
   query; a slot is `?slot=d:start-end&lesson=<id>`, so a parallel draft's link names its own draft — `slotFor`).
   **«היום שלי»** (`src/screens/myday/`, pure `myDay(model, day, me)` in `src/domain/myDay.ts`): the days `week.dayOwners`
   gives me (a tab each), each slot one next step; «משבצות ביום שלכם שמטופלות על ידי אחרים» is the pair's in-site notice —
-  «חדש» from `pitches.at` after my `seen_at` (a lesson has no updated-at), «ראיתי» = `markDaySeen`; an admin with no day sees
-  `/myday` as each day's first owner. **«מרצים»** (`src/screens/speakerPages/`): the list (`filters.ts` `filterSpeakers`; a table
+  «חדש» from `pitches.at` after my `seen_at` (a lesson has no updated-at), «ראיתי» = `markDaySeen`; staff are sent to
+  `/day` (phase 3). **«מרצים»** (`src/screens/speakerPages/`): the list (`filters.ts` `filterSpeakers`; a table
   from a tablet up — the institution under the name below 1024px — cards on a phone; a whole row or card opens the speaker), «מרצה חדש/ה» (`/speakers/new`: «פרט מבחין» only when the
   name check or the server asks; «דרך תקשורת» = `CONTACT_WAY_LABEL` everywhere the field shows), the speaker page: the
   vetting chip, «הפנייה», «זמינות» — `RangesEditor` on `src/domain/rangesForm.ts` (per day «לא ידוע / כל היום / רק בשעות… /
@@ -401,11 +400,57 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `<bdi dir="ltr">` (`timeRuns`). **The demo's `?as=trainee`** (`src/lib/config.ts` `demoAs`, sticky per tab): «חניך/ה א׳»
   (member 2) owns Sunday and Wednesday with partners, the demo edition becomes `real`, plus a few synthetic availability rows
   (`src/data/demoWeek.ts`). e2e: `myday.spec.ts`, `speakers-page.spec.ts`, `lesson-page.spec.ts`; old-screen specs that sign
-  in a content member open `/grid` or `/mine`. DECISIONS «הריסט, שלב 2 — המסכים של החניך/ה».
-- `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
-  grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
-  week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds
-  the header's badge); `actorIn` there is the one place a screen asks what the member may do.
+  in a content member open `/grid`. DECISIONS «הריסט, שלב 2 — המסכים של החניך/ה».
+- **The reset, phase 3 — approvals, the transport board, the staff's screens (no schema change):** the screens hide only
+  what the rules refuse; the commands decide. **Header** (`navFor`): staff «השבוע» `/` (the writing grid) · «ימים» `/day/:d` ·
+  «מרצים» · «אישורים» (badge) · «לוגיסטיקה» · «תוצרים» · «זמני זיכרון» · «מכריכה לכריכה» · «ידע» · «הגדרות» · «עזרה»;
+  logistics adds «אישורים»; a trainee gets «אחרי השבוע» once `reviewsOpen` (`src/domain/reviews.ts`: a date, and Israel's
+  today past the week's first day). `dayPath` / `afterPath` in `routes.ts`; the redirects are pure helpers in `nav.ts`
+  (`myDayRedirect`, `afterRedirect`, `mineRedirect`: `/mine` → `/speakers?s=mine`, `/mine/team` → `/speakers?view=team`).
+  `WeekVisit` is gone — no screen sends staff to the old panel; a lesson link is `lessonPath(id, step)`. **ONE handler rule:**
+  `lessonHandler` (`src/domain/handler.ts`, the lead's approach owner) — the lesson page, the panel, «היום שלי», «אחרי השבוע»,
+  the board, approvals, tracking and the «אחריות» lens. **ONE decide rule:** `mayDecide` (`src/domain/approvals.ts`, the rule
+  of `decide_payments`); `approvalsBadge` counts what waits for THIS viewer (vetting only for a global admin). **«אישורים»**
+  (`src/screens/approvals/`, `/approvals` for `handlesLogistics`): request rows from ONE `transports()` read (`requestRows`;
+  re-read when the pending set changes and after each decision; a failed read only drops the pickup), single or batch
+  decisions, `stale` reloads with one line; vetting and «אישור באצווה» stay the global admins'. Wording: payment and
+  transport are no longer «the instructor's» («ממתין לאישור», «החלטה על הבקשה»; `forbidden` = «אין הרשאה לפעולה הזו.»).
+  **The transport board** («לוגיסטיקה ← הסעות», `src/screens/logistics/TransportBoard.tsx`, the pure model `lanes.ts`): closed
+  lessons with a pending or approved request, from ONE `transports()` read and `useRota`; the axis (`BoardAxis.tsx`, from
+  768px, `aria-hidden` — the list is its twin and the phone's board) runs 06:30 to the next morning; outbound bar from
+  `boardPickupMin` (`pickup_min` only when it is the clock time typed in `pickup_time` — the old `set_transport_details`
+  form changes the text alone) to the start, clamped at 06:30, a marker «שעת איסוף לא ידועה» without one; a round trip's
+  «חזרה מ-HH:MM» at the TEACHING end (`teachEndOf` ≡ `app.teach_end`) with no length — no return time, car or second
+  driver exists in the database, so none is drawn; the day's staff shifts, leads marked, no phones. Pending → `Decide`
+  («דחייה» asks once, everywhere); approved → `DriverForm` (`setTransportDriver` only, changed keys only; «סודר» publishes
+  the driver on the escort's page — said on screen). The lesson page's pay step gives staff and logistics `StaffTransport`
+  (`src/screens/lesson/`: the pickup read-only, the driver only after approval, `mayArrangeDriver`); the old
+  `set_transport_details` form survives only in the grid's panel and an archive's lesson. **«ימים»** (`/day/:d`,
+  `src/screens/myday/DayScreen.tsx`): `myDay(…, { staff: true })` per day — the pair, the balance, every slot's next step,
+  «חריגים», who can come; no day in the address = `staffDay`; «ראיתי» only for an owner. **ONE «חריג» rule:** `outsidePair`
+  (`src/grid/owners.ts`: a closed lesson's handler, or any live candidate's on a draft, outside the day's pair; none on a
+  day without a pair; a member who left never counts) — the grid card, «ימים» and «היום שלי». **The grid:** «התקדמות» is a
+  table (`src/screens/progress/`, `progressRows`: a row per closed lesson and per draft with a candidate, a column per
+  `pageSteps` step, each cell a link to its step; filters day / «רק מה שחסר» / handler; cards on a phone) — last year's
+  colours stay only in tracking (`src/domain/progress.ts`); «אחריות» keeps the handler's colour and names the day's pair.
+  The pool is gone (no column, drawer or «שבץ»; propose from a cell's chooser or the speaker page); the only drag left
+  moves a lesson; the panel stays (shape, move, grid rules) with «לדף השיעור». **Deleted:** `SpeakerSheet`,
+  `CreateSpeaker`, `MineScreen`, `TeamBoard.tsx`, the old approvals queue, `src/grid/Pool.tsx`, `mySpeakers`,
+  `waitingForApproval`, `handlesSpeakers`, placing mode. «כל הצוות» → `/speakers?view=team` (`TeamView.tsx`); «הוצעו לך»
+  (`offeredTo`, `myDay.ts`) → a line atop «מרצים» and «היום שלי». **«אחרי השבוע»** (`/after`, `src/screens/after/`,
+  `afterRows` in `src/domain/after.ts`): my closed lessons by `lessonHandler`, each with `reviewWindow`; the panel's form
+  shared (`ReviewForm` / `reviewFormProps`, `ReviewStage.tsx`); ONE `reviews.ofEdition` read per page (none while a
+  trainee's window is closed); staff «כל השיעורים» `?all=1` (ignored for a non-admin); never logistics. **The demo's
+  `?as=logistics`** (`demoAs`): «לוגיסטיקה (הדגמה)» (member 5), the edition `real`, and in that mode only synthetic pickup
+  times (one before 06:30), an approved Wednesday transport with no driver and two staff shifts (`seedDemoLogistics`,
+  `demoWeek.ts`). Offline: `/day/:d` opens the copy on that day (`offlineDayOf`); `/after`, `/approvals` need a connection.
+  e2e: `approvals.spec.ts`, `staff.spec.ts`, `after.spec.ts`; `speakers.spec.ts` and `stages.spec.ts` rewritten,
+  `mine.spec.ts` deleted. DECISIONS «הריסט, שלב 3 — אישורים, הסעות והמסכים של הצוות».
+- `src/screens/speakers/` — the speaker's shared parts (since phase 3 of the reset no screen of its own): `sheetParts.tsx`
+  (contacts, hand-over and offers, claim, `mayEditSpeaker`), `call.tsx`, `parts.tsx`, `nameCheck.tsx`, `SpeakerReviews.tsx`
+  — used by `src/screens/speakerPages/` and the lesson page. The week, the new pages and /approvals share one loaded edition
+  (`src/screens/weekStore.tsx`, which also feeds the header's badge); `actorIn` there is the one place a screen asks what
+  the member may do.
 - `supabase/seed_gate.sql` / `unseed_gate.sql` — the decision gate's synthetic practice week.
 - `supabase/schema.sql` — the whole database; `tests/sql/` — its tests on PostgreSQL 16 with a
   Supabase-like bootstrap (`tests/sql/bootstrap.sql`).

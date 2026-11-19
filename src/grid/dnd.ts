@@ -1,27 +1,22 @@
 // Drag and drop — mouse (and pen) only, all of it in this one module.
 //
-// Touch never drags: on a phone or tablet a tap selects and a second tap
-// places (the «שבץ» flow), which is also what the keyboard uses. That keeps a
-// scroll gesture from ever moving a lesson by accident, and keeps this module
-// small enough to own without a library.
+// What drags is a lesson, to move it to another cell of the writing grid (the reset, phase 3: the pool is gone, and a
+// speaker is proposed from a cell's or a lesson's chooser or from the speaker's page — never by dragging; a candidate is
+// removed with «הסרה», a closed lesson reopened from its panel). Touch never drags, so a scroll gesture never moves a
+// lesson by accident, and the module stays small enough to own without a library.
 //
 // Sources and targets are plain DOM attributes, so any element can be one:
-//   data-drag="speaker:12" | "pitch:7" | "lesson:31"
-//   data-drop="cell:<day>:<start>:<end>" | "lesson:31" | "pool"
+//   data-drag="lesson:31"  (any other kind — a pitch chip's «pitch:7» — is not a source)
+//   data-drop="cell:<day>:<start>:<end>"  (a free lesson cell)
 import { useEffect, useRef, useState } from "react";
 
-export type DragItem = { kind: "speaker" | "pitch" | "lesson"; id: number };
+export type DragItem = { kind: "lesson"; id: number };
 
-export type DropTarget =
-  | { kind: "cell"; day: number; start: number; end: number }
-  | { kind: "lesson"; id: number }
-  | { kind: "pool" };
+export type DropTarget = { kind: "cell"; day: number; start: number; end: number };
 
 export function parseDrop(value: string | null | undefined): DropTarget | null {
   if (!value) return null;
   const [kind, ...rest] = value.split(":");
-  if (kind === "pool") return { kind: "pool" };
-  if (kind === "lesson" && rest.length === 1) return { kind: "lesson", id: Number(rest[0]) };
   if (kind === "cell" && rest.length === 3) {
     const [day, start, end] = rest.map(Number);
     return { kind: "cell", day, start, end };
@@ -32,7 +27,7 @@ export function parseDrop(value: string | null | undefined): DropTarget | null {
 export function parseDrag(value: string | null | undefined): DragItem | null {
   if (!value) return null;
   const [kind, id] = value.split(":");
-  if ((kind === "speaker" || kind === "pitch" || kind === "lesson") && id) return { kind, id: Number(id) };
+  if (kind === "lesson" && id) return { kind, id: Number(id) };
   return null;
 }
 

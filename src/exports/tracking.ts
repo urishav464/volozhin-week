@@ -6,6 +6,7 @@
 // the xlsx are all this one list.
 import { memorialCard } from "../domain/memorial";
 import { teachMinutes } from "../domain/message";
+import { lessonHandler } from "../domain/handler";
 import { displayName } from "../domain/names";
 import { lessonTone, PROGRESS_FILL, type ProgressTone } from "../domain/progress";
 import { APPROVAL_LABEL, IMPORTED_PAY, type LessonStep, nextLessonStep, PRINT_WHEN_LABEL, readerFilesOf, requestText, SOURCES_LABEL } from "../domain/stages";
@@ -76,7 +77,6 @@ export function trackingRows(week: Week): TrackingRow[] {
   const categories = new Map(week.categories.map((c) => [c.id, c.name]));
   const roster = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const team = new Map(week.team.map((t) => [t.id, t.display_name]));
-  const approachBySpeaker = new Map(week.approaches.map((a) => [a.speaker_id, a]));
   const approachById = new Map(week.approaches.map((a) => [a.id, a]));
   const lessonMinutes = week.edition.settings?.lesson_minutes;
 
@@ -110,7 +110,7 @@ export function trackingRows(week: Week): TrackingRow[] {
       }
       const leads = week.lessonSpeakers.filter((x) => x.lesson_id === l.id).sort((a, b) => Number(a.role !== "lead") - Number(b.role !== "lead"));
       const lead = leads[0] ? speakers.get(leads[0].speaker_id) : undefined;
-      const owner = lead ? approachBySpeaker.get(lead.id)?.owner_member_id : null;
+      const owner = lessonHandler(week, l.id);
       const req = requestText(l);
       const payment =
         req == null

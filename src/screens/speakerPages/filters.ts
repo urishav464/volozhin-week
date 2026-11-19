@@ -1,9 +1,13 @@
 // «מרצים» (/speakers): which speakers the list shows and in what order, from the filters its address holds
 // (src/domain/routes.ts SpeakersQuery). Pure, so «לבחור מרצה» on «היום שלי» and the list agree on who fits a slot.
 import { activeLessonRows, dayKind } from "../../domain/availability";
+import type { MineRow, TeamBlock } from "../../domain/mine";
 import type { SlotRef, SpeakersQuery } from "../../domain/routes";
 import type { Approach, Speaker } from "../../domain/types";
 import { type Fit, fitFor, type GridModel, type OpenSlot, openSlots, type PoolSection, poolSection, speakerMatches } from "../../grid/model";
+
+/** The team's board as teamBoard gives it. */
+export type TeamBoard = { owners: TeamBlock[]; unowned: MineRow[] };
 
 /** One speaker in the list: where they sit from my point of view, who handles them, how many lessons they closed here. */
 export interface SpeakerRow {
@@ -67,4 +71,15 @@ export function slotFor(model: GridModel, ref: SlotRef): OpenSlot | null {
   const open = openSlots(model, ref.day).filter((o) => o.start === ref.start && o.end === ref.end);
   if (ref.lesson != null) return open.find((o) => o.lessonId === ref.lesson) ?? open.find((o) => o.lessonId == null) ?? null;
   return open.find((o) => o.lessonId == null) ?? open[0] ?? null;
+}
+
+/**
+ * «כל הצוות» (`?view=team`): the team's board (src/domain/mine.ts teamBoard) under the list's search, topic and gender —
+ * a handler's block stays (empty) when none of theirs matches; «בלי אחראי/ת» likewise. Never a retired speaker.
+ */
+export function filterTeam(model: GridModel, board: TeamBoard, q: Pick<SpeakersQuery, "q" | "cat" | "g">): TeamBoard {
+  const catName = q.cat != null ? model.categoryById.get(q.cat)?.name : undefined;
+  const keep = (r: MineRow) =>
+    !r.speaker.retired && (!q.g || r.speaker.gender === q.g) && (q.cat == null || (!!catName && r.speaker.topics.includes(catName))) && (!q.q || speakerMatches(r.speaker, q.q));
+  return { owners: board.owners.map((o) => ({ ...o, rows: o.rows.filter(keep) })), unowned: board.unowned.filter(keep) };
 }

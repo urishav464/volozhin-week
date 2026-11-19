@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import seal from "../assets/brand/ein-prat-white.png";
 
-/** One of the site's sections in the header: the week, «המרצים שלי», the approvals queue, «הגדרות». */
+/** One of the site's sections in the header (src/screens/nav.ts): «השבוע», «ימים», «אישורים» (with a badge), «הגדרות»… */
 export interface NavItem {
   to: string;
   label: string;
@@ -78,7 +78,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
                     to={item.to}
                     aria-current={isActive ? "page" : undefined}
                     aria-label={item.badge ? `${item.label}, ${item.badge} ${item.badgeLabel ?? ""}`.trim() : undefined}
-                    className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-sm font-bold transition-colors duration-150 ${isActive ? "bg-paper text-navy shadow-sm" : "text-white hover:bg-white/10"}`}
+                    className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-sm font-bold transition-colors duration-150 ${isActive ? "bg-paper text-navy shadow-sm" : "text-white hover:bg-white/10"}`}
                   >
                     {item.label}
                     {!!item.badge && (

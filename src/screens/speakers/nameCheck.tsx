@@ -1,6 +1,6 @@
 // Search first: the name typed is looked up in the pool as it is typed (the same name key, or a similar one: pg_trgm
-// ≥ 0.6, «הצעה»), and the matches show as «ייתכן שזה…» — the first five, the rest behind one tap. «מרצה חדש/ה» in the
-// sheet (CreateSpeaker.tsx) and as a page (src/screens/speakerPages/NewSpeakerScreen.tsx) share it.
+// ≥ 0.6, «הצעה»), and the matches show as «ייתכן שזה…» — the first five, the rest behind one tap. «מרצה חדש/ה»
+// (/speakers/new, src/screens/speakerPages/NewSpeakerScreen.tsx) reads it; the grid's old side sheet went in phase 3.
 import { useEffect, useState } from "react";
 import type { DataPort } from "../../data/port";
 import type { SpeakerMatch } from "../../data/speakers";

@@ -1,7 +1,7 @@
 // The demo edition: synthetic people only («מרצה 07»), no dates (TBD), and every
 // shape last year's grid had — a parallel pair, a 60+30 split, an all-night
 // merge, memorial slots — so the decision gate exercises them all. The pool's
-// demo (milestone 2) adds a speaker for every «המרצים שלי» group, a hand-over
+// demo (milestone 2) adds a speaker for every group of «מרצים ← שלי», a hand-over
 // waiting for the demo user, a few contacts made of placeholder words (never
 // a number or address that could be someone's) and a past edition's lessons.
 // v14 adds a speaker who agreed and waits for the instructor's approval (the
@@ -10,7 +10,7 @@
 // rejected; a volunteer; a message sent, and one sent and then moved; escorts
 // from a synthetic roster (two lessons close together for one of them); every
 // kind of sources; transport details made of placeholder words — and, for the
-// demo user, a closed lesson in every «המרצים שלי» group. No message template
+// demo user, a closed lesson in every group of «שלי». No message template
 // and no duty phrases: those are the instructor's wording, never ours.
 // Milestone 5ב-2 adds memorial times: nine synthetic fallen («חלל/ה לדוגמה 1»
 // … 9 — the real names are entered by the instructor, in the app only), three
@@ -24,8 +24,10 @@ import {
   type Speaker, type SpeakerContacts, type TransportDetails, type Week,
 } from "../domain/types";
 import type { Sample } from "./demoFiles";
-import type { StoredObject } from "./engine";
+import type { PoolShared, StoredObject, StoredTransport } from "./engine";
 import type { Fallen, FallenContacts } from "./memorial";
+import type { RotaStaffShift } from "./rota";
+import type { MemberRow } from "./settings";
 import type { ActivityEntry, HistoryLesson } from "./speakers";
 import type { LessonReview, SpeakerReview } from "./reviews";
 
@@ -169,7 +171,7 @@ export function demoWeek(): Week {
   const sundayMemorial = lessons.find((l) => l.kind === "memorial" && l.day === 0)!;
   sundayMemorial.escort_roster_id = 4;
 
-  // «המרצים שלי» for the demo user (member 1): one speaker in each group the grid has not filled.
+  // «מרצים ← שלי» for the demo user (member 1): one speaker in each group the grid has not filled.
   approachOf(32, "claimed", 1); // להתקשר («לפני שיחה»)
   approachOf(36, "no_answer", 1); // לנסות שוב
   approachOf(28, "positive", 1); // לסגור שעה (agreed, approved)
@@ -278,6 +280,37 @@ export function demoTransport(week: Week): Record<string, TransportDetails> {
     [key(0, 510)]: { pickup_address: "כתובת לדוגמה", pickup_time: "07:15 (לדוגמה)", driver_name: "נהג/ת לדוגמה", driver_phone: "טלפון לדוגמה", arranged: true },
     [key(1, 510)]: { pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false },
   };
+}
+
+/**
+ * `?as=logistics` (the reset, phase 3 — that mode only; the default and trainee demos keep no pickup_min and the rota's
+ * own three staff shifts): what the transport board draws, synthetic — the demo's three transports get pickup times
+ * (Sunday's 08:30, approved and arranged: 07:15; Monday's 08:30, the round trip that waits for the decision: 06:10, before
+ * the board's 06:30; Wednesday's 10:00, approved, not arranged: a pickup row of its own at 08:45, no driver yet), and two
+ * more staff shifts — Monday morning a name as typed, Wednesday the logistics member as the shift's lead. Placeholder
+ * words only («כתובת לדוגמה»), never a number or an address that could be someone's.
+ */
+export function seedDemoLogistics(
+  shared: Pick<PoolShared, "transport" | "rota">,
+  week: Pick<Week, "edition" | "lessons">,
+  logistics: Pick<MemberRow, "id" | "display_name"> | null,
+): void {
+  const key = (day: Day, start: number) => `${week.edition.id}:${week.lessons.find((l) => l.kind === "lesson" && l.day === day && l.start_min === start && l.state === "closed")!.id}`;
+  const pickup = (day: Day, start: number, patch: Partial<StoredTransport>) => {
+    const k = key(day, start);
+    const empty: StoredTransport = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
+    shared.transport[k] = { ...(shared.transport[k] ?? empty), ...patch };
+  };
+  // as set_transport_request writes a pickup: the time typed and its minute together (the board trusts a minute only
+  // while it is the time typed — lanes.ts boardPickupMin)
+  pickup(0, 510, { pickup_time: "07:15", pickup_min: 435 });
+  pickup(1, 510, { pickup_time: "06:10", pickup_min: 370 });
+  pickup(3, 600, { pickup_address: "כתובת לדוגמה", pickup_time: "08:45", pickup_min: 525 });
+  const t = shared.rota;
+  const staff = (day: Day, start: number, end: number, who: Pick<RotaStaffShift, "member_id" | "name">, kind: RotaStaffShift["kind"]) =>
+    t.staff.push({ id: t.staff.reduce((m, s) => Math.max(m, s.id), 0) + 1, edition_id: week.edition.id, day, start_min: start, end_min: end, ...who, cohort_id: null, kind, note: null });
+  staff(1, 390, 720, { member_id: null, name: "איש/אשת צוות לדוגמה ב׳" }, "shift");
+  if (logistics) staff(3, 510, 870, { member_id: logistics.id, name: logistics.display_name }, "lead");
 }
 
 /** Contacts for the demo's sheet: placeholder words, and addresses at example.org (which never delivers). */

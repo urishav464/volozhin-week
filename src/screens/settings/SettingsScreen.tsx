@@ -46,7 +46,7 @@ export function SettingsScreen({
   port: DataPort;
   me: Me;
   onMeChanged: () => Promise<void> | void;
-  /** A new edition was opened here: the week, «המרצים שלי» and the approvals queue turn to it. */
+  /** A new edition was opened here: the week, the pages and «אישורים» turn to it. */
   onEditionStarted?: (id: number) => void;
 }) {
   const { tab } = useParams();

@@ -34,6 +34,12 @@ describe("the error catalog", () => {
     expect([...codes].filter((c) => !ERRORS[c])).toEqual([]);
   });
 
+  it("approved_locked is reopen_lesson's refusal (its one raise): it names the reopen — the handler may still change the request", () => {
+    expect(ERRORS.approved_locked).toBe("הבקשה אושרה — רק צוות המחזור פותח מחדש.");
+    expect(ERRORS.approved_locked).not.toMatch(/לשנות/);
+    expect([...SCHEMA.matchAll(/app\.refuse\('approved_locked'\)/g)]).toHaveLength(1);
+  });
+
   it("says what is wrong with a picked file: its type, the poster's type, or its size — never one for the other", () => {
     expect(ERRORS.bad_file).toContain("PDF");
     expect(ERRORS.bad_file).not.toMatch(/25MB|לשער/);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  lessonPath, newSpeakerPath, pageStepOf, parsePageStep, parseSlot, parseSpeakerSection, parseSpeakersQuery, speakerPath, speakersPath,
-  type SpeakersQuery,
+  afterPath, dayPath, lessonPath, newSpeakerPath, pageStepOf, parseAfterQuery, parseDay, parsePageStep, parseSlot, parseSpeakerSection, parseSpeakersQuery,
+  speakerPath, speakersPath, type SpeakersQuery,
 } from "./routes";
 
 describe("the trainee's pages' addresses", () => {
@@ -28,6 +28,7 @@ describe("the trainee's pages' addresses", () => {
       `/speakers?slot=0:960-1050&day=0&q=${encodeURIComponent("תנ\"ך")}&cat=3&g=f&s=mine&sort=name`,
     );
     expect(speakersPath({ q: "   " })).toBe("/speakers");
+    expect(speakersPath({ view: "team", s: "mine" })).toBe("/speakers?s=mine&view=team"); // the view written last
   });
 
   it("reads back what it wrote", () => {
@@ -38,12 +39,14 @@ describe("the trainee's pages' addresses", () => {
       { slot: { day: 0, start: 1050, end: 1140, lesson: 34 } },
       { cat: 3, g: "m", s: "declined", sort: "status" },
       { q: "a&b=c#d", day: 2 },
+      { view: "team" },
+      { s: "mine", view: "team" },
     ];
     for (const q of cases) expect(parseSpeakersQuery(speakersPath(q).replace(/^\/speakers/, ""))).toEqual(q);
   });
 
   it("drops what is not a value of its filter", () => {
-    expect(parseSpeakersQuery("?cat=0&g=x&s=everyone&day=5&sort=age&slot=0:960&q=")).toEqual({});
+    expect(parseSpeakersQuery("?cat=0&g=x&s=everyone&day=5&sort=age&slot=0:960&q=&view=all")).toEqual({});
     expect(parseSpeakersQuery("cat=-1&day=1.5&slot=7:960-1050")).toEqual({});
     expect(parseSpeakersQuery("?cat=abc&day=")).toEqual({});
     expect(parseSpeakersQuery("?slot=0%3A960-1050")).toEqual({ slot: { day: 0, start: 960, end: 1050 } }); // URLSearchParams' own spelling
@@ -83,5 +86,33 @@ describe("the trainee's pages' addresses", () => {
     expect(pageStepOf("reader")).toBe("sources");
     expect(pageStepOf("sources")).toBe("sources");
     expect(pageStepOf("escort")).toBe("escort");
+  });
+});
+
+describe("the staff's pages' addresses (the reset, phase 3)", () => {
+  it("a day: «/day» for the default one, else its number — and back", () => {
+    expect(dayPath()).toBe("/day");
+    expect(dayPath(null)).toBe("/day");
+    expect(dayPath(0)).toBe("/day/0");
+    expect(dayPath(4)).toBe("/day/4");
+    for (const d of [0, 1, 2, 3, 4] as const) expect(parseDay(dayPath(d).split("/")[2])).toBe(d);
+  });
+
+  it("a day is one of the five, never guessed", () => {
+    for (const v of ["5", "-1", "01", "1.0", " 1", "x", "", null, undefined]) expect(parseDay(v), String(v)).toBeNull();
+  });
+
+  it("«אחרי השבוע»: every lesson, one lesson — only what is set", () => {
+    expect(afterPath()).toBe("/after");
+    expect(afterPath({ all: false })).toBe("/after");
+    expect(afterPath({ all: true })).toBe("/after?all=1");
+    expect(afterPath({ all: true, lesson: 7 })).toBe("/after?all=1&lesson=7");
+    expect(afterPath({ lesson: 7 })).toBe("/after?lesson=7");
+    for (const q of [{ all: true, lesson: 7 }, { all: false, lesson: 12 }, { all: true }]) {
+      expect(parseAfterQuery(afterPath(q).replace(/^\/after/, ""))).toEqual({ all: !!q.all, lesson: q.lesson ?? null });
+    }
+    expect(parseAfterQuery("")).toEqual({ all: false, lesson: null });
+    expect(parseAfterQuery("?all=yes&lesson=0")).toEqual({ all: false, lesson: null });
+    expect(parseAfterQuery("all=1&lesson=7x")).toEqual({ all: true, lesson: null });
   });
 });

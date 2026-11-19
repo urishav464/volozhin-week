@@ -13,6 +13,7 @@ import type { DataPort } from "../../data/port";
 import { checkPicked, COVER_ACCEPT } from "../../data/sourceRules";
 import type { Me } from "../../data/types";
 import { fallenName } from "../../domain/memorial";
+import { lessonPath } from "../../domain/routes";
 import { SOURCES_LABEL } from "../../domain/stages";
 import { DAY_NAMES } from "../../domain/time";
 import type { SourceFile, Week } from "../../domain/types";
@@ -270,7 +271,7 @@ function ManifestPanel({ manifest }: { manifest: Manifest }) {
               <h3 className="mb-1 font-display text-lg font-bold text-navy">יום {DAY_NAMES[day]}</h3>
               <ul className="divide-y divide-sage/60">
                 {rows.map((r) => (
-                  <ManifestLine key={r.lesson.id} row={r} onOpen={() => navigate("/", { state: { lesson: r.lesson.id, stage: r.kind === "lesson" ? "sources" : undefined } })} />
+                  <ManifestLine key={r.lesson.id} row={r} onOpen={() => navigate(r.kind === "lesson" ? lessonPath(r.lesson.id, "sources") : "/memorial")} />
                 ))}
               </ul>
             </section>
