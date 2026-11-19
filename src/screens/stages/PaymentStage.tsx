@@ -248,7 +248,7 @@ function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
 
   const hidden =
     actor.role === "logistics" && l.approval !== "approved"
-      ? "פרטי ההסעה נפתחים לצוות הלוגיסטי אחרי שהמדריך/ה מאשר/ת את ההסעה."
+      ? "פרטי ההסעה גלויים לצוות הלוגיסטי כל עוד בקשת ההסעה ממתינה לאישור או אושרה; בקשה שנדחתה נסגרת עד שמבקשים אותה שוב."
       : errorMessage("transport_hidden");
 
   return (

@@ -9,6 +9,66 @@ const NOW = Date.now();
 const dateIn = (days: number) => addDays(israelDate(new Date(NOW).toISOString()), days);
 const isoIn = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
 
+// What a `log` step answers, line by line (fixture.ts `logLine`) — for the pins of the v18 scenarios.
+const logs = (...lines: string[]) => lines.join(" ; ");
+/** One set_availability_ranges call: counts only, under the speaker's approach (`approach`) or under none. */
+const rangesLog = (by: string, speaker: string, days: number[], ranges: number, marked: number, rest: "can" | "cannot" | null = null, approach = false) =>
+  `availability|approaches|approach=${approach ? "y" : "-"}|by=${by}|${JSON.stringify({ days, marked, ranges, rest, speaker })}`;
+/** One set_slot_availability call: the slot's day and times, the kind — never its note. */
+const slotLog = (by: string, speaker: string, day: number, start: number, end: number, kind: "can" | "cannot" | null, approach = false) =>
+  `availability|approaches|approach=${approach ? "y" : "-"}|by=${by}|${JSON.stringify({ day, end, kind, speaker, start })}`;
+/** A lesson's transport details: the changed field NAMES, never a value. */
+const transportLog = (by: string, fields: string[], lesson = "1|510-600|בית מדרש") => `transport|lessons|${lesson}|by=${by}|${JSON.stringify({ fields })}`;
+/** A day's owners, by key, ascending by member id (admin, A, B, L, E). */
+const ownersLog = (by: string, day: number, members: string[]) => `day_owners|editions|here|by=${by}|${JSON.stringify({ day, members })}`;
+
+/** A small seeded generator (mulberry32): the same numbers on every run, so both drivers get the same steps. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * `count` valid set_availability_ranges calls, drawn at random but always the same: some days, up to six ranges whose
+ * ends sit on a lesson row's edge, a minute to either side of one, or anywhere in the grid's day, and a rest — and in
+ * some calls a lesson row cut in two «יכול/ה» halves that meet or overlap (together they span the row; neither covers
+ * it). No answer is pinned — the rule's fixed cases are — but every answer and the slots after it must be the same
+ * on both sides.
+ */
+function randomRanges(count: number, seed: number): Step[] {
+  const rnd = seeded(seed);
+  const int = (lo: number, hi: number) => lo + Math.floor(rnd() * (hi - lo + 1));
+  const pick = <T>(list: readonly T[]): T => list[int(0, list.length - 1)];
+  const EDGES = [390, 435, 510, 600, 690, 780, 870, 960, 1050, 1140, 1200, 1290, 1350, 1440, 1470, 1560, 1650, 1740, 1830];
+  /** The template's lesson rows that every day has in play (Sunday opens at 08:30, Thursday closes at 19:00). */
+  const ROWS: [number, number][] = [[510, 600], [600, 690], [690, 780], [870, 960], [960, 1050], [1050, 1140]];
+  const minute = () => (rnd() < 0.7 ? Math.min(1830, Math.max(0, pick(EDGES) + pick([-1, 0, 0, 0, 1]))) : int(0, 1830));
+  const steps: Step[] = [];
+  for (let i = 0; i < count; i++) {
+    const days = [0, 1, 2, 3, 4].filter(() => rnd() < 0.4);
+    if (days.length === 0) days.push(int(0, 4));
+    if (rnd() < 0.5) days.reverse();
+    const list = Array.from({ length: int(0, 6) }, () => {
+      const [a, b] = [minute(), minute()];
+      const [start, end] = a < b ? [a, b] : a > b ? [b, a] : a < 1830 ? [a, a + 1] : [a - 1, a];
+      return { day: pick(days), start, end, kind: rnd() < 0.5 ? "can" : "cannot" };
+    });
+    if (rnd() < 0.4) {
+      const [day, [from, to]] = [pick(days), pick(ROWS)];
+      const cut = from + int(1, to - from - 1);
+      list.push({ day, start: from - pick([0, 0, 5]), end: cut + pick([0, 0, 10]), kind: "can" }, { day, start: cut, end: to + pick([0, 0, 5]), kind: "can" });
+    }
+    steps.push({ as: pick(["A", "B", "E"] as const), ranges: pick(["בטא", "זין", "גמא"]), days, list, rest: pick([null, null, "can", "cannot"]) });
+  }
+  return steps;
+}
+
 export const SCENARIOS: Record<string, Step[]> = {
   "propose, claim, offer, give back": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
@@ -418,12 +478,14 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", pay: [1, 510], amount: null, transport: "none" }, // nothing asked, as before: nothing
     { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // → pending
     { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" }, // the same again: nothing
-    { as: "A", decide: [[1, 510]], decision: "approved" }, // only a global admin decides
-    { as: "E", decide: [[1, 510]], decision: "approved" }, // not this edition's admin either
-    { as: "admin", decide: [[1, 510]], decision: "maybe" },
-    { as: "admin", decide: [[1, 510]], decision: "approved", staleBy: 1 }, // changed since the queue was read
-    { as: "admin", decide: [[1, 510]], decision: "approved", note: "  אושר (נתון לדוגמה)  " },
-    { as: "admin", decide: [[1, 510]], decision: "approved" }, // no longer waiting
+    { as: "A", decide: [[1, 510]], decision: "approved", is: "forbidden" }, // a content member never decides — their own request least of all
+    { as: "admin", decide: [[1, 510]], decision: "maybe", is: "bad_value" },
+    { as: "admin", decide: [[1, 510]], decision: "approved", staleBy: 1, is: "stale" }, // changed since the queue was read
+    { as: "admin", decide: [[1, 510]], decision: "approved", note: "  אושר (נתון לדוגמה)  ", is: "ok" },
+    { as: "admin", decide: [[1, 510]], decision: "approved", is: "stale" }, // no longer waiting
+    // v18: this edition's admin may decide too (before: a global admin alone, and E was `forbidden` here) — but one
+    // decision is enough, so E finds nothing waiting. The staff's own approvals: «v18 approvals by the staff of both teams».
+    { as: "E", decide: [[1, 510]], decision: "rejected", is: "stale" },
     { as: "A", reopen: [1, 510] }, // approved: the instructor's to reopen
     { as: "A", pay: [1, 510], amount: 400, transport: "round_trip" }, // a change → pending again, the note gone
     { as: "admin", decide: [[1, 510]], decision: "rejected", note: "לא מאושר (נתון לדוגמה)" },
@@ -536,21 +598,36 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", decide: [[1, 510]], decision: "rejected" }, // a draft's request is no one's
   ],
 
-  "transport details: the handler, logistics once approved, the instructor; paid": [
+  // v18: an edition's admins see every lesson's details, and its logistics from the request on — while it waits or
+  // was approved (before: the handler and the instructor alone, logistics only once approved)
+  "transport details: the handler, the edition's admins, logistics from the request on; paid": [
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
     { as: "A", close: "אלפא", at: [1, 510] },
     { as: "A", readTransport: [1, 510] }, // the handler: nothing yet
+    { as: "E", readTransport: [1, 510], is: "seen|addr=-|time=-|drv=-|ph=-|arr=false" }, // v18: the edition's admin, though not the handler
+    { as: "L", readTransport: [1, 510], is: "hidden" }, // logistics: no transport is asked
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" }, // no transport asked
     { as: "A", pay: [1, 510], amount: null, transport: "round_trip" },
     { as: "A", setTransport: [1, 510], address: " כתובת   לדוגמה ", time: "07:15" },
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15" }, // nothing changed
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", phone: "12-34" },
     { as: "A", setTransport: [1, 510], address: "א".repeat(201) },
-    { as: "L", readTransport: [1, 510] }, // logistics: not before the approval
-    { as: "L", setTransport: [1, 510], driver: "נהג/ת לדוגמה" },
-    { as: "B", readTransport: [1, 510] },
-    { as: "E", readTransport: [1, 510] }, // the edition's admin is not the handler
+    // v18: logistics from the request on — before the approval (was: hidden until approved)
+    { as: "L", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=-|ph=-|arr=false" },
+    // the old command writes all five for whoever may see them: through it logistics may name a driver early
+    // (was: transport_hidden) — the split is set_transport_request / set_transport_driver's to keep
+    { as: "L", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", is: "ok" },
+    { as: "B", readTransport: [1, 510], is: "hidden" }, // another content member: never
+    { as: "E", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=-|arr=false" }, // v18 (was: hidden — not the handler)
     { as: "admin", readTransport: [1, 510] },
+    // rejected: logistics loses sight — the request is the handler's to ask again
+    { as: "E", decide: [[1, 510]], decision: "rejected", is: "ok" },
+    { as: "L", readTransport: [1, 510], is: "hidden" },
+    { as: "L", setTransport: [1, 510], address: null, is: "transport_hidden" },
+    { as: "A", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=-|arr=false" }, // the handler still sees it
+    { as: "E", readTransport: [1, 510] },
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip" }, // rejected, asked again: pending
+    { as: "L", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=-|arr=false" }, // … and logistics sees it again
     { as: "admin", decide: [[1, 510]], decision: "approved" },
     { as: "L", readTransport: [1, 510] },
     { as: "L", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
@@ -559,10 +636,11 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "B", readTransport: [1, 510] }, // an offer is not a hand-over yet
     { as: "B", answerHandOver: "אלפא", accept: true },
     { as: "B", readTransport: [1, 510] }, // the new handler
-    { as: "A", readTransport: [1, 510] }, // the old one, no longer
+    { as: "A", readTransport: [1, 510], is: "hidden" }, // the old one, no longer
     { as: "L", paid: [1, 510], value: true }, // transport only: nothing to pay
     { as: "B", pay: [1, 510], amount: 250, transport: "round_trip" }, // pending again
-    { as: "L", readTransport: [1, 510] }, // logistics loses sight until it is approved again
+    // v18: logistics keeps sight while the request waits (was: lost until it is approved again)
+    { as: "L", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=555 0100 99|arr=true" },
     { as: "admin", decide: [[1, 510]], decision: "approved" },
     { as: "B", paid: [1, 510], value: true }, // content does not pay
     { as: "L", paid: [1, 510], value: null },
@@ -571,6 +649,7 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", paid: [1, 510], value: false }, // an admin may undo
     { as: "B", pay: [1, 510], amount: 250, transport: "none" }, // no transport: its details go
     { as: "admin", readTransport: [1, 510] },
+    { as: "L", readTransport: [1, 510], is: "hidden" }, // an amount waits, no transport: nothing of logistics' to see
     { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
     { as: "B", pay: [1, 510], amount: 250, transport: "one_way" },
     { as: "B", setTransport: [1, 510], address: "כתובת לדוגמה" },
@@ -578,6 +657,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "B", readTransport: [1, 510] }, // last year's handler
     { as: "B", setTransport: [1, 510], address: null },
     { as: "L", paid: [1, 510], value: true }, // an archive
+    { as: "E", readTransport: [1, 510], is: "hidden" }, // an archived edition: not its own admin either — the global admin alone
+    { as: "L", readTransport: [1, 510], is: "hidden" },
     { as: "admin", readTransport: [1, 510] },
   ],
 
@@ -588,6 +669,8 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", pay: [1, 510], amount: null, transport: "one_way" },
     { as: "A", readTransport: [1, 510] },
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה" },
+    { as: "E", readTransport: [1, 510], is: "hidden" }, // v18's wider sight is a real edition's: here not the practice week's own admin
+    { as: "L", readTransport: [1, 510], is: "hidden" }, // … nor its logistics, on a waiting request
     { as: "admin", decide: [[1, 510]], decision: "approved" },
     { as: "L", readTransport: [1, 510] },
     { as: "admin", setTransport: [1, 510], address: "כתובת לדוגמה", arranged: true },
@@ -1084,14 +1167,25 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", decide: [[1, 510], [1, 600], [3, 600]], decision: "approved" },
     { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", time: "07:15", driver: "נהג/ת לדוגמה", phone: "555 0100 99", arranged: true },
     { as: "A", setTransport: [2, 510], address: "כתובת לדוגמה" },
-    { as: "A", readTransports: true }, // the pending one is not a logistics item
-    { as: "B", readTransports: true },
-    { as: "L", readTransports: true },
-    { as: "E", readTransports: true }, // the edition's admin handles none
+    // v18: the read lists the requests that wait too, each saying which (`ap=`) — «לוגיסטיקה ← הסעות» filters the
+    // approved ones itself (transportRows). Before: approved only, and the edition's admin (no handler) saw none.
+    { as: "A", readTransports: true }, // A's own two: the approved one and the one that waits
+    { as: "B", readTransports: true, is: "1|600-690|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=approved|min=-" }, // B's one transport; the amount alone is none
+    { as: "L", readTransports: true }, // logistics: all three, the waiting one too
+    { as: "E", readTransports: true }, // the edition's admin: all three
     { as: "admin", readTransports: true },
-    { archive: true },
+    // rejected: on nobody's list — the read is of what waits or was approved
+    { as: "L", decide: [[2, 510]], decision: "rejected", is: "ok" },
     { as: "A", readTransports: true },
     { as: "L", readTransports: true },
+    { as: "A", readTransport: [2, 510], is: "seen|addr=כתובת לדוגמה|time=-|drv=-|ph=-|arr=false" }, // its handler still reads the lesson's own details
+    { as: "A", reopen: [1, 600] }, // (not A's lesson)
+    { as: "admin", reopen: [1, 600] }, // a draft again: no closed lesson, no line
+    { as: "L", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=555 0100 99|arr=true|ap=approved|min=-" },
+    { archive: true },
+    { as: "A", readTransports: true, is: "none" },
+    { as: "L", readTransports: true, is: "none" },
+    { as: "E", readTransports: true, is: "none" },
     { as: "admin", readTransports: true },
   ],
 
@@ -1404,5 +1498,339 @@ export const SCENARIOS: Record<string, Step[]> = {
     // a new import under another label: no review there, so it may be replaced at will
     { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 3, start: 870, end: 960, speakers: [0] }] } },
     { as: "admin", importArchive: { label: "בדיקה", speakers: [{ row: 2, action: "merge", speaker: "גמא", name: "גמא" }], lessons: [{ row: 2, day: 4, start: 510, end: 600, speakers: [0], import_note: "הערה לדוגמה" }] } },
+  ],
+
+  // ------------------------------------------------------------ v18 — the reset's data foundation
+  // (CONTRACT.md «v18 — day owners, availability by ranges, transport in two parts».) These scenarios pin their
+  // answers (`is`): the two sides agreeing is not enough — each pin is the contract's clause, on both.
+
+  "v18 day owners: an edition admin names the pair, an owner marks «ראיתי», a replacement keeps who stays": [
+    { as: "A", readOwners: true, is: "none" },
+    // who: an admin of the edition — the role before the values
+    { as: "A", owners: 1, members: ["A", "B"], is: "forbidden" },
+    { as: "L", owners: 9, members: ["nobody"], is: "forbidden" },
+    // the values: a day 0–4; at most two, different, each able to handle speakers here
+    { as: "E", owners: 5, members: ["A"], is: "bad_value" },
+    { as: "E", owners: -1, members: ["A"], is: "bad_value" },
+    { as: "E", owners: 1, members: ["A", "B", "E"], is: "bad_value" },
+    { as: "E", owners: 1, members: ["A", "A"], is: "bad_value" },
+    { as: "E", owners: 1, members: ["A", "L"], is: "bad_value" }, // logistics handles no speaker
+    { as: "E", owners: 1, members: ["nobody"], is: "bad_value" },
+    { as: "A", readOwners: true, is: "none" }, // a refusal writes nothing
+    { log: ["day_owners"], is: "none" },
+    { as: "E", owners: 1, members: ["B", "A"], is: "ok" },
+    { as: "L", readOwners: true, is: "1|A|seen=- ; 1|B|seen=-" }, // the whole team reads — by day, then member
+    { as: "E", owners: 1, members: ["A", "B"], is: "ok" }, // the same pair, whatever its order: nothing written, nothing logged
+    { log: ["day_owners"], is: ownersLog("E", 1, ["A", "B"]) },
+    // «ראיתי»: one of the day's owners, their own row
+    { as: "A", seen: 1, is: "ok" },
+    { as: "A", seen: 2, is: "forbidden" }, // not A's day
+    { as: "E", seen: 1, is: "forbidden" }, // the admin who named them is no owner
+    { as: "L", seen: 1, is: "forbidden" },
+    { as: "A", seen: 5, is: "bad_value" },
+    { as: "L", seen: 5, is: "bad_value" }, // the day before the owner
+    { as: "B", readOwners: true, is: "1|A|seen=y ; 1|B|seen=-" },
+    // replaced: A stays and keeps «ראיתי», B goes, E comes in new
+    { as: "admin", owners: 1, members: ["E", "A"], is: "ok" },
+    { as: "B", readOwners: true, is: "1|A|seen=y ; 1|E|seen=-" },
+    { as: "B", seen: 1, is: "forbidden" }, // no longer B's day
+    { as: "E", seen: 1, is: "ok" },
+    // B comes back: as new — «ראיתי» is not remembered across a removal
+    { as: "E", owners: 1, members: ["B"], is: "ok" },
+    { as: "A", readOwners: true, is: "1|B|seen=-" },
+    { as: "A", seen: 1, is: "forbidden" },
+    // a member may own several days; a global admin may be an owner
+    { as: "E", owners: 0, members: ["B"], is: "ok" },
+    { as: "E", owners: 4, members: ["B", "admin"], is: "ok" },
+    { as: "admin", seen: 4, is: "ok" },
+    { as: "B", seen: 0, is: "ok" },
+    { as: "B", seen: 0, is: "ok" }, // again: seen still
+    { as: "A", readOwners: true, is: "0|B|seen=y ; 1|B|seen=- ; 4|admin|seen=y ; 4|B|seen=-" }, // B's «ראיתי» is per day
+    // none: null, or an empty list
+    { as: "E", owners: 0, members: null, is: "ok" },
+    { as: "E", owners: 0, members: [], is: "ok" }, // none already: nothing
+    { as: "E", owners: 2, members: null, is: "ok" }, // a day that had none: nothing
+    { as: "A", readOwners: true, is: "1|B|seen=- ; 4|admin|seen=y ; 4|B|seen=-" },
+    // logged once per change, the members ascending — never for a call that changed nothing, never for «ראיתי»
+    {
+      log: ["day_owners"],
+      is: logs(ownersLog("E", 1, ["A", "B"]), ownersLog("admin", 1, ["A", "E"]), ownersLog("E", 1, ["B"]), ownersLog("E", 0, ["B"]), ownersLog("E", 4, ["admin", "B"]), ownersLog("E", 0, [])),
+    },
+    // an archived edition: its admin still names them (as the grid's rules), an owner still marks
+    { archive: true },
+    { as: "A", owners: 2, members: ["A"], is: "forbidden" },
+    { as: "E", owners: 2, members: ["A"], is: "ok" },
+    { as: "A", seen: 2, is: "ok" },
+    { as: "B", seen: 1, is: "ok" },
+    { as: "L", readOwners: true, is: "1|B|seen=y ; 2|A|seen=y ; 4|admin|seen=y ; 4|B|seen=-" },
+  ],
+
+  // The template's lesson rows: 06:30–07:15, 08:30, 10:00, 11:30 (to 13:00), 14:30, 16:00, 17:30 (to 19:00), 20:00–21:30,
+  // 22:30–00:00, 00:30, 02:00, 03:30 (to 05:00) — twelve a day; Sunday from its opening (08:30): eleven; Thursday to
+  // its close (19:00): seven.
+  "v18 availability as time ranges: any cannot-range that touches, one can-range that covers, else the rest; the day replaced; one log line": [
+    // «יכול/ה 17:00–19:00»: 17:30–19:00 alone — 16:00–17:30 is only partly covered
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 1020, end: 1140, kind: "can" }], is: "marked=1" },
+    // «לא 17:00–19:00»: both rows it touches — and the day is REPLACED: the «יכול/ה» above is gone
+    { as: "B", ranges: "בטא", days: [1], list: [{ day: 1, start: 1020, end: 1140, kind: "cannot" }], is: "marked=2" },
+    { log: ["availability"], is: logs(rangesLog("A", "בטא", [1], 1, 1), rangesLog("B", "בטא", [1], 1, 2)) }, // one line a call: counts, never a slot
+    // two can-ranges never add up to a row: 08:30–09:15 and 09:15–10:00 leave 08:30–10:00 unmarked
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 555, kind: "can" }, { day: 1, start: 555, end: 600, kind: "can" }], is: "marked=0" },
+    // … nor do two that overlap: 08:30–09:40 and 09:20–10:00
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 580, kind: "can" }, { day: 1, start: 560, end: 600, kind: "can" }], is: "marked=0" },
+    // one range over two rows marks both; a cannot-range inside one of them wins there
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 690, kind: "can" }, { day: 1, start: 640, end: 650, kind: "cannot" }], is: "marked=2" },
+    // edge to edge is no touch: «לא» until 08:30 leaves 08:30–10:00 to its can-range; one minute past 10:00 takes the next row
+    {
+      as: "A", ranges: "בטא", days: [1],
+      list: [{ day: 1, start: 435, end: 510, kind: "cannot" }, { day: 1, start: 600, end: 601, kind: "cannot" }, { day: 1, start: 510, end: 600, kind: "can" }],
+      is: "marked=2",
+    },
+    // the rest — what no range decides: «יכול/ה» (Monday's twelve rows: three «לא», nine «יכול/ה») …
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 870, end: 1140, kind: "cannot" }], rest: "can", is: "marked=12" },
+    // … or «לא», with no range at all: Sunday from its opening (11 rows), Thursday to its close (7); Monday as it was
+    { as: "A", ranges: "בטא", days: [4, 0], list: [], rest: "cannot", is: "marked=18" },
+    { as: "A", ranges: "בטא", days: [0], list: null, rest: null, is: "marked=0" }, // nothing said: Sunday emptied
+    // a range over rows that are not in play marks none of them: Sunday before the opening, Thursday after the close
+    { as: "A", ranges: "בטא", days: [0, 4], list: [{ day: 0, start: 390, end: 600, kind: "can" }, { day: 4, start: 1140, end: 1830, kind: "cannot" }], is: "marked=1" },
+    // the night belongs to its day: 00:00–06:30 after Tuesday is Tuesday's three night rows
+    { as: "A", ranges: "בטא", days: [2], list: [{ day: 2, start: 1440, end: 1830, kind: "can" }], is: "marked=3" },
+    // a speaker someone else handles: any editor writes; the day's slots — the conversion's, notes and all — are
+    // replaced, Wednesday's stays
+    { as: "A", ranges: "זין", days: [2], list: [{ day: 2, start: 1200, end: 1290, kind: "cannot" }], is: "marked=1" },
+    // a single slot marked afterwards stands until its day is replaced again
+    { as: "B", slot: "זין", day: 2, row: 1350, kind: "can", note: "הערה לדוגמה", is: "ok" },
+    { as: "E", ranges: "זין", days: [3, 2], list: [], is: "marked=0" }, // both days emptied — logged all the same
+    {
+      log: ["availability"],
+      is: logs(
+        rangesLog("A", "בטא", [1], 1, 1), rangesLog("B", "בטא", [1], 1, 2), rangesLog("A", "בטא", [1], 2, 0), rangesLog("A", "בטא", [1], 2, 0), rangesLog("A", "בטא", [1], 2, 2),
+        rangesLog("A", "בטא", [1], 3, 2),
+        rangesLog("A", "בטא", [1], 1, 12, "can"), rangesLog("A", "בטא", [0, 4], 0, 18, "cannot"), rangesLog("A", "בטא", [0], 0, 0), rangesLog("A", "בטא", [0, 4], 2, 1),
+        rangesLog("A", "בטא", [2], 1, 3),
+        // under the speaker's approach when there is one, so the speaker's «מה קרה» finds it
+        rangesLog("A", "זין", [2], 1, 1, null, true), slotLog("B", "זין", 2, 1350, 1440, "can", true), rangesLog("E", "זין", [2, 3], 0, 0, null, true),
+      ),
+    },
+    // ---- refusals, in the order of the checks: the role, the speaker, then the values (each `bad_value`)
+    { as: "L", ranges: "וו", days: [9], list: "x", is: "forbidden" },
+    { as: "A", ranges: "וו", days: [9], list: "x", is: "speaker_retired" }, // retired
+    { as: "A", ranges: "אין כזה", days: [1], list: [], is: "speaker_retired" },
+    { as: "A", ranges: "בטא", days: null, list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [], list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1, 1], list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [5], list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1, null], list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [0, 1, 2, 3, 4, 0], list: [], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: "x", is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: { day: 1, start: 510, end: 600, kind: "can" }, is: "bad_value" }, // one range, not a list
+    { as: "A", ranges: "בטא", days: [1], list: [[1, 510, 600, "can"]], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600 }], is: "bad_value" }, // no kind
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: "can", note: "הערה לדוגמה" }], is: "bad_value" }, // a range carries no note
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 2, start: 510, end: 600, kind: "can" }], is: "bad_value" }, // a day this call does not replace
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: "510", end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510.5, end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: null, end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 600, end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 690, end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: -5, end: 600, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 1831, kind: "can" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: "maybe" }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: null }], is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: "can" }, { day: 1, start: 600, end: 690, kind: "cannot", extra: true }], is: "bad_value" }, // one bad range refuses them all
+    { as: "A", ranges: "בטא", days: [1], list: [], rest: "maybe", is: "bad_value" },
+    { as: "A", ranges: "בטא", days: [1], list: Array.from({ length: 41 }, () => ({ day: 1, start: 510, end: 600, kind: "can" })), is: "bad_value" },
+    // forty is the most — the same range forty times is still one row
+    { as: "A", ranges: "בטא", days: [1], list: Array.from({ length: 40 }, () => ({ day: 1, start: 510, end: 600, kind: "can" })), is: "marked=1" },
+    // the widest range there is: 00:00–06:30 the next morning
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 0, end: 1830, kind: "cannot" }], is: "marked=12" },
+    { archive: true },
+    { as: "A", ranges: "בטא", days: [1], list: [], is: "archived" },
+    { as: "E", ranges: "בטא", days: [1], list: [], is: "marked=0" }, // an admin may still write in an archive
+  ],
+
+  // the same rule, away from the hand-picked cases: range ends on, beside and between the rows' edges
+  "v18 availability as time ranges: sixty seeded random sets of ranges — the same answer and the same slots on both sides": randomRanges(60, 5787),
+
+  "v18 transport in two parts: the request by the handler before the approval, the driver by logistics after it": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "not_closed" }, // a draft
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה" }, is: "no_transport" },
+    { as: "A", transportRequest: [4, 510], fields: {}, is: "stale" }, // no lesson there
+    { as: "L", transportDriver: [4, 510], fields: {}, is: "stale" },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "no_transport" }, // none asked
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip", is: "ok" }, // asked: it waits for the staff
+    // ---- the request: the lesson's handler or an admin of the edition (set_payment's rule)
+    { as: "B", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "not_handler" },
+    { as: "L", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "forbidden" },
+    // its shape and its values: every fault `bad_value`
+    { as: "A", transportRequest: [1, 510], fields: null, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: ["pickup_address"], is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: "כתובת לדוגמה", is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", driver_name: "נהג/ת לדוגמה" }, is: "bad_value" }, // the driver is not the request's
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: 7 }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_time: ["07:15"] }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: "435" }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: 435.5 }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: 1831 }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: -1 }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "א".repeat(201) }, is: "bad_value" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_time: "א".repeat(61) }, is: "bad_value" },
+    { as: "A", readTransport: [1, 510], is: "seen|addr=-|time=-|drv=-|ph=-|arr=false" }, // a refusal writes nothing
+    // filled BEFORE the approval; only the keys that are there are written
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "  כתובת   לדוגמה ", pickup_min: 435 }, is: "ok" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_time: "07:15" }, is: "ok" }, // the address and the minutes stay
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", pickup_time: " 07:15 ", pickup_min: 435 }, is: "ok" }, // as it is: nothing written, nothing logged
+    { as: "A", transportRequest: [1, 510], fields: {}, is: "ok" }, // no key: nothing
+    { log: ["transport"], is: logs(transportLog("A", ["pickup_address", "pickup_min"]), transportLog("A", ["pickup_time"])) }, // the names, never a value
+    // the read of what waits or was approved: the five fields, which of the two, the minutes — logistics from the request on
+    { as: "L", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=07:15|drv=-|ph=-|arr=false|ap=pending|min=435" },
+    { as: "B", readTransports: true, is: "none" }, // another content member: nothing
+    { as: "E", transportRequest: [1, 510], fields: { pickup_min: null, pickup_time: "" }, is: "ok" }, // an admin of the edition; null and an empty text clear
+    { as: "E", transportRequest: [1, 510], fields: { pickup_min: 0 }, is: "ok" }, // 00:00 is a minute, not «none»
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: 1830, pickup_time: "06:30 למחרת" }, is: "ok" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=06:30 למחרת|drv=-|ph=-|arr=false|ap=pending|min=1830" },
+    // ---- the driver: logistics or an admin of the edition (set_paid's rule), and only once the transport is approved
+    { as: "A", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה" }, is: "forbidden" }, // a content member — the handler too
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה" }, is: "transport_hidden" }, // it waits
+    { as: "E", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה" }, is: "transport_hidden" },
+    { as: "admin", transportDriver: [1, 510], fields: { arranged: "yes" }, is: "transport_hidden" }, // the approval before the patch — the instructor too
+    { as: "E", decide: [[1, 510]], decision: "rejected", is: "ok" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה" }, is: "transport_hidden" }, // rejected
+    { as: "L", readTransports: true, is: "none" }, // rejected: off logistics' list
+    { as: "A", transportRequest: [1, 510], fields: { pickup_time: "07:15", pickup_min: 435 }, is: "ok" }, // the request is corrected whatever the decision says
+    { as: "A", pay: [1, 510], amount: null, transport: "round_trip", is: "ok" }, // asked again: pending
+    { as: "L", decide: [[1, 510]], decision: "approved", is: "ok" }, // logistics approves
+    { as: "L", transportDriver: [1, 510], fields: null, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: [], is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", pickup_address: "כתובת לדוגמה" }, is: "bad_value" }, // the pickup is not the driver's
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: 5 }, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: 5550100 }, is: "bad_value" }, // a phone is text
+    { as: "L", transportDriver: [1, 510], fields: { arranged: null }, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { arranged: "true" }, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "א".repeat(81) }, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: "5".repeat(41) }, is: "bad_value" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: "12-34" }, is: "bad_phone" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: "12-34", arranged: 1 }, is: "bad_value" }, // the shape before the values
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: "12-34", driver_name: "א".repeat(81) }, is: "bad_value" }, // the name before the phone
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: " נהג/ת   לדוגמה " }, is: "ok" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_phone: "555 0100 99", arranged: true }, is: "ok" }, // the name stays
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "ok" }, // as it is: nothing
+    { as: "E", transportDriver: [1, 510], fields: { arranged: false }, is: "ok" }, // an admin of the edition
+    // the two halves are one row; the lesson's own read answers its five fields, never the minutes
+    { as: "L", readTransport: [1, 510], is: "seen|addr=כתובת לדוגמה|time=07:15|drv=נהג/ת לדוגמה|ph=555 0100 99|arr=false" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: null, driver_phone: "" }, is: "ok" }, // cleared
+    // the request after the approval: still the handler's — logistics never writes it
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת אחרת לדוגמה" }, is: "ok" },
+    { as: "L", transportRequest: [1, 510], fields: { pickup_min: 440 }, is: "forbidden" },
+    // the old command still writes its five at once, and leaves the minutes
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", driver: "נהג/ת לדוגמה", arranged: true, is: "ok" },
+    { as: "L", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=-|drv=נהג/ת לדוגמה|ph=-|arr=true|ap=approved|min=435" },
+    {
+      log: ["transport"],
+      is: logs(
+        transportLog("A", ["pickup_address", "pickup_min"]), transportLog("A", ["pickup_time"]), transportLog("E", ["pickup_time", "pickup_min"]), transportLog("E", ["pickup_min"]),
+        transportLog("A", ["pickup_time", "pickup_min"]), transportLog("A", ["pickup_time", "pickup_min"]),
+        transportLog("L", ["driver_name"]), transportLog("L", ["driver_phone", "arranged"]), transportLog("E", ["arranged"]), transportLog("L", ["driver_name", "driver_phone"]),
+        transportLog("A", ["pickup_address"]), transportLog("A", ["pickup_address", "pickup_time", "driver_name", "arranged"]),
+      ),
+    },
+    // no transport any more: the row goes, the minutes with it — and a new request starts empty
+    { as: "A", pay: [1, 510], amount: 300, transport: "none", is: "ok" },
+    { as: "admin", readTransports: true, is: "none" },
+    { as: "A", pay: [1, 510], amount: 300, transport: "one_way", is: "ok" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=pending|min=-" },
+    { as: "admin", decide: [[1, 510]], decision: "approved", is: "ok" },
+    { as: "L", transportDriver: [1, 510], fields: { arranged: false }, is: "ok" }, // no row and nothing to change: none is made
+    { as: "L", transportDriver: [1, 510], fields: { arranged: true }, is: "ok" }, // a first write makes the row
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: 420 }, is: "ok" },
+    // a reopen deletes the row, the minutes with it
+    { as: "B", propose: "בטא", cell: [1, 600, 690] },
+    { as: "B", close: "בטא", at: [1, 600] },
+    { as: "B", pay: [1, 600], amount: null, transport: "one_way" },
+    { as: "B", transportRequest: [1, 600], fields: { pickup_min: 500 }, is: "ok" },
+    { as: "E", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=true|ap=approved|min=420 ; 1|600-690|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=pending|min=500" },
+    { as: "B", reopen: [1, 600], is: "ok" },
+    { as: "E", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=true|ap=approved|min=420" },
+    // an archived edition: its own admin still writes both halves — what only the global admin reads
+    { archive: true },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "archived" },
+    { as: "L", transportDriver: [1, 510], fields: { arranged: false }, is: "archived" },
+    { as: "E", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "ok" },
+    { as: "E", transportDriver: [1, 510], fields: { arranged: false }, is: "ok" },
+    { as: "E", readTransports: true, is: "none" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=approved|min=430" },
+  ],
+
+  "v18 approvals by the staff of both teams: a global admin, the edition's admin or its logistics — one decision is enough": [
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "B", propose: "בטא", cell: [1, 600, 690] },
+    { as: "B", close: "בטא", at: [1, 600] },
+    { as: "A", pay: [1, 510], amount: 500, transport: "round_trip" },
+    { as: "B", pay: [1, 600], amount: null, transport: "one_way" },
+    // a trainee never decides — whatever is asked: the role comes first
+    { as: "A", decide: [[1, 510]], decision: "approved", is: "forbidden" }, // their own request
+    { as: "B", decide: [[1, 510]], decision: "maybe", is: "forbidden" },
+    { as: "A", decide: [], decision: "approved", is: "forbidden" }, // not even nothing
+    { as: "A", decide: [[4, 510]], decision: "approved", is: "forbidden" },
+    // logistics: the instructor's rules, one by one
+    { as: "L", decide: [[1, 510]], decision: "maybe", is: "bad_value" },
+    { as: "L", decide: [[1, 510]], decision: "approved", staleBy: 1, is: "stale" }, // changed since the queue was read
+    { as: "L", decide: [[4, 510]], decision: "approved", is: "stale" }, // no lesson there
+    { as: "L", decide: [], decision: "approved", is: "ok" }, // nothing to decide: nothing
+    { as: "L", decide: [[1, 510]], decision: "approved", note: "  אושר (נתון לדוגמה)  ", is: "ok" }, // approved_by: L
+    { as: "E", decide: [[1, 510]], decision: "approved", is: "stale" }, // one approval is enough: nothing waits for a second
+    { as: "admin", decide: [[1, 510]], decision: "rejected", is: "stale" },
+    { as: "L", paid: [1, 510], value: true, is: "ok" }, // what the staff approved is paid
+    { as: "L", paid: [1, 510], value: false, is: "ok" },
+    // the edition's admin: a rejection, with its note
+    { as: "E", decide: [[1, 600]], decision: "rejected", note: "לא מאושר (נתון לדוגמה)", is: "ok" },
+    { as: "B", pay: [1, 600], amount: null, transport: "one_way", is: "ok" }, // asked again
+    { as: "A", pay: [1, 510], amount: 600, transport: "round_trip", is: "ok" }, // a new amount: it waits again
+    { as: "E", decide: [[1, 600], [1, 510]], decision: "approved", note: "באצווה", is: "ok" }, // a batch
+    { as: "B", pay: [1, 600], amount: 150, transport: "one_way", is: "ok" },
+    { as: "L", decide: [[1, 510], [1, 600]], decision: "rejected", is: "stale" }, // one is not waiting: the whole batch stays
+    { as: "A", sent: [1, 510], is: "ok" }, // approved by the staff: the summary message goes out
+    // a draft's request is no one's to decide
+    { as: "B", reopen: [1, 600], is: "ok" }, // waiting: its handler may reopen
+    { as: "L", decide: [[1, 600]], decision: "approved", is: "stale" },
+    // an archived edition: the global admin alone, as before — refused at the lesson
+    { as: "A", pay: [1, 510], amount: 700, transport: "round_trip", is: "ok" },
+    { archive: true },
+    { as: "L", decide: [[1, 510]], decision: "approved", is: "forbidden" },
+    { as: "E", decide: [[1, 510]], decision: "approved", is: "forbidden" },
+    { as: "E", decide: [[1, 510]], decision: "maybe", is: "bad_value" }, // the decision's word before the lesson's edition
+    { as: "L", decide: [[4, 510]], decision: "approved", is: "stale" }, // a lesson that is not there, before its edition
+    { as: "admin", decide: [[1, 510]], decision: "approved", is: "ok" },
+  ],
+
+  "v18 in a practice week: both halves are written, the staff decide nothing, the instructor alone reads": [
+    { sandbox: true },
+    { as: "A", propose: "אלפא", cell: [1, 510, 600] },
+    { as: "A", close: "אלפא", at: [1, 510] },
+    { as: "A", pay: [1, 510], amount: 200, transport: "one_way" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", pickup_min: 420 }, is: "ok" }, // no gate on the edition's kind, as set_payment has none …
+    { as: "A", readTransport: [1, 510], is: "hidden" }, // … but here the handler reads nothing back
+    { as: "A", readTransports: true, is: "none" },
+    { as: "L", readTransports: true, is: "none" },
+    { as: "E", readTransports: true, is: "none" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=-|drv=-|ph=-|arr=false|ap=pending|min=420" },
+    // approvals: a practice week's staff decide nothing — the global admin alone
+    { as: "A", decide: [[1, 510]], decision: "approved", is: "forbidden" },
+    { as: "L", decide: [[1, 510]], decision: "approved", is: "forbidden" },
+    { as: "E", decide: [[1, 510]], decision: "rejected", is: "forbidden" },
+    { as: "L", decide: [[1, 510]], decision: "maybe", is: "bad_value" }, // the decision's word before the lesson's edition
+    { as: "L", decide: [[4, 510]], decision: "approved", is: "stale" }, // a lesson that is not there, before its edition
+    { as: "admin", decide: [[1, 510]], decision: "approved", is: "ok" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "ok" }, // logistics arranges the driver
+    { as: "L", readTransport: [1, 510], is: "hidden" },
+    { as: "L", readTransports: true, is: "none" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=-|drv=נהג/ת לדוגמה|ph=-|arr=true|ap=approved|min=420" },
+    // day owners and availability know no kind of edition
+    { as: "E", owners: 1, members: ["A"], is: "ok" },
+    { as: "A", seen: 1, is: "ok" },
+    { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: "can" }], is: "marked=1" },
   ],
 };

@@ -1761,8 +1761,10 @@ needs PostgreSQL 15 or later (Supabase's).
 
 What the reset's new screens will ask of the data (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»): a pair of
 trainees per day, availability typed as time ranges, a transport's request apart from its driver, and approvals
-by the staff of both teams. **No screen's code changed in this phase**, and none calls the five new functions
-yet. What an old screen reads through a rule that changed, changes with the rule: the lesson panel's transport
+by the staff of both teams. **No screen behaves differently in this phase**, and none calls the five new functions
+yet; one sentence of wording was corrected with the rule it states — the lesson panel's line for logistics whose
+details are closed (`src/screens/stages/PaymentStage.tsx`), beside `transport_hidden`'s text (`src/errors.ts`).
+What an old screen reads through a rule that changed, changes with the rule: the lesson panel's transport
 details now open for an edition's admin who is not the handler, and for logistics on a pending request (below);
 «לוגיסטיקה ← הסעות» lists the approved transports only, as before.
 
