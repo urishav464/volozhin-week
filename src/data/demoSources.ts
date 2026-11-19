@@ -33,7 +33,8 @@ export class DemoSources implements SourcesPort {
   constructor(private readonly s: DemoSourceStore) {}
 
   async upload(editionId: number, lessonId: number | null, file: File, opts: UploadOptions): Promise<SourceFile> {
-    const mime = checkPicked(file, lessonId == null);
+    const kind = opts.kind ?? "source";
+    const mime = checkPicked(file, lessonId == null, kind);
     const e = this.s.engine(editionId);
     const path = sourcePath(editionId, lessonId, crypto.randomUUID(), file.name, mime);
     for (const f of [0.25, 0.6, 1]) {
@@ -43,7 +44,7 @@ export class DemoSources implements SourcesPort {
     e.storeObject(path, mime, file.size);
     this.s.blobs.set(path, file);
     try {
-      const row = e.registerSourceFile(lessonId, path, displayNameOf(file.name), opts.pages);
+      const row = e.registerSourceFile(lessonId, path, displayNameOf(file.name), opts.pages, kind);
       this.s.notify();
       return row;
     } catch (err) {
@@ -94,6 +95,11 @@ export class DemoSources implements SourcesPort {
 
   async setCover(editionId: number, fileId: number | null): Promise<void> {
     this.s.engine(editionId).setReaderCover(fileId);
+    this.s.notify();
+  }
+
+  async setReaderSent(editionId: number, sent: boolean): Promise<void> {
+    this.s.engine(editionId).setReaderSent(sent);
     this.s.notify();
   }
 }

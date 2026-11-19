@@ -64,6 +64,8 @@ function keysOf(v: unknown, out = new Set<string>()): Set<string> {
 const NEVER_KEYS = [
   "pay_amount", "amount", "approval", "approval_note", "approved_by", "paid_at", "email", "pickup_address", "pickup_time", "notes", "secretary_note",
   "sources_note", "presentation_url", "audience", "confirm_sent_at", "needs_reconfirm", "escort_roster_id", "token", "token_hash", "member", "contact",
+  // v19: the guests' site reads a speaker's public words, never the team's; a photo only as a data: URL; never who uploaded it or the approval itself
+  "bio_short", "vetted_note", "disambiguator", "image", "uploaded_by", "public_ok",
 ];
 
 describe("links without an account", () => {
@@ -549,11 +551,13 @@ describe("links without an account", () => {
         await run("owner", "insert into public.lessons (edition_id, kind, day, start_min, end_min, room_id, title) select $1, 'memorial', 0, 780, 795, id, null from public.rooms where edition_id = $1 and is_default", [ed]);
         await run("owner", `update public.editions set start_date = ${israelDay} + 3 where id = $1`, [ed]);
         const v = (await run("anon", "select public.schedule_view($1) as v", [token.s])).rows[0].v;
-        expect(Object.keys(v).sort()).toEqual(["edition", "rows"]);
+        expect(Object.keys(v).sort()).toEqual(["edition", "fixed", "people", "rows"]);   // v19: the guests' site (tests/sql/v19.test.ts)
         expect(v.rows.map((r: { kind: string; day: number; start_min: number }) => [r.kind, r.day, r.start_min])).toEqual([
           ["memorial", 0, 780], ["lesson", 1, 510], ["lesson", 1, 600], ["lesson", 2, 510],
         ]);
-        for (const r of v.rows) expect(Object.keys(r).sort()).toEqual(["category", "date", "day", "end_min", "kind", "parallel", "room", "speaker", "start_min", "title"]);
+        for (const r of v.rows) expect(Object.keys(r).sort()).toEqual(["category", "date", "day", "end_min", "kind", "note", "parallel", "people", "room", "speaker", "start_min", "title"]);
+        expect(v.people).toEqual([]); // nobody marked public_ok
+        expect(v.rows.every((r: { people: unknown[]; note: unknown }) => r.people.length === 0 && r.note === null)).toBe(true);
         expect(v.rows[2]).toMatchObject({ speaker: "ד״ר מרצה לבדיקה 2", end_min: 675, parallel: false, category: "" });
         const keys = keysOf(v);
         for (const k of NEVER_KEYS) expect(keys.has(k), k).toBe(false);

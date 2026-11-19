@@ -1,7 +1,14 @@
 // The schedule to view (/s#token): the designer's public schedule — the same
 // facts (src/exports/designer.ts scheduleEntries, written by designerRow) — by
-// day, read-only, and printable on A4. Never a contact, an amount or a note:
-// public.schedule_view returns none.
+// day, read-only, and printable on A4. Never a contact, an amount or a note of
+// the team's: public.schedule_view returns none.
+// Since v19 the same answer is also the guests' site's (DECISIONS «הריסט, שלב 4»):
+// each row adds `note` (the lesson's public_note) and `people` (indexes into
+// `people`: the speakers approved to appear — public_ok — with their public_bio
+// and photo), beside `fixed` (the grid's meals, prayers and «מכריכה לכריכה»).
+// Phase 4 only TOLERATES them — this page draws the ten keys it drew before and
+// none of the new ones (schedule.test.ts holds it to that, and to an answer
+// written before v19, without them); the guests' page that shows them is phase 5's.
 import type { PublicPort, ScheduleView } from "../../data/publicPort";
 import { designerRow } from "../../exports/designer";
 import { DAY_NAMES, type Day } from "../../domain/time";
@@ -17,7 +24,8 @@ export function SchedulePage({ port, token }: { port: PublicPort; token: string 
   return <Schedule view={load.data} />;
 }
 
-function Schedule({ view: v }: { view: ScheduleView }) {
+/** The schedule by day: the rows' ten keys only (v19's note, people and fixed rows are phase 5's). */
+export function Schedule({ view: v }: { view: ScheduleView }) {
   const title = `לו"ז שבוע וולוז'ין ${v.edition.label}`;
   const days = [...new Set(v.rows.map((r) => r.day))].sort((a, b) => a - b) as Day[];
   return (

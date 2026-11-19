@@ -6,6 +6,7 @@
 import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ContactPref, EditionSettings, Gender } from "../domain/types";
+import { hasContact } from "../import/phone";
 import { CommandError } from "./commands";
 
 const fail = (code: string): never => {
@@ -19,6 +20,8 @@ export const LIMITS = {
   title: 40,
   affiliation: 120,
   bio_short: 400,
+  /** v19: the guests' schedule's description. */
+  public_bio: 600,
   topic: 40,
   topics: 10,
   /** a note on a status change or a hand-over */
@@ -58,6 +61,21 @@ export function cleanBlock(v: string | null | undefined, max: number): string | 
   const s = (v ?? "").replace(/\r\n/g, "\n").replace(EDGE_WS, "");
   if (s === "") return null;
   if (chars(s) > max) fail("bad_value");
+  return s;
+}
+
+/** `->>`: a JSON value as text — a string as it is, a number or a boolean written out, an object as its JSON; null for null. */
+export function asText(v: unknown): string | null {
+  return v == null ? null : typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
+/**
+ * v19 speakers.public_bio — what a guest reads (≤ 600, several lines): app.clean_block, then no phone or e-mail
+ * (app.has_contact → contact_in_text: the contacts have their own fields, never shown to a guest).
+ */
+export function cleanPublicBio(v: unknown): string | null {
+  const s = cleanBlock(asText(v), LIMITS.public_bio);
+  if (s != null && hasContact(s)) fail("contact_in_text");
   return s;
 }
 

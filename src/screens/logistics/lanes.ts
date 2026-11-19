@@ -8,13 +8,15 @@
 //   speaker's message, the escort's page and the files say; not the grid row's end) with no length: the data has no
 //   return time, no travel time, no car, one driver per lesson — never invented here;
 //   a shift lane per staff shift of that day (a team member, a name as typed or a cohort's staff; its lead marked), so
-//   whoever finds a driver sees who is on duty. No phone: shifts have none, and a lane carries none but what the read
-//   returned for whom it may show it.
+//   whoever finds a driver sees who is on duty; and (v19) beside them the cohorts whose staff can drive («הצוות שלה
+//   יכול להסיע», canDrive), those on campus that day first — names only. No phone: shifts and cohorts have none, and a
+//   lane carries none but what the read returned for whom it may show it.
 import type { LessonTransport, TransportDriverPatch } from "../../data/commands";
-import type { RotaData, RotaStaffShift } from "../../data/rota";
+import type { RotaCohort, RotaData, RotaStaffShift } from "../../data/rota";
 import { lessonHandler } from "../../domain/handler";
 import { teachMinutes } from "../../domain/message";
 import { pickupMin } from "../../domain/pickup";
+import { canDrive } from "../../domain/rota";
 import { DAY_END, DAY_START, type Day, DAYS, fmt } from "../../domain/time";
 import type { Lesson, TransportDetails, Week } from "../../domain/types";
 import { speakersOf } from "../../exports/logistics";
@@ -57,10 +59,19 @@ export interface ShiftLane {
   lead: boolean;
 }
 
+/** v19: a cohort whose staff can drive («הצוות שלה יכול להסיע») — its name only — and whether it is on campus that day. */
+export interface DriveCohort {
+  cohort: RotaCohort;
+  /** Marked on campus in any shift of the day (no row: not marked, never assumed). */
+  present: boolean;
+}
+
 export interface DayLanes {
   day: Day;
   transports: TransportLane[];
   shifts: ShiftLane[];
+  /** The cohorts whose staff can drive: those on campus that day first, then by the cohorts' order (sort, letter). */
+  drivers: DriveCohort[];
 }
 
 type BoardWeek = Pick<Week, "lessons" | "lessonSpeakers" | "speakers" | "approaches" | "team" | "edition">;
@@ -110,11 +121,26 @@ function laneOf(week: BoardWeek, l: Lesson, details: Map<number, LessonTransport
   };
 }
 
-/** One day of the board: its transport lanes by start (then id), its staff shifts by start (then id). */
+const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The cohorts whose staff can drive, for one day: on campus that day first, then by sort, letter and id. */
+export function driveCohorts(rota: Pick<RotaData, "cohorts" | "presence"> | null, day: Day): DriveCohort[] {
+  if (!rota) return [];
+  const here = new Set(rota.presence.filter((p) => p.day === day).map((p) => p.cohort_id));
+  return rota.cohorts
+    .filter(canDrive)
+    .map((cohort) => ({ cohort, present: here.has(cohort.id) }))
+    .sort((a, b) => Number(b.present) - Number(a.present) || a.cohort.sort - b.cohort.sort || cmpStr(a.cohort.letter, b.cohort.letter) || a.cohort.id - b.cohort.id);
+}
+
+/**
+ * One day of the board: its transport lanes by start (then id), its staff shifts by start (then id), and the cohorts
+ * whose staff can drive (driveCohorts).
+ */
 export function transportLanes(
   week: BoardWeek,
   transports: readonly LessonTransport[] | null,
-  rota: Pick<RotaData, "staff" | "cohorts"> | null,
+  rota: Pick<RotaData, "staff" | "cohorts" | "presence"> | null,
   day: Day,
 ): DayLanes {
   const details = new Map((transports ?? []).map((t) => [t.lesson_id, t]));
@@ -129,6 +155,7 @@ export function transportLanes(
       .filter((s) => s.day === day)
       .sort((a, b) => a.start_min - b.start_min || a.id - b.id)
       .map((s) => ({ shift: s, who: (s.member_id != null ? team.get(s.member_id) : undefined) ?? staffWho(rota!, s), lead: s.kind === "lead" })),
+    drivers: driveCohorts(rota, day),
   };
 }
 

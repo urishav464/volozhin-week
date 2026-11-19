@@ -8,7 +8,7 @@ import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, SpeakerContacts, Vetting } from "../domain/types";
 import { CommandError } from "./commands";
-import type { ActivityEntry, CreateOptions, HistoryLesson, NewSpeaker, SpeakerMatch, SpeakerPatch, SpeakerPort } from "./speakers";
+import type { ActivityEntry, CreateOptions, HistoryLesson, NewSpeaker, SpeakerMatch, SpeakerPatch, SpeakerPhoto, SpeakerPort } from "./speakers";
 import { PortError } from "./types";
 
 function refusal(error: PostgrestError): Error {
@@ -100,5 +100,18 @@ export class SupabaseSpeakers implements SpeakerPort {
   async setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest: SlotKind | null = null): Promise<number> {
     const p_ranges = ranges.map(({ day, start, end, kind }) => ({ day, start, end, kind }));
     return num(await this.rpc("set_availability_ranges", { p_edition: editionId, p_speaker: speakerId, p_days: days, p_ranges, p_rest: rest }));
+  }
+
+  async photo(speakerId: number): Promise<SpeakerPhoto | null> {
+    const r = await this.rpc<{ photo?: unknown; uploaded_at?: unknown } | null>("get_speaker_photo", { p_speaker: speakerId });
+    return r == null || typeof r.photo !== "string" ? null : { photo: r.photo, uploaded_at: String(r.uploaded_at) };
+  }
+
+  async setPhoto(editionId: number, speakerId: number, photo: string | null): Promise<void> {
+    await this.rpc("set_speaker_photo", { p_edition: editionId, p_speaker: speakerId, p_photo: photo });
+  }
+
+  async setPublicOk(_editionId: number, approachId: number, version: number, ok: boolean): Promise<void> {
+    await this.rpc("set_public_ok", { p_approach: approachId, p_version: version, p_ok: ok });
   }
 }

@@ -1,8 +1,10 @@
 // «לוגיסטיקה» (/logistics/<tab>, milestone 5ב-2) — the logistics team's and the
 // admins' four lists, each from the loaded week (src/exports/logistics.ts), and
 // (milestone 7) «תורנויות», the campus duty roster (/logistics/rota/<view>,
-// src/screens/logistics/rota/):
-// הסעות (the transport board, TransportBoard.tsx: the requests and the approved
+// src/screens/logistics/rota/). The reset, phase 4: `/logistics` with no tab is
+// the HOME (LogisticsHome.tsx — what is left to do, in three groups); an unknown
+// tab goes there; the strip stays on every page, «בית» first:
+// הסעות וצוות (/logistics/transports — the transport board, TransportBoard.tsx: the requests and the approved
 // transports by day on a time axis beside the staff shifts, decided and given a
 // driver there; it prints the approved ones), תשלומים (the approved amounts, «שולם» by the
 // existing command, the totals), ספרים (מכריכה לכריכה's book orders), הדפסות
@@ -12,7 +14,7 @@
 // are personal data: on screen, on paper and in a file only behind «כולל כתובות
 // וטלפונים», off by default and off again in another edition.
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { Link, Navigate, useParams } from "react-router";
 import { CommandError } from "../../data/commands";
 import type { KkData } from "../../data/kk";
 import type { DataPort } from "../../data/port";
@@ -32,19 +34,36 @@ import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { fileKind } from "../stages/SourceFiles";
 import { archivedEdition } from "../stages/parts";
 import { type Actor, actorIn, useWeekStore } from "../weekStore";
+import { LogisticsHome } from "./LogisticsHome";
 import { Bar, type LogisticsTab, PaperTable, type TabProps } from "./parts";
 import { RotaTab } from "./rota/RotaTab";
 import { TransportBoard } from "./TransportBoard";
 
 export type { LogisticsTab } from "./parts";
 
-const TABS: [LogisticsTab, string][] = [
-  ["transports", "הסעות"],
+/** The strip's pages: the home, then the lists. */
+export type LogisticsPage = "home" | LogisticsTab;
+
+/** «בית» is `/logistics` itself; every other tab its own segment. */
+export const LOGISTICS_TABS: readonly [LogisticsPage, string][] = [
+  ["home", "בית"],
+  ["transports", "הסעות וצוות"],
   ["payments", "תשלומים"],
   ["books", "ספרים"],
   ["prints", "הדפסות"],
   ["rota", "תורנויות"],
 ];
+
+export const logisticsPath = (page: LogisticsPage): string => (page === "home" ? "/logistics" : `/logistics/${page}`);
+
+/** The page an address asks for: no tab = the home; a tab the strip does not have = null (sent to the home). */
+export function logisticsPageOf(tab: string | undefined): LogisticsPage | null {
+  if (tab === undefined) return "home";
+  return LOGISTICS_TABS.some(([k]) => k === tab && k !== "home") ? (tab as LogisticsPage) : null;
+}
+
+/** The lists' own names on paper and in a file's title (the board keeps «הסעות»: it prints the transports alone). */
+const PRINT_LABEL: Record<LogisticsTab, string> = { transports: "הסעות", payments: "תשלומים", books: "ספרים", prints: "הדפסות", rota: "תורנויות" };
 
 /** May this member open «לוגיסטיקה» in this edition: its logistics team and its admins. */
 export function mayLogistics(actor: Actor): boolean {
@@ -55,14 +74,17 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
   const { week } = store;
   const params = useParams();
-  const tab: LogisticsTab = TABS.some(([k]) => k === params.tab) ? (params.tab as LogisticsTab) : "transports";
+  const page = logisticsPageOf(params.tab);
   const { notify, clear, node } = useToast();
 
+  // a tab the strip does not have: the home (before anything loads — the address is wrong whatever the week)
+  if (page == null) return <Navigate replace to="/logistics" />;
   if (store.problem === "none") return <p className="mt-10 text-center text-ink-soft">עוד לא נפתח מחזור.</p>;
   if (store.problem === "error") return <p className="mt-10 text-center text-bad">לא הצלחנו לטעון. כדאי לרענן את הדף.</p>;
   if (!week) return <p className="mt-10 text-center text-ink-soft">טוען…</p>;
   const actor = actorIn(me, week.edition);
-  const label = TABS.find(([k]) => k === tab)![1];
+  const tab = page === "home" ? null : page;
+  const label = tab ? PRINT_LABEL[tab] : "";
 
   return (
     // the rota's board (five days side by side) and the transport board (a day's time axis) take a computer's width
@@ -75,18 +97,21 @@ export function LogisticsScreen({ port, me }: { port: DataPort; me: Me }) {
         <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">המסך הזה לצוות הלוגיסטי ולמדריך/ה של המחזור. אפשר לבחור מחזור אחר למעלה.</p>
       ) : (
         <>
+          {/* Link with its own aria-current, not NavLink: «בית» (/logistics) would be «current» on every tab below it */}
           <nav aria-label="לוגיסטיקה" className="flex flex-wrap gap-1.5 print:hidden">
-            {TABS.map(([k, text]) => (
-              <NavLink
+            {LOGISTICS_TABS.map(([k, text]) => (
+              <Link
                 key={k}
-                to={`/logistics/${k}`}
-                aria-current={k === tab ? "page" : undefined}
-                className={`inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-bold transition-colors duration-150 ${k === tab ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-navy hover:border-navy/50 hover:bg-accent-soft"}`}
+                to={logisticsPath(k)}
+                data-logistics-tab={k}
+                aria-current={k === page ? "page" : undefined}
+                className={`inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-bold transition-colors duration-150 ${k === page ? "border-navy bg-navy text-white shadow-sm" : "border-line bg-card text-navy hover:border-navy/50 hover:bg-accent-soft"}`}
               >
                 {text}
-              </NavLink>
+              </Link>
             ))}
           </nav>
+          {page === "home" && <LogisticsHome key={week.edition.id} port={port} week={week} actor={actor} />}
           {tab === "transports" && <TransportBoard key={week.edition.id} port={port} week={week} actor={actor} notify={notify} clear={clear} reload={store.reload} label={label} />}
           {tab === "payments" && <Payments port={port} week={week} actor={actor} notify={notify} clear={clear} reload={store.reload} label={label} />}
           {tab === "books" && <Books port={port} week={week} actor={actor} notify={notify} clear={clear} label={label} />}

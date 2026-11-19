@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { KkData } from "../data/kk";
 import { emptyWeek } from "../testing/week";
-import { andList, groupName, kkSessions, kkStatus, leaderInput, leaderName, notYet, offered, traineeLeaders } from "./kk";
+import { andList, groupName, kkSessions, kkStatus, leaderInput, leaderName, notYet, offered, suggestedCopies, traineeLeaders } from "./kk";
 import type { RosterMember } from "./types";
 
 const w = emptyWeek(); // opens Sunday 08:30 (510), closes Thursday at 19:00 (1140)
@@ -67,5 +67,14 @@ describe("מכריכה לכריכה for the screens (v15)", () => {
     expect(leaderInput("   ", roster)).toBeNull();
     const twins = [...roster, { id: 5, full_name: "חניך/ה לדוגמה ג׳", gender: null }];
     expect(leaderInput("חניך/ה לדוגמה ג׳", twins)).toBeNull(); // two trainees by that name: the admin picks from the list
+  });
+});
+
+describe("suggestedCopies (v19 «הצעה»)", () => {
+  it("one copy for each trainee signed up and one for each leader — nothing else is added", () => {
+    expect(suggestedCopies(0, 0)).toBe(0);
+    expect(suggestedCopies(12, 2)).toBe(14);
+    expect(suggestedCopies(0, 3)).toBe(3);
+    expect(suggestedCopies(-1, 2)).toBe(2); // never below zero
   });
 });

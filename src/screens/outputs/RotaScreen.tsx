@@ -1,6 +1,7 @@
 // «תוצרים ← תורנויות» (/print/rota, every member of the edition; milestone 7, schema v16): every page of the duty
 // roster, to print or download — the board, a schedule per group (all or one: one A4 landscape page each, GroupSheet),
-// a page per day, the kitchen's, the heads, the staff's shifts, מוצ"ש–ראשון, the food, who is on campus, the loads.
+// a page per day, the kitchen's, the heads, the staff's shifts, מוצ"ש–ראשון (the tasks, and the shopping list on a page of
+// its own — v19), the food, who is on campus, the loads.
 // Each is a builder of src/exports/rota.ts: the screen, the paper and the files are one list. «הורדת xlsx (כל
 // הגיליונות)» writes all of them, a sheet each; «הורדת CSV» the page on screen. Made in this browser, nothing uploaded.
 // The heads' phones are personal data: «כולל טלפונים של ראשי הקבוצות» only for an edition's logistics and admins in a
@@ -17,7 +18,7 @@ import { csvBytes } from "../../exports/csv";
 import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
 import {
   campusTable, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, type HeadPhones, headsTable, kitchenDutyId, kitchenSheet, loadsTable, prepTable,
-  rotaBoardTable, rotaWorkbook, stackTables, staffTable,
+  rotaBoardTable, rotaWorkbook, shoppingTable, stackTables, staffTable,
 } from "../../exports/rota";
 import type { Table } from "../../exports/table";
 import { israelDate } from "../../exports/tracking";
@@ -92,7 +93,7 @@ export function RotaScreen({ port, me }: { port: DataPort; me: Me }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 print:hidden">
       <h2 className="font-display text-2xl font-extrabold text-navy">תורנויות</h2>
       <EditionSelect />
-      <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
+      <OutputsTabs admin={actor.isAdmin} />
     </div>
   );
   if (!data) {
@@ -262,7 +263,7 @@ function tablesOf(
     case "staff":
       return [staffTable(data)];
     case "prep":
-      return [prepTable(data)];
+      return [prepTable(data), shoppingTable(data)];
     case "food":
       return [foodTable(data, e)];
     case "campus":

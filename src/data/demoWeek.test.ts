@@ -159,7 +159,7 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
 
   it("gives the three transports synthetic pickup times — placeholder words, a 06:10 before the board's 06:30 — and two staff shifts", () => {
     const week = demoWeek();
-    const shared = { transport: demoTransport(week), rota: emptyRota() };
+    const shared = { transport: demoTransport(week), rota: emptyRota(), photos: {} };
     const before = structuredClone(shared.transport);
     seedDemoLogistics(shared, week, { id: 5, display_name: "לוגיסטיקה (הדגמה)" });
     const row = (day: number, start: number) => shared.transport[`1:${at(week, day, start).id}`];
@@ -172,7 +172,7 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
       { id: 2, edition_id: 1, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, kind: "lead", note: null },
     ]);
     // no logistics member to lead: the typed shift alone
-    const bare = { transport: demoTransport(week), rota: emptyRota() };
+    const bare = { transport: demoTransport(week), rota: emptyRota(), photos: {} };
     seedDemoLogistics(bare, week, null);
     expect(bare.rota.staff.map((s) => s.name)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
     // synthetic only: no digits in a pickup address, and the times are what the board needs
@@ -194,7 +194,8 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
       ["איש/אשת צוות לדוגמה ב׳", false],
       ["צוות מכינה לדוגמה נ", false],
     ]);
-    expect(day(2)).toEqual({ day: 2, transports: [], shifts: [] });
+    // v19: cohort «ב» alone has staff who can drive (the logistics demo's flag), marked on campus that day
+    expect(day(2)).toEqual({ day: 2, transports: [], shifts: [], drivers: [{ cohort: expect.objectContaining({ letter: "ב", can_drive: true }), present: true }] });
     expect(boardCounts(week, read)).toEqual({ pending: 1, approved: 2, arranged: 1 });
     // the default demo draws the same transports with no pickup time known: markers at the lessons' starts
     const plain = new DemoPort();

@@ -100,9 +100,48 @@ describe("markdown-lite", () => {
     expect(mine).toContain("איפה השיחה עומדת");
     expect(mine).not.toContain("הצעד הבא");
     // the board's axis is drawn from 768px (a tablet), and its return is the teaching's end (app.teach_end)
-    const board = guide.split("\n").find((l) => l.startsWith("- **הסעות — לוח ההסעות:**"));
+    // (phase 4 renamed the tab «הסעות וצוות»)
+    const board = guide.split("\n").find((l) => l.startsWith("- **הסעות וצוות — לוח ההסעות:**"));
     expect(board).toContain("בטאבלט ובמחשב — ציר זמן");
     expect(board).toContain("בסוף זמן הלימוד");
+  });
+
+  it("«עזרה» after the reset's phase 4: the logistics home, the cohorts' flags, Saturday night's two lists, the reader, the books' «הצעה»", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    const lines = guide.split("\n");
+    const line = (start: string) => lines.find((l) => l.startsWith(start)) ?? "";
+    // the header as logistics sees it (nav.ts navFor): «בית» first, the week to read — and the staff's unchanged
+    const header = line("- בראש המסך יש את האזורים");
+    expect(header).toContain("הצוות הלוגיסטי: בית · אישורים · השבוע · תוצרים · זמני זיכרון · מכריכה לכריכה · ידע · עזרה.");
+    expect(header).toContain("השבוע · ימים · מרצים · אישורים · לוגיסטיקה");
+    // the strip (LogisticsScreen.tsx LOGISTICS_TABS) and the home's three groups (tasks.ts GROUP_TITLE), always all there
+    expect(line("- **«לוגיסטיקה»**")).toContain("בית · הסעות וצוות · תשלומים · ספרים · הדפסות · תורנויות");
+    const home = line("- **«בית» — מה נשאר לעשות:**");
+    for (const g of ["**בהתחלה:**", "**כשהתוכן מוכן:**", "**קרוב לשבוע:**", "תמיד שלושתן", "«תאריך השבוע עוד לא נקבע»"]) expect(home).toContain(g);
+    // the four chips (TASK_STATE_LABEL), and the two «לא ידוע» lines (NOT_LOADED, NOT_HERE)
+    const states = line("- **כל משימה**");
+    for (const w of ["«הושלם»", "«לטיפול»", "«עוד לא התחיל»", "«לא ידוע»", "«לא נטען»", "«לא זמין במחזור הזה»"]) expect(states).toContain(w);
+    // the cohorts' two flags (Setup.tsx), and the board's cohorts that can drive (TransportBoard.tsx)
+    const flags = line("- **שני סימונים לכל מכינה:**");
+    expect(flags).toContain("**«עוזרת בתורנויות»**");
+    expect(flags).toContain("**«הצוות שלה יכול להסיע»**");
+    expect(flags).toContain("הנוכחות שלה עדיין נספרת לארוחות");
+    expect(line("- **הסעות וצוות — לוח ההסעות:**")).toContain("«מכינות שהצוות שלהן יכול להסיע»");
+    // Saturday night: two lists, «נקנה», the quantity after a tab (PrepTasks.tsx); both carry over with the quantities
+    const prep = line('- **מוצ"ש–ראשון: שתי רשימות.**');
+    for (const w of ["**«משימות»:**", "**«רשימת קניות»:**", "«נקנה»", "«הדבקת רשימת קניות»", "אחרי טאב"]) expect(prep).toContain(w);
+    expect(line("- **לשנה הבאה**")).toContain("עם הכמויות");
+    // the reader is every member's; logistics builds it and marks «נשלח לדפוס» (ReaderScreen.tsx, sent.ts)
+    expect(line("- **«מקראה»** נמצאת ב«תוצרים»")).toContain("לכל הצוות");
+    expect(line("- **הצוות הלוגיסטי** בונה ומוריד את המקראה")).toContain("בלי השער, הכותרות הרצות, ההעלאה וההסרה");
+    const sent = line("- **«נשלח לדפוס»:**");
+    for (const w of ["«סימון שנשלחה לדפוס»", "«שליחה מחדש»", "«ביטול הסימון»", "«נוספו N קבצים אחרי השליחה — אולי צריך לשלוח שוב»"]) expect(sent).toContain(w);
+    // the books' suggestion fills the field only (BookOrder.tsx): no line says any more that nothing is suggested
+    expect(guide).not.toContain("והמערכת לא ממלאת מספר");
+    for (const l of [line("- **ספרים:** כמה עותקים להזמין"), line("- **ספרים:** שורה לכל ספר")]) {
+      expect(l).toContain("«הצעה: N»");
+      expect(l).toContain("«שמירה»");
+    }
   });
 });
 

@@ -4,7 +4,12 @@
 //
 // Every case starts from ROTA_FIXTURE in an empty edition: cohort «א» (A), its group 1 (G1) and group 2 (G2), cohort «נ»
 // (N), the duty «מטבח» (D1) and «נקיון» (D2), and G2 on D2 on Monday morning. `expect` is "ok" or the refusal's code.
-import type { NewAssignment, NewCohort, NewDuty, NewGroup, NewStaffShift, RotaShiftsSetting } from "../data/rota";
+//
+// v19: a cohort's two flags (`helps_rota`, `can_drive` — addCohort's and updateCohort's args, sent as the columns), and
+// `addPrepRows` — one insert of rows of one `kind` («task» or «item», sent as it is: the guard checks it) with their
+// quantities (`qty`, an item's); its `prep`, on an "ok", is the edition's whole list afterwards (the fixture has none),
+// in order — what the guard wrote: a task's quantity is null, whatever was sent.
+import type { NewAssignment, NewCohort, NewDuty, NewGroup, NewStaffShift, PrepKind, RotaShiftsSetting } from "../data/rota";
 
 export const ROTA_FIXTURE = {
   cohorts: [
@@ -35,6 +40,14 @@ export type RotaCase =
   | { name: string; op: "applySuggestion"; args: (Omit<NewAssignment, "duty_id" | "group_id"> & { duty: Ref; group: Ref })[]; expect: string }
   | { name: string; op: "addStaffShift"; args: Omit<NewStaffShift, "cohort_id"> & { cohort?: Ref | null }; expect: string }
   | { name: string; op: "addPrepTasks"; args: string[]; expect: string }
+  | {
+      name: string;
+      op: "addPrepRows";
+      kind: unknown;
+      args: { text: string; qty?: string | null }[];
+      expect: string;
+      prep?: { text: string; kind: PrepKind; qty: string | null }[];
+    }
   | { name: string; op: "setShifts"; args: RotaShiftsSetting | null; expect: string }
   | { name: string; op: "setContact"; ref: Ref; args: string | null; expect: string };
 
@@ -55,6 +68,12 @@ export const ROTA_CASES: RotaCase[] = [
   { name: "a diet's count out of range", op: "addCohort", args: { letter: "ג", name: "מכינה", diets: [{ label: "צמחוני", count: 1001 }] }, expect: "bad_value" },
   { name: "a cohort with groups is not deleted", op: "deleteCohort", ref: "A", expect: "in_use" },
   { name: "a cohort without groups is", op: "deleteCohort", ref: "N", expect: "ok" },
+  // v19: the two flags
+  { name: "a cohort that does not help, whose staff can drive", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", helps_rota: false, can_drive: true }, expect: "ok" },
+  { name: "a flag null", op: "addCohort", args: { letter: "ג", name: "מכינה לדוגמה ג", helps_rota: null as unknown as boolean }, expect: "bad_value" },
+  { name: "a flag turned on", op: "updateCohort", ref: "A", args: { can_drive: true }, expect: "ok" },
+  { name: "a flag turned off", op: "updateCohort", ref: "N", args: { helps_rota: false }, expect: "ok" },
+  { name: "a flag set to null", op: "updateCohort", ref: "A", args: { helps_rota: null }, expect: "bad_value" },
   // groups
   { name: "a group", op: "addGroup", args: { cohort: "A", number: 3, size: 9, head_name: null }, expect: "ok" },
   { name: "a group's number twice in a cohort", op: "addGroup", args: { cohort: "A", number: 1 }, expect: "rota_group_taken" },
@@ -88,6 +107,21 @@ export const ROTA_CASES: RotaCase[] = [
   // preparations
   { name: "a pasted list", op: "addPrepTasks", args: ["חדר צוות לדוגמה", "פינת קפה לדוגמה לסדר"], expect: "ok" },
   { name: "a phone in a task", op: "addPrepTasks", args: ["להתקשר ל-000-000-0055"], expect: "rota_contact_in_text" },
+  // v19: tasks and a shopping list
+  {
+    name: "a shopping list with quantities", op: "addPrepRows", kind: "item", args: [{ text: "פריט לדוגמה 1", qty: "2 (לדוגמה)" }, { text: "פריט לדוגמה 2" }], expect: "ok",
+    prep: [{ text: "פריט לדוגמה 1", kind: "item", qty: "2 (לדוגמה)" }, { text: "פריט לדוגמה 2", kind: "item", qty: null }],
+  },
+  {
+    name: "a task's quantity is dropped, a phone in it too", op: "addPrepRows", kind: "task", args: [{ text: "משימה לדוגמה", qty: "הקפצת מרצה, טל' 1234567" }], expect: "ok",
+    prep: [{ text: "משימה לדוגמה", kind: "task", qty: null }],
+  },
+  { name: "an unknown kind", op: "addPrepRows", kind: "thing", args: [{ text: "פריט לדוגמה" }], expect: "bad_value" },
+  { name: "no kind", op: "addPrepRows", kind: null, args: [{ text: "פריט לדוגמה" }], expect: "bad_value" },
+  { name: "an empty row before an unknown kind (the text first)", op: "addPrepRows", kind: "thing", args: [{ text: "   " }], expect: "name_required" },
+  { name: "a quantity too long", op: "addPrepRows", kind: "item", args: [{ text: "פריט לדוגמה", qty: "א".repeat(41) }], expect: "bad_value" },
+  { name: "a phone in a quantity", op: "addPrepRows", kind: "item", args: [{ text: "פריט לדוגמה", qty: "טל' 1234567" }], expect: "rota_contact_in_text" },
+  { name: "a phone in an item", op: "addPrepRows", kind: "item", args: [{ text: "להתקשר ל-000-000-0055", qty: "1" }], expect: "rota_contact_in_text" },
   // the shifts
   { name: "other cuts and names", op: "setShifts", args: { cuts: [840, 1320], labels: ["בוקר", "צהריים", "לילה"] }, expect: "forbidden" },
   { name: "back to last year's", op: "setShifts", args: null, expect: "forbidden" },

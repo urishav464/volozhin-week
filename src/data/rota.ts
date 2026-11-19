@@ -34,6 +34,13 @@ export interface RotaCohort {
   name: string;
   diets: Diet[];
   sort: number;
+  /**
+   * v19 «עוזרת בתורנויות»: absent = true. A cohort that does not help still counts for meals (its presence), but the
+   * suggestion never places its groups and the uneven-load check leaves them out (src/domain/rota.ts `helpsRota`).
+   */
+  helps_rota?: boolean;
+  /** v19 «הצוות שלה יכול להסיע»: absent = false — the transport board names it (no phone, no driver). */
+  can_drive?: boolean;
 }
 
 /** The cohort is on campus in this shift (no row: not marked — never assumed). */
@@ -100,15 +107,26 @@ export interface RotaStaffShift {
   note: string | null;
 }
 
+/** v19: a Saturday-night row is a task («משימות») or an item to buy («רשימת קניות»). */
+export type PrepKind = "task" | "item";
+
 /** A Saturday-night preparation («מוצ"ש–ראשון»): its number is its place in the list. */
 export interface RotaPrepTask {
   id: number;
   edition_id: number;
   text: string;
   group_id: number | null;
+  /** A task: done; an item: «נקנה». */
   done: boolean;
   sort: number;
+  /** v19: absent = "task". */
+  kind?: PrepKind;
+  /** v19: an item's quantity as typed (≤ 40, no contact); always null on a task. Absent = null. */
+  qty?: string | null;
 }
+
+/** What `addPrepTasks` takes: a text, or (an item) a text and its quantity. */
+export type NewPrepRow = string | { text: string; qty?: string | null };
 
 /** Everything the rota screens read (public.load_rota) — never a phone. */
 export interface RotaData {
@@ -129,8 +147,8 @@ export interface RotaContact {
   head_phone: string;
 }
 
-export type NewCohort = Pick<RotaCohort, "letter" | "name"> & Partial<Pick<RotaCohort, "diets" | "sort">>;
-export type CohortPatch = Partial<Pick<RotaCohort, "letter" | "name" | "diets" | "sort">>;
+export type NewCohort = Pick<RotaCohort, "letter" | "name"> & Partial<Pick<RotaCohort, "diets" | "sort" | "helps_rota" | "can_drive">>;
+export type CohortPatch = Partial<Pick<RotaCohort, "letter" | "name" | "diets" | "sort" | "helps_rota" | "can_drive">>;
 export type NewGroup = Pick<RotaGroup, "cohort_id" | "number"> & Partial<Pick<RotaGroup, "size" | "head_name">>;
 export type GroupPatch = Partial<Pick<RotaGroup, "number" | "size" | "head_name">>;
 export type NewDuty = Pick<RotaDuty, "name"> & Partial<Omit<RotaDuty, "id" | "edition_id" | "name">>;
@@ -138,7 +156,7 @@ export type DutyPatch = Partial<Omit<RotaDuty, "id" | "edition_id">>;
 export type NewAssignment = Pick<RotaAssignment, "day" | "shift" | "duty_id" | "group_id">;
 export type NewStaffShift = Omit<RotaStaffShift, "id" | "edition_id">;
 export type StaffPatch = Partial<NewStaffShift>;
-export type PrepPatch = Partial<Pick<RotaPrepTask, "text" | "group_id" | "done" | "sort">>;
+export type PrepPatch = Partial<Pick<RotaPrepTask, "text" | "group_id" | "done" | "sort" | "kind" | "qty">>;
 /** Which presence cells a «כל השבוע» / «כל היום» / one cell button sets: a day and a shift narrow it. */
 export interface PresenceScope {
   day?: Day;
@@ -183,8 +201,11 @@ export interface RotaPort {
   updateStaffShift(id: number, patch: StaffPatch): Promise<void>;
   deleteStaffShift(id: number): Promise<void>;
 
-  /** One or more (a pasted list): appended after the last, in order. */
-  addPrepTasks(editionId: number, texts: string[]): Promise<void>;
+  /**
+   * One or more (a pasted list) of one kind — ONE insert, appended after the last of the edition (both kinds share the
+   * numbering), in order. A task's quantity is dropped (null); `kind` absent = "task".
+   */
+  addPrepTasks(editionId: number, rows: NewPrepRow[], kind?: PrepKind): Promise<void>;
   updatePrepTask(id: number, patch: PrepPatch): Promise<void>;
   deletePrepTask(id: number): Promise<void>;
 
@@ -215,6 +236,7 @@ export const ROTA_LIMITS = {
   note: 200,
   prepText: 200,
   prepPaste: 200,
+  qty: 40,
   shiftLabel: 20,
   phone: 40,
 } as const;
@@ -302,6 +324,33 @@ export function cleanPrepText(v: string | null | undefined): string {
   return noContact(cleanLine(v, ROTA_LIMITS.prepText)) ?? fail("name_required");
 }
 
+/** v19: a cohort's flag — a boolean; anything else, null included → bad_value (the columns are NOT NULL). */
+export const cleanFlag = (v: unknown): boolean => (typeof v === "boolean" ? v : fail("bad_value"));
+
+/** v19: a Saturday-night row's kind; anything else, null included → bad_value. */
+export const cleanPrepKind = (v: unknown): PrepKind => (v === "task" || v === "item" ? v : fail("bad_value"));
+
+/** v19: a row's quantity — one line ≤ 40, no phone or e-mail; blank → null. Cleaned whatever the kind (a task keeps none). */
+export function cleanQty(v: string | null | undefined): string | null {
+  return noContact(cleanLine(v, ROTA_LIMITS.qty));
+}
+
+/** A row's kind as stored (absent: a task — a row from before v19). */
+export const prepKindOf = (t: Pick<RotaPrepTask, "kind">): PrepKind => (t.kind === "item" ? "item" : "task");
+
+/**
+ * addPrepTasks' rows as the guard writes them, each in the guard's order: the text, the kind, the quantity — cleaned
+ * whatever the kind (a phone in a task's refuses too), then kept for an item only.
+ */
+export function cleanPrepRows(rows: readonly NewPrepRow[], kind: unknown): { text: string; kind: PrepKind; qty: string | null }[] {
+  return rows.map((r) => {
+    const text = cleanPrepText(typeof r === "string" ? r : r?.text);
+    const k = cleanPrepKind(kind);
+    const qty = typeof r === "string" ? null : cleanQty(r?.qty ?? null);
+    return { text, kind: k, qty: k === "item" ? qty : null };
+  });
+}
+
 /**
  * A pasted list of preparations («הדבקת רשימה»): a line a task, its numbering taken off — a number followed by «.», «)»,
  * «-», «–», «:» or a tab (a spreadsheet's own cell) — and empty lines dropped. A number without one stays: it is the
@@ -315,6 +364,23 @@ export function parsePrepList(text: string): string[] {
     .filter(Boolean);
   if (lines.length > ROTA_LIMITS.prepPaste) return fail("bad_value");
   return lines.map(cleanPrepText);
+}
+
+/**
+ * v19: a pasted shopping list — parsePrepList's numbering rule, then each line split at its first tab: the item, and
+ * its quantity (a spreadsheet's second column; blank → null). A phone or an e-mail in either refuses the whole paste.
+ */
+export function parsePrepItems(text: string): { text: string; qty: string | null }[] {
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.replace(/^\s*\d{1,3}(?:\s*[.)\-–:]|\t)\s*/, "").trim())
+    .filter(Boolean);
+  if (lines.length > ROTA_LIMITS.prepPaste) return fail("bad_value");
+  return lines.map((l) => {
+    const tab = l.indexOf("\t");
+    return tab < 0 ? { text: cleanPrepText(l), qty: null } : { text: cleanPrepText(l.slice(0, tab)), qty: cleanQty(l.slice(tab + 1)) };
+  });
 }
 
 /** settings.rota_shifts: 390 < first cut < second cut < 1830, multiples of 5; three names, one line each. */

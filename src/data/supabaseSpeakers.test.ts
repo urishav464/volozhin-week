@@ -86,6 +86,27 @@ describe("SupabaseSpeakers on the wire", () => {
     ]);
   });
 
+  it("v19: the photo (get_speaker_photo, set_speaker_photo) and public_ok (set_public_ok) by their parameter names", async () => {
+    const { s, sent } = port([
+      [200, { photo: "QUJD", uploaded_at: "2026-11-19T10:00:00.000Z" }], [200, null], [204, null], [204, null], [204, null],
+      [400, { code: "P0001", message: "bad_file", details: null, hint: null }],
+    ]);
+    expect(await s.photo(41)).toEqual({ photo: "QUJD", uploaded_at: "2026-11-19T10:00:00.000Z" });
+    expect(await s.photo(42)).toBeNull();
+    await s.setPhoto(7, 41, "QUJD");
+    await s.setPhoto(7, 41, null);
+    await s.setPublicOk(7, 17, 3, true);
+    expect(await code(s.setPhoto(7, 41, "abc"))).toBe("bad_file");
+    expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
+      ["get_speaker_photo", { p_speaker: 41 }],
+      ["get_speaker_photo", { p_speaker: 42 }],
+      ["set_speaker_photo", { p_edition: 7, p_speaker: 41, p_photo: "QUJD" }],
+      ["set_speaker_photo", { p_edition: 7, p_speaker: 41, p_photo: null }],
+      ["set_public_ok", { p_approach: 17, p_version: 3, p_ok: true }],
+      ["set_speaker_photo", { p_edition: 7, p_speaker: 41, p_photo: "abc" }],
+    ]);
+  });
+
   it("reads contacts as four fields, and the matches, history and timeline as numbers where ids are", async () => {
     const { s } = port([
       [200, { phone: "555 0100 99", email: null, secretary_note: "דרך המזכירות", notes: null }],

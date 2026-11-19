@@ -61,18 +61,24 @@ const PEER_ADMIN = "peer.admin@example.org";
 // (availability written as time ranges), set_transport_request and set_transport_driver
 // (the transport details in two parts) — and no app.* function; anon's surface is as
 // it was: ping and the six link functions (tests/sql/reset.test.ts).
+// v19 (the logistics home, and what the guests' site reads) added three definer
+// functions — set_reader_sent («נשלח לדפוס»), set_speaker_photo and set_public_ok —
+// and get_speaker_photo (invoker, under speaker_photos' policy); register_source_file
+// took p_kind, its old signature dropped (still one function). No app.* function
+// (app.photo_ok runs inside set_speaker_photo only); anon's surface is as it was —
+// the guests read through schedule_view alone (tests/sql/v19.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
-  "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_import_note", "get_rota_contacts", "get_speaker_contacts", "get_transport_details", "get_transports_for", "hand_over",
+  "delete_memorial_plan", "edition_returning", "get_contacts_for", "get_fallen_contacts", "get_import_note", "get_rota_contacts", "get_speaker_contacts", "get_speaker_photo", "get_transport_details", "get_transports_for", "hand_over",
   "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
   "kk_update_group", "load_kk", "load_reviews", "load_rota", "load_week", "mark_confirm_sent", "mark_day_seen", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
   "register_source_file",
   "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
   "set_availability_ranges",
   "set_book_order", "set_call_template", "set_confirm_template", "set_day_owners", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
-  "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_reader_cover", "set_reader_headers",
-  "set_rota_contact", "set_rota_shifts", "set_slot_availability", "set_sources", "set_speaker_contacts", "set_transport_details", "set_transport_driver", "set_transport_request",
+  "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_public_ok", "set_reader_cover", "set_reader_headers", "set_reader_sent",
+  "set_rota_contact", "set_rota_shifts", "set_slot_availability", "set_sources", "set_speaker_contacts", "set_speaker_photo", "set_transport_details", "set_transport_driver", "set_transport_request",
   "speaker_activity", "speaker_history",
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
@@ -159,8 +165,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
           "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes, " +
           // v16: every table of «תורנויות» — the group heads' phones among them
           "public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_group_contacts, public.rota_duties, public.rota_assignments, " +
-          // v18: the days' owners
-          "public.rota_staff_shifts, public.rota_prep_tasks, public.day_owners",
+          // v18: the days' owners; v19: the speakers' photos
+          "public.rota_staff_shifts, public.rota_prep_tasks, public.day_owners, public.speaker_photos",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -243,7 +249,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
         for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability",
                          "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks",
-                         "day_owners", "transport_details"]) {
+                         "day_owners", "transport_details", "speaker_photos"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
         expect(await sqlstate(q("select public.issue_link(1, 'schedule')"))).toBe("42501");
@@ -257,7 +263,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
                          "app.may_write_rota(1)", "app.may_see_rota_contacts(1)", "app.rota_shift_active(1, 0, 0)",
                          // v18: nothing of the days' owners, the ranges or the transport's two parts
                          "public.set_day_owners(1, 0, null)", "public.mark_day_seen(1, 0)", "public.set_availability_ranges(1, 1, array[0], null)",
-                         "public.set_transport_request(1, '{}')", "public.set_transport_driver(1, '{}')", "public.get_transports_for(1)", "app.may_see_transport(1)"]) {
+                         "public.set_transport_request(1, '{}')", "public.set_transport_driver(1, '{}')", "public.get_transports_for(1)", "app.may_see_transport(1)",
+                         // v19: nothing of a photo, the approval to appear or «נשלח לדפוס» — the guests read schedule_view alone
+                         "public.get_speaker_photo(1)", "public.set_speaker_photo(1, 1, null)", "public.set_public_ok(1, 1, true)", "public.set_reader_sent(1, true)",
+                         "app.photo_ok('\\x00'::bytea)"]) {
           expect(await sqlstate(q(`select ${f}`)), f).toBe("42501");
         }
       });
@@ -293,7 +302,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(18);
+        expect(w.schema_version).toBe(19);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -406,14 +415,14 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
       "rota_assignments.day:INSERT,UPDATE", "rota_assignments.duty_id:INSERT,UPDATE", "rota_assignments.edition_id:INSERT",
       "rota_assignments.group_id:INSERT,UPDATE", "rota_assignments.shift:INSERT,UPDATE", "rota_assignments.source:INSERT",
-      "rota_cohorts.diets:INSERT,UPDATE", "rota_cohorts.edition_id:INSERT", "rota_cohorts.letter:INSERT,UPDATE", "rota_cohorts.name:INSERT,UPDATE",
-      "rota_cohorts.sort:INSERT,UPDATE",
+      "rota_cohorts.can_drive:INSERT,UPDATE", "rota_cohorts.diets:INSERT,UPDATE", "rota_cohorts.edition_id:INSERT", "rota_cohorts.helps_rota:INSERT,UPDATE",
+      "rota_cohorts.letter:INSERT,UPDATE", "rota_cohorts.name:INSERT,UPDATE", "rota_cohorts.sort:INSERT,UPDATE",
       "rota_duties.description:INSERT,UPDATE", "rota_duties.edition_id:INSERT", "rota_duties.min_people:INSERT,UPDATE", "rota_duties.name:INSERT,UPDATE",
       "rota_duties.need_afternoon:INSERT,UPDATE", "rota_duties.need_morning:INSERT,UPDATE", "rota_duties.need_night:INSERT,UPDATE", "rota_duties.sort:INSERT,UPDATE",
       "rota_groups.cohort_id:INSERT,UPDATE", "rota_groups.edition_id:INSERT", "rota_groups.head_name:INSERT,UPDATE", "rota_groups.number:INSERT,UPDATE",
       "rota_groups.size:INSERT,UPDATE",
-      "rota_prep_tasks.done:INSERT,UPDATE", "rota_prep_tasks.edition_id:INSERT", "rota_prep_tasks.group_id:INSERT,UPDATE", "rota_prep_tasks.sort:INSERT,UPDATE",
-      "rota_prep_tasks.text:INSERT,UPDATE",
+      "rota_prep_tasks.done:INSERT,UPDATE", "rota_prep_tasks.edition_id:INSERT", "rota_prep_tasks.group_id:INSERT,UPDATE", "rota_prep_tasks.kind:INSERT,UPDATE",
+      "rota_prep_tasks.qty:INSERT,UPDATE", "rota_prep_tasks.sort:INSERT,UPDATE", "rota_prep_tasks.text:INSERT,UPDATE",
       "rota_presence.cohort_id:INSERT", "rota_presence.day:INSERT", "rota_presence.edition_id:INSERT", "rota_presence.shift:INSERT",
       "rota_staff_shifts.cohort_id:INSERT,UPDATE", "rota_staff_shifts.day:INSERT,UPDATE", "rota_staff_shifts.edition_id:INSERT",
       "rota_staff_shifts.end_min:INSERT,UPDATE", "rota_staff_shifts.kind:INSERT,UPDATE", "rota_staff_shifts.member_id:INSERT,UPDATE",

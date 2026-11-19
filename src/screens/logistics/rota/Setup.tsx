@@ -1,5 +1,5 @@
 // «קבוצות ומכינות» — what the board is made of: the cohorts on campus (a letter that starts its groups' codes, a name,
-// the diets the food orders count), when each is on campus (cohort × day × shift; no mark = not marked, never assumed —
+// the diets the food orders count, and v19's two flags — «עוזרת בתורנויות», «הצוות שלה יכול להסיע»), when each is on campus (cohort × day × shift; no mark = not marked, never assumed —
 // «כל השבוע», «כל היום»), the groups (the next number suggested, a size — TBD until known — and the head's name; the
 // head's phone only behind «כולל טלפונים של ראשי הקבוצות», for those who may see it, saved through set_rota_contact
 // alone), the duties (how many groups each shift needs — empty is «not set», and the suggestion leaves it — and a
@@ -7,7 +7,7 @@
 // admins'. A head's phone is personal data: no column, no line and no field for it while the switch is off.
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { cleanHeadPhone, type Diet, LAST_YEAR_DUTIES, type NewDuty, type PresenceScope, type RotaCohort, type RotaDuty, type RotaGroup } from "../../../data/rota";
-import { DEFAULT_ROTA_SHIFTS, groupCode, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS } from "../../../domain/rota";
+import { canDrive, DEFAULT_ROTA_SHIFTS, groupCode, helpsRota, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS } from "../../../domain/rota";
 import { DAY_NAMES, fmt, parseClock } from "../../../domain/time";
 import { cohortsInOrder, dutiesInOrder, groupsInOrder, shiftText } from "../../../exports/rota";
 import { GroupChip, HeadPhonesToggle, useHeadPhones } from "../../rota/shared";
@@ -93,10 +93,20 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
               />
             </li>
           ) : (
-            <li key={c.id} data-rota-cohort={c.letter} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+            <li
+              key={c.id}
+              data-rota-cohort={c.letter}
+              data-helps-rota={helpsRota(c) ? "y" : "-"}
+              data-can-drive={canDrive(c) ? "y" : "-"}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
+            >
               <div className="min-w-0 flex-1 basis-48">
-                <p className="font-bold text-navy">
-                  <bdi>{c.letter}</bdi> · {c.name}
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-bold text-navy">
+                  <span>
+                    <bdi>{c.letter}</bdi> · {c.name}
+                  </span>
+                  {!helpsRota(c) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
+                  {canDrive(c) && <Badge tone="accent">הצוות יכול להסיע</Badge>}
                 </p>
                 <p className="text-sm text-ink-soft">
                   {groupsOf(c) === 1 ? "קבוצה אחת" : `${groupsOf(c)} קבוצות`} ·{" "}
@@ -162,10 +172,21 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
 
 type Refused = (code: string | null) => boolean;
 
-function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string; initial?: RotaCohort; busy: boolean; onSave: (v: { letter: string; name: string; diets: Diet[] }, refused: Refused) => Promise<void>; onCancel: () => void }) {
+/** What the cohort form saves: v19's two flags always sent (a new cohort's: helps, cannot drive — the columns' defaults). */
+interface CohortValues {
+  letter: string;
+  name: string;
+  diets: Diet[];
+  helps_rota: boolean;
+  can_drive: boolean;
+}
+
+function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string; initial?: RotaCohort; busy: boolean; onSave: (v: CohortValues, refused: Refused) => Promise<void>; onCancel: () => void }) {
   const id = useId();
   const [letter, setLetter] = useState(initial?.letter ?? "");
   const [name, setName] = useState(initial?.name ?? "");
+  const [helps, setHelps] = useState(initial ? helpsRota(initial) : true);
+  const [drives, setDrives] = useState(initial ? canDrive(initial) : false);
   const [diets, setDiets] = useState<{ label: string; count: string }[]>(initial?.diets.map((d) => ({ label: d.label, count: String(d.count) })) ?? []);
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
@@ -174,7 +195,7 @@ function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string;
     if (!letter.trim()) return setProblem("צריך אות למכינה (למשל א, ב, נ).");
     const list = diets.filter((d) => d.label.trim() || d.count.trim()).map((d) => ({ label: d.label, count: intOrNull(d.count) ?? Number.NaN }));
     void onSave(
-      { letter, name, diets: list },
+      { letter, name, diets: list, helps_rota: helps, can_drive: drives },
       formRefusal(setProblem, { bad_value: "אחד הערכים לא תקין: אות בלי ספרות ורווחים, ולכל דיאטה שם ומספר שלם (עד 1000).", name_required: "צריך שם למכינה." }),
     );
   };
@@ -188,6 +209,19 @@ function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string;
         <Field id={`${id}-name`} label="שם המכינה">
           <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={INPUT} />
         </Field>
+      </div>
+      <div className="space-y-1">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2">
+          <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={helps} onChange={(e) => setHelps(e.target.checked)} aria-describedby={`${id}-helps-hint`} />
+          <span>עוזרת בתורנויות</span>
+        </label>
+        <p id={`${id}-helps-hint`} className="text-xs text-ink-soft">
+          מכינה שלא עוזרת: ההצעה לא משבצת את הקבוצות שלה. הנוכחות שלה עדיין נספרת לארוחות.
+        </p>
+        <label className="flex min-h-11 cursor-pointer items-center gap-2">
+          <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={drives} onChange={(e) => setDrives(e.target.checked)} />
+          <span>הצוות שלה יכול להסיע</span>
+        </label>
       </div>
       <fieldset className="min-w-0 space-y-2">
         <legend className="mb-1 text-sm font-bold text-ink">דיאטות (לכמויות האוכל)</legend>

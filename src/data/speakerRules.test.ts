@@ -2,7 +2,10 @@
 // (tests/parity sends the same inputs through both).
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
-import { cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, DEFAULT_TITLES, LIMITS, pickContactPref, pickGender, pickTitle, titlesOf } from "./speakerRules";
+import {
+  asText, cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanPublicBio, cleanTopics, DEFAULT_TITLES, LIMITS, pickContactPref, pickGender, pickTitle,
+  titlesOf,
+} from "./speakerRules";
 
 const code = (fn: () => unknown) => {
   try {
@@ -121,5 +124,21 @@ describe("availability by ranges (v18): what set_availability_ranges takes", () 
     expect(bad([1], [], true)).toBe("bad_value");
     expect(bad([1], [], "")).toBe("bad_value");
     expect(bad([1], [], "can")).toBe("ok");
+  });
+});
+
+describe("v19: a speaker's words for the guests (public_bio)", () => {
+  it("a block of up to 600 — its edges trimmed, CRLF made LF — never a phone or an e-mail; read as `->>` reads a JSON value", () => {
+    expect(LIMITS.public_bio).toBe(600);
+    expect(cleanPublicBio("  תיאור לדוגמה,\r\nבשתי שורות  ")).toBe("תיאור לדוגמה,\nבשתי שורות");
+    expect(cleanPublicBio("   ")).toBeNull();
+    expect(cleanPublicBio(null)).toBeNull();
+    expect(cleanPublicBio("א".repeat(600))).toBe("א".repeat(600));
+    expect(code(() => cleanPublicBio("א".repeat(601)))).toBe("bad_value");
+    expect(code(() => cleanPublicBio("לפרטים: someone@example.org"))).toBe("contact_in_text");
+    expect(code(() => cleanPublicBio("לפרטים: 000-000-0081"))).toBe("contact_in_text");
+    expect(code(() => cleanPublicBio(`${"א".repeat(601)} someone@example.org`))).toBe("bad_value"); // the length first
+    expect(cleanPublicBio(1948)).toBe("1948"); // a number written out, as `->>` does
+    expect([asText(null), asText(true), asText({ a: 1 }), asText("x")]).toEqual([null, "true", '{"a":1}', "x"]);
   });
 });

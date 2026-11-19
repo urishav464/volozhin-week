@@ -57,6 +57,10 @@ export interface Speaker {
   retired: boolean;
   name_key: string;
   version: number;
+  /** v19: a short description for the guests' schedule (≤ 600, no contact); absent = null. Kept with the speaker across years. */
+  public_bio?: string | null;
+  /** v19: a photo for the guests' schedule is stored (speaker_photos — its bytes come one speaker at a time); absent = false. */
+  has_photo?: boolean;
 }
 
 /** speaker_contacts — reached only through the port's contacts calls, never in a Week or in Realtime. */
@@ -79,6 +83,11 @@ export interface Approach {
   /** A hand-over («העברה») the handler offered this member, waiting for their answer. */
   offered_to: number | null;
   version: number;
+  /**
+   * v19: the handler (or an admin) approved showing this speaker — name, description, photo — on this edition's guests'
+   * schedule (`set_public_ok`); absent = false. Never copied to the next edition.
+   */
+  public_ok?: boolean;
 }
 
 /**
@@ -148,6 +157,11 @@ export interface Lesson {
   in_reader: boolean;
   version: number;
   updated_by: number | null;
+  /**
+   * v19: a short description for the guests' schedule (≤ 400, no contact); absent = null. Not a stage field — a reopen
+   * keeps it, like the title.
+   */
+  public_note?: string | null;
 }
 
 /** A new lesson's stage fields — nothing asked, nothing sent, no escort, sources pending (the database's defaults). */
@@ -252,6 +266,8 @@ export interface EditionSettings {
   memorial?: MemorialPolicy;
   /** v16 «תורנויות»: the two cuts between the three shifts and their names; absent = last year's (src/domain/rota.ts). */
   rota_shifts?: RotaShiftsSetting;
+  /** v19: logistics (or an admin) marked the reader sent to print — when (ISO UTC) and by whom (members.id); absent = not sent. */
+  reader_sent?: { at: string; by: number | null };
 }
 
 /** settings.rota_shifts: cuts [morning→afternoon, afternoon→night] in the day's minutes (390 < a < b < 1830, ×5), three names. */
@@ -350,15 +366,25 @@ export interface Week {
   dayOwners: DayOwner[];
 }
 
-/** The four types the sources bucket takes. */
-export type SourceMime = "application/pdf" | "image/png" | "image/jpeg" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+/** The five types the sources bucket takes (v19: a pptx, only as a presentation). */
+export type SourceMime =
+  | "application/pdf"
+  | "image/png"
+  | "image/jpeg"
+  | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  | "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+/** v19: what a file is for — a lesson's source (the reader's), or a presentation shown in the room (never in the reader). */
+export type SourceKind = "source" | "presentation";
 
 /** One uploaded file (source_files): a lesson's source, or the reader's poster (`cover`). */
 export interface SourceFile {
   id: number;
-  /** null: the poster, or a lesson deleted since (its file stays for removal). */
+  /** null: the poster, or a lesson deleted since (its file stays for removal) — or (v19) the week's presentation. */
   lesson_id: number | null;
   cover: boolean;
+  /** v19: absent = "source". A presentation is never in the reader, never the cover. */
+  kind?: SourceKind;
   /** The lesson's lead speaker when it arrived — another lead now: «מהמרצה הקודם», never in the reader. */
   speaker_id: number | null;
   /** A memorial slot's file: the fallen of the plan it came for (v11) — the reader takes it wherever that plan is placed. */

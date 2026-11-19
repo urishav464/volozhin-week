@@ -4,7 +4,7 @@
 // (src/grid/layout.ts rowActive). An edition's admin may move the two cuts and rename the shifts (settings.rota_shifts,
 // public.set_rota_shifts); the count stays three, so a moved cut never orphans an assignment's shift index.
 // `rotaShiftActive` ≡ app.rota_shift_active (tests/sql/rota.test.ts compares them value for value).
-import type { RotaAssignment, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import type { RotaAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
 import { DAY_END, DAY_START, type Day } from "./time";
 import type { Edition, RotaShiftsSetting } from "./types";
 
@@ -88,6 +88,22 @@ export function groupCode(letter: string, number: number): string {
 export function codeOf(data: Pick<RotaData, "cohorts">, g: Pick<RotaGroup, "cohort_id" | "number">): string {
   const c = data.cohorts.find((x) => x.id === g.cohort_id);
   return c ? groupCode(c.letter, g.number) : `?${g.number}`;
+}
+
+/**
+ * v19 «עוזרת בתורנויות» (absent = it helps, as every cohort did before v19): a cohort that does not help is still on
+ * campus — its presence feeds the meal counts — but the suggestion never places its groups and the uneven-load check
+ * leaves them out; a hand-made assignment to one of them is the `not_helping` warning.
+ */
+export const helpsRota = (c: Pick<RotaCohort, "helps_rota">): boolean => c.helps_rota !== false;
+
+/** v19 «הצוות שלה יכול להסיע» (absent = no): the transport board names such a cohort — never a phone or a driver. */
+export const canDrive = (c: Pick<RotaCohort, "can_drive">): boolean => c.can_drive === true;
+
+/** The groups the suggestion and the fairness look at: those of a cohort that helps (a group whose cohort is gone stays). */
+export function helpingGroups<G extends Pick<RotaGroup, "cohort_id">>(data: { cohorts: readonly Pick<RotaCohort, "id" | "helps_rota">[]; groups: readonly G[] }): G[] {
+  const notHelping = new Set(data.cohorts.filter((c) => !helpsRota(c)).map((c) => c.id));
+  return data.groups.filter((g) => !notHelping.has(g.cohort_id));
 }
 
 /** Is the cohort marked on campus in this shift (no row = not marked: never assumed). */

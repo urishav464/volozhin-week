@@ -6,7 +6,7 @@
 // Synthetic only: no name, no phone.
 import { describe, expect, it } from "vitest";
 import { LAST_YEAR_DUTIES, type NewAssignment, type RotaAssignment, type RotaData, type RotaDuty, type ShiftIndex } from "../data/rota";
-import { loadsOf, needOf, presentAt, rotaShiftActive, rotaSlots, slotIndex } from "./rota";
+import { helpingGroups, helpsRota, loadsOf, needOf, presentAt, rotaShiftActive, rotaSlots, slotIndex } from "./rota";
 import { ROTA_LOAD_TOLERANCE, ROTA_MAX_EXTRA, ROTA_MAX_SWAPS, type RotaSuggestInput, type RotaSuggestion, suggestionOrder, suggestRota } from "./rotaSuggest";
 import { rotaWarnings } from "./rotaWarnings";
 import type { Day } from "./time";
@@ -15,8 +15,8 @@ type Edges = RotaSuggestInput["edition"];
 const WEEK: Edges = { first_day_from: 510, last_day_until: 1140, settings: {} };
 
 interface Spec {
-  /** A letter, the groups' sizes, the days on campus (all shifts of each; default the whole week). */
-  cohorts: { letter: string; sizes: (number | null)[]; days?: number[] }[];
+  /** A letter, the groups' sizes, the days on campus (all shifts of each; default the whole week); `helps: false` (v19) a cohort that does not help. */
+  cohorts: { letter: string; sizes: (number | null)[]; days?: number[]; helps?: boolean }[];
   /** [morning, afternoon, night], and a minimum of people. */
   duties: { need: [number | null, number | null, number | null]; min?: number }[];
   assignments?: { day: number; shift: number; duty: number; group: number; source?: "hand" | "suggested" }[];
@@ -29,7 +29,7 @@ function build(spec: Spec): RotaSuggestInput & { data: RotaData } {
   const data: RotaData = { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] };
   let gid = 0;
   spec.cohorts.forEach((c, i) => {
-    data.cohorts.push({ id: i + 1, edition_id: 1, letter: c.letter, name: `מכינה לדוגמה ${c.letter}`, diets: [], sort: i + 1 });
+    data.cohorts.push({ id: i + 1, edition_id: 1, letter: c.letter, name: `מכינה לדוגמה ${c.letter}`, diets: [], sort: i + 1, ...(c.helps === false ? { helps_rota: false } : {}) });
     for (const s of rotaSlots(edition)) if (!c.days || c.days.includes(s.day)) data.presence.push({ cohort_id: i + 1, day: s.day, shift: s.shift });
     c.sizes.forEach((size, n) => data.groups.push({ id: ++gid, edition_id: 1, cohort_id: i + 1, number: n + 1, size, head_name: null }));
   });
@@ -64,6 +64,8 @@ function invariants(input: RotaSuggestInput, r: RotaSuggestion): void {
   const { data, edition } = input;
   const rows = all(input, r);
   const groupOf = new Map(data.groups.map((g) => [g.id, g]));
+  const cohortOf = new Map(data.cohorts.map((c) => [c.id, c]));
+  const helping = helpingGroups(data);
   // one duty per group per shift — what was there and what is added together
   const seen = new Set<string>();
   for (const a of rows) {
@@ -74,6 +76,7 @@ function invariants(input: RotaSuggestInput, r: RotaSuggestion): void {
   for (const a of r.add) {
     expect(rotaShiftActive(edition, a.day, a.shift), "a shift the week has").toBe(true);
     expect(presentAt(data, groupOf.get(a.group_id)!.cohort_id, a.day, a.shift), "on campus").toBe(true);
+    expect(helpsRota(cohortOf.get(groupOf.get(a.group_id)!.cohort_id)!), "a group of a cohort that helps (v19)").toBe(true);
     const need = needOf(data.duties.find((d) => d.id === a.duty_id)!, a.shift);
     expect(need != null && need > 0, "a duty whose need is set").toBe(true);
   }
@@ -92,9 +95,9 @@ function invariants(input: RotaSuggestInput, r: RotaSuggestion): void {
       const u = r.unfilled.find((x) => x.day === s.day && x.shift === s.shift && x.duty_id === d.id);
       if (after >= need) expect(u).toBeUndefined();
       else {
-        // short only when no free group on campus was left in that shift
+        // short only when no free group on campus (of a cohort that helps) was left in that shift
         expect(u?.missing).toBe(need - after);
-        const free = data.groups.filter((g) => presentAt(data, g.cohort_id, s.day, s.shift) && !rows.some((a) => a.day === s.day && a.shift === s.shift && a.group_id === g.id));
+        const free = helping.filter((g) => presentAt(data, g.cohort_id, s.day, s.shift) && !rows.some((a) => a.day === s.day && a.shift === s.shift && a.group_id === g.id));
         expect(free, `a free group left while ${d.name} is short`).toEqual([]);
       }
     }
@@ -458,6 +461,61 @@ describe("last year's shape (6/6/5 groups, «נ» on campus Monday and Tuesday, 
   });
 });
 
+describe("a cohort that does not help (v19 «עוזרת בתורנויות» off)", () => {
+  it("its groups are never suggested, however free; the others carry the needs, and what they cannot is reported", () => {
+    const input = build({ cohorts: [{ letter: "א", sizes: [8, 8] }, { letter: "נ", sizes: [8, 8, 8], helps: false }], duties: [{ need: [3, 1, 0] }] });
+    const r = suggestRota(input);
+    invariants(input, r);
+    const nun = new Set(input.data.groups.filter((g) => g.cohort_id === 2).map((g) => g.id));
+    expect(r.add.filter((a) => nun.has(a.group_id))).toEqual([]);
+    // three groups a morning, two that help: one short every morning, though «נ» is on campus
+    const mornings = rotaSlots(input.edition).filter((x) => x.shift === 0);
+    expect(r.unfilled).toEqual(mornings.map((x) => ({ day: x.day, shift: 0, duty_id: 1, missing: 1 })));
+    // every helping group still loaded fairly among themselves; «נ»'s load is nothing
+    for (const id of nun) expect(r.loads.get(id)!.shifts).toBe(0);
+  });
+
+  it("a duty one of its groups was given by hand counts as filled — the suggestion adds nothing there", () => {
+    const input = build({
+      cohorts: [{ letter: "א", sizes: [8, 8] }, { letter: "נ", sizes: [8], helps: false }],
+      duties: [{ need: [1, 1, 1] }],
+      assignments: [{ day: 1, shift: 0, duty: 1, group: 3 }],
+    });
+    const r = suggestRota(input);
+    invariants(input, r);
+    expect(on(r.add, 1, 0, 1)).toEqual([]);
+    expect(r.unfilled).toEqual([]);
+    expect(r.loads.get(3)!.shifts).toBe(1); // what is there, in the loads as it is
+  });
+
+  it("the tightest shifts first counts only the groups that help: a shift with only «נ» on campus comes before one with «א»", () => {
+    // «א» (helps) on campus Monday only, «נ» (does not help) every day: every other shift has nobody to fill it
+    const input = build({ cohorts: [{ letter: "א", sizes: [8], days: [1] }, { letter: "נ", sizes: [8], helps: false }], duties: [{ need: [1, 1, 1] }] });
+    const order = suggestionOrder(input);
+    const monday = order.filter((x) => x.day === 1);
+    expect(order.slice(-monday.length)).toEqual(monday);
+    // the same rota with «נ» helping: Monday, with two groups free, is still last — but now the other shifts are filled
+    const both = build({ cohorts: [{ letter: "א", sizes: [8], days: [1] }, { letter: "נ", sizes: [8] }], duties: [{ need: [1, 1, 1] }] });
+    expect(suggestRota(both).unfilled).toEqual([]);
+    expect(suggestRota(input).unfilled.length).toBe(rotaSlots(input.edition).length - 3);
+  });
+
+  it("the polish never moves a row to a group that does not help", () => {
+    const input = build({ cohorts: [{ letter: "א", sizes: [8, 8, 8] }, { letter: "נ", sizes: [8, 8, 8], helps: false }], duties: [{ need: [2, 1, 1] }] });
+    const r = suggestRota(input);
+    invariants(input, r);
+    polishKeeps(input, "not helping");
+    expect(new Set(r.add.map((a) => a.group_id))).toEqual(new Set([1, 2, 3]));
+  });
+
+  it("deterministic in any order, with a cohort that does not help between two that do", () => {
+    const input = build({ cohorts: [{ letter: "א", sizes: [6, 9] }, { letter: "נ", sizes: [7], helps: false }, { letter: "ב", sizes: [8, null] }], duties: [{ need: [1, 1, 1] }, { need: [1, 0, null], min: 12 }] });
+    const r = suggestRota(input);
+    invariants(input, r);
+    for (let seed = 1; seed <= 20; seed++) expect(suggestRota(shuffle(input, seed))).toEqual(r);
+  });
+});
+
 describe("seeded random rotas", () => {
   /** A random rota: 1–3 cohorts of 1–6 groups (some sizes TBD), presence whole / partial / none, 1–4 duties, some already assigned. */
   function random(seed: number): RotaSuggestInput & { data: RotaData } {
@@ -483,6 +541,9 @@ describe("seeded random rotas", () => {
       taken.add(k);
       built.data.assignments.push({ id: built.data.assignments.length + 1, edition_id: 1, day: a.day as Day, shift: a.shift as ShiftIndex, duty_id: a.duty, group_id: a.group, source: rnd() < 0.5 ? "hand" : "suggested" });
     }
+    // v19: now and then a cohort that does not help — drawn apart, so the rotas above stay what they were
+    const flag = prng(seed + 5000);
+    for (const c of built.data.cohorts) if (flag() < 0.2) c.helps_rota = false;
     return built;
   }
 

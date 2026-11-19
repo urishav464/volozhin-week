@@ -4,7 +4,8 @@
 // or decision changes and after every write. One day at a time (`?day=`): a time axis from a tablet up (BoardAxis —
 // aria-hidden) and its text twin, the list, which is the phone's whole board. A request is decided right here by whoever
 // public.decide_payments lets (mayDecide; one approval decides the payment and the transport together); an approved
-// transport gets its driver and «סודר» through set_transport_driver only (DriverForm). The pickup is the handler's:
+// transport gets its driver and «סודר» through set_transport_driver only (DriverForm). Beside the day's staff shifts (v19)
+// the cohorts whose staff can drive, those on campus that day first — names only (lanes.ts driveCohorts). The pickup is the handler's:
 // read-only here, written on the lesson page («לדף השיעור»). The addresses and the drivers' phones only behind «כולל
 // כתובות וטלפונים». Print and the files keep the approved transports only (transportRows / transportTable).
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -24,7 +25,7 @@ import { mayArrangeDriver } from "../lesson/StaffTransport";
 import { type Act, LINK_BUTTON, memberName } from "../stages/parts";
 import { BoardAxis } from "./BoardAxis";
 import { ARRANGED_NOTE, DriverForm } from "./DriverForm";
-import { AXIS, boardCounts, boardDayParam, type BoardState, defaultBoardDay, lanesPerDay, onBoard, pickupText, type ShiftLane, type TransportLane, transportLanes } from "./lanes";
+import { AXIS, boardCounts, boardDayParam, type BoardState, defaultBoardDay, type DriveCohort, lanesPerDay, onBoard, pickupText, type ShiftLane, type TransportLane, transportLanes } from "./lanes";
 import { Bar, PaperTable, PersonalToggle, type TabProps } from "./parts";
 
 /** Where a transport stands, in words (the axis draws it in colour). */
@@ -197,7 +198,10 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
               </ul>
             )}
           </div>
-          <Shifts shifts={lanes.shifts} loading={rota.data == null && rota.failed == null} failed={rota.data == null && rota.failed != null} retry={() => void rota.reload()} />
+          <div className="min-w-0 space-y-4">
+            <Shifts shifts={lanes.shifts} loading={rota.data == null && rota.failed == null} failed={rota.data == null && rota.failed != null} retry={() => void rota.reload()} />
+            <DriveCohorts drivers={lanes.drivers} loading={rota.data == null && rota.failed == null} failed={rota.data == null && rota.failed != null} />
+          </div>
         </div>
       </section>
     </>
@@ -384,6 +388,36 @@ function Shifts({ shifts, loading, failed, retry }: { shifts: ShiftLane[]; loadi
               <span className="min-w-0 break-words">{s.who}</span>
               {s.lead && <Badge tone="accent">אחראי/ת משמרת</Badge>}
               {s.shift.note && <span className="basis-full text-xs break-words text-ink-soft">{s.shift.note}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * v19: the cohorts whose staff can drive («הצוות שלה יכול להסיע», set in «תורנויות ← קבוצות ומכינות») — those on campus
+ * that day first. Names only: the rota has no phone, and finding the driver stays a conversation. A failed rota read is
+ * said once, by the shifts beside it.
+ */
+export function DriveCohorts({ drivers, loading, failed }: { drivers: DriveCohort[]; loading: boolean; failed: boolean }) {
+  if (failed) return null;
+  return (
+    <section aria-labelledby="board-drive-cohorts" data-drive-cohorts className="min-w-0 space-y-2">
+      <h3 id="board-drive-cohorts" className="font-display text-lg font-bold text-navy">
+        מכינות שהצוות שלהן יכול להסיע
+      </h3>
+      {loading ? (
+        <p className="text-sm text-ink-soft">טוען…</p>
+      ) : drivers.length === 0 ? (
+        <p className="text-sm text-ink-soft">אין מכינות שהצוות שלהן מסומן כיכול להסיע.</p>
+      ) : (
+        <ul aria-labelledby="board-drive-cohorts" className="divide-y divide-sage/60 rounded-xl border border-line bg-card px-3 shadow-sm">
+          {drivers.map(({ cohort, present }) => (
+            <li key={cohort.id} data-drive-cohort={cohort.id} data-present={present ? "y" : "-"} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm">
+              <span className="min-w-0 flex-1 break-words font-semibold">{cohort.name}</span>
+              <Chip tone={present ? "ok" : "plain"}>{present ? "בקמפוס ביום הזה" : "לא בקמפוס ביום הזה"}</Chip>
             </li>
           ))}
         </ul>

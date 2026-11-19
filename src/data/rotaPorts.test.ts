@@ -12,7 +12,7 @@ import { ROTA_ADMIN_CASES, ROTA_CASES, ROTA_FIXTURE, type RotaCase } from "../te
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
 import type { Actor } from "./engine";
-import { LAST_YEAR_DUTIES, type RotaData, type RotaPort } from "./rota";
+import { LAST_YEAR_DUTIES, type PrepKind, type RotaData, type RotaPort } from "./rota";
 
 const LOGISTICS: Actor = { memberId: 5, role: "logistics" };
 const EDITION_ADMIN: Actor = { memberId: 1, role: "admin" };
@@ -81,6 +81,8 @@ function run(r: RotaPort, e: number, refs: Map<string, number>, c: RotaCase): Pr
     }
     case "addPrepTasks":
       return r.addPrepTasks(e, c.args);
+    case "addPrepRows":
+      return r.addPrepTasks(e, c.args, c.kind as PrepKind);
     case "setShifts":
       return r.setShifts(e, c.args);
     case "setContact":
@@ -97,6 +99,8 @@ describe("the shared cases (src/testing/rotaCases.ts) on the demo", () => {
       expect(await code(run(port.rota, e, refs, c))).toBe(c.expect);
       // a refusal changes nothing (an all-or-nothing apply included)
       if (c.expect !== "ok") expect(await port.rota.load(e)).toEqual(before);
+      // v19: what the guard wrote of the rows
+      if (c.op === "addPrepRows" && c.prep) expect((await port.rota.load(e)).prep.map(({ text, kind, qty }) => ({ text, kind, qty }))).toEqual(c.prep);
     });
   }
   for (const c of ROTA_ADMIN_CASES) {

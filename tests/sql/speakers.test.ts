@@ -569,10 +569,12 @@ describe("the speaker pool", () => {
   it("load_week carries the pool's new fields — and still no contact detail", async () => {
     await as(db, "authenticated", google(B), async (q) => {
       const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
+      // v19: the guests' site's words and whether a photo is stored (never its bytes); the approval to appear there
       expect(Object.keys(w.speakers[0]).sort()).toEqual([
-        "affiliation", "bio_short", "contact_pref", "disambiguator", "gender", "id", "name", "name_key", "retired", "title", "topics", "version", "vetted", "vetted_by", "vetted_note",
+        "affiliation", "bio_short", "contact_pref", "disambiguator", "gender", "has_photo", "id", "name", "name_key", "public_bio", "retired", "title", "topics", "version",
+        "vetted", "vetted_by", "vetted_note",
       ]);
-      expect(Object.keys(w.approaches[0]).sort()).toEqual(["avail_note", "id", "offered_to", "owner_member_id", "speaker_id", "status", "version"]);
+      expect(Object.keys(w.approaches[0]).sort()).toEqual(["avail_note", "id", "offered_to", "owner_member_id", "public_ok", "speaker_id", "status", "version"]);
       expect(JSON.stringify(w)).not.toMatch(/synthetic|555 0100|speaker@example/);
     });
   });

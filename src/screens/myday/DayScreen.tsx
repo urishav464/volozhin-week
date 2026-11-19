@@ -3,7 +3,7 @@
 // balance, the slots in time order each with its next step — staff may act on every lesson (myDay's staff mode; the
 // RPCs decide) — the lessons handled by someone outside the pair highlighted («חריגים»; none on a day with no pair),
 // and the speakers who can come. «ראיתי» only for an owner of the day. A trainee is sent to their own home (`/?day=d`
-// on a day of theirs), logistics to theirs.
+// on a day of theirs), logistics to theirs (`/logistics`, nav.ts dayRedirect).
 import { type KeyboardEvent, useMemo, useRef } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { personaOf } from "../../data/gate";
@@ -14,6 +14,7 @@ import { dayPath, parseDay } from "../../domain/routes";
 import { DAYS, DAY_NAMES, type Day } from "../../domain/time";
 import { buildModel } from "../../grid/model";
 import { pairText } from "../../grid/owners";
+import { dayRedirect } from "../nav";
 import { Button, useRunner } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { actorIn, useWeekStore } from "../weekStore";
@@ -44,7 +45,8 @@ export function DayScreen({ port, me }: { port: DataPort; me: Me }) {
   const asked = params.d === undefined ? null : parseDay(params.d);
   // the day pages are the staff's: a trainee goes home (to that day, when it is one of theirs), logistics too
   const persona = personaOf(me, week.edition.id);
-  if (persona === "logistics") return <Navigate replace to="/" />;
+  const elsewhere = dayRedirect(persona);
+  if (elsewhere) return <Navigate replace to={elsewhere} />;
   if (persona === "trainee") return <Navigate replace to={asked != null && ownedDays(week, actor.memberId).includes(asked) ? `/?day=${asked}` : "/"} />;
   // a day that is not one of the five: the page's own default
   if (params.d !== undefined && asked == null) return <Navigate replace to={dayPath()} />;

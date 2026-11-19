@@ -35,6 +35,7 @@ const SPEAKER_FIELD: Record<string, string> = {
   gender: "מגדר",
   affiliation: "מוסד",
   bio_short: "תיאור קצר",
+  public_bio: "תיאור לאתר האורחים",
   topics: "נושאים",
   contact_pref: "דרך תקשורת",
   retired: "פעיל/ה",
@@ -67,6 +68,8 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
       else if (e.kind === "vet")
         text = d.vetted === "approved" ? byGender(g, "אושר", "אושרה") : d.vetted === "rejected" ? byGender(g, "נדחה", "נדחתה", "נדחה/תה") : `${byGender(g, "הוחזר", "הוחזרה")} להמתנה לאישור`;
       else if (e.kind === "contacts") text = `פרטי הקשר עודכנו: ${list(d.fields, CONTACT_FIELD)}`;
+      // v19: the guests' photo — set or removed, never the bytes
+      else if (e.kind === "photo") text = d.set === false ? "התמונה לאתר האורחים הוסרה" : "הועלתה תמונה לאתר האורחים";
       else text = e.kind;
     } else if (e.entity === "approaches" && e.kind === "availability" && num(d.marked) != null) {
       // v18: a set of time ranges (set_availability_ranges) — one line for the whole update: how many slots it marked
@@ -88,6 +91,9 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
         text = [owner != null ? `בטיפול ${member(owner)}` : "נפתחה פנייה", statusLabel(status, g)].join(" · ");
       } else if (e.kind === "delete") {
         text = "הפנייה נמחקה";
+      } else if (typeof d.public_ok === "boolean") {
+        // v19 set_public_ok: the one thing that changed — never «הערה»
+        text = d.public_ok ? `${byGender(g, "אושר", "אושרה")} להופיע באתר האורחים` : `${byGender(g, "הוסר", "הוסרה")} מאתר האורחים`;
       } else {
         // The approach's row before this one (older, so later in the list).
         const prev = entries.slice(i + 1).find((x) => x.entity === "approaches" && x.entity_id === e.entity_id && (x.kind === "insert" || x.kind === "update"));
@@ -131,9 +137,9 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
 
 /**
  * «מה קרה» on the speaker page (the reset, phase 2), curated: what a teammate needs to know — the speaker added to the
- * pool and vetted, the approach (who handles them, the call's results, hand-overs), the pitches (proposed, closed,
- * withdrawn). Edits of the record and of the contacts are left out (the page shows them as they are now), and the
- * availability taps one member made on one day in Israel become ONE line: how many slots, on which days — a set of
+ * pool and vetted, the approach (who handles them, the call's results, hand-overs; v19 the approval to show them to
+ * guests), the guests' photo (v19), the pitches (proposed, closed, withdrawn). Edits of the record and of the contacts
+ * are left out (the page shows them as they are now), and the availability taps one member made on one day in Israel become ONE line: how many slots, on which days — a set of
  * time ranges (v18) is one line already, and a single tap keeps its own line (it says which slot). Newest first, as
  * given; the line stands where the group's newest entry stood, with its id and time.
  */
@@ -142,7 +148,8 @@ export function curate(entries: readonly ActivityEntry[]): ActivityEntry[] {
   const groups = new Map<string, { at: number; slots: Set<string>; days: Set<number>; n: number }>();
   for (const e of entries) {
     if (e.entity === "speakers") {
-      if (e.kind === "insert" || e.kind === "vet") out.push(e);
+      // v19: the guests' photo is what a guest will see — kept, like the approval to show the speaker (an approach's line)
+      if (e.kind === "insert" || e.kind === "vet" || e.kind === "photo") out.push(e);
       continue;
     }
     if (e.entity === "pitches") {

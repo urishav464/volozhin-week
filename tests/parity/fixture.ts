@@ -1,4 +1,7 @@
 // The base data every parity scenario starts from — synthetic only.
+import { PHOTO_DATA_PREFIX, photoFromBase64, photoToBase64 } from "../../src/domain/photo";
+import { type PhotoFixture, photoName } from "../../src/testing/photos";
+
 export type ActorKey = "admin" | "A" | "B" | "L" | "E";
 
 /** `global`: an admin of every edition (members.edition_id null); everyone else belongs to the scenario's edition. */
@@ -77,6 +80,8 @@ export interface CreateFields {
   gender?: string | null;
   affiliation?: string | null;
   bio_short?: string | null;
+  /** v19: the guests' words. */
+  public_bio?: string | null;
   topics?: unknown;
   contact_pref?: string | null;
 }
@@ -157,8 +162,11 @@ type Command =
   // the sources' files (milestone 5ב-1) — files by the label a step gave them (an ASCII word: it is the stored name too)
   /** An upload through the Storage API to the lesson's folder (or the poster's): the bucket's limits, then the INSERT policy. */
   | { as: ActorKey; store: At | "cover"; file: string; mime?: string; size?: number }
-  /** register_source_file for a stored file — `for` names another target in the call than the file's own folder. */
-  | { as: ActorKey; register: string; display?: string; pages?: number | null; for?: At | "cover" }
+  /**
+   * register_source_file for a stored file — `for` names another target in the call than the file's own folder; v19
+   * `kind` ("source", "presentation" or anything else, null too) — undefined: the five-argument call (the default).
+   */
+  | { as: ActorKey; register: string; display?: string; pages?: number | null; for?: At | "cover"; kind?: string | null }
   /** A delete through the Storage API, as the caller: «deleted» or «kept». */
   | { as: ActorKey; unstore: string }
   | { as: ActorKey; unregister: string }
@@ -214,11 +222,40 @@ type Command =
   /** set_transport_request / set_transport_driver: the patch as it is (a wrong shape too). */
   | { as: ActorKey; transportRequest: At; fields: unknown }
   | { as: ActorKey; transportDriver: At; fields: unknown }
+  // v19 (CONTRACT.md «v19»): the reader sent to print, presentations, the guests' words, photos, the guests' schedule
+  /** set_reader_sent. */
+  | { as: ActorKey; readerSent: boolean | null }
+  /**
+   * set_speaker_photo: `raw` — the text as it is; else `bytes` — a fixture's base64 (src/testing/photos.ts), null or
+   * absent: null (removes it).
+   */
+  | { as: ActorKey; photo: string; bytes?: PhotoFixture | null; raw?: string }
+  /** get_speaker_photo: «none», or the photo's tag (photoTag) and whether it has a time («at=y»). */
+  | { as: ActorKey; readPhoto: string }
+  /** set_public_ok on the speaker's approach (none: an id no approach has), at its version less `staleBy`. */
+  | { as: ActorKey; publicOk: string; ok: boolean | null; staleBy?: number }
+  /** update_lesson with {public_note} alone. */
+  | { as: ActorKey; publicNote: At; note: string | null; staleBy?: number }
+  /** A co-speaker on a lesson, inserted by hand as the tables' owner (no command makes one yet). */
+  | { coSpeaker: string; at: At }
+  /** schedule_view, one part of it as lines (schedulePart): its keys, rows, people or fixed rows. */
+  | { anon: "scheduleView"; token: string; from?: string; times?: number; part: SchedulePart }
   /** The log's lines of these kinds, oldest first — read from outside, as the table's owner. */
   | { log: LogKind[] };
 
-/** The kinds of log line a `log` step compares: a speaker's availability, a lesson's transport details, a day's owners. */
-export type LogKind = "availability" | "transport" | "day_owners";
+/**
+ * The kinds of log line a `log` step compares: a speaker's availability, a lesson's transport details, a day's owners;
+ * v19 a speaker's photo set or removed, and an approach's public_ok changed (an approaches update whose detail has it).
+ */
+export type LogKind = "availability" | "transport" | "day_owners" | "photo" | "public_ok";
+
+/** Which LogKind an activity row is, if any (the same filter on both sides). */
+export function logKindOf(r: { entity: string; kind: string; detail: Record<string, unknown> | null }): LogKind | null {
+  if (r.entity === "approaches" && r.kind === "update" && r.detail != null && "public_ok" in r.detail) return "public_ok";
+  return r.kind === "availability" || r.kind === "transport" || r.kind === "day_owners" || r.kind === "photo" ? r.kind : null;
+}
+
+export type SchedulePart = "keys" | "rows" | "people" | "fixed";
 
 /**
  * A step, and optionally what it must answer on BOTH sides (`is`): parity alone proves the two agree, not that they
@@ -354,6 +391,8 @@ export interface Normal {
   reviews: string[];
   /** day_owners (v18): the day, the member by key, and whether that owner has looked («seen») */
   owners: string[];
+  /** speaker_photos (v19): the speaker by label, the bytes by fixture name (photoName), who uploaded it */
+  photos: string[];
 }
 
 /** A review as the state (and a read) compares it: by its lesson's place, its speaker by label, who wrote it by key. */
@@ -385,25 +424,55 @@ export function planLine(fallen: string, slot: string, p: {
   return `plan|${fallen}|at=${slot}|${p.family_status}|sp=${d(p.speaker_text)}|m=${d(p.planned_minutes)}|hs=${p.hard_stop}|mn=${d(p.materials_note)}|v=${p.version}`;
 }
 
+export const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
 /** A stored file's place: <edition>/<lesson|cover>/<a uuid made from its label>-<label>.<ext>. */
 export function filePath(edition: number, lesson: number | null, label: string, mime: string): string {
   const n = [...label].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1e12, 7);
-  const ext = mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : mime === "application/pdf" ? "pdf" : "txt";
+  const ext =
+    mime === "image/png" ? "png"
+    : mime === "image/jpeg" ? "jpg"
+    : mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx"
+    : mime === PPTX ? "pptx"
+    : mime === "application/pdf" ? "pdf"
+    : "txt";
   return `${edition}/${lesson ?? "cover"}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}-${label}.${ext}`;
 }
 
-/** A source_files row as the state compares it. */
-export function fileLine(where: string, f: { display_name: string; mime: string; size_bytes: number | string; page_count: number | null; cover: boolean }, speaker: string, by: string, fallen = "-"): string {
-  return `${where}|${f.display_name}|${f.mime}|${f.size_bytes}|p=${d(f.page_count)}|cover=${f.cover}|spk=${speaker}|by=${by}|fallen=${fallen}`;
+/** A source_files row as the state compares it (v19: `k=` its kind — absent is a source, as the column's default). */
+export function fileLine(
+  where: string, f: { display_name: string; mime: string; size_bytes: number | string; page_count: number | null; cover: boolean; kind?: string | null }, speaker: string, by: string,
+  fallen = "-",
+): string {
+  return `${where}|${f.display_name}|${f.mime}|${f.size_bytes}|p=${d(f.page_count)}|cover=${f.cover}|k=${f.kind ?? "source"}|spk=${speaker}|by=${by}|fallen=${fallen}`;
+}
+
+/** A stored photo's base64 as a read compares it: a fixture's name when it is that fixture's canonical base64, «noncanonical» when only its bytes are, else photoName. */
+export function photoTag(b64: unknown): string {
+  if (b64 == null) return "-";
+  const bytes = photoFromBase64(b64);
+  if (!bytes) return typeof b64 === "string" ? `bad:${b64.length}` : "bad";
+  return photoToBase64(bytes) === b64 ? photoName(bytes) : "noncanonical";
+}
+
+/** A guest's photo (a data: URL) as a read compares it: the prefix stripped, then photoTag — «badprefix» without it. */
+export function dataUrlTag(url: unknown): string {
+  if (url == null) return "-";
+  return typeof url === "string" && url.startsWith(PHOTO_DATA_PREFIX) ? photoTag(url.slice(PHOTO_DATA_PREFIX.length)) : "badprefix";
+}
+
+/** A speaker_photos row as the state compares it. */
+export function photoLine(speaker: string, image: Uint8Array, by: string): string {
+  return `${speaker}|${photoName(image)}|by=${by}`;
 }
 
 const d = (v: unknown) => (v == null ? "-" : String(v));
 
 export function poolLine(s: {
   name: string; disambiguator: string | null; title: string | null; gender: string | null; affiliation: string | null; bio_short: string | null;
-  topics: string[]; contact_pref: string | null; vetted: string; vetted_note: string | null; retired: boolean; version: number;
+  public_bio?: string | null; topics: string[]; contact_pref: string | null; vetted: string; vetted_note: string | null; retired: boolean; version: number;
 }, vettedBy: string): string {
-  return [speakerLabel(s), `t=${d(s.title)}`, `g=${d(s.gender)}`, `a=${d(s.affiliation)}`, `b=${d(s.bio_short)}`, `tp=${s.topics.join(",")}`,
+  return [speakerLabel(s), `t=${d(s.title)}`, `g=${d(s.gender)}`, `a=${d(s.affiliation)}`, `b=${d(s.bio_short)}`, `pb=${d(s.public_bio)}`, `tp=${s.topics.join(",")}`,
     `cp=${d(s.contact_pref)}`, `vt=${s.vetted}`, `vb=${vettedBy}`, `vn=${d(s.vetted_note)}`, `r=${s.retired}`, `v=${s.version}`].join("|");
 }
 
@@ -433,6 +502,7 @@ export function lessonLine(
     pay_amount: number | null; transport: string; approval: string; approval_note: string | null; approved_by: unknown; approved_at: unknown; paid_at: unknown;
     confirm_sent_at: unknown; confirm_sent_by: unknown; needs_reconfirm: boolean; self_intro: boolean; escort_note: string | null;
     sources_kind: string; print_when: string; sources_note: string | null; presentation_url: string | null; in_reader: boolean; version: number;
+    public_note?: string | null;
   },
   category: string,
   member: (id: unknown) => string,
@@ -440,7 +510,7 @@ export function lessonLine(
 ): string {
   const set = (v: unknown) => (v == null ? "-" : "y");
   return [
-    key, l.kind, l.state, `t=${d(l.title)}`, `c=${category}`, `a=${d(l.audience)}`, `tm=${d(l.teach_min)}`, `p=${d(l.parallel_reason)}`,
+    key, l.kind, l.state, `t=${d(l.title)}`, `c=${category}`, `a=${d(l.audience)}`, `note=${d(l.public_note)}`, `tm=${d(l.teach_min)}`, `p=${d(l.parallel_reason)}`,
     `pay=${d(l.pay_amount)}`, `tr=${l.transport}`, `ap=${l.approval}`, `an=${d(l.approval_note)}`, `ab=${member(l.approved_by)}`, `aat=${set(l.approved_at)}`,
     `paid=${set(l.paid_at)}`, `sent=${set(l.confirm_sent_at)}`, `sb=${member(l.confirm_sent_by)}`, `rc=${l.needs_reconfirm}`,
     `es=${trainee}`, `si=${l.self_intro}`, `en=${d(l.escort_note)}`,
@@ -487,6 +557,11 @@ export function logLine(
     return `availability|${r.entity}|approach=${r.entity_id == null ? "-" : "y"}|by=${by}|${stable({ ...detail, speaker: names.speaker(Number(detail.speaker)) })}`;
   }
   if (r.kind === "transport") return `transport|${r.entity}|${names.lesson(Number(r.entity_id))}|by=${by}|${stable(detail)}`;
+  if (r.kind === "photo") return `photo|${r.entity}|${names.speaker(Number(r.entity_id))}|by=${by}|${stable(detail)}`;
+  if (logKindOf({ ...r, detail }) === "public_ok") {
+    const who = (k: string) => (detail[k] === undefined ? {} : { [k]: detail[k] == null ? null : names.member(detail[k]) });
+    return `public_ok|${r.entity}|${names.speaker(Number(detail.speaker))}|by=${by}|${stable({ ...detail, speaker: names.speaker(Number(detail.speaker)), ...who("owner"), ...who("offered_to") })}`;
+  }
   const members = Array.isArray(detail.members) ? detail.members.map((m) => names.member(m)) : detail.members;
   return `${r.kind}|${r.entity}|${names.edition(r.entity_id)}|by=${by}|${stable({ ...detail, members })}`;
 }
@@ -496,15 +571,17 @@ export function transportRead(t: Parameters<typeof transportLine>[1] | null): st
   return t == null ? "hidden" : transportLine("seen", t);
 }
 
-/** The edition's templates and phrases, as comparable lines. */
+/** The edition's templates and phrases, as comparable lines (v19: «נשלח לדפוס» — set or not, and by whom: `member`). */
 export function editionLines(settings: {
   confirm_template?: string | null; call_template?: string | null; duty_phrases?: { when: string; text: string }[] | null; kk_window?: { opens_at: string; closes_at: string } | null;
   reader_headers?: [string, string] | null;
   memorial?: object | null;
   gender_tolerance?: number | null;
   max_category_per_day?: number | null;
-}, cover = "-", purged = false): string[] {
+  reader_sent?: { at: string; by: number | null } | null;
+}, cover = "-", purged = false, member: (id: unknown) => string = (id) => d(id)): string[] {
   return [
+    settings.reader_sent ? `sent=${settings.reader_sent.at ? "y" : "-"}|by=${member(settings.reader_sent.by)}` : "sent=-",
     `purged=${purged ? "y" : "-"}`,
     `rules=${settings.gender_tolerance ?? "-"}/${settings.max_category_per_day ?? "-"}`,
     `memorial=${settings.memorial ? stable(settings.memorial) : "-"}`,
@@ -537,15 +614,36 @@ export function stable(v: unknown): string {
 
 const byText = <T>(key: (x: T) => string) => (a: T, b: T) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
 
+/** One part of schedule_view as lines (` ; `-joined, «none» when empty) — v19's rows, people and fixed rows, or its keys. */
+export function schedulePart(part: SchedulePart, v: unknown): string {
+  const x = v as {
+    rows: { day: number; start_min: number; end_min: number; kind: string; speaker: string; note: string | null; people: number[] }[];
+    people: { label: string; bio: string | null; photo: string | null }[];
+    fixed: { day: number; start_min: number; end_min: number; label: string }[];
+  };
+  const lines = (list: string[]) => list.join(" ; ") || "none";
+  switch (part) {
+    case "keys":
+      return Object.keys(v as object).sort().join(",");
+    case "rows":
+      return lines(x.rows.map((r) => `${r.day}|${r.start_min}-${r.end_min}|${r.kind}|${r.speaker || "-"}|note=${d(r.note)}|people=${(r.people ?? []).join(",") || "-"}`));
+    case "people":
+      return lines(x.people.map((p) => `${p.label}|bio=${d(p.bio)}|photo=${dataUrlTag(p.photo)}`));
+    case "fixed":
+      return lines(x.fixed.map((f) => `${f.day}|${f.start_min}-${f.end_min}|${f.label}`));
+  }
+}
+
 /** What a public read returns, as one comparable string: lessons by place, ids by name, tick times as set/unset, lists the SQL orders by collation sorted. */
 export function publicRead(
   kind: "escortView" | "escortTick" | "kkForm" | "scheduleView",
   v: unknown,
   names: { lesson: (id: number) => string; group: (id: number) => string; trainee: (id: number) => string },
+  part?: SchedulePart,
 ): string {
   const ticks = (t: Record<string, string | null>) => Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x == null ? "-" : "y"]));
   if (kind === "escortTick") return stable(ticks(v as Record<string, string | null>));
-  if (kind === "scheduleView") return stable(v);
+  if (kind === "scheduleView") return part ? schedulePart(part, v) : stable(v);
   if (kind === "escortView") {
     const x = structuredClone(v) as { lessons: { lesson_id: number | string; ticks: Record<string, string | null> }[] };
     for (const l of x.lessons) Object.assign(l, { lesson_id: names.lesson(Number(l.lesson_id)), ticks: ticks(l.ticks) });

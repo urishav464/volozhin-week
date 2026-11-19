@@ -50,7 +50,7 @@ describe("the archive's 5ב-2 files", () => {
     const files = archiveFiles({ week: w, extras, more, schemaVersion: 11, exportedAt: AT });
     expect(Object.keys(files).sort()).toEqual(["README.txt", "edition.json", "kk.json", "memorial.json", PERSONAL_FILE, "sources.json", "speakers.json", "tracking.xlsx"].sort());
     const json = (k: string) => JSON.parse(strFromU8(files[k]));
-    expect(json("edition.json")).toMatchObject({ format_version: 5, escort_ticks: [{ lesson_id: 1, item: "met" }] });
+    expect(json("edition.json")).toMatchObject({ format_version: 6, escort_ticks: [{ lesson_id: 1, item: "met" }] });
     // v14: availability per slot, as the Week holds it
     expect(json("edition.json").slot_availability).toEqual(w.slotAvailability);
     expect(json("edition.json")).not.toHaveProperty("availability");
@@ -241,11 +241,35 @@ describe("the archive's «תורנויות» (v16)", () => {
     for (const [name, bytes] of Object.entries(files)) if (!name.endsWith(".xlsx")) expect(strFromU8(bytes), name).not.toMatch(/טלפון שדלף|head_phone/);
     expect(files[PERSONAL_FILE]).toBeUndefined(); // no phone given: no personal-data file
     expect(strFromU8(files["README.txt"])).toContain("rota.json: התורנויות");
-    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(5);
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(6);
     // not read (an older caller): no rota.json, and the README says so
     const none = archiveFiles({ week: w, extras, more: base, schemaVersion: 16, exportedAt: AT });
     expect(none["rota.json"]).toBeUndefined();
     expect(strFromU8(none["README.txt"])).toContain("התורנויות לא נקראו בייצוא הזה.");
+  });
+
+  it("write v19's keys out (format 6): every cohort's two flags and every preparation's kind and qty — absent read as the defaults, a task's qty null", () => {
+    const w = demoWeek();
+    const r = rota(); // a port from before v19: no flag, no kind, no qty
+    r.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2, helps_rota: false, can_drive: true });
+    r.prep.push(
+      { id: 2, edition_id: 1, text: "פריט לדוגמה", group_id: null, done: true, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
+      { id: 3, edition_id: 1, text: "פריט לדוגמה בלי כמות", group_id: null, done: false, sort: 3, kind: "item" },
+      { id: 4, edition_id: 1, text: "משימה לדוגמה", group_id: null, done: false, sort: 4, kind: "task", qty: "כמות שלא נשמרת" },
+    );
+    const files = archiveFiles({ week: w, extras, more: { ...base, rota: r, rotaPhones: [] }, schemaVersion: 19, exportedAt: AT });
+    const json = JSON.parse(strFromU8(files["rota.json"]));
+    expect(json.cohorts.map((c: { letter: string; helps_rota: boolean; can_drive: boolean }) => [c.letter, c.helps_rota, c.can_drive])).toEqual([
+      ["א", true, false],
+      ["נ", false, true],
+    ]);
+    expect(json.prep.map((t: { id: number; kind: string; qty: string | null; done: boolean }) => [t.id, t.kind, t.qty, t.done])).toEqual([
+      [1, "task", null, false],
+      [2, "item", "2 (לדוגמה)", true],
+      [3, "item", null, false],
+      [4, "task", null, false],
+    ]);
+    expect(strFromU8(files["README.txt"])).toContain("ורשימת הקניות עם הכמויות");
   });
 
   it("put the heads' phones the exporter was given in the personal-data file alone, by the group's code — of this edition's groups only", () => {

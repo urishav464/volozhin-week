@@ -18,7 +18,9 @@
 //   rota.json        «תורנויות» (milestone 7): load_rota's answer — the cohorts,
 //                    when each is on campus, the groups and their heads' names,
 //                    the duties, the assignments, the staff's shifts and the
-//                    Saturday-night preparations; never a phone
+//                    Saturday-night preparations; never a phone (format 6, v19:
+//                    every cohort with helps_rota/can_drive, every preparation
+//                    with its kind — a task or a shopping item — and qty)
 //   sources/<day>/   the files themselves — only when «כולל קבצי המקורות» was
 //                    asked for; a file that could not be read is listed in
 //                    sources.json and README.txt, not silently left out
@@ -35,10 +37,10 @@ import type { KkData } from "../data/kk";
 import type { Fallen, FallenContacts } from "../data/memorial";
 import type { LessonReview } from "../data/reviews";
 import type { ArchiveExtras } from "../data/outputs";
-import type { RotaContact, RotaData } from "../data/rota";
+import { prepKindOf, type RotaContact, type RotaData } from "../data/rota";
 import { fallenName } from "../domain/memorial";
 import { displayName } from "../domain/names";
-import { codeOf } from "../domain/rota";
+import { canDrive, codeOf, helpsRota } from "../domain/rota";
 import { DAY_NAMES, fmt } from "../domain/time";
 import type { SourceFile, Week } from "../domain/types";
 import { PERSONAL_FILE } from "./download";
@@ -144,7 +146,7 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
     more.reviews ? "- reviews.json: «איך עבר» לכל שיעור שנכתב לו — דעות על המרצים. לשמור במקום מוגן, כמו כל הארכיון." : "- «איך עבר» לא נקרא בייצוא הזה.",
     more.rota
-      ? "- rota.json: התורנויות — המכינות ומתי כל אחת בקמפוס, הקבוצות ושמות ראשי הקבוצות, התורנויות, השיבוצים, משמרות הצוות ומשימות מוצ״ש–ראשון (בלי טלפונים)."
+      ? "- rota.json: התורנויות — המכינות ומתי כל אחת בקמפוס, הקבוצות ושמות ראשי הקבוצות, התורנויות, השיבוצים, משמרות הצוות, ומשימות מוצ״ש–ראשון ורשימת הקניות עם הכמויות (בלי טלפונים)."
       : "- התורנויות לא נקראו בייצוא הזה.",
     more.sources
       ? `- sources/: קבצי המקורות עצמם, בתיקייה לכל יום.${skipped.length ? ` ${skipped.length} קבצים לא נקראו ולא נכללו: ${skipped.map((x) => x.name).join(", ")}.` : ""}`
@@ -171,7 +173,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const edition = {
     format: ARCHIVE_FORMAT,
-    format_version: 5, // v16: rota.json; v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
+    format_version: 6, // v19: rota.json's cohorts carry helps_rota/can_drive, its prep kind/qty; v16: rota.json; v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
     schema_version: input.schemaVersion,
     exported_at: input.exportedAt,
     edition: week.edition,
@@ -224,8 +226,11 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
     });
   }
   if (more.rota) {
-    // load_rota's answer, as it came — never a phone: a head's phone is its own table, and a stray key is dropped here too
-    const { cohorts, presence, groups, duties, assignments, staff, prep } = more.rota;
+    // load_rota's answer, as it came — never a phone: a head's phone is its own table, and a stray key is dropped here too.
+    // v19's keys are written out even when a port left them out (absent reads as the column's default): format 6.
+    const { presence, groups, duties, assignments, staff } = more.rota;
+    const cohorts = more.rota.cohorts.map((c) => ({ ...c, helps_rota: helpsRota(c), can_drive: canDrive(c) }));
+    const prep = more.rota.prep.map((t) => ({ ...t, kind: prepKindOf(t), qty: prepKindOf(t) === "item" ? (t.qty ?? null) : null }));
     files["rota.json"] = strToU8(
       JSON.stringify({ format: ARCHIVE_FORMAT, exported_at: input.exportedAt, shifts: week.edition.settings?.rota_shifts ?? null, cohorts, presence, groups, duties, assignments, staff, prep }, (k, v) => (k === "head_phone" ? undefined : v), 2),
     );

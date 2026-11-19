@@ -37,7 +37,9 @@ interface Upload {
  * «PDF · 3 עמודים», «Word · צריך PDF», «תמונה · עמוד אחד» — and a PDF or a picture the browser could not read on
  * upload (no page count: the reader leaves it out, src/reader/model.ts readableFile) «… · לא נקרא — …; צריך קובץ אחר».
  */
-export function fileKind(f: Pick<SourceFile, "mime" | "page_count">): string {
+export function fileKind(f: Pick<SourceFile, "mime" | "page_count" | "kind">): string {
+  // v19: a presentation is shown in the room, never printed — no «צריך PDF», no page count
+  if (f.kind === "presentation") return "מצגת";
   if (f.mime === DOCX) return "Word · צריך PDF";
   const pdf = f.mime === "application/pdf";
   if (f.page_count == null) return pdf ? "PDF · לא נקרא — מוגן או פגום; צריך קובץ אחר" : "תמונה · לא נקרא — פגום או בפורמט אחר; צריך קובץ אחר";

@@ -9,12 +9,13 @@ import { TEMPLATE_2026 } from "../../src/domain/template2026";
 import type { Day } from "../../src/domain/time";
 import type { ApproachStatus, DutyPhrase, PrintWhen, SourcesKind, Transport, Vetting, Week } from "../../src/domain/types";
 import type { KkGroupFields } from "../../src/data/kk";
+import { photoBase64 } from "../../src/testing/photos";
 import { linkClient, type LinkScope } from "../../src/data/links";
 import {
   answers, APPROACHES, type At, CATEGORIES, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, importRead, lookupRead, planLine, purgeRead, reviewLine, speakerRows,
-  kkGroupLine, type KkStepFields, lessonKey, lessonLine, linkLine, logLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, ownerLine, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS,
-  speakerLabel, prefsRow, slotLine, SLOTS, type Step, transportRead, transportRowLine, transportsLine,
+  kkGroupLine, type KkStepFields, lessonKey, lessonLine, linkLine, logKindOf, logLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, ownerLine, photoLine, photoTag, poolLine,
+  publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, prefsRow, slotLine, SLOTS, type Step, transportRead, transportRowLine, transportsLine,
 } from "./fixture";
 
 export function engineDriver(): Driver {
@@ -147,6 +148,12 @@ export function engineDriver(): Driver {
         week.edition.first_day_from = step.firstDayFrom;
         return "ok";
       }
+      if ("coSpeaker" in step) {
+        // as the tables' owner: a co-speaker row on the lesson (no command makes one yet)
+        const l = lessonAt(step.at);
+        if (l) week.lessonSpeakers.push({ lesson_id: l.id, speaker_id: speakerId(step.coSpeaker), role: "co" });
+        return "ok";
+      }
       if ("expire" in step) {
         const l = shared.links.find((x) => x.token === tokenOf(step.expire));
         if (l) l.expires_at = new Date(Date.now() - 60_000).toISOString();
@@ -167,7 +174,10 @@ export function engineDriver(): Driver {
         // the engine's log as the activity table holds it: oldest first, who by key
         const edition = (id: unknown) => (Number(id) === week.edition.id ? "here" : `#${id}`);
         return shared.log
-          .filter((r) => (step.log as string[]).includes(r.kind))
+          .filter((r) => {
+            const k = logKindOf(r);
+            return k != null && step.log.includes(k);
+          })
           .sort((a, b) => a.id - b.id)
           .map((r) => logLine(r, memberKey(r.actor), { speaker: speakerName, lesson: names.lesson, member: (id) => memberKey(id == null ? null : Number(id)), edition }))
           .join(" ; ") || "none";
@@ -182,7 +192,8 @@ export function engineDriver(): Driver {
             case "scheduleView":
               return answers(Array.from({ length: ("times" in step ? step.times : undefined) ?? 1 }, () => {
                 try {
-                  return publicRead(step.anon, step.anon === "escortView" ? e.escortView(t) : step.anon === "kkForm" ? e.kkForm(t) : e.scheduleView(t), names);
+                  const v = step.anon === "escortView" ? e.escortView(t) : step.anon === "kkForm" ? e.kkForm(t) : e.scheduleView(t);
+                  return publicRead(step.anon, v, names, "part" in step ? step.part : undefined);
                 } catch (err) {
                   if (err instanceof CommandError) return err.code;
                   throw err;
@@ -316,11 +327,24 @@ export function engineDriver(): Driver {
         } else if ("register" in step) {
           const f = files[step.register];
           const target = step.for ?? f?.target ?? "cover";
-          e.registerSourceFile(targetId(target), pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages);
+          e.registerSourceFile(targetId(target), pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages, step.kind);
         } else if ("unstore" in step) return e.deleteObject(pathOf(step.unstore)) ? "deleted" : "kept";
         else if ("unregister" in step) e.removeSourceFile(week.sourceFiles.find((f) => f.storage_path === pathOf(step.unregister))?.id ?? -1);
         else if ("readerHeaders" in step) e.setReaderHeaders(step.readerHeaders[0], step.readerHeaders[1]);
         else if ("readerCover" in step) e.setReaderCover(step.readerCover == null ? null : (week.sourceFiles.find((f) => f.storage_path === pathOf(step.readerCover!))?.id ?? -1));
+        // ---- v19
+        else if ("readerSent" in step) e.setReaderSent(step.readerSent);
+        else if ("photo" in step) e.setSpeakerPhoto(speakerId(step.photo), step.raw !== undefined ? step.raw : step.bytes == null ? null : photoBase64(step.bytes));
+        else if ("readPhoto" in step) {
+          const p = e.speakerPhoto(speakerId(step.readPhoto));
+          return p == null ? "none" : `${photoTag(p.photo)}|at=${p.uploaded_at ? "y" : "-"}`;
+        } else if ("publicOk" in step) {
+          const a = approachOf(step.publicOk);
+          e.setPublicOk(a?.id ?? -1, (a?.version ?? 0) - (step.staleBy ?? 0), step.ok);
+        } else if ("publicNote" in step) {
+          const l = at(step.publicNote, step.staleBy);
+          e.updateLesson(l.id, l.version, { public_note: step.note });
+        }
         // ---- memorial times and logistics
         else if ("saveFallen" in step) {
           const id = step.saveFallen == null ? null : fallenId(step.saveFallen);
@@ -408,7 +432,9 @@ export function engineDriver(): Driver {
           .map((l) => lessonLine(key(l.id), l, cat(l.category_id), memberOf, trainee(l.escort_roster_id)))
           .sort(),
         pitches: week.pitches.map((p) => `${key(p.lesson_id)}|${approachSpeaker(p.approach_id)}|${p.state}|by=${member(p.proposed_by)}`).sort(),
-        approaches: week.approaches.map((a) => `${sp(a.speaker_id)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|v=${a.version}`).sort(),
+        approaches: week.approaches
+          .map((a) => `${sp(a.speaker_id)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|pub=${a.public_ok === true}|v=${a.version}`)
+          .sort(),
         speakers: week.lessonSpeakers.map((x) => `${key(x.lesson_id)}|${sp(x.speaker_id)}|${x.role}`).sort(),
         pool: week.speakers.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: Object.entries(shared.contacts).map(([id, c]) => contactsLine(sp(Number(id)), c)).sort(),
@@ -419,7 +445,7 @@ export function engineDriver(): Driver {
           })
           .sort(),
         transport: Object.entries(shared.transport).map(([k, t]) => transportRowLine(key(Number(k.split(":")[1])), t)).sort(),
-        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover), week.edition.purged_at != null),
+        edition: editionLines(week.edition.settings, labelOfFile(week.edition.settings.reader_cover), week.edition.purged_at != null, memberOf),
         links: shared.links
           .map((l) => linkLine({ scope: l.scope, trainee: trainee(l.subject_id), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -471,6 +497,7 @@ export function engineDriver(): Driver {
           .map((r) => reviewLine(key(r.lesson_id), { ...r, speaker: r.speaker_id == null ? "-" : sp(r.speaker_id), by: member(r.written_by) }))
           .sort(),
         owners: week.dayOwners.map((o) => ownerLine(o, member(o.member_id))).sort(),
+        photos: Object.entries(shared.photos).map(([id, p]) => photoLine(sp(Number(id)), p.image, member(p.uploaded_by))).sort(),
       };
     },
 

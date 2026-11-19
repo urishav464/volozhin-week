@@ -26,6 +26,12 @@
 // ranges becomes the same slots (rangesToSlots); a transport's request and driver are
 // two commands on the one row in `shared.transport`, whose `pickup_min` only the
 // transports read shows; and a request is decided by the staff of both teams.
+// And v19 (CONTRACT.md «v19»): «נשלח לדפוס» in the edition's settings; a file's
+// kind (a presentation is never the reader's); the guests' words (a speaker's
+// public_bio, a lesson's public_note); a speaker's photo in `shared.photos`, kept
+// as its BYTES (as speaker_photos keeps a bytea) and read back as canonical
+// base64; the approval to show a speaker to guests (an approach's public_ok,
+// logged); and the guests' schedule (src/exports/publicSchedule.ts).
 import { rangesToSlots, type SlotKind } from "../domain/availability";
 import { dutyNotes } from "../domain/escorts";
 import { kkSessions, offered } from "../domain/kk";
@@ -42,7 +48,8 @@ import type {
 } from "../domain/types";
 import { LESSON_STAGE_DEFAULTS, LIVE_PITCH, TICK_ITEMS, type TickItem } from "../domain/types";
 import { cellSpan, spansRows, sticksOut, timeSplitOk } from "../domain/shape";
-import { scheduleEntries } from "../exports/designer";
+import { photoFromBase64, photoToBase64 } from "../domain/photo";
+import { publicSchedule } from "../exports/publicSchedule";
 import { phoneKey } from "../import/phone";
 import { titleGender } from "../import/speakerName";
 import { TEMPLATE_2026 } from "../domain/template2026";
@@ -54,7 +61,8 @@ import {
 } from "./commands";
 import { cleanFallen, cleanFallenContacts, cleanPlanPatch, cleanPolicy, EMPTY_FALLEN_CONTACTS, type Fallen, type FallenContacts, type FallenFields, type PlanPatch } from "./memorial";
 import {
-  cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD, titlesOf,
+  cleanAvailabilityRanges, cleanBlock, cleanContactEmail, cleanLine, cleanPhone, cleanPublicBio, cleanTopics, LIMITS, pickContactPref, pickGender, pickTitle, SIMILAR_THRESHOLD,
+  titlesOf,
 } from "./speakerRules";
 import { type BookOrder, type CleanGroup, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup } from "./kk";
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
@@ -67,10 +75,10 @@ import {
 import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
 import type { PurgeReport } from "./settings";
 import type { RotaAssignment, RotaCohort, RotaDuty, RotaGroup, RotaPrepTask, RotaPresence, RotaStaffShift } from "./rota";
-import { arrived, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, SOURCE_MIMES } from "./sourceRules";
+import { arrived, BUCKET_MIMES, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, PPTX } from "./sourceRules";
 import {
-  cleanAmount, cleanDutyPhrases, cleanTransportDetails, cleanTransportDriver, cleanTransportRequest, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind, pickTransport,
-  readerKind, STAGE_LIMITS,
+  cleanAmount, cleanDutyPhrases, cleanPublicNote, cleanTransportDetails, cleanTransportDriver, cleanTransportRequest, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind,
+  pickTransport, readerKind, STAGE_LIMITS,
 } from "./stageRules";
 
 export interface Actor {
@@ -140,6 +148,18 @@ export interface PoolShared {
   rota: RotaStore;
   /** rota_group_contacts (v16), by group id: a group head's phone — never in a Week or load_rota; the purge deletes it. */
   rotaContacts: Record<number, string>;
+  /**
+   * speaker_photos (v19), by speaker id: the JPEG's bytes (as the bytea keeps them — never the base64 it came as),
+   * who uploaded it and when. Never in a Week (which says `has_photo`); the guests see it only through schedule_view.
+   */
+  photos: Record<number, StoredPhoto>;
+}
+
+/** A speaker_photos row. */
+export interface StoredPhoto {
+  image: Uint8Array;
+  uploaded_by: number | null;
+  uploaded_at: string;
 }
 
 /**
@@ -161,11 +181,14 @@ export interface StoredObject {
   owner: string;
 }
 
-export const emptyShared = (): PoolShared => ({ contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {}, rota: emptyRota(), rotaContacts: {} });
+export const emptyShared = (): PoolShared => ({
+  contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {}, rota: emptyRota(),
+  rotaContacts: {}, photos: {},
+});
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
 const STATUSES: readonly ApproachStatus[] = ["claimed", "approached", "positive", "declined", "no_answer"];
-const SPEAKER_FIELDS = ["title", "name", "disambiguator", "gender", "affiliation", "bio_short", "topics", "contact_pref", "retired"] as const;
+const SPEAKER_FIELDS = ["title", "name", "disambiguator", "gender", "affiliation", "bio_short", "public_bio", "topics", "contact_pref", "retired"] as const;
 
 function fail(code: string): never {
   throw new CommandError(code);
@@ -440,11 +463,14 @@ export class Engine {
       if (l.version !== version) fail("stale");
       if (patch.teach_min != null && (patch.teach_min <= 0 || patch.teach_min > l.end_min - l.start_min)) fail("bad_shape");
       if (patch.category_id != null && !this.week.categories.some((c) => c.id === patch.category_id)) fail("bad_shape");
+      // v19: the guests' line about the lesson — a block ≤ 400, never a phone or an e-mail (a key JSON keeps: not undefined)
+      const note = "public_note" in patch && patch.public_note !== undefined ? cleanPublicNote(patch.public_note) : undefined;
       const text = (v: string | null | undefined) => (v == null ? null : v.trim() || null);
       if ("title" in patch) l.title = text(patch.title);
       if ("audience" in patch) l.audience = text(patch.audience);
       if ("category_id" in patch) l.category_id = patch.category_id ?? null;
       if ("teach_min" in patch) l.teach_min = patch.teach_min ?? null;
+      if (note !== undefined) l.public_note = note;
       l.version++;
     });
   }
@@ -478,6 +504,7 @@ export class Engine {
       const gender = pickGender(input.gender);
       const affiliation = cleanLine(input.affiliation, LIMITS.affiliation);
       const bio_short = cleanBlock(input.bio_short, LIMITS.bio_short);
+      const public_bio = cleanPublicBio(input.public_bio);
       const topics = cleanTopics(input.topics);
       const contact_pref = pickContactPref(input.contact_pref);
       const approve = !!opts.approve;
@@ -491,7 +518,7 @@ export class Engine {
       if (!opts.confirmed && pool.some((s) => s.name_key === key || similarity(s.name_key, key) >= min)) fail("speaker_similar");
 
       const s: Speaker = {
-        id: this.nextId(pool), title, name: name!, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
+        id: this.nextId(pool), title, name: name!, disambiguator, gender, affiliation, bio_short, public_bio, topics, contact_pref,
         vetted: approve ? "approved" : "pending", vetted_by: approve ? this.actor.memberId : null, vetted_note: null,
         retired: false, name_key: key, version: 1,
       };
@@ -528,6 +555,7 @@ export class Engine {
       if (has("gender")) n.gender = pickGender(patch.gender);
       if (has("affiliation")) n.affiliation = cleanLine(patch.affiliation, LIMITS.affiliation);
       if (has("bio_short")) n.bio_short = cleanBlock(patch.bio_short, LIMITS.bio_short);
+      if (has("public_bio")) n.public_bio = cleanPublicBio(patch.public_bio);
       if (has("topics")) n.topics = cleanTopics(patch.topics);
       if (has("contact_pref")) n.contact_pref = pickContactPref(patch.contact_pref);
       if (has("retired")) {
@@ -543,7 +571,8 @@ export class Engine {
       }
       if (((has("gender") && n.gender == null) || (has("retired") && n.retired)) && this.hasLiveClosed(s.id)) fail("lesson_closed");
 
-      const fields = SPEAKER_FIELDS.filter((k) => JSON.stringify(n[k]) !== JSON.stringify(s[k]));
+      // a field a row from before v19 lacks (public_bio) reads as null, as the new column does
+      const fields = SPEAKER_FIELDS.filter((k) => JSON.stringify(n[k] ?? null) !== JSON.stringify(s[k] ?? null));
       if (fields.length === 0) return;
       Object.assign(s, n, { version: s.version + 1 });
       this.log(this.week.edition.id, "speakers", s.id, "update", { fields });
@@ -632,6 +661,55 @@ export class Engine {
       a.version++;
       this.logApproach(a, "update", n);
     });
+  }
+
+  /**
+   * public.set_public_ok (v19): the approach's handler or an admin of the edition shows (or stops showing) the speaker
+   * on this edition's guests' schedule — set_approach_status's rule: gone `stale`; an editor; neither admin nor the
+   * owner `not_handler`; the version `stale`; not a boolean `bad_value`; unchanged nothing (no version); else the flag
+   * and the version, logged with `public_ok` (app.log_activity).
+   */
+  setPublicOk(approachId: number, version: number, ok: unknown): void {
+    this.tx(() => {
+      const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
+      this.requireEditor();
+      if (!this.isAdmin() && a.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (a.version !== version) fail("stale");
+      if (typeof ok !== "boolean") fail("bad_value");
+      if ((a.public_ok === true) === ok) return;
+      a.public_ok = ok;
+      a.version++;
+      this.logApproach(a, "update", null, { public_ok: ok });
+    });
+  }
+
+  /**
+   * public.set_speaker_photo (v19): whoever may edit the speaker (app.may_edit_speaker) in this edition — an editor
+   * first; the speaker gone `stale`; else `not_handler`. null removes the photo (logged only when one went); else the
+   * base64 must decode to bytes photoOk accepts (`bad_file` — the length, the alphabet, the grammar): kept as BYTES,
+   * by whom and when, and logged `{set: true}` every time. The bytes are never logged.
+   */
+  setSpeakerPhoto(speakerId: number, photo: unknown): void {
+    this.tx(() => {
+      this.requireEditor();
+      if (!this.week.speakers.some((x) => x.id === speakerId)) fail("stale");
+      if (!this.mayEditSpeaker(speakerId)) fail("not_handler");
+      if (photo == null) {
+        if (!this.shared.photos[speakerId]) return;
+        delete this.shared.photos[speakerId];
+        this.log(this.week.edition.id, "speakers", speakerId, "photo", { set: false });
+        return;
+      }
+      const image = photoFromBase64(photo) ?? fail("bad_file");
+      this.shared.photos[speakerId] = { image, uploaded_by: this.actor.memberId, uploaded_at: this.now() };
+      this.log(this.week.edition.id, "speakers", speakerId, "photo", { set: true });
+    });
+  }
+
+  /** public.get_speaker_photo (v19; under the table's policy — every member): canonical base64 and when, or null. */
+  speakerPhoto(speakerId: number): { photo: string; uploaded_at: string } | null {
+    const p = this.shared.photos[speakerId];
+    return p ? { photo: photoToBase64(p.image), uploaded_at: p.uploaded_at } : null;
   }
 
   /** «העברה»: the handler offers (null withdraws the offer); an admin reassigns at once (null: back to the pool). */
@@ -1021,12 +1099,12 @@ export class Engine {
   }
 
   /**
-   * An upload through the Storage API: the bucket takes the four types (bad_file — the API's 415) up to 25 MB
+   * An upload through the Storage API: the bucket takes the five types (v19: a pptx too; bad_file — the API's 415) up to 25 MB
    * (file_too_big — its 413), then the INSERT policy decides (upload_refused — the API's 403). Never replaces an object.
    */
   storeObject(path: string, mime: string, size: number): void {
     this.tx(() => {
-      if (!(SOURCE_MIMES as readonly string[]).includes(mime)) fail("bad_file");
+      if (!(BUCKET_MIMES as readonly string[]).includes(mime)) fail("bad_file");
       if (!(size >= 0) || size > MAX_SOURCE_BYTES) fail("file_too_big");
       if (!this.mayUploadSource(path)) fail("upload_refused");
       if (this.shared.objects[path]) fail("upload_failed");
@@ -1041,8 +1119,14 @@ export class Engine {
     return true;
   }
 
-  /** public.register_source_file: the uploaded object becomes the lesson's file (lessonId null: the edition's poster). */
-  registerSourceFile(lessonId: number | null, path: string, displayName: string, pages: number | null): SourceFile {
+  /**
+   * public.register_source_file: the uploaded object becomes the lesson's file (lessonId null: the edition's poster).
+   * v19 `kind` (undefined: the five-argument call — a source): "source" or "presentation", else `bad_value`; a
+   * presentation never on a memorial slot (`bad_value`), a pptx never a source (`bad_file`). A presentation leaves the
+   * lesson's sources and in_reader as they are and is never the cover; on the cover path (lessonId null) it is the
+   * week's presentation — `cover` false.
+   */
+  registerSourceFile(lessonId: number | null, path: string, displayName: string, pages: number | null, kind: unknown = "source"): SourceFile {
     return this.tx(() => {
       const p = parseSourcePath(path);
       if (!p || p.edition !== this.week.edition.id || p.lesson !== lessonId) fail("bad_path");
@@ -1058,21 +1142,27 @@ export class Engine {
       if (!obj || obj.owner !== this.ownerKey()) fail("no_file");
       if (!mimeMatches(obj!.mime, p!.ext) || obj!.size > MAX_SOURCE_BYTES) fail("bad_file");
       const mime = obj!.mime as SourceMime;
-      const name = cleanDisplayName(displayName);
-      const pageCount = pagesFor(mime, pages);
+      if (kind !== "source" && kind !== "presentation") fail("bad_value");
+      const presentation = kind === "presentation";
       const lesson = lessonId == null ? null : this.week.lessons.find((l) => l.id === lessonId)!;
       // a memorial slot's file remembers the fallen of its plan (v11), no speaker; the slot's sources columns stay
       const memorial = lesson?.kind === "memorial";
+      if (presentation && memorial) fail("bad_value");
+      if (mime === PPTX && !presentation) fail("bad_file");
+      const name = cleanDisplayName(displayName);
+      const pageCount = pagesFor(mime, pages);
       const fallenId = memorial ? (this.week.memorialPlans.find((x) => x.lesson_id === lesson!.id)?.fallen_id ?? null) : null;
       const lead = lesson && !memorial ? (this.week.lessonSpeakers.find((x) => x.lesson_id === lesson.id && x.role === "lead")?.speaker_id ?? null) : null;
-      const first = lesson != null && !memorial && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead);
+      // the current speaker's first SOURCE file puts the lesson in the reader — a presentation never counts
+      const first =
+        lesson != null && !memorial && !this.week.sourceFiles.some((f) => f.lesson_id === lesson.id && f.speaker_id === lead && f.kind !== "presentation");
       const row: SourceFile = {
-        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null, speaker_id: lead, fallen_id: fallenId, storage_path: path, display_name: name,
-        mime, size_bytes: obj!.size, page_count: pageCount, uploaded_by: this.actor.memberId, uploaded_at: this.now(),
+        id: this.nextId(this.week.sourceFiles), lesson_id: lessonId, cover: lessonId == null && !presentation, kind: presentation ? "presentation" : "source", speaker_id: lead,
+        fallen_id: fallenId, storage_path: path, display_name: name, mime, size_bytes: obj!.size, page_count: pageCount, uploaded_by: this.actor.memberId, uploaded_at: this.now(),
       };
       this.week.sourceFiles.push(row);
-      if (memorial) {
-        // a memorial slot is always in the reader: nothing of the lesson changes
+      if (memorial || presentation) {
+        // a memorial slot is always in the reader, and a presentation is never the reader's: nothing of the lesson changes
       } else if (lesson) {
         const next = arrived(lesson, first);
         if (next.sources_kind !== lesson.sources_kind || next.in_reader !== lesson.in_reader) {
@@ -1121,10 +1211,28 @@ export class Engine {
   setReaderCover(fileId: number | null): void {
     this.tx(() => {
       this.requireEditionAdmin();
-      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.page_count != null && f.mime !== DOCX)) fail("bad_value");
+      if (fileId != null && !this.week.sourceFiles.some((f) => f.id === fileId && f.cover && f.kind !== "presentation" && f.page_count != null && f.mime !== DOCX)) {
+        fail("bad_value");
+      }
       const settings = { ...this.week.edition.settings };
       if (fileId == null) delete settings.reader_cover;
       else settings.reader_cover = fileId;
+      this.week.edition.settings = settings;
+    });
+  }
+
+  /**
+   * public.set_reader_sent (v19, «נשלח לדפוס»): logistics or an admin of the edition (requireLogistics — an archived one:
+   * its admins), then a boolean (`bad_value`). true stamps settings.reader_sent {at, by} — again, a new stamp; false
+   * removes it (nothing to remove: nothing).
+   */
+  setReaderSent(sent: unknown): void {
+    this.tx(() => {
+      this.requireLogistics();
+      if (typeof sent !== "boolean") fail("bad_value");
+      const settings = { ...this.week.edition.settings };
+      if (sent) settings.reader_sent = { at: this.now(), by: this.actor.memberId };
+      else delete settings.reader_sent;
       this.week.edition.settings = settings;
     });
   }
@@ -1743,12 +1851,17 @@ export class Engine {
     });
   }
 
-  /** public.schedule_view: the public schedule (src/exports/designer.ts). */
+  /**
+   * public.schedule_view: the guests' schedule (src/exports/publicSchedule.ts — v19: the rows with their notes and
+   * people, the people this edition approved with their words and photos, the fixed rows).
+   */
   scheduleView(token: unknown): ScheduleView {
     return this.tx(() => {
       this.linkFor(token, "schedule");
-      const e = this.week.edition;
-      return { edition: { label: e.label, start_date: e.start_date }, rows: scheduleEntries(this.week).map(({ lesson_id: _id, ...r }) => r) };
+      return publicSchedule(this.week, (id) => {
+        const p = this.shared.photos[id];
+        return p ? photoToBase64(p.image) : null;
+      });
     });
   }
 
@@ -2302,14 +2415,15 @@ export class Engine {
     this.shared.log.push({ id: this.nextId(this.shared.log), at: this.now(), actor: this.actor.memberId, edition_id: editionId, entity, entity_id: entityId, kind, detail });
   }
 
-  /** As the approaches trigger logs a row (app.log_activity). */
-  private logApproach(a: Approach, kind: "insert" | "update", note: string | null) {
+  /** As the approaches trigger logs a row (app.log_activity); `extra` — v19's `public_ok`, when it changed. */
+  private logApproach(a: Approach, kind: "insert" | "update", note: string | null, extra: Record<string, unknown> = {}) {
     this.log(this.week.edition.id, "approaches", a.id, kind, {
       status: a.status,
       owner: a.owner_member_id,
       speaker: a.speaker_id,
       ...(a.offered_to != null ? { offered_to: a.offered_to } : {}),
       ...(note != null ? { note } : {}),
+      ...extra,
     });
   }
 

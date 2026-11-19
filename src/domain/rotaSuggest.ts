@@ -3,7 +3,8 @@
 // in any order gives the same suggestion.
 //
 // It never touches an assignment already there (it counts in the loads and takes its place), never puts a group in a
-// shift its cohort is not marked on campus in, never two duties to one group in one shift, and never fills a duty in a
+// shift its cohort is not marked on campus in, never a group of a cohort that does not help (v19 `helpsRota`: its
+// groups are left out of the choosing and the fairness, but a duty one of them was given by hand counts as filled), never two duties to one group in one shift, and never fills a duty in a
 // shift whose need is not set. The tightest shifts first (the fewest free groups for what they need, suggestionOrder),
 // then by time; within a shift every duty's need first — the duties with a minimum of people first, then by their
 // order —, and only then, from the groups still free, the extras for a minimum. A group is chosen by, in this order:
@@ -25,7 +26,7 @@
 // with a suggested day shift of that other (the loads stay). No move makes a new pair of shifts in a row, takes a duty
 // under its minimum or makes a cell «too many»; never an assignment that was there.
 import type { NewAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, ShiftIndex } from "../data/rota";
-import { type GroupLoad, loadsOf, needOf, rotaSlots, slotIndex, type RotaSlot } from "./rota";
+import { type GroupLoad, helpingGroups, loadsOf, needOf, rotaSlots, slotIndex, type RotaSlot } from "./rota";
 import type { Day } from "./time";
 import type { Edition } from "./types";
 
@@ -60,8 +61,10 @@ export interface RotaSuggestion {
 
 interface G {
   g: RotaGroup;
-  /** Its place in the canonical order (cohort by sort, letter, id; then number, id). */
+  /** Its place in the canonical order (cohort by sort, letter, id; then number, id) among the groups that help. */
   pos: number;
+  /** Its cohort helps (v19): only then is it ever chosen or weighed; otherwise only its hand-made rows are counted. */
+  helps: boolean;
   /** Shifts its cohort is on campus (the week's shifts only). */
   present: number;
   shifts: number;
@@ -88,12 +91,14 @@ export function overNeed(need: number | null, minPeople: number | null, sizes: r
 }
 
 /**
- * The order the suggestion fills the shifts in: the tightest first — the fewest groups free (on campus, not busy by
- * an assignment already there) for the groups still needed —, then by time.
+ * The order the suggestion fills the shifts in: the tightest first — the fewest groups free (on campus, of a cohort
+ * that helps, not busy by an assignment already there) for the groups still needed —, then by time. A hand-made
+ * assignment of a group that does not help still fills its duty.
  */
 export function suggestionOrder(input: RotaSuggestInput): RotaSlot[] {
   const { data, edition } = input;
   const known = new Set(data.groups.map((g) => g.id));
+  const helping = helpingGroups(data);
   const here = new Set(data.presence.map((p) => `${p.cohort_id}:${p.day}:${p.shift}`));
   const busy = new Set<string>();
   const count = new Map<string, number>();
@@ -104,7 +109,7 @@ export function suggestionOrder(input: RotaSuggestInput): RotaSlot[] {
     count.set(k, (count.get(k) ?? 0) + 1);
   }
   const slack = (s: RotaSlot) => {
-    const open = data.groups.filter((g) => here.has(`${g.cohort_id}:${s.day}:${s.shift}`) && !busy.has(`${g.id}:${s.day}:${s.shift}`)).length;
+    const open = helping.filter((g) => here.has(`${g.cohort_id}:${s.day}:${s.shift}`) && !busy.has(`${g.id}:${s.day}:${s.shift}`)).length;
     const wanted = data.duties.reduce((sum, d) => {
       const need = needOf(d, s.shift);
       return need != null && need > 0 ? sum + Math.max(0, need - (count.get(`${s.day}:${s.shift}:${d.id}`) ?? 0)) : sum;
@@ -127,18 +132,22 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
   const { data, edition } = input;
   const cohorts = [...data.cohorts].sort((a: RotaCohort, b: RotaCohort) => a.sort - b.sort || cmpStr(a.letter, b.letter) || a.id - b.id);
   const cohortRank = new Map(cohorts.map((c, i) => [c.id, i]));
-  const groups = [...data.groups].sort(
-    (a, b) => (cohortRank.get(a.cohort_id) ?? cohorts.length) - (cohortRank.get(b.cohort_id) ?? cohorts.length) || a.number - b.number || a.id - b.id,
-  );
+  const helps = new Set(helpingGroups(data).map((g) => g.id));
+  const groups = [...data.groups]
+    .sort((a, b) => (cohortRank.get(a.cohort_id) ?? cohorts.length) - (cohortRank.get(b.cohort_id) ?? cohorts.length) || a.number - b.number || a.id - b.id)
+    // the groups that help first, so their places (and the rotation) are as if the others were not there
+    .sort((a, b) => Number(!helps.has(a.id)) - Number(!helps.has(b.id)));
   const duties = [...data.duties].sort((a, b) => Number(a.min_people == null) - Number(b.min_people == null) || a.sort - b.sort || a.id - b.id);
   const dutyRank = new Map(duties.map((d, i) => [d.id, i]));
   const slots = rotaSlots(edition);
   const here = new Set(data.presence.map((p) => `${p.cohort_id}:${p.day}:${p.shift}`));
   const presentAt = (g: RotaGroup, s: RotaSlot) => here.has(`${g.cohort_id}:${s.day}:${s.shift}`);
-  const n = groups.length;
+  const n = helps.size;
 
   const state = new Map<number, G>();
-  groups.forEach((g, pos) => state.set(g.id, { g, pos, present: slots.filter((s) => presentAt(g, s)).length, shifts: 0, nights: 0, byDuty: new Map(), busy: new Set() }));
+  groups.forEach((g, pos) =>
+    state.set(g.id, { g, pos, helps: helps.has(g.id), present: slots.filter((s) => presentAt(g, s)).length, shifts: 0, nights: 0, byDuty: new Map(), busy: new Set() }),
+  );
   /** (slot, duty) → the groups on it. */
   const cell = new Map<string, number[]>();
   const cellKey = (idx: number, duty: number) => `${idx}:${duty}`;
@@ -166,7 +175,7 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
   }
 
   const adjacentBusy = (st: G, idx: number) => Number(st.busy.has(idx - 1)) + Number(st.busy.has(idx + 1));
-  const free = (st: G, s: RotaSlot) => st.present > 0 && presentAt(st.g, s) && !st.busy.has(slotIndex(s.day, s.shift));
+  const free = (st: G, s: RotaSlot) => st.helps && st.present > 0 && presentAt(st.g, s) && !st.busy.has(slotIndex(s.day, s.shift));
   const sizeOf = (id: number) => state.get(id)?.g.size ?? null;
   const people = (ids: number[]) => ids.reduce((sum, id) => sum + (sizeOf(id) ?? 0), 0);
   const needs = (s: RotaSlot) =>
@@ -284,7 +293,7 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
   }
 
   // the polish: a suggested row moves from a group above its share to one below, while they are more than the tolerance apart
-  const fair = [...state.values()].filter((st) => st.present > 0);
+  const fair = [...state.values()].filter((st) => st.helps && st.present > 0);
   const P = fair.reduce((sum, st) => sum + st.present, 0);
   const T = fair.reduce((sum, st) => sum + st.shifts, 0);
   /** A group's distance from its share, times P (exact): shifts × P − present × T. */
