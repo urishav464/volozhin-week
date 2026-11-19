@@ -179,3 +179,21 @@ describe("offlineDecision: who may see the snapshot", () => {
     expect(decide({ whoami: who({ me: me({ memberships: [{ edition_id: 2, role: "content", member_id: 2 }] }) }) })).toBe("drop");
   });
 });
+
+describe("v19: the guests' site in the copy", () => {
+  it("the new fields are the Week's (has_photo, public_bio, public_ok, public_note, kind, reader_sent) — a photo's bytes never", () => {
+    expect(PERSONAL_KEYS).toEqual(expect.arrayContaining(["image", "photo"]));
+    const w = demoWeek();
+    w.speakers[0] = { ...w.speakers[0], public_bio: "תיאור לדוגמה", has_photo: true };
+    w.approaches[0] = { ...w.approaches[0], public_ok: true };
+    w.lessons[0] = { ...w.lessons[0], public_note: "שורה לאורחים" };
+    w.edition.settings = { ...w.edition.settings, reader_sent: { at: "2026-11-19T10:00:00.000Z", by: 5 } };
+    w.sourceFiles = w.sourceFiles.map((f) => ({ ...f, kind: "source" as const }));
+    expect(() => assertWeekOnly(w)).not.toThrow();
+    for (const key of ["photo", "image"]) {
+      const x = demoWeek();
+      x.speakers[0] = { ...x.speakers[0], [key]: "QUJD" } as never;
+      expect(() => assertWeekOnly(x), key).toThrow(new RegExp(`personal data at .*${key}`));
+    }
+  });
+});

@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import type { RotaAssignment, RotaData } from "../data/rota";
 import {
-  adjacent, codeOf, DEFAULT_ROTA_SHIFTS, groupCode, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds, slotIndex, slotKey,
+  adjacent, canDrive, codeOf, DEFAULT_ROTA_SHIFTS, groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds,
+  slotIndex, slotKey,
 } from "./rota";
 
 const week = (first_day_from: number | null = 510, last_day_until = 1140, rota_shifts?: { cuts: [number, number]; labels: [string, string, string] }) => ({
@@ -159,5 +160,25 @@ describe("loadsOf", () => {
     const rows = [a(1, 2, 1, 1, 11), a(2, 0, 2, 1, 11), a(3, 1, 0, 1, 11)];
     expect(loadsOf(data, rows, week()).get(11)).toEqual(loadsOf(data, [...rows].reverse(), week()).get(11));
     expect(loadsOf(data, [], week()).get(21)).toEqual({ shifts: 0, nights: 0, byDuty: new Map(), present: 1, backToBack: 0 });
+  });
+});
+
+describe("a cohort's two flags (v19)", () => {
+  it("«עוזרת בתורנויות» is on unless set off; «הצוות שלה יכול להסיע» is off unless set on — a cohort from before v19 has neither", () => {
+    expect(helpsRota({})).toBe(true);
+    expect(helpsRota({ helps_rota: true })).toBe(true);
+    expect(helpsRota({ helps_rota: false })).toBe(false);
+    expect(canDrive({})).toBe(false);
+    expect(canDrive({ can_drive: false })).toBe(false);
+    expect(canDrive({ can_drive: true })).toBe(true);
+  });
+
+  it("helpingGroups: the groups of the cohorts that help, in their order — a group whose cohort is gone stays", () => {
+    const data = {
+      cohorts: [{ id: 1 }, { id: 2, helps_rota: false }, { id: 3, helps_rota: true }],
+      groups: [{ id: 11, cohort_id: 1 }, { id: 21, cohort_id: 2 }, { id: 31, cohort_id: 3 }, { id: 22, cohort_id: 2 }, { id: 91, cohort_id: 9 }],
+    };
+    expect(helpingGroups(data).map((g) => g.id)).toEqual([11, 31, 91]);
+    expect(helpingGroups({ cohorts: [], groups: [] })).toEqual([]);
   });
 });

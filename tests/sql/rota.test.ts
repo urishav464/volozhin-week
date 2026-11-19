@@ -168,9 +168,14 @@ describe("תורנויות (v16)", () => {
   /** One shared case, sent as SupabaseRota sends it — the raw values, not cleaned first: the guards are the backstop. */
   async function perform(run: Run, who: string, edition: number, ids: Ids, c: RotaCase): Promise<string> {
     switch (c.op) {
-      case "addCohort":
-        return attempt("rota_cohorts", run(who, "insert into public.rota_cohorts (edition_id, letter, name, diets, sort) values ($1, $2, $3, $4::jsonb, $5) returning id",
-          [edition, c.args.letter, c.args.name, JSON.stringify(c.args.diets ?? []), c.args.sort ?? 0]));
+      case "addCohort": {
+        // v19: the two flags as columns when the case gives them (absent: the columns' defaults), a null sent as null
+        const flags = (["helps_rota", "can_drive"] as const).filter((k) => k in c.args);
+        const cols = ["edition_id", "letter", "name", "diets", "sort", ...flags];
+        const values = [edition, c.args.letter, c.args.name, JSON.stringify(c.args.diets ?? []), c.args.sort ?? 0, ...flags.map((k) => c.args[k])];
+        return attempt("rota_cohorts", run(who, `insert into public.rota_cohorts (${cols.join(", ")}) values (${cols.map((k, i) => `$${i + 1}${k === "diets" ? "::jsonb" : ""}`).join(", ")}) returning id`,
+          values));
+      }
       case "updateCohort": {
         const keys = Object.keys(c.args);
         const sets = keys.map((k, i) => `${k} = $${i + 2}${k === "diets" ? "::jsonb" : ""}`).join(", ");
@@ -204,6 +209,17 @@ describe("תורנויות (v16)", () => {
           "insert into public.rota_prep_tasks (edition_id, text, sort) select $1, t.text, $3 + t.o from unnest($2::text[]) with ordinality as t(text, o) returning id",
           [edition, c.args, last]));
       }
+      case "addPrepRows": {
+        // v19: one insert of rows of one kind, sent as it is (the guard checks it), each with its quantity
+        const last = await num(run, who, "select coalesce(max(sort), 0) from public.rota_prep_tasks where edition_id = $1", [edition]);
+        return attempt("rota_prep_tasks", run(who,
+          `insert into public.rota_prep_tasks (edition_id, text, kind, qty, sort)
+           select $1, r.x ->> 'text', $3, r.x ->> 'qty', $4 + r.o from jsonb_array_elements($2::jsonb) with ordinality as r(x, o) returning id`,
+          [edition, JSON.stringify(c.args.map((a) => ({ text: a.text, qty: a.qty ?? null }))), c.kind, last]));
+      }
+      case "updatePrep":
+        // v19: the row the case starts with (written before `state`), updated as SupabaseRota.updatePrepTask sends it
+        return attempt("rota_prep_tasks", run(who, "update public.rota_prep_tasks set qty = $2 where id = $1 returning id", [ids.P, c.args.qty]), { row: true });
       case "setShifts":
         return attempt("editions", run(who, "select public.set_rota_shifts($1, $2::jsonb)", [edition, c.args == null ? null : JSON.stringify(c.args)]));
       case "setContact":
@@ -275,9 +291,16 @@ describe("תורנויות (v16)", () => {
       it(`as logistics in a live real edition: ${c.name} → ${c.expect}`, async () => {
         await inTx(async (run) => {
           const ids = await fixture(run, ed.live);
+          if (c.op === "updatePrep") {
+            ids.P = await num(run, "owner", "insert into public.rota_prep_tasks (edition_id, text, kind, qty, sort) values ($1, 'פריט לדוגמה', $2, '1', 1) returning id", [ed.live, c.kind]);
+          }
           const before = await state(run, ed.live);
           expect(await perform(run, L, ed.live, ids, c)).toBe(c.expect);
           if (c.expect !== "ok") expect(await state(run, ed.live), "a refusal changes nothing").toEqual(before);
+          // v19: what the guard wrote — the edition's whole list of preparations, in order
+          if ((c.op === "addPrepRows" || c.op === "updatePrep") && c.prep) {
+            expect((await run("owner", "select text, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id", [ed.live])).rows).toEqual(c.prep);
+          }
         });
       });
     }
@@ -690,13 +713,13 @@ describe("תורנויות (v16)", () => {
           walk(rota);
           for (const k of [...PERSONAL_KEYS, "head_phone", "phone"]) expect(keys.has(k), `${who}: ${k}`).toBe(false);
           // the shape, record by record (src/data/rota.ts)
-          expect(Object.keys(rota.cohorts[0]).sort()).toEqual(["diets", "edition_id", "id", "letter", "name", "sort"]);
+          expect(Object.keys(rota.cohorts[0]).sort()).toEqual(["can_drive", "diets", "edition_id", "helps_rota", "id", "letter", "name", "sort"]);   // v19: the two flags
           expect(Object.keys(rota.presence[0]).sort()).toEqual(["cohort_id", "day", "shift"]);
           expect(Object.keys(rota.groups[0]).sort()).toEqual(["cohort_id", "edition_id", "head_name", "id", "number", "size"]);
           expect(Object.keys(rota.duties[0]).sort()).toEqual(["description", "edition_id", "id", "min_people", "name", "need_afternoon", "need_morning", "need_night", "sort"]);
           expect(Object.keys(rota.assignments[0]).sort()).toEqual(["day", "duty_id", "edition_id", "group_id", "id", "shift", "source"]);
           expect(Object.keys(rota.staff[0]).sort()).toEqual(["cohort_id", "day", "edition_id", "end_min", "id", "kind", "member_id", "name", "note", "start_min"]);
-          expect(Object.keys(rota.prep[0]).sort()).toEqual(["done", "edition_id", "group_id", "id", "sort", "text"]);
+          expect(Object.keys(rota.prep[0]).sort()).toEqual(["done", "edition_id", "group_id", "id", "kind", "qty", "sort", "text"]);   // v19: a task or an item
           // the order: cohorts by sort, letter; groups by cohort, number; duties by sort; assignments by day, shift, duty, group; staff by day, start; prep by sort
           expect(rota.cohorts.map((c) => c.letter)).toEqual(["א", "נ", "ב"]);
           expect(rota.cohorts[0].diets).toEqual([{ label: "צמחוני", count: 2 }]);
@@ -842,13 +865,15 @@ describe("תורנויות (v16)", () => {
         await run(L, "insert into public.rota_duties (edition_id, name, description, need_morning, need_afternoon, need_night, min_people, sort) values ($1, 'בית מדרש', 'תיאור לדוגמה', 4, 4, 4, 20, 0)", [ed.live]);
         await run(L, "update public.rota_prep_tasks set done = true where id = $1", [ids.P]);
         await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה לדוגמה אחרונה', 9), ($1, 'הכנה לדוגמה ראשונה', 0)", [ed.live]);
+        // v19: an item of the shopping list, bought, with its quantity — carried as an item, its quantity kept, not bought
+        await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort, kind, qty, done) values ($1, 'פריט לדוגמה', 5, 'item', '2 (לדוגמה)', true)", [ed.live]);
         await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE]);
         const shifts = { cuts: [840, 1320], labels: ["בוקר", "צהריים", "לילה"] };
         await run(ED_ADMIN, "select public.set_rota_shifts($1, $2::jsonb)", [ed.live, JSON.stringify(shifts)]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(false)")) as Record<string, unknown>;
-        expect(preview).toMatchObject({ carry_from: { id: ed.live }, rota_duties: 3, rota_prep_tasks: 3, rota_shifts: true });
+        expect(preview).toMatchObject({ carry_from: { id: ed.live }, rota_duties: 3, rota_prep_tasks: 4, rota_shifts: true });
         const duties = "select name, description, need_morning, need_afternoon, need_night, min_people, sort from public.rota_duties where edition_id = $1 order by sort, id";
-        const prep = "select text, sort, group_id, done from public.rota_prep_tasks where edition_id = $1 order by sort, id";
+        const prep = "select text, sort, group_id, done, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id";
         const was = { duties: (await run("owner", duties, [ed.live])).rows, prep: (await run("owner", prep, [ed.live])).rows };
         const next = await num(run, ADMIN, "select public.start_edition('תשפ\"ח', null)");
         expect((await run("owner", duties, [next])).rows).toEqual(was.duties);

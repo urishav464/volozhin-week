@@ -2,9 +2,11 @@
 // Pure: the loaded rota (or the rota with a suggestion added) and the edition's week. A warning names the groups by
 // their codes and the duties by their names, a shift as «יום X · משמרת Y»; it carries the cell it is about (day,
 // shift, duty) and the groups, so the board can mark them. Nothing is deleted or changed here — an assignment on a
-// shift the week no longer has stays, warned about, until someone moves it.
-import type { RotaAssignment, RotaCohort, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
-import { groupCode, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
+// shift the week no longer has stays, warned about, until someone moves it. A cohort that does not help (v19
+// `helpsRota`) still has its presence asked for — it feeds the meal counts — but its groups are out of the fairness,
+// and a duty given to one of them by hand is the `not_helping` warning.
+import type { RotaAssignment, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import { byCohortOrder, groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presenceMarked, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
 import { overNeed, ROTA_LOAD_TOLERANCE } from "./rotaSuggest";
 import { type Day, DAY_NAMES } from "./time";
 import type { Edition } from "./types";
@@ -22,7 +24,8 @@ export type RotaWarningKind =
   | "no_target"
   | "no_lead"
   | "no_head"
-  | "diets_exceed";
+  | "diets_exceed"
+  | "not_helping";
 
 export interface RotaWarning {
   key: string;
@@ -38,8 +41,6 @@ export interface RotaWarning {
 export type RotaWarningData = Pick<RotaData, "cohorts" | "presence" | "groups" | "duties" | "assignments"> & Partial<Pick<RotaData, "staff">>;
 type WeekEdges = Pick<Edition, "first_day_from" | "last_day_until" | "settings">;
 
-const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
 /**
  * Every warning of the rota. `staff` (default: the data's) is what «אחראי/ת משמרת» is looked for in: without it, the
  * shifts' leads are not checked.
@@ -48,7 +49,7 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   const out: RotaWarning[] = [];
   const labels = rotaShiftsOf(edition).labels;
   const when = (day: number, shift: number) => `יום ${DAY_NAMES[day as Day]} · משמרת ${labels[shift]}`;
-  const cohorts = [...data.cohorts].sort((a: RotaCohort, b: RotaCohort) => a.sort - b.sort || cmpStr(a.letter, b.letter) || a.id - b.id);
+  const cohorts = [...data.cohorts].sort(byCohortOrder);
   const cohortOf = new Map(cohorts.map((c) => [c.id, c]));
   const rank = new Map(cohorts.map((c, i) => [c.id, i]));
   const groups = [...data.groups].sort((a, b) => (rank.get(a.cohort_id) ?? 1e9) - (rank.get(b.cohort_id) ?? 1e9) || a.number - b.number || a.id - b.id);
@@ -68,8 +69,10 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   // ---- the cohorts and the groups
   for (const c of cohorts) {
     const mine = groups.filter((g) => g.cohort_id === c.id).map((g) => g.id);
-    if (!data.presence.some((p) => p.cohort_id === c.id)) {
-      out.push({ key: `presence_unknown:${c.id}`, kind: "presence_unknown", severity: "warn", groupIds: mine, message: `לא סומן מתי ${c.name} בקמפוס — ההצעה לא משבצת את הקבוצות שלה` });
+    if (!presenceMarked(data, c.id)) {
+      // a cohort that does not help: the suggestion would not place its groups anyway — only its presence is missing
+      const message = helpsRota(c) ? `לא סומן מתי ${c.name} בקמפוס — ההצעה לא משבצת את הקבוצות שלה` : `לא סומן מתי ${c.name} בקמפוס`;
+      out.push({ key: `presence_unknown:${c.id}`, kind: "presence_unknown", severity: "warn", groupIds: mine, message });
     }
     const diets = c.diets.reduce((s, d) => s + d.count, 0);
     const sized = groups.filter((g) => g.cohort_id === c.id);
@@ -101,6 +104,13 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   // ---- each shift: the week's, the cohorts on campus, the needs, the people
   for (const a of assignments) {
     const g = groupOf.get(a.group_id);
+    const c = g ? cohortOf.get(g.cohort_id) : undefined;
+    if (c && !helpsRota(c)) {
+      out.push({
+        key: `not_helping:${a.id}`, kind: "not_helping", severity: "warn", day: a.day, shift: a.shift, groupIds: [a.group_id], dutyId: a.duty_id,
+        message: `${codeById(a.group_id)} שובצה ב«${dutyName(a.duty_id)}» (${when(a.day, a.shift)}), אבל המכינה שלה לא עוזרת בתורנויות`,
+      });
+    }
     if (!rotaShiftActive(edition, a.day, a.shift)) {
       out.push({
         key: `outside_week:${a.id}`, kind: "outside_week", severity: "warn", day: a.day, shift: a.shift, groupIds: [a.group_id], dutyId: a.duty_id,
@@ -170,10 +180,11 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
 
 /**
  * The most and the least loaded groups when they are further apart than ROTA_LOAD_TOLERANCE shifts from their shares
- * (each share in proportion to the shifts its cohort is on campus, compared exactly); null when even.
+ * (each share in proportion to the shifts its cohort is on campus, compared exactly); null when even. Only the groups
+ * of a cohort that helps are weighed (a hand-made row of another is `not_helping`, not a load).
  */
-function unevenLoad(data: RotaWarningData, edition: WeekEdges): [{ id: number; shifts: number; present: number }, { id: number; shifts: number; present: number }] | null {
-  const loads = [...loadsOf(data, data.assignments, edition)].map(([id, l]) => ({ id, shifts: l.shifts, present: l.present })).filter((l) => l.present > 0);
+export function unevenLoad(data: RotaWarningData, edition: WeekEdges): [{ id: number; shifts: number; present: number }, { id: number; shifts: number; present: number }] | null {
+  const loads = [...loadsOf({ groups: helpingGroups(data), presence: data.presence }, data.assignments, edition)].map(([id, l]) => ({ id, shifts: l.shifts, present: l.present })).filter((l) => l.present > 0);
   const P = loads.reduce((s, l) => s + l.present, 0);
   const T = loads.reduce((s, l) => s + l.shifts, 0);
   if (T === 0 || loads.length < 2) return null;

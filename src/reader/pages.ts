@@ -4,14 +4,15 @@
 // the manifest counts as received is a file the build puts in. A PDF: its
 // pages; a picture: 1; null — the reader cannot print it (protected by a
 // password, damaged, not the type its name says): it is uploaded all the same,
-// for the team to see and replace, and shown «לא נקרא» everywhere. Word: null,
-// never read (its own «צריך PDF»). pdf-lib is in the check: loaded on demand.
+// for the team to see and replace, and shown «לא נקרא» everywhere. Word and (v19)
+// PowerPoint: null, never read (their own «צריך PDF»). pdf-lib is in the check:
+// loaded on demand.
 import type { SourceMime } from "../domain/types";
-import { DOCX } from "../data/sourceRules";
+import { DOCX, PPTX } from "../data/sourceRules";
 import type { ReaderMime } from "./readable";
 
 export async function readerPages(file: Blob, mime: SourceMime): Promise<number | null> {
-  if (mime === DOCX) return null;
+  if (mime === DOCX || mime === PPTX) return null;
   const { readableSource } = await import("./readable");
   const bytes = new Uint8Array(await file.arrayBuffer());
   try {

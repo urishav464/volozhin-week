@@ -15,6 +15,10 @@
 // the lesson's stage and dot and the manifest alike, and never «התקבל»; a
 // lesson with a PDF and a Word file is counted on the manifest as the panel
 // counts it; a computer builds the reader at any width, a mouse is enough.
+// v19 (the reset, phase 4): register_source_file carries `p_kind`; logistics build the reader and download it, read
+// «נשלח לדפוס» (when, by whom, «נוסף קובץ אחד אחרי השליחה» — a presentation never counted) and send set_reader_sent
+// {p_edition, p_sent} by the keyboard — the focus kept through a slow call, and given to the button that stays when
+// «ביטול הסימון» leaves —, with no cover, headers, upload or removal; a content member reads the mark and sets nothing.
 // Synthetic data only: every file is made here.
 import { readFileSync } from "node:fs";
 import { expect, type Download, type Locator, type Page, type TestInfo, test } from "@playwright/test";
@@ -470,7 +474,8 @@ test.describe("mock build", () => {
     expect([up.auth, up.contentType, up.apikey]).toEqual([bearer, "application/pdf", "sb_publishable_mock"]);
     expect(up.cacheControl).toBe("private, no-store"); // Storage serves the file back with it: no copy outlives a signed URL or a removal
     const path = up.path.slice("/storage/v1/object/sources/".length);
-    expect(sb.rpc.get("register_source_file")).toEqual([{ p_edition: 7, p_lesson: target.id, p_path: path, p_display_name: "מקורות.pdf", p_pages: 2 }]);
+    // v19: the kind always sent — a lesson's file from this panel is a source (a presentation is phase 5's page)
+    expect(sb.rpc.get("register_source_file")).toEqual([{ p_edition: 7, p_lesson: target.id, p_path: path, p_display_name: "מקורות.pdf", p_pages: 2, p_kind: "source" }]);
     expect(sb.calls.filter((c) => c.path === "/rest/v1/rpc/register_source_file").every((c) => c.auth === bearer)).toBe(true);
     await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
 
@@ -496,21 +501,40 @@ test.describe("mock build", () => {
     expect(sources(doc)).toContain("200x300");
   });
 
-  test("logistics read the files (they print) but upload nothing and build no reader", async ({ page }, info) => {
-    test.skip(info.project.name !== "desktop", "one width is enough for the permissions");
+  test("logistics read the files (they print) and upload or remove none; the reader (v19): built and downloaded, «נשלח לדפוס» by set_reader_sent — no cover, headers or removal", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the permissions; the reader is built on a computer");
+    test.setTimeout(120_000);
     const week = demoWeek();
     seedDemoSources(week);
     week.edition.id = 7;
     week.edition.kind = "real";
+    // marked «נשלח לדפוס» on 15.11 at 12:00 (Israel); one file came after it, and a presentation too — which is never in
+    // the reader, so never counted (filesAfterSent)
+    week.edition.settings = { ...week.edition.settings, reader_sent: { at: "2026-11-15T10:00:00.000Z", by: 5 } };
+    const late = week.sourceFiles.find((f) => f.display_name === "מקור נוסף לדוגמה.pdf")!;
+    late.uploaded_at = "2026-11-16T08:00:00.000Z";
+    week.sourceFiles.push({
+      id: 90, lesson_id: late.lesson_id, cover: false, speaker_id: late.speaker_id, fallen_id: null, kind: "presentation",
+      storage_path: `7/${late.lesson_id}/00000000-0000-4000-8000-000000000090-deck.pptx`, display_name: "מצגת לדוגמה.pptx",
+      mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", size_bytes: 30_000, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-16T09:00:00.000Z",
+    });
     const sb = new FakeSupabase({
       status: 200,
       body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email: "l@example.org", display_name: "לוגיסטיקה לדוגמה", global_admin: false, memberships: [{ edition_id: 7, role: "logistics", member_id: 5 }] },
     });
     sb.answers.set("editions", [week.edition]);
     sb.answers.set("load_week", week);
+    sb.answers.set("set_reader_sent", null);
+    for (const f of week.sourceFiles) {
+      if (f.mime === "application/pdf") sb.storageFiles.set(f.storage_path, await pdf(Array.from({ length: f.page_count ?? 1 }, () => [420, 595] as [number, number])));
+      if (f.mime === "image/png") sb.storageFiles.set(f.storage_path, PIXEL);
+    }
     await sb.attach(page);
-    sb.token = (await signIn(page, "l@example.org")).access_token;
-    await page.goto(mockUrl());
+    const session = await signIn(page, "l@example.org");
+    sb.token = session.access_token;
+    const bearer = `Bearer ${session.access_token}`;
+    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    await page.goto(`${mockUrl()}/grid`);
     const panel = await openLesson(page, info, "ראשון", "מרצה 01");
     await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
     const files = panel.getByRole("list", { name: "קבצים שהועלו" });
@@ -518,10 +542,75 @@ test.describe("mock build", () => {
     await expect(files.getByRole("button", { name: "פתיחה" }).first()).toBeVisible();
     await expect(files.getByRole("button", { name: "הסרה" })).toHaveCount(0);
     await expect(panel.locator("input[type=file]")).toHaveCount(0);
-    await page.goto(`${mockUrl()}/reader`);
-    await expect(page.getByText("את המקראה בונים צוות התוכן והמדריך/ה")).toBeVisible();
-    await expect(page.getByRole("button", { name: BUILD })).toHaveCount(0);
-    await expect(page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" })).toHaveCount(0);
+    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
+
+    // the reader: a tab of «תוצרים» for them too
+    await page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
+    await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" }).click();
+    await expect(page).toHaveURL(/\/reader$/);
+    await expect(page.locator("[data-manifest-totals]")).toBeVisible();
+    // no cover, no headers, no upload and no removal: the content team's and the admins'
+    await expect(page.getByRole("heading", { name: "שער", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("form", { name: "כותרות רצות" })).toHaveCount(0);
+    await expect(page.locator("input[type=file]")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "הסרה" })).toHaveCount(0);
+    await expect(page.getByText("את המקראה בונים צוות התוכן והמדריך/ה")).toHaveCount(0);
+
+    // «נשלח לדפוס»: when and by whom, and the one file that came after (the presentation is not counted)
+    const sent = page.locator("[data-reader-sent]");
+    await expect(sent).toHaveAttribute("data-sent", "y");
+    await expect(sent).toHaveAttribute("data-after-sent", "1");
+    await expect(sent).toContainText("נשלחה לדפוס ב-15.11.2026 בשעה 12:00 · סימן/ה: לוגיסטיקה (הדגמה).");
+    await expect(sent).toContainText("נוסף קובץ אחד אחרי השליחה — אולי צריך לשלוח שוב.");
+    // by the keyboard, each call held as a slow network holds it: the pressed button keeps the focus while it runs (busy
+    // is aria-disabled, never `disabled`; the other button waits the same way) and after it
+    const held: (() => void)[] = [];
+    await page.route("**/rest/v1/rpc/set_reader_sent", (route) => new Promise<void>((done) => held.push(() => void route.fallback().then(done))));
+    await sent.getByRole("button", { name: "שליחה מחדש" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => held.length).toBe(1);
+    await expect(sent.getByRole("button", { name: "שומר…" })).toBeFocused();
+    await expect(sent.getByRole("button", { name: "שומר…" })).toHaveAttribute("aria-disabled", "true");
+    await expect(sent.getByRole("button", { name: "ביטול הסימון" })).toHaveAttribute("aria-disabled", "true");
+    await expect(sent.getByRole("button", { name: "ביטול הסימון" })).not.toHaveAttribute("disabled");
+    // the week read again answers the new stamp
+    sb.answers.set("load_week", { ...week, edition: { ...week.edition, settings: { ...week.edition.settings, reader_sent: { at: "2026-11-19T10:00:00.000Z", by: 5 } } } });
+    held.shift()!();
+    await expect(toast(page, "סומן שהמקראה נשלחה לדפוס")).toBeVisible();
+    await expect(sent).toHaveAttribute("data-after-sent", "0");
+    await expect(sent.getByRole("button", { name: "שליחה מחדש" })).toBeFocused();
+    await expect.poll(() => sb.rpc.get("set_reader_sent")).toEqual([{ p_edition: 7, p_sent: true }]);
+    // «ביטול הסימון» leaves with the mark (the week read again has none): the focus goes to the button that stays
+    await sent.getByRole("button", { name: "ביטול הסימון" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => held.length).toBe(1);
+    await expect(sent.getByRole("button", { name: "שומר…" })).toBeFocused();
+    const { reader_sent: _sent, ...unsent } = week.edition.settings;
+    sb.answers.set("load_week", { ...week, edition: { ...week.edition, settings: unsent } });
+    held.shift()!();
+    await expect(toast(page, "הסימון בוטל")).toBeVisible();
+    await expect(sent).toHaveAttribute("data-sent", "-");
+    await expect(sent.getByRole("button", { name: "ביטול הסימון" })).toHaveCount(0);
+    await expect(sent.getByRole("button", { name: "סימון שנשלחה לדפוס" })).toBeFocused();
+    await expect.poll(() => sb.rpc.get("set_reader_sent")).toEqual([
+      { p_edition: 7, p_sent: true },
+      { p_edition: 7, p_sent: false },
+    ]);
+    for (const c of sb.calls.filter((x) => x.path === "/rest/v1/rpc/set_reader_sent")) expect(c.auth).toBe(bearer);
+    await noSidewaysScroll(page);
+
+    // built and downloaded: the files through signed URLs with the member's own token — never the presentation
+    const out = await downloaded(page, () => page.getByRole("button", { name: BUILD }).click());
+    expect(out.d.suggestedFilename()).toMatch(/^volozhin-reader-edition-7-\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect((await PDFDocument.load(out.bytes)).getPageCount()).toBeGreaterThan(2);
+    const signs = sb.storage.filter((c) => c.method === "POST" && c.path === "/storage/v1/object/sign/sources");
+    expect(signs.length).toBeGreaterThan(0);
+    for (const sign of signs) {
+      expect(sign.auth).toBe(bearer);
+      expect((sign.body as { paths: string[] }).paths.some((x) => x.endsWith(".pptx"))).toBe(false);
+    }
+    expect(sb.storage.some((c) => c.path.includes("/object/public/"))).toBe(false);
+    for (const fn of ["register_source_file", "remove_source_file", "set_reader_headers", "set_reader_cover"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
   });
 
   test("a refused upload says so and registers nothing", async ({ page }, info) => {
@@ -546,5 +635,11 @@ test.describe("mock build", () => {
     await panel.locator("input[type=file]").setInputFiles({ name: "a.pdf", mimeType: "application/pdf", buffer: await pdf([[100, 100]]) });
     await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toContainText("אין הרשאה להעלות לכאן");
     expect(sb.rpc.get("register_source_file")).toBeUndefined();
+    // v19: a content member reads whether the reader went to print, and marks nothing
+    await page.goto(`${mockUrl()}/reader`);
+    await expect(page.locator("[data-reader-sent]")).toHaveAttribute("data-sent", "-");
+    await expect(page.locator("[data-reader-sent]")).toContainText("עוד לא סומן שהמקראה נשלחה לדפוס.");
+    await expect(page.getByRole("button", { name: "סימון שנשלחה לדפוס" })).toHaveCount(0);
+    expect(sb.rpc.get("set_reader_sent")).toBeUndefined();
   });
 });

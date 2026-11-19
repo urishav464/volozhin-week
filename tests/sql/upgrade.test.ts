@@ -1,7 +1,7 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds an older version and its data. This runs exactly
-// that, from five bases read from git history — v13 (PR #6), v14 (PR #8), v15
-// (PR #9), v16 (PR #11) and v17 (PR #14, what production runs) — under both default-privilege regimes the
+// that, from six bases read from git history — v13 (PR #6), v14 (PR #8), v15
+// (PR #9), v16 (PR #11), v17 (PR #14) and v18 (PR #15, what production runs) — under both default-privilege regimes the
 // other tests model: the old file with some data in it — last year's week with
 // its transport details, links, a member, availability (v13's by part of a day,
 // in every shape the conversion meets; v14's and v15's per slot) and מכריכה
@@ -14,13 +14,17 @@
 // the days' owners (v18) are there and empty and every transport detail is as it
 // was, its new pickup_min unset — and what v18 itself writes after the first run
 // (an owner who looked at their day, a pickup time in minutes) is still there
-// after the second. And the catalog — every table, column, constraint, index, trigger, policy,
+// after the second. v19 adds its columns to the old rows with their defaults (no speaker approved for the
+// guests' site, every file a source, every preparation a task, every cohort helping and none driving), a fifth
+// type to the bucket's list, and keeps what it writes after the first run — a photo, an approval to appear,
+// «נשלח לדפוס», an item of the shopping list. And the catalog — every table, column, constraint, index, trigger, policy,
 // function body, privilege and the Realtime publication — is exactly a fresh
 // install's, so nothing a fresh database is tested for can differ on the owner's.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
+import { photoBase64 } from "../../src/testing/photos";
 import { SCHEMA, dropDatabase, freshDatabase, type Regime } from "./db";
 
 interface Base {
@@ -34,8 +38,11 @@ const BASES: Base[] = [
   { commit: "fe55f7c", version: 14 }, // PR #8, as merged: availability per slot
   { commit: "baf3cbe", version: 15 }, // PR #9, as merged: מכריכה לכריכה by the week
   { commit: "bcab571", version: 16 }, // PR #11: «תורנויות»
-  { commit: "035f6fa", version: 17 }, // PR #14 — what production runs: titles
+  { commit: "035f6fa", version: 17 }, // PR #14: titles
+  { commit: "512ae35", version: 18 }, // PR #15 — what production runs: the reset's data foundation
 ];
+
+const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 /** «תורנויות» (v16): every table, empty after the run. */
 const ROTA_TABLES = ["rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks"];
@@ -104,6 +111,8 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
   let ed: number;
   let s1: number;
   let s2: number;
+  let s3: number; // v19: claimed between the two runs — its approach approved for the guests' site, its photo stored
+  let adminId: number;
   let kkToken: string;
   let kkWindow: unknown;
   const notices: string[][] = [[], []]; // what each of the two runs said
@@ -182,6 +191,11 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     await db.query("insert into public.members (email, display_name, role, edition_id) values ('content@example.org', 'חבר/ת צוות', 'content', $1)", [ed]);
     await db.query("insert into public.share_links (edition_id, scope, token_hash, expires_at) values ($1, 'schedule', extensions.digest('a-token-for-the-upgrade', 'sha256'), now() + interval '1 day')", [ed]);
     await db.query("insert into public.transport_details (lesson_id, pickup_address, driver_name) select id, 'כתובת לדוגמה', 'נהג/ת לדוגמה' from public.lessons where edition_id = $1", [ed]);
+    if (version >= 16) {
+      // «תורנויות» as v16–v18 kept it: a cohort and a preparation, which v19 gives their defaults
+      await db.query("insert into public.rota_cohorts (edition_id, letter, name) values ($1, 'א', 'מכינה לבדיקה')", [ed]);
+      await db.query("insert into public.rota_prep_tasks (edition_id, text) values ($1, 'הכנה לבדיקה')", [ed]);
+    }
     for (const [i, run] of notices.entries()) {
       const heard = (n: { message?: string }) => run.push(n.message ?? "");
       db.on("notice", heard);
@@ -195,10 +209,21 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
         });
         await db.query("update public.day_owners set seen_at = '2027-02-01T08:00:00Z' where edition_id = $1", [ed]);
         await db.query("update public.transport_details set pickup_min = 435");
+        // what v19 itself writes, between the two runs: a third speaker claimed, approved for the guests' site, with a
+        // photo; «נשלח לדפוס»; an item of the shopping list — the second run must leave every one as it is
+        s3 = Number((await db.query("insert into public.speakers (name, gender, vetted) values ('מרצה שלישית לבדיקה', 'f', 'approved') returning id")).rows[0].id);
+        await asAdmin(async () => {
+          const a = Number((await db.query("select public.claim_speaker($1, $2) as id", [ed, s3])).rows[0].id);
+          await db.query("select public.set_public_ok($1, 1, true)", [a]);
+          await db.query("select public.set_speaker_photo($1, $2, $3)", [ed, s3, photoBase64("clean")]);
+          await db.query("select public.set_reader_sent($1, true)", [ed]);
+        });
+        await db.query("insert into public.rota_prep_tasks (edition_id, text, kind, qty) values ($1, 'פריט לבדיקה', 'item', '3 (לבדיקה)')", [ed]);
       }
     }
     ref = await freshDatabase(fresh, regime);
     await ref.query(SCHEMA);
+    adminId = Number((await db.query("select id from public.members where email = 'admin@example.org'")).rows[0].id);
   });
 
   afterAll(async () => {
@@ -206,10 +231,12 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v18, with «תורנויות»'s tables there and empty", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(18);
+  it("is v19, with «תורנויות»'s tables there — empty but for the rows written into them", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(19);
+    // the old version's cohort and preparation (v16–v18), and v19's item written between the two runs
+    const written: Record<string, number> = { rota_cohorts: version >= 16 ? 1 : 0, rota_prep_tasks: version >= 16 ? 2 : 1 };
     for (const t of ROTA_TABLES) {
-      expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(0);
+      expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(written[t] ?? 0);
     }
     // nothing carried into the old edition's settings: its shifts are last year's
     expect((await db.query("select settings ? 'rota_shifts' as k from public.editions where id = $1", [ed])).rows[0].k).toBe(false);
@@ -249,7 +276,7 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect((await db.query("select detail from public.activity where entity = 'approaches' and kind = 'availability'")).rows.map((r) => r.detail)).toEqual([
       { speaker: s1, day: 1, part: "morning", kind: "cannot" },
     ]);
-    expect((await db.query("select status, version from public.approaches where edition_id = $1 order by speaker_id", [ed])).rows).toEqual([
+    expect((await db.query("select status, version from public.approaches where edition_id = $1 and speaker_id <> $2 order by speaker_id", [ed, s3])).rows).toEqual([
       { status: "claimed", version: 1 },
       { status: "claimed", version: 1 },
     ]);
@@ -327,8 +354,54 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     }
   });
 
+  it("adds v19's own: the old rows' new columns at their defaults, pptx in the bucket's list — and a second run keeps what v19 wrote", async () => {
+    // the old rows: no public words, no approval to appear, no note for guests, every file a source
+    expect((await db.query("select public_bio from public.speakers where id = any ($1) order by id", [[s1, s2]])).rows).toEqual([{ public_bio: null }, { public_bio: null }]);
+    expect((await db.query("select public_ok from public.approaches where edition_id = $1 and speaker_id = any ($2) order by speaker_id", [ed, [s1, s2]])).rows).toEqual([
+      { public_ok: false }, { public_ok: false },
+    ]);
+    expect((await db.query("select public_note from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ public_note: null }]);
+    expect((await db.query("select kind from public.source_files")).rows).toEqual([{ kind: "source" }]);
+    if (version >= 16) {
+      expect((await db.query("select helps_rota, can_drive from public.rota_cohorts")).rows).toEqual([{ helps_rota: true, can_drive: false }]);
+    }
+    expect((await db.query("select text, kind, qty from public.rota_prep_tasks order by id")).rows).toEqual([
+      ...(version >= 16 ? [{ text: "הכנה לבדיקה", kind: "task", qty: null }] : []),
+      { text: "פריט לבדיקה", kind: "item", qty: "3 (לבדיקה)" },
+    ]);
+    // the bucket: the old four types and pptx after them (a fresh install's order), still private
+    expect((await db.query("select public, allowed_mime_types from storage.buckets where id = 'sources'")).rows).toEqual([
+      { public: false, allowed_mime_types: ["application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", PPTX] },
+    ]);
+    // the type check widened in place, the PowerPoint rule beside it
+    expect((await db.query("select pg_get_constraintdef(oid) as c from pg_constraint where conname = 'source_files_mime_check'")).rows[0].c).toContain(PPTX);
+    expect((await db.query("select pg_get_constraintdef(oid) as c from pg_constraint where conname = 'source_files_pptx_kind'")).rows).toEqual([
+      { c: `CHECK (((mime <> '${PPTX}'::text) OR (kind = 'presentation'::text)))` },
+    ]);
+    // what v19 wrote between the two runs survived the second: the photo (the same bytes), the approval, «נשלח לדפוס»
+    const photo = (await db.query("select encode(image, 'base64') as b, uploaded_by, app.photo_ok(image) as ok from public.speaker_photos where speaker_id = $1", [s3])).rows;
+    expect(photo.map((r) => ({ b: String(r.b).replace(/\n/g, ""), by: Number(r.uploaded_by), ok: r.ok }))).toEqual([{ b: photoBase64("clean"), by: adminId, ok: true }]);
+    expect((await db.query("select public_ok, version from public.approaches where edition_id = $1 and speaker_id = $2", [ed, s3])).rows).toEqual([{ public_ok: true, version: 2 }]);
+    const sent = (await db.query("select settings -> 'reader_sent' as s from public.editions where id = $1", [ed])).rows[0].s;
+    expect(sent).toEqual({ at: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/), by: adminId });
+    expect((await db.query("select kind, detail from public.activity where entity = 'speakers' and entity_id = $1 and kind = 'photo'", [s3])).rows).toEqual([
+      { kind: "photo", detail: { set: true } },
+    ]);
+    // the new commands are there, each once; register_source_file has its one new signature
+    const count = async (fn: string) => (await db.query("select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1", [fn])).rows[0].n;
+    for (const fn of ["set_reader_sent", "set_speaker_photo", "get_speaker_photo", "set_public_ok", "register_source_file", "schedule_view"]) {
+      expect(await count(fn), fn).toBe(1);
+    }
+    expect((await db.query("select pg_get_function_identity_arguments('public.register_source_file'::regproc) as a")).rows[0].a).toBe(
+      "p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer, p_kind text",
+    );
+  });
+
   it("keeps every other row it held, and seeds nothing — «נקודות לשיחה» stay the code's own text until edited", async () => {
-    expect((await db.query("select settings from public.editions where id = $1", [ed])).rows[0].settings).toEqual({ lesson_minutes: 75, row_minutes: 90, kk_window: kkWindow });
+    // (and «נשלח לדפוס», which v19 wrote between the two runs)
+    expect((await db.query("select settings from public.editions where id = $1", [ed])).rows[0].settings).toEqual({
+      lesson_minutes: 75, row_minutes: 90, kk_window: kkWindow, reader_sent: { at: expect.any(String), by: adminId },
+    });
     expect((await db.query("select count(*)::int as n from public.roster where edition_id = $1", [ed])).rows[0].n).toBe(1);
     expect((await db.query("select kind, title from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ kind: "memorial", title: "זמן זיכרון" }]);
     expect((await db.query("select display_name, fallen_id from public.source_files")).rows).toEqual([{ display_name: "שער.pdf", fallen_id: null }]);
@@ -352,6 +425,10 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect(a).toContain("con transport_details transport_details_pickup_min_check CHECK (((pickup_min >= 0) AND (pickup_min <= 1830)))");
     expect(a).toContain("pol public.day_owners day_owners_read PERMISSIVE authenticated SELECT app.can_see_edition(edition_id) ");
     expect(a).not.toContain("pub day_owners");
+    // v19: the photos' table, read by every member and never published; the old type check replaced, not doubled
+    expect(a).toContain("pol public.speaker_photos speaker_photos_read PERMISSIVE authenticated SELECT ( SELECT app.is_member() AS is_member) ");
+    expect(a).not.toContain("pub speaker_photos");
+    expect(a.filter((x) => x.startsWith("con source_files source_files_mime_check "))).toHaveLength(1);
     expect(a.filter((x) => !b.includes(x))).toEqual([]);
     expect(b.filter((x) => !a.includes(x))).toEqual([]);
   });

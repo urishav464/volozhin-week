@@ -5,6 +5,7 @@ import { CommandError } from "./commands";
 import {
   cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter, cleanMinPeople,
   cleanNeed, cleanNote, cleanPrepText, cleanShift, cleanShifts, cleanStaffKind, cleanStaffName, cleanStaffTimes, cleanStaffWho, LAST_YEAR_DUTIES, parsePrepList, ROTA_LIMITS,
+  cleanFlag, cleanPrepKind, cleanPrepRows, cleanQty, parsePrepItems, prepKindOf,
 } from "./rota";
 
 const code = (f: () => unknown) => {
@@ -179,5 +180,60 @@ describe("the shifts' setting", () => {
     expect(code(() => cleanShifts({ cuts: [840, 1320], labels: ["בוקר", " ", "לילה"] }))).toBe("name_required");
     expect(code(() => cleanShifts({ cuts: [840, 1320], labels: ["בוקר", "א".repeat(21), "לילה"] }))).toBe("bad_value");
     expect(code(() => cleanShifts({ cuts: [840, 1320], labels: ["בוקר", "טל' 1234567", "לילה"] }))).toBe("rota_contact_in_text");
+  });
+});
+
+describe("v19: a cohort's two flags, and Saturday night's two lists", () => {
+  it("a flag is a boolean — null and anything else are bad_value (the columns are NOT NULL)", () => {
+    expect(cleanFlag(true)).toBe(true);
+    expect(cleanFlag(false)).toBe(false);
+    for (const v of [null, undefined, "true", 1, 0]) expect(code(() => cleanFlag(v)), String(v)).toBe("bad_value");
+  });
+
+  it("a row's kind: a task or an item; as stored, an absent kind is a task", () => {
+    expect(cleanPrepKind("task")).toBe("task");
+    expect(cleanPrepKind("item")).toBe("item");
+    for (const v of [null, undefined, "", "Item", "thing"]) expect(code(() => cleanPrepKind(v)), String(v)).toBe("bad_value");
+    expect(prepKindOf({})).toBe("task");
+    expect(prepKindOf({ kind: "item" })).toBe("item");
+  });
+
+  it("a quantity: one line of up to 40, no contact; blank → null", () => {
+    expect(ROTA_LIMITS.qty).toBe(40);
+    expect(cleanQty("  2   (לדוגמה) ")).toBe("2 (לדוגמה)");
+    expect(cleanQty("  ")).toBeNull();
+    expect(cleanQty(null)).toBeNull();
+    expect(cleanQty("א".repeat(40))).toBe("א".repeat(40));
+    expect(code(() => cleanQty("א".repeat(41)))).toBe("bad_value");
+    expect(code(() => cleanQty("טל' 1234567"))).toBe("rota_contact_in_text");
+  });
+
+  it("the rows of one insert, each in the guard's order — the text, the kind, the quantity; a task's quantity is null whatever was sent", () => {
+    expect(cleanPrepRows([" פריט לדוגמה ", { text: "פריט לדוגמה 2", qty: " 3 " }], "item")).toEqual([
+      { text: "פריט לדוגמה", kind: "item", qty: null },
+      { text: "פריט לדוגמה 2", kind: "item", qty: "3" },
+    ]);
+    // a task keeps no quantity, but a phone sent in one refuses all the same (≡ the guard)
+    expect(cleanPrepRows([{ text: "משימה לדוגמה", qty: " 3 " }], "task")).toEqual([{ text: "משימה לדוגמה", kind: "task", qty: null }]);
+    expect(code(() => cleanPrepRows([{ text: "משימה לדוגמה", qty: "טל' 1234567" }], "task"))).toBe("rota_contact_in_text");
+    expect(code(() => cleanPrepRows([{ text: "  " }], "thing"))).toBe("name_required"); // the text first
+    expect(code(() => cleanPrepRows([{ text: "פריט" }], "thing"))).toBe("bad_value");
+    expect(code(() => cleanPrepRows([{ text: "פריט", qty: "טל' 1234567" }], "item"))).toBe("rota_contact_in_text");
+    expect(cleanPrepRows([], "item")).toEqual([]);
+  });
+
+  it("a pasted shopping list: the numbering off as in a task list, then the quantity after the first tab (a spreadsheet's second column)", () => {
+    expect(parsePrepItems("1. פריט לדוגמה\t2 (לדוגמה)\r\n2) פריט בלי כמות\n\n3\tפריט ממספור של גיליון\t5\nפריט\t  \n")).toEqual([
+      { text: "פריט לדוגמה", qty: "2 (לדוגמה)" },
+      { text: "פריט בלי כמות", qty: null },
+      { text: "פריט ממספור של גיליון", qty: "5" },
+      { text: "פריט", qty: null },
+    ]);
+    // a number that is the item's own stays; so does a second tab's text, in the quantity
+    expect(parsePrepItems("40 כוסות\t2 שקיות\tהערה")).toEqual([{ text: "40 כוסות", qty: "2 שקיות הערה" }]);
+    expect(parsePrepItems("\n \n")).toEqual([]);
+    expect(code(() => parsePrepItems("פריט\tטל' 1234567"))).toBe("rota_contact_in_text");
+    expect(code(() => parsePrepItems(`פריט\t${"א".repeat(41)}`))).toBe("bad_value");
+    expect(code(() => parsePrepItems(Array.from({ length: 201 }, (_, i) => `פריט ${i}`).join("\n")))).toBe("bad_value");
   });
 });

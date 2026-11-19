@@ -19,11 +19,23 @@ export interface SpeakerFields {
   gender: Gender | null;
   affiliation: string | null;
   bio_short: string | null;
+  /** v19: the guests' schedule's description (≤ 600, no phone or e-mail: contact_in_text). Kept with the speaker across years. */
+  public_bio: string | null;
   topics: string[];
   contact_pref: ContactPref | null;
 }
 
 export type NewSpeaker = Partial<SpeakerFields> & { name: string };
+
+/**
+ * v19: a speaker's photo for the guests' schedule (public.get_speaker_photo) — a small JPEG (≤ 20KB, ≤ 512px, no
+ * metadata: src/domain/photo.ts `photoOk`), read one speaker at a time, never in a Week (which says only `has_photo`).
+ */
+export interface SpeakerPhoto {
+  /** Canonical base64, no newlines, no «data:» prefix. */
+  photo: string;
+  uploaded_at: string;
+}
 
 /** Only the keys present change. `retired` is a global admin's. */
 export type SpeakerPatch = Partial<SpeakerFields & { retired: boolean }>;
@@ -138,4 +150,18 @@ export interface SpeakerPort {
    * null = no mark). The same people as setSlotAvailability. Returns how many slots were marked; logged once.
    */
   setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest?: SlotKind | null): Promise<number>;
+
+  // ------------------------------------------------ v19: the guests' schedule
+  /** The speaker's photo (public.get_speaker_photo, under the table's policy: any member); null when none. */
+  photo(speakerId: number): Promise<SpeakerPhoto | null>;
+  /**
+   * public.set_speaker_photo: whoever may edit the speaker (mayEditSpeaker) in this edition. `photo` is base64 of a
+   * JPEG that already passes photoOk (anything else → bad_file); null removes it. Logged without the bytes.
+   */
+  setPhoto(editionId: number, speakerId: number, photo: string | null): Promise<void>;
+  /**
+   * public.set_public_ok: the approach's handler or an edition admin shows (or stops showing) the speaker on THIS
+   * edition's guests' schedule; `version` from the Week (stale otherwise). Taking it back hides them at once.
+   */
+  setPublicOk(editionId: number, approachId: number, version: number, ok: boolean): Promise<void>;
 }

@@ -12,6 +12,7 @@ import {
   type EditionPatch, type EscortedLesson, type MemberPatch, type MemberRow, type NewEdition, type NewMember, type PurgeReport, type RosterEntry, type SettingsPort, type StartPreview, resort,
 } from "./settings";
 import type { Note } from "./knowledge";
+import { prepKindOf } from "./rota";
 import { TEMPLATE_2026 } from "../domain/template2026";
 
 const fail = (code: string): never => {
@@ -131,7 +132,8 @@ export class DemoSettings implements SettingsPort {
         rota.duties.push({ ...fields, id: nextId(rota.duties), edition_id: edition.id });
       }
       for (const t of rota.prep.filter((x) => x.edition_id === prevEdition.id).sort((a, b) => a.sort - b.sort || a.id - b.id)) {
-        rota.prep.push({ id: nextId(rota.prep), edition_id: edition.id, text: t.text, group_id: null, done: false, sort: t.sort });
+        // v19: a task stays a task, an item an item with its quantity — «בוצע»/«נקנה» start over
+        rota.prep.push({ id: nextId(rota.prep), edition_id: edition.id, text: t.text, group_id: null, done: false, sort: t.sort, kind: prepKindOf(t), qty: t.qty ?? null });
       }
     }
     // v8: and its milestones — titles and W−n, none of them done
@@ -257,6 +259,8 @@ export class DemoSettings implements SettingsPort {
           w.speakers.some((s) => s.vetted_by === id) ||
           w.sourceFiles.some((f) => f.uploaded_by === id),
       ) ||
+      // v19: a speaker's photo remembers who uploaded it (speaker_photos.uploaded_by)
+      Object.values(this.s.shared.photos ?? {}).some((p) => p.uploaded_by === id) ||
       this.s.authored(id);
     if (used) fail("member_has_history");
     this.s.members = this.s.members.filter((x) => x.id !== id);

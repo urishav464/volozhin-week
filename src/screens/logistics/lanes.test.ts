@@ -8,7 +8,7 @@ import type { RotaCohort, RotaStaffShift } from "../../data/rota";
 import type { Day } from "../../domain/time";
 import { type Approach, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Speaker, type Week } from "../../domain/types";
 import {
-  AXIS, AXIS_TICKS, axisPercent, boardCounts, boardDayParam, boardPickupMin, defaultBoardDay, driverPatch, lanesPerDay, onBoard, outboundOf, pickupText, teachEndOf,
+  AXIS, AXIS_TICKS, axisPercent, boardCounts, boardDayParam, boardPickupMin, defaultBoardDay, driveCohorts, driverPatch, lanesPerDay, onBoard, outboundOf, pickupText, teachEndOf,
   transportLanes,
 } from "./lanes";
 
@@ -71,9 +71,9 @@ describe("which lessons get a lane", () => {
 
   it("a day with nothing: no lanes, no shifts — with or without a read and a rota", () => {
     const w = weekOf([lesson(1)]);
-    expect(transportLanes(w, null, null, 4)).toEqual({ day: 4, transports: [], shifts: [] });
-    expect(transportLanes(w, [transport(1)], { staff: [shift(1, 0, 510, 870)], cohorts: [] }, 4)).toEqual({ day: 4, transports: [], shifts: [] });
-    expect(transportLanes(weekOf([]), [], { staff: [], cohorts: [] }, 0)).toEqual({ day: 0, transports: [], shifts: [] });
+    expect(transportLanes(w, null, null, 4)).toEqual({ day: 4, transports: [], shifts: [], drivers: [] });
+    expect(transportLanes(w, [transport(1)], { staff: [shift(1, 0, 510, 870)], cohorts: [], presence: [] }, 4)).toEqual({ day: 4, transports: [], shifts: [], drivers: [] });
+    expect(transportLanes(weekOf([]), [], { staff: [], cohorts: [], presence: [] }, 0)).toEqual({ day: 0, transports: [], shifts: [], drivers: [] });
   });
 
   it("names the speakers (lead first), the title (TBD when none) and the handler — the lead speaker's approach's owner", () => {
@@ -227,7 +227,7 @@ describe("the staff shifts of the day", () => {
   ];
 
   it("by start then id; a team member by the team's name, a typed name as typed, a cohort's whole staff; leads marked", () => {
-    const shifts = transportLanes(weekOf([]), null, { staff, cohorts }, 0).shifts;
+    const shifts = transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 0).shifts;
     expect(shifts.map((s) => [s.shift.id, s.who, s.lead])).toEqual([
       [2, "לוגיסטיקה לדוגמה", true],
       [3, "צוות מכינה לדוגמה נ", false],
@@ -236,13 +236,62 @@ describe("the staff shifts of the day", () => {
       [4, "TBD", false], // a cohort that is gone
     ]);
     expect(shifts.find((s) => s.shift.id === 1)!.shift.note).toBe("הקפצת מרצה (לדוגמה)");
-    expect(transportLanes(weekOf([]), null, { staff, cohorts }, 1).shifts.map((s) => s.who)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
+    expect(transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 1).shifts.map((s) => s.who)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
   });
 
-  it("no rota yet (loading, or the read failed): no shift lanes, the transports still drawn", () => {
+  it("no rota yet (loading, or the read failed): no shift lanes, no cohorts that drive, the transports still drawn", () => {
     const d = transportLanes(weekOf([lesson(1)]), null, null, 0);
     expect(d.shifts).toEqual([]);
+    expect(d.drivers).toEqual([]);
     expect(d.transports).toHaveLength(1);
+  });
+});
+
+describe("the cohorts whose staff can drive (v19), beside the shifts", () => {
+  const cohort = (id: number, letter: string, sort: number, extra: Partial<RotaCohort> = {}): RotaCohort => ({
+    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, diets: [], sort, ...extra,
+  });
+  const cohorts = [
+    cohort(1, "א", 1, { can_drive: true }),
+    cohort(2, "ב", 2, { can_drive: true, helps_rota: false }), // not helping the rota: still drives
+    cohort(3, "ג", 3), // can_drive absent = no
+    cohort(4, "ד", 2, { can_drive: true }),
+    cohort(5, "ה", 5, { can_drive: false }),
+  ];
+  const presence = [
+    { cohort_id: 4, day: 0 as Day, shift: 2 as const },
+    { cohort_id: 2, day: 0 as Day, shift: 0 as const },
+    { cohort_id: 2, day: 0 as Day, shift: 1 as const },
+    { cohort_id: 3, day: 0 as Day, shift: 0 as const },
+    { cohort_id: 1, day: 1 as Day, shift: 0 as const },
+  ];
+
+  it("only those marked «הצוות שלה יכול להסיע»; on campus that day (any shift) first, then by sort, letter and id", () => {
+    const d = transportLanes(weekOf([]), null, { staff: [], cohorts, presence }, 0).drivers;
+    expect(d.map((x) => [x.cohort.letter, x.present])).toEqual([
+      ["ב", true],
+      ["ד", true],
+      ["א", false],
+    ]);
+    expect(driveCohorts({ cohorts, presence }, 1).map((x) => [x.cohort.letter, x.present])).toEqual([
+      ["א", true],
+      ["ב", false],
+      ["ד", false],
+    ]);
+    // no presence marked anywhere: none is on campus, never assumed
+    expect(driveCohorts({ cohorts, presence: [] }, 0).map((x) => [x.cohort.id, x.present])).toEqual([
+      [1, false],
+      [2, false],
+      [4, false],
+    ]);
+  });
+
+  it("names only: the cohort as loaded (load_rota has no phone), nothing when none can drive", () => {
+    const [first] = driveCohorts({ cohorts, presence }, 0);
+    expect(Object.keys(first).sort()).toEqual(["cohort", "present"]);
+    expect(first.cohort.name).toBe("מכינה לדוגמה ב");
+    expect(driveCohorts({ cohorts: [cohort(9, "ט", 1)], presence: [] }, 0)).toEqual([]);
+    expect(driveCohorts(null, 0)).toEqual([]);
   });
 });
 

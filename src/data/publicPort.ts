@@ -79,10 +79,46 @@ export interface KkForm {
   groups: KkFormGroup[];
 }
 
+/**
+ * v19: a speaker the guests' schedule may show — only one whose approach in the link's edition has `public_ok`; each
+ * once, in the order they first appear (src/exports/publicSchedule.ts ≡ public.schedule_view).
+ */
+export interface PublicPerson {
+  /** The name as printed (title and name). */
+  label: string;
+  /** speakers.public_bio. */
+  bio: string | null;
+  /** «data:image/jpeg;base64,…», or null (no photo). */
+  photo: string | null;
+}
+
+/**
+ * v19: one row of the guests' schedule — the ten keys the designer's export has (ScheduleEntry, unchanged) and the
+ * lesson's `public_note` (null for a memorial time) and the indexes of its speakers in `people` (a memorial time: []).
+ * schedule_view and publicSchedule always send both.
+ */
+export type PublicScheduleRow = ScheduleEntry & { note: string | null; people: number[] };
+
+/** v19: a fixed row of the grid (a meal, a prayer, «מכריכה לכריכה») on one day — its label and times, no people. */
+export interface FixedRow {
+  day: Day;
+  start_min: number;
+  end_min: number;
+  label: string;
+}
+
+/** What schedule_view answers since v19, every key present — publicSchedule's (src/exports/publicSchedule.ts) too. */
 export interface ScheduleView {
   edition: { label: string; start_date: string | null };
-  rows: ScheduleEntry[];
+  rows: PublicScheduleRow[];
+  /** The speakers approved to appear (public_ok), each once, by first appearance. */
+  people: PublicPerson[];
+  /** By day, then start. */
+  fixed: FixedRow[];
 }
+
+/** publicSchedule's answer (src/exports/publicSchedule.ts): schedule_view's own shape, every key present. */
+export type GuestSchedule = ScheduleView;
 
 export interface PublicPort {
   readonly mode: "demo" | "live";

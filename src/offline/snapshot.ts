@@ -63,7 +63,9 @@ void everyKeyListed;
  * `note` (a chip's «לא בבקרים») shares its name — the family's note never travels without its `contact_name` and
  * `relation`. And (v16) a group head's phone, `head_phone` (rota_group_contacts: never in load_rota, a Week or the copy).
  * And (v18) `pickup_min`, the pickup time of a transport request as minutes of the day (transport_details: it travels
- * with the transports read alone, never in a Week, Realtime or the copy).
+ * with the transports read alone, never in a Week, Realtime or the copy). And (v19, defensively) a speaker's photo,
+ * `image` (speaker_photos' column) and `photo` (get_speaker_photo's key): read one speaker at a time — the Week says
+ * only `has_photo`.
  */
 export type PersonalKey =
   | keyof SpeakerContacts
@@ -72,7 +74,9 @@ export type PersonalKey =
   | Exclude<keyof RotaContact, "group_id">
   | "address"
   | "import_note"
-  | "pickup_min";
+  | "pickup_min"
+  | "image"
+  | "photo";
 export const PERSONAL_KEYS = [
   "phone",
   "email",
@@ -89,6 +93,8 @@ export const PERSONAL_KEYS = [
   "import_note",
   "head_phone",
   "pickup_min",
+  "image",
+  "photo",
 ] as const satisfies readonly PersonalKey[];
 type MissedPersonal = Exclude<PersonalKey, (typeof PERSONAL_KEYS)[number]>;
 const everyPersonalKeyListed: [MissedPersonal] extends [never] ? true : MissedPersonal = true;

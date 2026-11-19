@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { personaOf } from "../data/gate";
 import type { Me } from "../data/types";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
-import { afterRedirect, mineRedirect, myDayRedirect, navFor } from "./nav";
+import { afterRedirect, dayRedirect, homeRedirect, LOGISTICS_HOME, mineRedirect, myDayRedirect, navFor } from "./nav";
+import { backLink } from "./ReadOnlyWeek";
+import { sectionActive } from "./Shell";
 
 const base: Me = { status: "ok", schema_version: 18, email: "a@example.org", display_name: "א", global_admin: false, memberships: [] };
 const me = (patch: Partial<Me>): Me => ({ ...base, ...patch });
@@ -59,9 +61,39 @@ describe("navFor (the reset, phases 2–3)", () => {
 
   it("an edition's admin: the same staff sections; logistics: no «ימים», «מרצים» or «הגדרות», but «אישורים»", () => {
     expect(paths(editionAdmin)).toEqual(["/", "/day", "/speakers", "/approvals", "/logistics", "/tracking", "/memorial", "/kk", "/knowledge", "/settings", "/help"]);
-    expect(paths(logistics)).toEqual(["/", "/approvals", "/logistics", "/tracking", "/memorial", "/kk", "/knowledge", "/help"]);
+    expect(paths(logistics)).toEqual(["/logistics", "/approvals", "/week", "/tracking", "/memorial", "/kk", "/knowledge", "/help"]);
     // «אחרי השבוע» is never logistics'
     expect(paths(logistics, 1, waiting(), "2030-01-01T10:00:00Z")).not.toContain("/after");
+  });
+
+  it("logistics (phase 4): «בית» their home, «אישורים», «השבוע» to read, then the sections every member reads — no grid, no «לוגיסטיקה»", () => {
+    const items = navFor(logistics, "logistics", null);
+    expect(items.map((i) => [i.to, i.label])).toEqual([
+      ["/logistics", "בית"],
+      ["/approvals", "אישורים"],
+      ["/week", "השבוע"],
+      ["/tracking", "תוצרים"],
+      ["/memorial", "זמני זיכרון"],
+      ["/kk", "מכריכה לכריכה"],
+      ["/knowledge", "ידע"],
+      ["/help", "עזרה"],
+    ]);
+    expect(items.map((i) => i.to)).not.toContain("/");
+    expect(items.map((i) => i.label)).not.toContain("לוגיסטיקה");
+    expect(items.map((i) => i.to)).not.toContain("/settings");
+    // «בית» stays lit on every tab of the home, and on nothing else
+    const home = items[0];
+    for (const p of ["/logistics", "/logistics/transports", "/logistics/rota/prep", "/logistics/books"]) expect(sectionActive(home, p)).toBe(true);
+    for (const p of ["/", "/week", "/approvals", "/logisticsx", "/reader"]) expect(sectionActive(home, p)).toBe(false);
+    // the badge counts what logistics may decide here
+    expect(navFor(logistics, "logistics", waiting())[1]).toMatchObject({ to: "/approvals", badge: 1, badgeLabel: "ממתין" });
+  });
+
+  it("staff keep phase 3's header, «לוגיסטיקה» leading to the same home", () => {
+    const items = navFor(editionAdmin, "staff", null);
+    expect(items.find((i) => i.label === "לוגיסטיקה")).toMatchObject({ to: LOGISTICS_HOME });
+    expect(items.map((i) => i.label)).not.toContain("בית");
+    expect(LOGISTICS_HOME).toBe("/logistics");
   });
 
   it("the badge per viewer: a global admin the vetting and the requests; an edition's admin and logistics the requests of a live real edition", () => {
@@ -83,16 +115,44 @@ describe("navFor (the reset, phases 2–3)", () => {
 });
 
 describe("the addresses that are another persona's (App.tsx's routes)", () => {
+  it("logistics' `/` is their home; a trainee's and staff's `/` their own page", () => {
+    expect(homeRedirect("logistics")).toBe("/logistics");
+    expect(homeRedirect("trainee")).toBeNull();
+    expect(homeRedirect("staff")).toBeNull();
+    expect(homeRedirect(null)).toBeNull();
+  });
+
   it("/myday is a trainee's: staff go to «ימים», logistics home", () => {
     expect(myDayRedirect("trainee")).toBeNull();
     expect(myDayRedirect("staff")).toBe("/day");
-    expect(myDayRedirect("logistics")).toBe("/");
+    expect(myDayRedirect("logistics")).toBe("/logistics");
+    expect(myDayRedirect(null)).toBeNull();
   });
 
-  it("«אחרי השבוע» is content's and admins', never logistics'", () => {
+  it("the day pages (/day/:d) are staff's: logistics home (a trainee is sent by the page itself)", () => {
+    expect(dayRedirect("logistics")).toBe("/logistics");
+    expect(dayRedirect("staff")).toBeNull();
+    expect(dayRedirect("trainee")).toBeNull();
+  });
+
+  it("«אחרי השבוע» is content's and admins', never logistics' — home", () => {
     expect(afterRedirect("trainee")).toBeNull();
     expect(afterRedirect("staff")).toBeNull();
-    expect(afterRedirect("logistics")).toBe("/");
+    expect(afterRedirect("logistics")).toBe("/logistics");
+  });
+
+  it("«השבוע» (/week) links back: a trainee «להיום שלי», logistics «לבית» (their home), staff «לרשת השבוע»", () => {
+    expect(backLink("trainee")).toEqual({ to: "/", label: "להיום שלי" });
+    expect(backLink("logistics")).toEqual({ to: "/logistics", label: "לבית" });
+    expect(backLink("staff")).toEqual({ to: "/", label: "לרשת השבוע" });
+  });
+
+  it("every redirect lands logistics on an address of their own header: `/logistics` itself, never `/`", () => {
+    const ours = navFor(logistics, "logistics", null);
+    for (const to of [homeRedirect("logistics"), myDayRedirect("logistics"), dayRedirect("logistics"), afterRedirect("logistics")]) {
+      expect(to).toBe("/logistics");
+      expect(ours.some((i) => sectionActive(i, to!))).toBe(true);
+    }
   });
 
   it("«המרצים שלי» is gone: /mine to «מרצים» at «שלי», /mine/team at «כל הצוות»", () => {

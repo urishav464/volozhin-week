@@ -3,6 +3,7 @@
 // must be identical.
 import { addDays, israelDate } from "../../src/domain/israelTime";
 import { EDITION, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, type ImportLessonStep, type ImportSpeakerStep, type Step } from "./fixture";
+import { V19 } from "./scenariosV19";
 
 // Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
 const NOW = Date.now();
@@ -1849,4 +1850,6 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "A", seen: 1, is: "ok" },
     { as: "A", ranges: "בטא", days: [1], list: [{ day: 1, start: 510, end: 600, kind: "can" }], is: "marked=1" },
   ],
+
+  ...V19,
 };

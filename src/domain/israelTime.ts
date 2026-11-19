@@ -72,3 +72,15 @@ export function israelMoment(iso: string): string {
   const [y, mo, d] = p.date.split("-").map(Number);
   return `${d}.${mo}.${y} ${p.hm}`;
 }
+
+/**
+ * How many calendar days in Israel from today to the week's first day (`start_date`): 0 on the day itself, 1 the day
+ * before, negative once it began — the logistics home's «קרוב לשבוע» line. Israel's date at `nowIso`, whatever the
+ * device's clock zone (the day turns at 00:00 Israel). null while the date is TBD (or not a date).
+ */
+export function daysToWeek(startDate: string | null | undefined, nowIso: string): number | null {
+  const m = startDate ? /^(\d{4})-(\d{2})-(\d{2})/.exec(startDate) : null;
+  if (!m) return null;
+  const [y, mo, d] = israelDate(nowIso).split("-").map(Number);
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(y, mo - 1, d)) / 86_400_000);
+}

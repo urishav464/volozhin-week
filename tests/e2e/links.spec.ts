@@ -14,7 +14,10 @@
 // publishable key alone — never a session, even with a member signed in in the
 // same browser — call only the six anon functions, the token in the body and
 // never in a URL; a refusal from the server is the one page; «קישורים» and /kk
-// go out by the contract with the member's token. Synthetic data only.
+// go out by the contract with the member's token. v19 (the reset, phase 4): schedule_view's answer carries a row's
+// note and people, the approved speakers and the grid's fixed rows — the page draws exactly what it drew from an
+// answer without them (the guests' site is phase 5's); /kk's book order says «הצעה: N», and «למלא» fills the field
+// only — set_book_order goes out on «שמירה». Synthetic data only.
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { KkData } from "../../src/data/kk";
@@ -456,7 +459,18 @@ test.describe("demo build", () => {
     const books = b.getByRole("form", { name: "ספרים · ספר לדוגמה ב׳" });
     await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("");
     await expect(books).toContainText("נרשמו 1 · מעבירים 1");
+    // v19: «הצעה» — a copy for each who signed up and each who leads; «למלא» only puts it in the field: nothing saved
+    await expect(books.locator("[data-copies-suggestion]")).toHaveText("הצעה: 2");
+    const fill = books.getByRole("button", { name: "למלא את ההצעה: 2 עותקים" });
+    await fill.click();
+    await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("2");
+    await expect(fill).toBeDisabled(); // the field holds the suggestion now
+    await expect(fill).toBeFocused(); // and the keyboard is where it was
+    await expect(books.getByRole("button", { name: "שמירה" })).toBeEnabled(); // something to save: not saved yet
+    await expect(toast(page, "הזמנת הספרים נשמרה")).toHaveCount(0);
+    await expect(b.getByText("ספרים: עוד לא נקבע כמה להזמין")).toBeVisible();
     await books.getByLabel("עותקים להזמנה").fill("3");
+    await expect(fill).toBeEnabled();
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();
     const saveBooks = books.getByRole("button", { name: "שמירה" });
     await saveBooks.press("Enter");
@@ -578,6 +592,18 @@ test.describe("demo build", () => {
     await page.emulateMedia({ media: "screen" });
   });
 
+  test("v19's guest words stay off the schedule link in phase 4: a speaker approved for the guests, with a description and a photo, reads as before", async ({ page }) => {
+    // `?as=logistics` is the demo whose Sunday 08:30 speaker is approved (public_ok) with «תיאור לדוגמה» and a photo
+    // (src/data/demoWeek.ts seedDemoLogistics): schedule_view carries them; the page draws the ten keys alone
+    await page.goto(`${demoUrl()}/s?as=logistics#${SEEDED.schedule}`);
+    await expect(page.getByRole("heading", { name: 'לו"ז שבוע וולוז\'ין הדגמה' })).toBeVisible();
+    await expect(page.locator("[data-schedule-row]")).toHaveCount(scheduleEntries(demoWeek()).length);
+    const html = await page.locator("main").innerHTML();
+    for (const secret of ["תיאור לדוגמה", "data:image", "base64"]) expect(html).not.toContain(secret);
+    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0); // (the seal is the page's own picture)
+    await noSidewaysScroll(page);
+  });
+
   test("the ticks reach the team: the escorts' list and the lesson panel", async ({ page }, info) => {
     await page.goto(`${demoUrl()}/print/escorts`);
     const a = page.getByRole("region", { name: "מלווה לדוגמה א׳" });
@@ -652,12 +678,25 @@ test.describe("mock build", () => {
   };
   /** «30.10.2026», as the page writes a date (before the Hebrew date beside it). */
   const dmy = (iso: string) => iso.split("-").reverse().map(Number).join(".");
+  // v19's answer: a row's `note` and `people`, the approved speakers (their public words and photo) and the grid's fixed
+  // rows — the guests' site is phase 5's: until then the page draws exactly what it drew before (GUEST_ONLY: none of it)
+  const GUEST_ONLY = { bio: "תיאור לאורחים לדוגמה", note: "הערה לאורחים לדוגמה", fixed: "ארוחת בוקר (לדוגמה)", photo: "data:image/jpeg;base64,/9j/AAAA" };
   const scheduleView: ScheduleView = {
     edition,
     rows: [
-      { kind: "lesson", day: 0, date: start, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false },
-      { kind: "memorial", day: 0, date: start, start_min: 780, end_min: 795, speaker: "", title: null, category: "", room: "חדר לדוגמה", parallel: false },
+      { kind: "lesson", day: 0, date: start, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false, note: GUEST_ONLY.note, people: [0] },
+      { kind: "memorial", day: 0, date: start, start_min: 780, end_min: 795, speaker: "", title: null, category: "", room: "חדר לדוגמה", parallel: false, note: null, people: [] },
     ],
+    people: [{ label: "ד״ר מרצה לדוגמה", bio: GUEST_ONLY.bio, photo: GUEST_ONLY.photo }],
+    fixed: [
+      { day: 0, start_min: 420, end_min: 480, label: GUEST_ONLY.fixed },
+      { day: 2, start_min: 420, end_min: 480, label: GUEST_ONLY.fixed }, // a day with a fixed row only
+    ],
+  };
+  /** The same schedule as schedule_view answered it before v19: the ten keys of a row, nothing else. */
+  const scheduleBefore19 = {
+    edition,
+    rows: scheduleView.rows.map(({ note: _note, people: _people, ...row }) => row),
   };
   const ANON = ["escort_view", "escort_tick", "escort_pickup", "kk_form", "kk_signup", "schedule_view"].map((f) => `/rest/v1/rpc/${f}`);
 
@@ -733,11 +772,22 @@ test.describe("mock build", () => {
     await expect(page.getByRole("status", { name: "הבקשה נשלחה" })).toContainText("מה ששלחת: חניך/ה לדוגמה ב׳ — ספר לדוגמה");
     expect(sb.rpc.get("kk_signup")).toEqual([{ p_token: TOKEN, p_roster: 12, p_group: 21 }]);
 
-    // the schedule
+    // the schedule: v19's answer drawn exactly as the same answer before v19 — no bio, note, photo or fixed row, no day
+    // that only a fixed row has
     await page.goto(`${mockUrl()}/s#${TOKEN}`);
     await expect(page.locator("[data-schedule-row]")).toHaveCount(2);
     await expect(page.locator("[data-schedule-row]").nth(1)).toContainText("זמן זיכרון");
     expect(sb.rpc.get("schedule_view")).toEqual([{ p_token: TOKEN }]);
+    const drawn = await page.locator("main").innerHTML();
+    for (const v of Object.values(GUEST_ONLY)) expect(drawn).not.toContain(v);
+    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "יום שלישי" })).toHaveCount(0);
+    sb.answers.set("schedule_view", scheduleBefore19);
+    await page.goto("about:blank"); // a fresh load (the same address but its hash would stay on the page)
+    await page.goto(`${mockUrl()}/s#${TOKEN}`);
+    await expect(page.locator("[data-schedule-row]")).toHaveCount(2);
+    expect(await page.locator("main").innerHTML()).toBe(drawn);
+    expect(sb.rpc.get("schedule_view")).toEqual([{ p_token: TOKEN }, { p_token: TOKEN }]);
 
     anonOnly(sb); // no whoami, no /auth/v1, no table, no session
   });
@@ -918,6 +968,11 @@ test.describe("mock build", () => {
     ]);
     await g.getByText(/^ספרים:/).click();
     const books = g.getByRole("form", { name: "ספרים · ספר לדוגמה" });
+    // v19: «הצעה: 1» (one signed up, no leader) — «למלא» fills the field and sends nothing; only «שמירה» does
+    await expect(books.locator("[data-copies-suggestion]")).toHaveAttribute("data-copies-suggestion", "1");
+    await books.locator("[data-fill-copies]").click();
+    await expect(books.getByLabel("עותקים להזמנה")).toHaveValue("1");
+    expect(sb.rpc.get("set_book_order")).toBeUndefined();
     await books.getByLabel("עותקים להזמנה").fill("5");
     await books.getByRole("checkbox", { name: /^הוזמן/ }).check();
     await books.getByRole("button", { name: "שמירה" }).click();

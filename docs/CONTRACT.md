@@ -750,6 +750,8 @@ the facts of `scheduleEntries` (`src/exports/designer.ts`), from which the desig
 written. `speaker`: the names (title + name), the lead first then by speaker id, joined « · »;
 `category`, `room`: names or ""; `parallel`: a lesson-kind lesson overlapping another closed
 lesson-kind lesson of the day (by the slot). Never a contact, an amount or a note.
+**Since v19** the answer is `{edition, rows, people, fixed}`: each row adds `note` and `people`, beside the
+approved speakers and the grid's fixed rows — «v19», below.
 
 ## The escorts' ticks for the team
 
@@ -952,7 +954,8 @@ pages, a picture 1, null when the reader cannot print it — protected, damaged,
 says; Word null, never read), POSTs the bytes to `/storage/v1/object/sources/<path>` with the
 member's own access token (never a service key), then calls:
 
-`register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages)` — in this order:
+`register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages)` — in this order (since v19 a sixth
+argument, `p_kind`, and three checks after the type's — «v19», below):
 - the caller not a member of `p_edition` → `not_member`;
 - `p_path` not the convention for exactly this edition and this lesson (`cover` when `p_lesson` is
   null) → `bad_path`;
@@ -964,9 +967,9 @@ member's own access token (never a service key), then calls:
   (`bad_path`);
 - `app.source_refusal(p_path)` → its code;
 - no live object at `p_path`, or not uploaded by the caller (`owner_id` ≠ the JWT `sub`) → `no_file`;
-- the object's `metadata.mimetype` not one of the four or not matching the extension, or its
-  `metadata.size` missing or over 25 MB → `bad_file` — the size as Storage measured it; the type as the
-  uploader declared it (Storage held it to the four, never sniffing the bytes);
+- the object's `metadata.mimetype` not one of the four (v19: five, PowerPoint for a presentation) or not
+  matching the extension, or its `metadata.size` missing or over 25 MB → `bad_file` — the size as Storage
+  measured it; the type as the uploader declared it (Storage held it to the bucket's types, never sniffing the bytes);
 - `display_name` one line ≤ 200, required; `p_pages` null or 1–5000 → else `bad_value`. The browser
   sends the picked file's name shortened to fit before the bytes go up (`displayNameOf`: cut before
   the extension, which stays — «….pdf»), so a long name is never refused after the upload.
@@ -1099,7 +1102,7 @@ browser maps it; `bad_file cover_bad_file file_too_big` from the browser's own c
 
 | RPC | Parameters | Returns | Role |
 |---|---|---|---|
-| `register_source_file` | `p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer` | `jsonb` (the row) | authenticated |
+| `register_source_file` | `p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer` (v19: `, p_kind text default 'source'`) | `jsonb` (the row) | authenticated |
 | `remove_source_file` | `p_file bigint` | `void` | authenticated |
 | `set_reader_headers` | `p_edition bigint, p_left text, p_right text` | `void` | authenticated |
 | `set_reader_cover` | `p_edition bigint, p_file bigint` | `void` | authenticated |
@@ -2006,3 +2009,239 @@ fresh install.
 On both ports for phases 2–3, called by no screen yet: `WeekCommands.setDayOwners`, `markDaySeen`,
 `setTransportRequest`, `setTransportDriver` (`src/data/commands.ts`) and `port.speakers.setAvailabilityRanges`
 (`src/data/speakers.ts`).
+
+# v19 — the logistics home, and what the guests' site reads (the reset, phase 4; schema v19)
+
+The last schema run of the reset: phase 5 (the guests' site, the presentations page, the cleanup) needs no
+schema change, so everything it reads is here. The owner's decisions (19.11, DECISIONS «הריסט, שלב 4»): the guests'
+site stays behind the EXISTING schedule link — **no new anon function**, anon's reach stays `ping` and the six link
+functions; a speaker's photo is small and stored in the database (no Storage bucket), shown to a guest only through
+`schedule_view`, only while that edition's approach has `public_ok` — taken back, gone at once; the grid's fixed rows
+reach the guests (the label and times, no person); a lesson's note for guests is optional, ≤ 400.
+
+The same two implementations: `supabase/schema.sql` and `src/data/engine.ts` (behind `DemoPort`), held together by
+`tests/parity` (its six «v19» scenarios); the permissions per role and every refusal in order are
+`tests/sql/v19.test.ts`. **No new refusal code and no new role.** Checks run in the order written; the first failure
+wins.
+
+## The new columns (each `add column if not exists`, its check named by PostgreSQL)
+
+| column | type | default on every old row |
+|---|---|---|
+| `speakers.public_bio` | `text`, `char_length ≤ 600` | null |
+| `approaches.public_ok` | `boolean not null` | `false` |
+| `lessons.public_note` | `text`, `char_length ≤ 400` | null |
+| `source_files.kind` | `text not null`, `source` or `presentation` | `source` |
+| `rota_cohorts.helps_rota` | `boolean not null` | `true` |
+| `rota_cohorts.can_drive` | `boolean not null` | `false` |
+| `rota_prep_tasks.kind` | `text not null`, `task` or `item` | `task` |
+| `rota_prep_tasks.qty` | `text`, `char_length ≤ 40` | null |
+
+`source_files_mime_check` takes five types — PDF, PNG, JPEG, Word, PowerPoint
+(`application/vnd.openxmlformats-officedocument.presentationml.presentation`), written one way in the table and in
+the guarded block that replaces a v10–v18 check lacking PowerPoint (dropped and added again only then); beside it
+`source_files_pptx_kind`: `mime <> PPTX or kind = 'presentation'` — a PowerPoint file is only ever a presentation.
+
+## A speaker's photo — `speaker_photos`
+
+`speaker_photos(speaker_id primary key → speakers on delete cascade, image bytea not null, octet_length 100–20480,
+uploaded_by → members on delete set null, uploaded_at timestamptz not null default now())` — one per speaker, across
+years, like the speaker's row. RLS on, one policy, `speaker_photos_read`: SELECT for `authenticated` where
+`(select app.is_member())` (any member, as `speakers_read`). `authenticated` has SELECT only; anon nothing. **Never in
+Realtime** (the never-publish list) and never in `load_week` (which says `has_photo` alone), the offline copy, a log
+or a file. `app.member_has_history` counts `uploaded_by`; deleting a speaker deletes the photo.
+
+**`app.photo_ok(bytea)` ≡ `photoOk` (`src/domain/photo.ts`)**, immutable, run by no API role: 100–20480 bytes; SOI
+(`FFD8`); then marker segments, each `FF`, a marker and a two-byte length ≥ 2 that stays inside the file (no fill
+bytes) — only APP0 (length ≥ 7, starting `JFIF\0`), APP14, DQT, DHT, DRI and exactly one SOF0/SOF1 (length ≥ 8, height
+and width 1–512) — until one SOS, which needs that SOF; after the SOS segment every byte up to the last two is entropy
+data, where `FF` is followed only by `00` or a restart marker `D0`–`D7` (an `FF` right before the end fails); the last
+two bytes are EOI (`FFD9`), nothing after. Everything else is false — APP1–APP13 and APP15 (EXIF, XMP, ICC…), COM, a
+progressive or any other SOF, a second scan, bytes after the end. The browser re-encodes a picked picture on a canvas
+(≤ 512px, the quality stepped down to fit 20 KB), strips what is left (`src/reader/jpeg.ts`) and checks `photoOk`
+before it sends; the database checks again.
+
+### `setPhoto(edition, speaker, photo)` — `set_speaker_photo(p_edition bigint, p_speaker bigint, p_photo text)` → `void`
+
+Definer. In this order:
+1. editor of the edition (`app.require_editor`: `not_member` / `forbidden` for logistics / `archived` for a non-admin
+   of an archive or archived edition);
+2. the speaker, locked (`for update`); none → `stale`;
+3. `app.may_edit_speaker(edition, speaker, me)` — a global admin; in a real, live edition its admins and the
+   speaker's handler there — else `not_handler` (so a practice or demo week's team, and an archived edition's own
+   admin, set no photo);
+4. `p_photo` null: the row is deleted, and **only if there was one** logged `speakers · photo`, detail
+   `{"set": false}`. Done.
+5. `p_photo`: at most 27308 characters (20 KB as base64), a multiple of 4, `^[A-Za-z0-9+/]+={0,2}$` (no data: prefix,
+   no line break, no URL-safe letters), decoded by PostgreSQL's `decode(…, 'base64')` (padding bits that are not
+   zero are accepted: the bytes are the same), and `app.photo_ok` — any fault → `bad_file`.
+
+Then stored, replacing the old one (`uploaded_by` the caller's member id, `uploaded_at` now), and logged `speakers ·
+photo`, detail `{"set": true}` — every time, the same photo again included. The log never holds a byte of it. The
+speaker's own row and version are untouched.
+
+### `photo(speaker)` — `get_speaker_photo(p_speaker bigint)` → `jsonb`
+
+Invoker, `language sql`, STABLE: exactly `{photo, uploaded_at}` — `photo` the stored bytes as canonical base64 with
+no line breaks (`encode`'s are taken out), `uploaded_at` as `toISOString` writes it — or null: none stored, or not the
+caller's to see (the table's policy). One speaker at a time.
+
+## The approval to appear — `setPublicOk(edition, approach, version, ok)` — `set_public_ok(p_approach bigint, p_version integer, p_ok boolean)` → `void`
+
+Definer; `set_approach_status`'s rule. In this order:
+1. the approach, locked; none → `stale`;
+2. editor of its edition (`app.require_editor`);
+3. an admin of the edition, or the approach's owner — else `not_handler`;
+4. a MARK (`p_ok` true) needs the speaker-edit rule too, `app.may_edit_speaker` (a global admin, or in a real edition
+   that is not archived its admin or the speaker's handler there) — else `not_handler`. A practice or demo week, where
+   anyone may claim any pool speaker, would otherwise publish the photo and words the real edition stored, which nobody
+   asked the speaker for. Taking a mark back (`false`) needs no more than 3;
+5. `p_version` ≠ the approach's version → `stale`;
+6. `p_ok` null → `bad_value`.
+
+The same value as stored: nothing written, no version change, nothing logged. Else `public_ok := p_ok`, `version + 1`;
+the approaches trigger (`app.log_activity`) logs the update with its usual detail `{status, owner, speaker}` and, on an
+UPDATE that changed it, `public_ok` (the new value) — `timeline()` reads it as «אושר/אושרה להופיע באתר האורחים» /
+«הוסר/הוסרה מאתר האורחים», never as a note. In `load_week`'s approaches. `start_edition` copies no approach: every year
+starts with nobody approved. A practice week's link therefore shows nobody its own team marked (step 4) — only what
+a global admin chose to mark there.
+
+## A speaker's public words — `public_bio` through `create_speaker` / `update_speaker`
+
+`p_fields.public_bio` / `p_patch.public_bio`: `app.clean_block(…, 600)` (CRLF → LF, ASCII white space trimmed at both
+ends, empty → null, longer → `bad_value`), then `app.has_contact` → `contact_in_text` — checked right after
+`bio_short` (so a bad `bio_short` wins, and `public_bio` is checked before `topics`). In the changed-field list it
+follows `bio_short` (`{fields: […, "bio_short", "public_bio", …]}`); engine `SPEAKER_FIELDS` the same. Who, as every
+field of the record: `app.may_edit_speaker`. In `load_week`'s speakers, with `has_photo` (whether a photo is stored).
+
+## A lesson's note for guests — `public_note` through `update_lesson`
+
+`p_patch.public_note`, after the two `bad_shape` checks: `app.clean_block(p_patch ->> 'public_note', 400)` (the value
+as `->>` reads it — a number written out) → `bad_value`; then `app.has_contact` → `contact_in_text`. A patch without
+the key keeps the note. The rest of `update_lesson` is as it was: `cell_closed`, `require_editor`, `memorial_slot` (a
+memorial slot has no note), `stale`. Not a stage: `reopen_lesson` keeps it, like the title. In `load_week` with the
+lesson's row.
+
+## «נשלח לדפוס» — `setReaderSent(edition, sent)` — `set_reader_sent(p_edition bigint, p_sent boolean)` → `void`
+
+Definer. In this order:
+1. logistics or an admin of the edition (`app.require_logistics`, as `set_book_order`): no role there or no such
+   edition → `not_member`; a content member → `forbidden`; a non-admin of an archive or archived edition → `archived`;
+2. `p_sent` null → `bad_value` (so a content member's null is `forbidden`: the role first).
+
+`true`: `editions.settings.reader_sent := {at: now as toISOString writes it, by: the caller's member id}` — sending
+again re-stamps both. `false`: the key removed; when there is none, the row is not even written. Not logged. In
+`load_week` with the edition's settings. `start_edition` does not carry it. The browser's «נוספו N קבצים אחרי השליחה»
+is `filesAfterSent(week)` (`src/reader/model.ts`): the edition's non-presentation files uploaded after `at`.
+
+## Presentations — `source_files.kind`
+
+### `register_source_file(p_edition, p_lesson, p_path, p_display_name, p_pages, p_kind text default 'source')` → `jsonb` (the row)
+
+The five-argument signature is dropped (`drop function if exists`, its grant line replaced: a grant naming it would
+fail the whole run), so the name is one function and a five-argument call still resolves — to `p_kind` `source`. The
+order of «Sources and the reader» above, with the type check widened and three steps after it:
+- … `no_file`; the object's type not one of the **five** or not its extension's (`app.source_mime_ok`: PowerPoint is
+  `.pptx`), or its size → `bad_file`;
+- `p_kind` null or not `source` / `presentation` → `bad_value`;
+- a presentation on a memorial slot → `bad_value` (a slot's files are its fallen's, for the reader);
+- a PowerPoint file as a source → `bad_file`;
+- then the display name and the pages (`bad_value`), as before.
+
+A retry (a row already at the path) answers that row whatever `p_kind` says. A presentation: on a lesson its slides —
+any of the five types; it keeps the lesson's lead as `speaker_id`, exactly as a source does (so a reopen shows it «מהמרצה
+הקודם» too), and its `page_count` as for a source (a PDF's pages, a picture 1, else null); on the cover path the week's
+own («המצגת המלווה לשבוע»: the cover path is the edition's admins', as the poster — `app.source_refusal` is unchanged
+and refuses Word alone there, so the browser's `checkPicked` refuses a Word presentation on that path before the bytes
+go up, `bad_file`) — an EDITION-LEVEL presentation is exactly `lesson_id` null, `cover` false (and
+`speaker_id` / `fallen_id` null), whatever the edition's cover is. **A presentation never touches the lesson** —
+`sources_kind`, `in_reader`, `version` — **is never the reader's cover** (`cover` false; `set_reader_cover` refuses it,
+`bad_value`) **and is never in the reader** (`readerFilesOf`, `readerManifest`, `unreadForReader`, `printRows` skip
+it). The current speaker's «first file» counts sources only: a lesson whose first file was a presentation still goes
+`pending` → `sheet` and into the reader with its first source. In `load_week`'s `sourceFiles` with `kind`.
+
+The bucket: the guarded block that creates it inserts the five types, and on a bucket whose list lacks PowerPoint
+appends it (`allowed_mime_types || array[PPTX]`; a list someone cleared — null, every type — is left alone); the rest
+of the block is as it was (it never rewrites the size, it always makes the bucket private again). `app.source_path_re`
+≡ `SOURCE_PATH_RE` takes `.pptx`.
+
+## The cohorts' two flags, and Saturday night's shopping list («תורנויות»)
+
+- `rota_cohorts.helps_rota` («עוזרת בתורנויות»): off, the fair suggestion leaves its groups out, `unevenLoad` ignores
+  them, and an assignment made by hand to one is the warning `not_helping`; its presence still counts (the meals).
+  `can_drive` («הצוות שלה יכול להסיע»): the transport board lists such cohorts (names only), those on campus that day
+  first. The guard (`app.rota_cohorts_guard`), after `sort`: a null flag → `bad_value` (before the NOT NULL).
+  Column grants: INSERT and UPDATE of both.
+- `rota_prep_tasks.kind` (`task` / `item`) and `qty`: the guard (`app.rota_prep_guard`), after the text: `kind` null or
+  unknown → `bad_value`; then `qty` := `app.rota_no_contact(app.clean_line(qty, 40))` (`bad_value` /
+  `rota_contact_in_text`) WHATEVER the kind — a phone sent in a task's quantity refuses too — and a task's := null.
+  «נקנה» is `done`. Column grants: INSERT and UPDATE of both.
+  `addPrepTasks(edition, rows, kind)` is still ONE insert, its sort continuing the edition's last over both kinds.
+- `load_rota`: cohorts exactly `id edition_id letter name diets sort helps_rota can_drive`; prep exactly `id edition_id
+  text group_id done sort kind qty`.
+- `start_edition` copies each preparation's `kind` and `qty` (no group, not done); the dry run's counts are as they
+  were. The archive's `rota.json` is `format_version` 6.
+
+## `schedule_view(p_token)` → `jsonb` — the guests' schedule (v19)
+
+The same link and the same rules (`app.link_for`: `link_invalid` alike for every bad token, the rate limit). Exactly
+`{edition, rows, people, fixed}`:
+- `edition`: exactly `{label, start_date}`, as before;
+- `rows`: closed lessons and memorial slots (not cancelled) in grid order (day, start, the room's sort, id), each
+  exactly `kind day date start_min end_min speaker title category room parallel note people` — the ten keys as
+  before (`speaker` still every name, the lead first, then by speaker id, joined « · », whatever was approved), and
+  `note` (the lesson's `public_note`; a memorial slot's null) and `people` (indexes into `people`, in the lesson's
+  order — lead first, then speaker id; a memorial slot's `[]`);
+- `people`: exactly `[{label, bio, photo}]` — a speaker counts only when an approach exists with the link's
+  edition, that speaker and `public_ok`; each speaker once, by first appearance (the rows' order, then the lesson's;
+  a draft never counts); `label` = `app.speaker_label` (title + name), `bio` = `public_bio`, `photo` =
+  `data:image/jpeg;base64,` and the stored bytes (canonical, no line breaks), or null;
+- `fixed`: exactly `[{day, start_min, end_min, label}]` — the edition's `grid_rows` of kind `fixed` or `kk` (meals,
+  prayers, «מכריכה לכריכה»), one per day 0–4 in the row's `days` that the window lets through (`rowActive` ≡
+  `app.kk_rows`: not a Sunday row ending by `first_day_from`, not a Thursday row starting at `last_day_until` or
+  later), by day, start, end, label (`collate "C"`). A row's words and times — never a person.
+
+Never a contact, an amount, a note of the team's (`bio_short`, `vetted_note`, `sources_note`, `approval_note`), a
+disambiguator, a photo's bytes outside a `people` entry, who uploaded it, or `public_ok` itself. No cap in SQL on the
+answer's size: ≈ 20 KB a photo, so ≈ 1 MB for some fifty approved speakers with photos (the owner's budget). The
+engine's twin is `publicSchedule(week, photoOf)` (`src/exports/publicSchedule.ts`); `ScheduleEntry` (the reader, the
+rota, the designer) and `app.export_snapshots_guard` (ten keys) are unchanged. The types: `ScheduleView`,
+`PublicScheduleRow`, `PublicPerson`, `FixedRow` (`src/data/publicPort.ts`).
+
+**The guests' only door.** Nothing of a photo, a speaker's public words or a lesson's note reaches anon any other way:
+`escort_view` and `kk_form` are as they were (`tests/sql/v19.test.ts` asserts their answers carry none of it), and
+anon executes none of the four new functions and reads no table.
+
+## `load_week` (v19)
+
+Speakers add exactly `public_bio`, `has_photo`; approaches `public_ok`; `sourceFiles` `kind`; lessons `public_note`
+(the row's `to_jsonb`); the edition's settings `reader_sent` when set. Never a photo's bytes.
+
+## Errors (v19)
+
+No new code: `bad_value bad_file forbidden not_member archived stale not_handler contact_in_text memorial_slot
+bad_shape cell_closed no_file rota_contact_in_text name_required`.
+
+## RPC signatures (v19)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `set_reader_sent` | `p_edition bigint, p_sent boolean` | `void` | authenticated |
+| `set_speaker_photo` | `p_edition bigint, p_speaker bigint, p_photo text` | `void` | authenticated |
+| `get_speaker_photo` | `p_speaker bigint` | `jsonb` | authenticated (invoker) |
+| `set_public_ok` | `p_approach bigint, p_version integer, p_ok boolean` | `void` | authenticated |
+| `register_source_file` | `p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer, p_kind text default 'source'` | `jsonb` | authenticated |
+
+Changed under the same signatures: `create_speaker`, `update_speaker`, `update_lesson`, `start_edition`, `load_week`
+and `load_rota` (invoker), `schedule_view` (anon), `app.log_activity`, `app.member_has_history`, the two rota guards,
+`app.source_path_re`, `app.source_mime_ok`. `app.photo_ok` runs inside `set_speaker_photo` only (no API role executes
+it). The three writers are SECURITY DEFINER with `search_path = ''`, each checking its caller; the Security Advisor's
+count of signed-in definer functions grows by three, 73 → 76 (83 warnings in all: 76 + 6 + 1); anon's reach is as it
+was. `tests/sql/schema.test.ts` pins the lists; `tests/sql/upgrade.test.ts` re-runs the file on six bases, v13–v18
+(v18 = `512ae35`, what production runs), checks the old rows' defaults, PowerPoint appended to the bucket's list, and
+that what v19 writes between two runs — a photo, an approval, «נשלח לדפוס», an item — survives the second, and
+compares the catalog with a fresh install.
+
+On both ports: `port.sources.setReaderSent`, `UploadOptions.kind` (`src/data/sources.ts`); `port.speakers.photo`,
+`setPhoto`, `setPublicOk`, `SpeakerFields.public_bio` (`src/data/speakers.ts`); `LessonPatch.public_note`
+(`src/data/commands.ts`); `RotaPort.addPrepTasks(edition, rows, kind)` (`src/data/rota.ts`).

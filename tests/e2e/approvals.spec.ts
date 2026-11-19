@@ -1,11 +1,11 @@
-// «אישורים» and the transport board («לוגיסטיקה ← הסעות») — the reset, phase 3 — in a real browser. One approval is
+// «אישורים» and the transport board («לוגיסטיקה ← הסעות וצוות», a tab of the logistics home since phase 4) — the reset, phase 3 — in a real browser. One approval is
 // enough, the staff's or logistics'; the vetting of speakers stays the instructor's. Demo build, every width: the
 // instructor (the default demo, a global admin) asks for two payments on the lesson pages (one asked again after a «לא»),
 // decides one request in its row — its pickup beside it — and the other two as a batch, then vets the speaker who
 // agreed: the header's badge counts down to nothing; the vetting itself — who agreed first, the others folded and
 // approved as a batch, a refusal with a word that her chip and «כל הצוות» show, the archive's «אישור באצווה» behind a
 // Confirm whose «ביטול» gives the focus back (it was «המרצים שלי»'s and the old queue's). Logistics (`?as=logistics`: the demo edition made real, the board's
-// synthetic pickup times and staff shifts): «אישורים» in their header counting the requests only, the requests with
+// synthetic pickup times and staff shifts): their header («בית» first since phase 4), «אישורים» in it counting the requests only, the requests with
 // their pickups and no vetting; the board — the counts, a day at a time on the axis (a tablet up; aria-hidden) with its
 // text twin, the list (the phone's whole board), the clamped early pickup and the round trip's return, the staff shifts
 // and their lead, a pending request decided on the board (the payment with it), then the driver and «סודר» on it, the
@@ -234,8 +234,9 @@ test.describe("demo build — the instructor's vetting", () => {
 test.describe("demo build — logistics", () => {
   test("«אישורים» in the header counts the requests only; the requests with their pickups, and no vetting", async ({ page }) => {
     await page.goto(`${demoUrl()}/?as=logistics`);
-    // the staff's order, without «ימים» and «מרצים» (the logistics home is phase 4) — and no settings
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    // phase 4: logistics' own header — «בית» (their home, `/` sends them there), «אישורים», the week to read — and no settings
+    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/logistics$`));
+    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(badge(page)).toHaveAccessibleName("אישורים, 1 ממתין"); // not the speaker who waits for the instructor
     await badge(page).click();
     await expect(page).toHaveURL(/\/approvals$/);
@@ -247,9 +248,10 @@ test.describe("demo build — logistics", () => {
     await expect(page.locator("[data-vetting-count]")).toHaveCount(0);
     await expect(page.getByText("עוד ממתינים לאישור")).toHaveCount(0);
     await noSidewaysScroll(page);
-    // «אחרי השבוע» and «ימים» are not logistics' pages
+    // «אחרי השבוע» and «ימים» are not logistics' pages: their home
     await page.goto(`${demoUrl()}/after`);
-    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/$`));
+    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/logistics$`));
+    await expect(page.locator("[data-logistics-home]")).toBeVisible();
   });
 
   test("the board: the counts, a day's lanes and their text twin, an early pickup and a return; a request decided there; the driver and «סודר»", async ({ page }, info) => {
@@ -420,8 +422,10 @@ test.describe("demo build — logistics: a refusal asks once; the lesson page's 
     await expect(edit).toBeFocused();
     await noSidewaysScroll(page);
 
-    // the board says the same
-    await nav(page).getByRole("link", { name: "לוגיסטיקה" }).click();
+    // the board says the same — «הסעות וצוות», a tab of the logistics home (phase 4)
+    await nav(page).getByRole("link", { name: "בית", exact: true }).click();
+    await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "הסעות וצוות" }).click();
+    await expect(page).toHaveURL(/\/logistics\/transports$/);
     await page.getByRole("button", { name: "יום שני: הסעה אחת" }).click();
     await expect(boardRow(page, lessonAt(1, 510))).toHaveAttribute("data-state", "arranged");
     await expect(boardRow(page, lessonAt(1, 510)).locator("[data-driver]")).toHaveText("נהג/ת לדוגמה ב׳");
@@ -556,15 +560,18 @@ test.describe("mock build", () => {
     desktopOnly(info);
     const { sb, session } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
     await page.goto(mockUrl());
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`)); // their home (phase 4)
+    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(badge(page)).toHaveAccessibleName("אישורים, 2 ממתינים"); // the two requests: no vetting is counted
     await badge(page).click();
     await expect(page.locator("#vetting")).toHaveCount(0);
     await requestsList(page).getByRole("button", { name: "אישור הבקשה של מרצה 07" }).click();
     await expect.poll(() => sb.rpc.get("decide_payments")).toEqual([{ p_lessons: [lessonAt(0, 870)], p_versions: [1], p_decision: "approved", p_note: null }]);
 
-    await nav(page).getByRole("link", { name: "לוגיסטיקה" }).click();
+    await nav(page).getByRole("link", { name: "בית", exact: true }).click();
     await expect(page).toHaveURL(/\/logistics$/);
+    await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "הסעות וצוות" }).click();
+    await expect(page).toHaveURL(/\/logistics\/transports$/);
     await page.getByRole("button", { name: "יום רביעי: הסעה אחת" }).click();
     const wednesday = boardRow(page, lessonAt(3, 600));
     await wednesday.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();

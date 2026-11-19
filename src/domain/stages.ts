@@ -81,7 +81,8 @@ export function readerFilesOf(week: Pick<Week, "sourceFiles" | "lessonSpeakers">
   const out = { printable: 0, word: 0, unread: 0 };
   if (lead == null) return out;
   for (const f of week.sourceFiles ?? []) {
-    if (f.lesson_id !== lessonId || f.speaker_id !== lead) continue;
+    // a presentation (v19) is shown in the room, never printed: not the stage's
+    if (f.lesson_id !== lessonId || f.speaker_id !== lead || f.kind === "presentation") continue;
     if (f.mime === WORD) out.word++;
     else if (f.page_count == null) out.unread++;
     else out.printable++;

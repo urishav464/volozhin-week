@@ -47,11 +47,15 @@ create schema if not exists app;
 -- v17: titles — «עו״ד» and the two together. v18: the reset's data foundation —
 -- a pair of trainees per day (day_owners), availability written as time ranges,
 -- transport in two parts (the request, the driver) with a pickup time in
--- minutes, and approvals by the edition's admins and logistics as well.
+-- minutes, and approvals by the edition's admins and logistics as well. v19: the
+-- logistics home and what the guests' site will read — the cohorts' two flags,
+-- Saturday night's shopping list, «נשלח לדפוס», presentations beside the sources,
+-- a speaker's public words and small photo, a lesson's note for guests, the
+-- approval to appear (approaches.public_ok) and the schedule link's new shape.
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 18 $$;
+  as $$ select 19 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -392,6 +396,10 @@ create table if not exists public.speakers (
 );
 create unique index if not exists speakers_name_key on public.speakers (name_key, coalesce(disambiguator, ''));
 alter table public.speakers add column if not exists vetted_note text;   -- v6, on a database from before
+-- v19: a few lines about the speaker for the guests' site — the team's own words, never a
+-- phone or an e-mail (contact_in_text). Shown to a guest only through schedule_view, only
+-- while the speaker's approach in that edition has public_ok; kept with the speaker across years.
+alter table public.speakers add column if not exists public_bio text check (char_length(public_bio) <= 600);
 -- «ייתכן שזה…» (v6): trigram search over the name's comparison key.
 create index if not exists speakers_name_trgm on public.speakers using gin (name_key extensions.gin_trgm_ops);
 
@@ -405,6 +413,22 @@ create table if not exists public.speaker_contacts (
   secretary_note text,
   notes          text
 );
+
+-- v19: a speaker's photo for the guests' site — SMALL and in the database, no
+-- Storage bucket: re-encoded in the browser (≤ 512px, no EXIF/GPS), at most 20 KB,
+-- a baseline JPEG that app.photo_ok accepts (set_speaker_photo checks it). One
+-- per speaker, across years. Read by the team (RLS speaker_photos_read: any
+-- member; get_speaker_photo is invoker), written only by set_speaker_photo; a
+-- guest sees it only through schedule_view, only while the speaker's approach in
+-- that link's edition has public_ok. Never in Realtime, never anon's, never in
+-- load_week (which says has_photo alone).
+create table if not exists public.speaker_photos (
+  speaker_id  bigint primary key references public.speakers (id) on delete cascade,
+  image       bytea not null check (octet_length(image) between 100 and 20480),
+  uploaded_by bigint references public.members (id) on delete set null,
+  uploaded_at timestamptz not null default now()
+);
+create index if not exists speaker_photos_uploaded_by on public.speaker_photos (uploaded_by);
 
 -- ------------------------------------------------------------- per edition
 
@@ -444,6 +468,10 @@ create table if not exists public.approaches (
   unique (edition_id, speaker_id)
 );
 alter table public.approaches add column if not exists offered_to bigint references public.members (id) on delete set null;   -- v6
+-- v19: «מאושר/ת להופיע באתר האורחים» — the speaker's public words, photo and name in
+-- the link's people (schedule_view). Per edition: start_edition copies no approach,
+-- so every year starts without it; set_public_ok writes it.
+alter table public.approaches add column if not exists public_ok boolean not null default false;
 -- A speaker's availability is per slot (v14, public.slot_availability — after app.lesson_rows, below).
 
 create table if not exists public.lessons (
@@ -486,6 +514,10 @@ create table if not exists public.lessons (
   constraint lesson_room_excl exclude using gist (edition_id with =, room_id with =, span with &&) where (state <> 'cancelled')
 );
 create index if not exists lessons_edition on public.lessons (edition_id);
+-- v19: a short description of the lesson for the guests' site (update_lesson's
+-- patch; never a phone or an e-mail; a memorial slot has none). A reopen keeps it,
+-- like the title.
+alter table public.lessons add column if not exists public_note text check (char_length(public_note) <= 400);
 
 -- Who teaches a lesson. span/active are copied from the lesson (trigger), so
 -- the speaker constraint can see them: a speaker is never in two CLOSED
@@ -733,6 +765,10 @@ create or replace function app.log_activity() returns trigger
         if coalesce(current_setting('app.note', true), '') <> '' then
           v_det := v_det || jsonb_build_object('note', current_setting('app.note', true));
         end if;
+        -- v19: the approval to appear on the guests' site, when it changed (set_public_ok)
+        if tg_op = 'UPDATE' and new.public_ok is distinct from old.public_ok then
+          v_det := v_det || jsonb_build_object('public_ok', new.public_ok);
+        end if;
       end if;
     end if;
     insert into public.activity (actor, edition_id, entity, entity_id, kind, detail)
@@ -753,6 +789,7 @@ alter table public.grid_template    enable row level security;
 alter table public.categories       enable row level security;
 alter table public.speakers         enable row level security;
 alter table public.speaker_contacts enable row level security;
+alter table public.speaker_photos   enable row level security;
 alter table public.grid_rows        enable row level security;
 alter table public.rooms            enable row level security;
 alter table public.approaches       enable row level security;
@@ -767,6 +804,9 @@ drop policy if exists categories_read on public.categories;
 create policy categories_read on public.categories for select to authenticated using ((select app.is_member()));
 drop policy if exists speakers_read on public.speakers;
 create policy speakers_read on public.speakers for select to authenticated using ((select app.is_member()));
+-- v19: a speaker's photo, like the speaker's row — every member (the guests see it only through schedule_view)
+drop policy if exists speaker_photos_read on public.speaker_photos;
+create policy speaker_photos_read on public.speaker_photos for select to authenticated using ((select app.is_member()));
 
 -- Contacts: a global admin, or whoever handles the speaker in a REAL edition
 -- they belong to — and only while it is not archived. A speaker has one
@@ -1207,9 +1247,10 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v_l  public.lessons;
-    v_me bigint;
-    v_t  integer;
+    v_l    public.lessons;
+    v_me   bigint;
+    v_t    integer;
+    v_note text;
   begin
     select * into v_l from public.lessons where id = p_lesson for update;
     if v_l.id is null or v_l.state = 'cancelled' then perform app.refuse('cell_closed'); end if;
@@ -1226,11 +1267,18 @@ create or replace function public.update_lesson(p_lesson bigint, p_version integ
        and not exists (select 1 from public.categories where id = (p_patch ->> 'category_id')::bigint) then
       perform app.refuse('bad_shape');
     end if;
+    -- v19: the lesson's note for the guests' site — a block of ≤ 400 (bad_value), never a phone or an
+    -- e-mail (contact_in_text: guests read it through the schedule link)
+    if p_patch ? 'public_note' then
+      v_note := app.clean_block(p_patch ->> 'public_note', 400);
+      if app.has_contact(v_note) then perform app.refuse('contact_in_text'); end if;
+    end if;
     update public.lessons set
       title       = case when p_patch ? 'title' then nullif(btrim(p_patch ->> 'title'), '') else title end,
       category_id = case when p_patch ? 'category_id' then (p_patch ->> 'category_id')::bigint else category_id end,
       audience    = case when p_patch ? 'audience' then nullif(btrim(p_patch ->> 'audience'), '') else audience end,
       teach_min   = case when p_patch ? 'teach_min' then (p_patch ->> 'teach_min')::integer else teach_min end,
+      public_note = case when p_patch ? 'public_note' then v_note else public_note end,
       version     = version + 1,
       updated_by  = v_me
     where id = v_l.id;
@@ -1270,6 +1318,9 @@ create or replace function public.start_edition(
     -- Saturday-night preparations (no group, none done yet) and the shifts' cuts
     -- and names (settings.rota_shifts) — never its cohorts, groups, heads,
     -- assignments or staff shifts (public.rota_* is created further down).
+    -- v19: each preparation keeps its kind (a task, or an item of the shopping
+    -- list with its quantity); never «נשלח לדפוס» (settings.reader_sent) and never
+    -- an approach — so no speaker starts the year approved for the guests' site.
     select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
     if coalesce(p_deactivate_team, false) then
       update public.members set active = false
@@ -1292,8 +1343,8 @@ create or replace function public.start_edition(
     insert into public.rota_duties (edition_id, name, description, need_morning, need_afternoon, need_night, min_people, sort)
     select v, d.name, d.description, d.need_morning, d.need_afternoon, d.need_night, d.min_people, d.sort
       from public.rota_duties d where d.edition_id = v_from order by d.sort, d.id;
-    insert into public.rota_prep_tasks (edition_id, text, sort)
-    select v, t.text, t.sort from public.rota_prep_tasks t where t.edition_id = v_from order by t.sort, t.id;
+    insert into public.rota_prep_tasks (edition_id, text, sort, kind, qty)
+    select v, t.text, t.sort, t.kind, t.qty from public.rota_prep_tasks t where t.edition_id = v_from order by t.sort, t.id;
     return v;
   end
   $$;
@@ -1326,7 +1377,8 @@ create index if not exists activity_actor on public.activity (actor);
 -- Has this member done anything in the system? Every grid change is logged
 -- with its actor; the columns below name a member directly. (plpgsql, so it may
 -- read the tables created further down: notes, milestones, export_snapshots (v8),
--- share_links (v9), source_files (v10), memorial_plans (v11), lesson_reviews (v12).)
+-- share_links (v9), source_files (v10), memorial_plans (v11), lesson_reviews (v12),
+-- speaker_photos (v19).)
 create or replace function app.member_has_history(p_member bigint) returns boolean
   language plpgsql stable security definer set search_path = ''
   as $$
@@ -1343,7 +1395,8 @@ create or replace function app.member_has_history(p_member bigint) returns boole
         or exists (select 1 from public.share_links where created_by = p_member)
         or exists (select 1 from public.source_files where uploaded_by = p_member)
         or exists (select 1 from public.memorial_plans where updated_by = p_member)
-        or exists (select 1 from public.lesson_reviews where written_by = p_member);   -- v12
+        or exists (select 1 from public.lesson_reviews where written_by = p_member)    -- v12
+        or exists (select 1 from public.speaker_photos where uploaded_by = p_member);  -- v19
   end
   $$;
 
@@ -1790,6 +1843,7 @@ create or replace function public.create_speaker(
     v_gender text;
     v_aff    text;
     v_bio    text;
+    v_pbio   text;
     v_topics text[];
     v_pref   text;
     v_ok     boolean := coalesce(p_approve, false);
@@ -1807,6 +1861,9 @@ create or replace function public.create_speaker(
     v_gender := app.pick_gender(p_fields ->> 'gender');
     v_aff    := app.clean_line(p_fields ->> 'affiliation', 120);
     v_bio    := app.clean_block(p_fields ->> 'bio_short', 400);
+    -- v19: the guests' site's words — never a phone or an e-mail
+    v_pbio   := app.clean_block(p_fields ->> 'public_bio', 600);
+    if app.has_contact(v_pbio) then perform app.refuse('contact_in_text'); end if;
     v_topics := app.clean_topics(p_fields -> 'topics');
     v_pref   := app.pick_contact_pref(p_fields ->> 'contact_pref');
     if v_ok and not app.is_global_admin() then perform app.refuse('forbidden'); end if;
@@ -1825,9 +1882,9 @@ create or replace function public.create_speaker(
     end if;
 
     begin
-      insert into public.speakers (title, name, disambiguator, gender, affiliation, bio_short, topics, contact_pref,
+      insert into public.speakers (title, name, disambiguator, gender, affiliation, bio_short, public_bio, topics, contact_pref,
                                    vetted, vetted_by, vetted_at, created_by, source)
-      values (v_title, v_name, v_dis, v_gender, v_aff, v_bio, v_topics, v_pref,
+      values (v_title, v_name, v_dis, v_gender, v_aff, v_bio, v_pbio, v_topics, v_pref,
               case when v_ok then 'approved' else 'pending' end,
               case when v_ok then app.my_member_id(null) end,
               case when v_ok then now() end,
@@ -1872,6 +1929,10 @@ create or replace function public.update_speaker(p_edition bigint, p_speaker big
     if p_patch ? 'gender' then v_n.gender := app.pick_gender(p_patch ->> 'gender'); end if;
     if p_patch ? 'affiliation' then v_n.affiliation := app.clean_line(p_patch ->> 'affiliation', 120); end if;
     if p_patch ? 'bio_short' then v_n.bio_short := app.clean_block(p_patch ->> 'bio_short', 400); end if;
+    if p_patch ? 'public_bio' then   -- v19: the guests' site's words — never a phone or an e-mail
+      v_n.public_bio := app.clean_block(p_patch ->> 'public_bio', 600);
+      if app.has_contact(v_n.public_bio) then perform app.refuse('contact_in_text'); end if;
+    end if;
     if p_patch ? 'topics' then v_n.topics := app.clean_topics(p_patch -> 'topics'); end if;
     if p_patch ? 'contact_pref' then v_n.contact_pref := app.pick_contact_pref(p_patch ->> 'contact_pref'); end if;
     if p_patch ? 'retired' then
@@ -1901,6 +1962,7 @@ create or replace function public.update_speaker(p_edition bigint, p_speaker big
         case when v_n.gender is distinct from v_s.gender then 'gender' end,
         case when v_n.affiliation is distinct from v_s.affiliation then 'affiliation' end,
         case when v_n.bio_short is distinct from v_s.bio_short then 'bio_short' end,
+        case when v_n.public_bio is distinct from v_s.public_bio then 'public_bio' end,
         case when v_n.topics is distinct from v_s.topics then 'topics' end,
         case when v_n.contact_pref is distinct from v_s.contact_pref then 'contact_pref' end,
         case when v_n.retired is distinct from v_s.retired then 'retired' end]) with ordinality as u(f, o)
@@ -1909,7 +1971,7 @@ create or replace function public.update_speaker(p_edition bigint, p_speaker big
     begin
       update public.speakers
          set title = v_n.title, name = v_n.name, disambiguator = v_n.disambiguator, gender = v_n.gender,
-             affiliation = v_n.affiliation, bio_short = v_n.bio_short, topics = v_n.topics,
+             affiliation = v_n.affiliation, bio_short = v_n.bio_short, public_bio = v_n.public_bio, topics = v_n.topics,
              contact_pref = v_n.contact_pref, retired = v_n.retired, version = version + 1
        where id = p_speaker;
     exception when unique_violation then
@@ -1987,6 +2049,122 @@ create or replace function public.set_speaker_contacts(
   end
   $$;
 
+-- ------------------------------------------------------------- the photo for the guests' site (v19)
+
+-- What a speaker's photo may be: a small baseline JPEG and nothing else in it —
+-- the browser re-encodes the picked image on a canvas (≤ 512px, quality stepped
+-- down to fit 20 KB) and strips what is left (src/reader/jpeg.ts), so a camera's
+-- EXIF/GPS, a comment or anything appended never reaches a guest. The rule
+-- (src/domain/photo.ts photoOk is the same, size included): 100–20480 bytes;
+-- SOI (FFD8); then marker segments, each FF, a marker and a length ≥ 2 that
+-- stays inside the file (no fill bytes) — only APP0 (length ≥ 7, starting
+-- «JFIF\0»), APP14, DQT, DHT, DRI and exactly one SOF0/SOF1 (length ≥ 8, height
+-- and width 1–512) — until one SOS, which needs that SOF; after the SOS segment,
+-- every byte up to the last two is entropy data, where FF is followed only by
+-- 00 or a restart marker D0–D7; the last two bytes are EOI (FFD9), nothing after.
+-- Everything else is refused: APP1–13 and APP15 (EXIF, XMP, ICC…), COM, a
+-- progressive or any other SOF, a second scan, bytes after the end.
+create or replace function app.photo_ok(p bytea) returns boolean
+  language plpgsql immutable set search_path = ''
+  as $$
+  declare
+    n   integer := octet_length(p);
+    i   integer := 2;
+    m   integer;
+    len integer;
+    sof integer := 0;
+    h   integer;
+    w   integer;
+  begin
+    if p is null or n < 100 or n > 20480 then return false; end if;
+    if get_byte(p, 0) <> 255 or get_byte(p, 1) <> 216 then return false; end if;
+    loop
+      if i + 4 > n or get_byte(p, i) <> 255 then return false; end if;
+      m := get_byte(p, i + 1);
+      len := get_byte(p, i + 2) * 256 + get_byte(p, i + 3);
+      if len < 2 or i + 2 + len > n then return false; end if;
+      if m = 218 then                                   -- SOS (DA)
+        if sof <> 1 then return false; end if;
+        i := i + 2 + len;
+        exit;
+      elsif m = 224 then                                -- APP0 (E0): «JFIF\0»
+        if len < 7 or substring(p from i + 5 for 5) <> '\x4a46494600'::bytea then return false; end if;
+      elsif m in (192, 193) then                        -- SOF0 / SOF1 (C0, C1)
+        if len < 8 or sof > 0 then return false; end if;
+        h := get_byte(p, i + 5) * 256 + get_byte(p, i + 6);
+        w := get_byte(p, i + 7) * 256 + get_byte(p, i + 8);
+        if h < 1 or h > 512 or w < 1 or w > 512 then return false; end if;
+        sof := 1;
+      elsif m not in (238, 219, 196, 221) then          -- APP14 (EE), DQT (DB), DHT (C4), DRI (DD)
+        return false;
+      end if;
+      i := i + 2 + len;
+    end loop;
+    if i > n - 2 or get_byte(p, n - 2) <> 255 or get_byte(p, n - 1) <> 217 then return false; end if;
+    while i <= n - 3 loop
+      if get_byte(p, i) = 255 then
+        m := get_byte(p, i + 1);
+        if not (m = 0 or m between 208 and 215) then return false; end if;
+      end if;
+      i := i + 1;
+    end loop;
+    return true;
+  end
+  $$;
+
+-- The speaker's photo, as the team sees it: {photo: base64 (no data: prefix, no
+-- line breaks), uploaded_at: ISO UTC}, or null — none, or not the caller's to see
+-- (invoker: the table's policy, any member). One speaker at a time; never in
+-- load_week (which says has_photo), Realtime or anon's reach.
+create or replace function public.get_speaker_photo(p_speaker bigint) returns jsonb
+  language sql stable security invoker set search_path = ''
+  as $$
+    select jsonb_build_object('photo', replace(encode(ph.image, 'base64'), E'\n', ''),
+                              'uploaded_at', to_char(ph.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      from public.speaker_photos ph where ph.speaker_id = p_speaker
+  $$;
+
+-- Set (or, with NULL, remove) a speaker's photo: the people who may rewrite the
+-- speaker's record (app.may_edit_speaker — a global admin; in a real, live
+-- edition its admins and the speaker's handler there). In this order: editor of
+-- the edition (not_member / forbidden for logistics / archived); the speaker, locked
+-- (missing: stale); app.may_edit_speaker (not_handler). NULL: the photo goes — logged
+-- {"set": false} only if there was one. Else the text is base64 of at most 27308
+-- characters (20 KB), a multiple of 4, of the base64 alphabet with at most two «=»
+-- at the end, that decodes to bytes app.photo_ok accepts — any fault is bad_file;
+-- stored (replacing the old one) and logged {"set": true}, every time. The log holds
+-- no byte of it.
+create or replace function public.set_speaker_photo(p_edition bigint, p_speaker bigint, p_photo text) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_me  bigint := app.require_editor(p_edition);
+    v_s   public.speakers;
+    v_img bytea;
+  begin
+    select * into v_s from public.speakers where id = p_speaker for update;
+    if v_s.id is null then perform app.refuse('stale'); end if;
+    if not app.may_edit_speaker(p_edition, p_speaker, v_me) then perform app.refuse('not_handler'); end if;
+    if p_photo is null then
+      delete from public.speaker_photos where speaker_id = p_speaker;
+      if found then perform app.log_event(p_edition, 'speakers', p_speaker, 'photo', '{"set": false}'::jsonb); end if;
+      return;
+    end if;
+    if char_length(p_photo) > 27308 or char_length(p_photo) % 4 <> 0 or p_photo !~ '^[A-Za-z0-9+/]+={0,2}$' then
+      perform app.refuse('bad_file');
+    end if;
+    begin
+      v_img := decode(p_photo, 'base64');
+    exception when others then
+      v_img := null;
+    end;
+    if v_img is null or not app.photo_ok(v_img) then perform app.refuse('bad_file'); end if;
+    insert into public.speaker_photos (speaker_id, image, uploaded_by, uploaded_at) values (p_speaker, v_img, v_me, now())
+    on conflict (speaker_id) do update set image = excluded.image, uploaded_by = excluded.uploaded_by, uploaded_at = excluded.uploaded_at;
+    perform app.log_event(p_edition, 'speakers', p_speaker, 'photo', '{"set": true}'::jsonb);
+  end
+  $$;
+
 -- ------------------------------------------------------------- approaches (one handler per speaker per edition)
 
 -- «אני מטפל/ת»: take a free speaker (or an approach nobody holds) without a cell.
@@ -2044,6 +2222,37 @@ create or replace function public.set_approach_status(p_approach bigint, p_versi
     perform app.set_note(v_note);
     update public.approaches set status = p_status, version = version + 1 where id = v_a.id;
     perform app.set_note(null);
+  end
+  $$;
+
+-- v19: «מאושר/ת להופיע באתר האורחים» — the speaker's name, public words and photo
+-- among the schedule link's people (schedule_view), for this edition only. Who, as
+-- set_approach_status: the approach, locked (missing: stale); editor of its edition
+-- (not_member / forbidden for logistics / archived); an admin of the edition or the
+-- approach's owner (not_handler); a MARK (p_ok true) needs the speaker-edit rule
+-- too, app.may_edit_speaker — a real live edition's admin or handler, or a global
+-- admin (not_handler): anyone may claim any pool speaker in a practice or demo
+-- week, so its link would publish the pool's photo and words nobody asked the
+-- speaker for; taking a mark back needs no more than before; the version (stale);
+-- p_ok not null (bad_value). The same value again: nothing written. Else the flag
+-- and version + 1; the log line (app.log_activity) carries public_ok. Taking it
+-- back hides them at once.
+create or replace function public.set_public_ok(p_approach bigint, p_version integer, p_ok boolean) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare
+    v_a  public.approaches;
+    v_me bigint;
+  begin
+    select * into v_a from public.approaches where id = p_approach for update;
+    if v_a.id is null then perform app.refuse('stale'); end if;
+    v_me := app.require_editor(v_a.edition_id);
+    if not (app.my_role(v_a.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('not_handler'); end if;
+    if p_ok and not app.may_edit_speaker(v_a.edition_id, v_a.speaker_id, v_me) then perform app.refuse('not_handler'); end if;
+    if v_a.version <> p_version then perform app.refuse('stale'); end if;
+    if p_ok is null then perform app.refuse('bad_value'); end if;
+    if p_ok = v_a.public_ok then return; end if;
+    update public.approaches set public_ok = p_ok, version = version + 1 where id = v_a.id;
   end
   $$;
 
@@ -3906,15 +4115,43 @@ create or replace function public.kk_signup(p_token text, p_roster bigint, p_gro
 -- The public schedule (src/exports/designer.ts): closed lessons and memorial
 -- slots, in grid order — kind, day, the day column's date (or null), the
 -- teaching time, the speakers' names, title, category, room, «במקביל». Never a
--- contact, an amount or a note.
+-- contact, an amount or a note of the team's.
+-- v19, the guests' site (the same link, the same rules — no new anon function):
+-- {edition, rows, people, fixed}.
+--   rows    each as before (the ten keys, the `speaker` string unchanged) and
+--           `note` (the lesson's public_note; a memorial slot's is null) and `people`
+--           (indexes into the top-level people, the lesson's order: lead first, then
+--           speaker id; a memorial slot's is []);
+--   people  [{label, bio, photo}] — a speaker counts only while an approach of the
+--           link's edition for them has public_ok (set_public_ok: taken back, gone
+--           at once); each once, by first appearance (the rows' order, then the
+--           lesson's); bio = public_bio; photo = a data: URL of the stored JPEG, or null;
+--   fixed   the grid's fixed rows (meals, prayers, «מכריכה לכריכה» — kind fixed or
+--           kk), one per day of `days` the edition's window lets through (rowActive,
+--           as app.kk_rows): {day, start_min, end_min, label}, by day, start, end,
+--           label — the row's words and times, never a person.
+-- Its twin is src/exports/publicSchedule.ts (publicSchedule), held to this by tests/parity.
 create or replace function public.schedule_view(p_token text) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
   declare
-    v    public.share_links := app.link_for(p_token, 'schedule');
-    v_ed public.editions;
+    v     public.share_links := app.link_for(p_token, 'schedule');
+    v_ed  public.editions;
+    v_ids bigint[];
   begin
     select * into v_ed from public.editions where id = v.edition_id;
+    -- who may be shown, in order of first appearance
+    select coalesce(array_agg(f.speaker_id order by f.ord), '{}') into v_ids
+      from (select p.speaker_id, min(p.ord) as ord
+              from (select x.speaker_id,
+                           row_number() over (order by l.day, l.start_min, rm.sort, l.id, (x.role <> 'lead'), x.speaker_id) as ord
+                      from public.lessons l
+                      join public.rooms rm on rm.id = l.room_id
+                      join public.lesson_speakers x on x.lesson_id = l.id
+                     where l.edition_id = v.edition_id and l.kind = 'lesson' and l.state = 'closed'
+                       and exists (select 1 from public.approaches a
+                                    where a.edition_id = v.edition_id and a.speaker_id = x.speaker_id and a.public_ok)) p
+             group by p.speaker_id) f;
     return jsonb_build_object(
       'edition', jsonb_build_object('label', v_ed.label, 'start_date', v_ed.start_date),
       'rows', coalesce((
@@ -3933,12 +4170,35 @@ create or replace function public.schedule_view(p_token text) returns jsonb
                  'parallel', l.kind = 'lesson' and exists (
                    select 1 from public.lessons o
                     where o.edition_id = l.edition_id and o.id <> l.id and o.kind = 'lesson' and o.state = 'closed'
-                      and o.day = l.day and o.start_min < l.end_min and l.start_min < o.end_min))
+                      and o.day = l.day and o.start_min < l.end_min and l.start_min < o.end_min),
+                 'note', case when l.kind = 'lesson' then l.public_note end,
+                 'people', case when l.kind = 'lesson' then coalesce((
+                   select jsonb_agg(u.i - 1 order by (x.role <> 'lead'), x.speaker_id)
+                     from public.lesson_speakers x
+                     join unnest(v_ids) with ordinality as u(id, i) on u.id = x.speaker_id
+                    where x.lesson_id = l.id), '[]'::jsonb) else '[]'::jsonb end)
                order by l.day, l.start_min, rm.sort, l.id)
           from public.lessons l
           join public.rooms rm on rm.id = l.room_id
           left join public.categories c on c.id = l.category_id
-         where l.edition_id = v.edition_id and l.state <> 'cancelled' and (l.kind = 'memorial' or l.state = 'closed')), '[]'::jsonb));
+         where l.edition_id = v.edition_id and l.state <> 'cancelled' and (l.kind = 'memorial' or l.state = 'closed')), '[]'::jsonb),
+      'people', coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'label', app.speaker_label(s),
+                 'bio', s.public_bio,
+                 'photo', (select 'data:image/jpeg;base64,' || replace(encode(ph.image, 'base64'), E'\n', '')
+                             from public.speaker_photos ph where ph.speaker_id = s.id))
+               order by u.i)
+          from unnest(v_ids) with ordinality as u(id, i)
+          join public.speakers s on s.id = u.id), '[]'::jsonb),
+      'fixed', coalesce((
+        select jsonb_agg(jsonb_build_object('day', d.day, 'start_min', r.start_min, 'end_min', r.end_min, 'label', r.label)
+               order by d.day, r.start_min, r.end_min, r.label collate "C")
+          from public.grid_rows r
+          cross join generate_series(0, 4) as d(day)
+         where r.edition_id = v.edition_id and r.kind in ('fixed', 'kk') and d.day = any (r.days)
+           and not (d.day = 0 and v_ed.first_day_from is not null and r.end_min <= v_ed.first_day_from)
+           and not (d.day = 4 and r.start_min >= v_ed.last_day_until)), '[]'::jsonb));
   end
   $$;
 
@@ -4221,12 +4481,13 @@ create or replace function public.set_book_order(p_group bigint, p_copies intege
 
 -- The path convention, in one place (src/data/sourceRules.ts holds the same):
 -- edition id / lesson id or 'cover' / a uuid, a dash, a safe ASCII name and
--- one of the accepted extensions.
+-- one of the accepted extensions (v19: pptx, a presentation's).
 create or replace function app.source_path_re() returns text
   language sql immutable set search_path = ''
-  as $$ select '^([1-9][0-9]{0,17})/([1-9][0-9]{0,17}|cover)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9][A-Za-z0-9_-]{0,59}\.(pdf|png|jpg|jpeg|docx)$' $$;
+  as $$ select '^([1-9][0-9]{0,17})/([1-9][0-9]{0,17}|cover)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9][A-Za-z0-9_-]{0,59}\.(pdf|png|jpg|jpeg|docx|pptx)$' $$;
 
 -- The types the bucket takes (allowed_mime_types below) and the extension each must carry.
+-- v19: PowerPoint (pptx) — only ever a presentation's (register_source_file, source_files_pptx_kind).
 create or replace function app.source_mime_ok(p_mime text, p_ext text) returns boolean
   language sql immutable set search_path = ''
   as $$
@@ -4235,6 +4496,7 @@ create or replace function app.source_mime_ok(p_mime text, p_ext text) returns b
       when 'image/png' then p_ext = 'png'
       when 'image/jpeg' then p_ext in ('jpg', 'jpeg')
       when 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' then p_ext = 'docx'
+      when 'application/vnd.openxmlformats-officedocument.presentationml.presentation' then p_ext = 'pptx'
       else false
     end
   $$;
@@ -4350,14 +4612,20 @@ create or replace function app.source_object(p_name text) returns jsonb
 -- cannot be written. Each warning says it all — the owner sends it to Claude.
 do $$
 begin
-  -- Private, 25 MB, the four types. A re-run never rewrites the size or the
-  -- types (the owner may have changed them in the dashboard) — but it always
-  -- makes the bucket private again: a public bucket would hand any file to
-  -- whoever guesses its address, policies or not.
+  -- Private, 25 MB, the five types (v19: pptx, a presentation's). A re-run never
+  -- rewrites the size or the types (the owner may have changed them in the
+  -- dashboard) — but it adds pptx to a list that lacks it (a v10–v18 bucket),
+  -- and it always makes the bucket private again: a public bucket would hand any
+  -- file to whoever guesses its address, policies or not.
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
   values ('sources', 'sources', false, 26214400,
-          array['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
+          array['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation'])
   on conflict (id) do nothing;
+  update storage.buckets
+     set allowed_mime_types = allowed_mime_types || array['application/vnd.openxmlformats-officedocument.presentationml.presentation']
+   where id = 'sources' and allowed_mime_types is not null
+     and not ('application/vnd.openxmlformats-officedocument.presentationml.presentation' = any (allowed_mime_types));
   update storage.buckets set public = false where id = 'sources' and public is distinct from false;
   if found then
     raise warning 'the «sources» bucket was public — it is private again (a public bucket lets anyone with a file''s address read the file); nothing more to do, but if you did not expect it, send this whole message to Claude';
@@ -4413,7 +4681,8 @@ create table if not exists public.source_files (
   speaker_id   bigint references public.speakers (id) on delete set null,  -- the lesson's lead speaker when it arrived
   storage_path text not null unique,
   display_name text not null,
-  mime         text not null check (mime in ('application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')),
+  mime         text not null check (mime in ('application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                             'application/vnd.openxmlformats-officedocument.presentationml.presentation')),
   size_bytes   bigint not null check (size_bytes between 0 and 26214400),
   page_count   integer check (page_count between 1 and 5000),             -- read in the browser: a PDF's pages, an image 1; NULL: not readable (or Word)
   uploaded_by  bigint references public.members (id) on delete set null,
@@ -4421,6 +4690,27 @@ create table if not exists public.source_files (
 );
 create index if not exists source_files_lesson on public.source_files (lesson_id);
 create index if not exists source_files_edition on public.source_files (edition_id);
+-- v19: what a file is — a source (the reader's, as before) or a presentation (the
+-- lesson's slides, or the week's own on the cover path: never in the reader, never
+-- a lesson's sources or the reader's cover). A PowerPoint file is only ever a
+-- presentation. On a v10–v18 database the type check lacks pptx: it is replaced
+-- (written one way here and above: pdf, png, jpeg, docx, pptx).
+alter table public.source_files add column if not exists kind text not null default 'source' check (kind in ('source', 'presentation'));
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conrelid = 'public.source_files'::regclass and conname = 'source_files_mime_check'
+                    and position('presentationml' in pg_get_constraintdef(oid)) > 0) then
+    alter table public.source_files drop constraint if exists source_files_mime_check;
+    alter table public.source_files add constraint source_files_mime_check
+      check (mime in ('application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                      'application/vnd.openxmlformats-officedocument.presentationml.presentation'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.source_files'::regclass and conname = 'source_files_pptx_kind') then
+    alter table public.source_files add constraint source_files_pptx_kind
+      check (mime <> 'application/vnd.openxmlformats-officedocument.presentationml.presentation' or kind = 'presentation');
+  end if;
+end $$;
 
 alter table public.source_files enable row level security;
 drop policy if exists source_files_read on public.source_files;
@@ -4433,7 +4723,7 @@ create policy source_files_read on public.source_files for select to authenticat
 -- uploaded by the caller (no_file), of an accepted type matching its
 -- extension and at most 25 MB (bad_file) — from objects.metadata: the size as
 -- Storage measured it, the type as the uploader declared it (Content-Type,
--- held by Storage to the bucket's four types; it never sniffs the bytes — the
+-- held by Storage to the bucket's five types; it never sniffs the bytes — the
 -- reader checks those). The same path again returns the row it already made,
 -- checked before the rest (a retry — the browser lost the first answer — is
 -- answered even if the lesson was reopened since; app.may_upload_source
@@ -4446,7 +4736,18 @@ create policy source_files_read on public.source_files for select to authenticat
 -- A memorial slot's file (v11) remembers the fallen of the plan placed on it
 -- (fallen_id; no speaker), and leaves the slot's sources columns alone: a
 -- memorial slot is always in the reader.
-create or replace function public.register_source_file(p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer)
+-- v19: p_kind — 'source' (as before) or 'presentation': the lesson's slides (any of
+-- the five types; a PowerPoint file is never a source — bad_file), or, on the
+-- cover path, the week's own («המצגת המלווה לשבוע»: an admin's, as the poster —
+-- cover false). A presentation never touches the lesson's sources or in_reader, is
+-- never the reader's cover, and is never a memorial slot's (bad_value); the
+-- current speaker's «first file» counts sources only. After the checks above, in
+-- this order: p_kind null or unknown, bad_value; a presentation on a memorial
+-- slot, bad_value; a PowerPoint file as a source, bad_file; then the display name
+-- and the pages (bad_value). A retry answers its row whatever p_kind says.
+drop function if exists public.register_source_file(bigint, bigint, text, text, integer);   -- v10–v18's signature
+create or replace function public.register_source_file(
+  p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer, p_kind text default 'source')
   returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -4489,6 +4790,9 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
     v_mime := v_obj -> 'metadata' ->> 'mimetype';
     v_size := case when (v_obj -> 'metadata' ->> 'size') ~ '^[0-9]{1,12}$' then (v_obj -> 'metadata' ->> 'size')::bigint end;
     if v_mime is null or not app.source_mime_ok(v_mime, m[3]) or v_size is null or v_size > 26214400 then perform app.refuse('bad_file'); end if;
+    if p_kind is null or p_kind not in ('source', 'presentation') then perform app.refuse('bad_value'); end if;
+    if p_kind = 'presentation' and p_lesson is not null and v_l.kind = 'memorial' then perform app.refuse('bad_value'); end if;
+    if p_kind = 'source' and v_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation' then perform app.refuse('bad_file'); end if;
     v_name := app.clean_line(p_display_name, 200);
     if v_name is null then perform app.refuse('bad_value'); end if;
     if p_pages is not null and (p_pages < 1 or p_pages > 5000) then perform app.refuse('bad_value'); end if;
@@ -4498,12 +4802,15 @@ create or replace function public.register_source_file(p_edition bigint, p_lesso
       select p.fallen_id into v_fallen from public.memorial_plans p where p.lesson_id = p_lesson;
     elsif p_lesson is not null then
       select x.speaker_id into v_spk from public.lesson_speakers x where x.lesson_id = p_lesson and x.role = 'lead';
-      v_first := not exists (select 1 from public.source_files f where f.lesson_id = p_lesson and f.speaker_id is not distinct from v_spk);
+      v_first := not exists (select 1 from public.source_files f
+                              where f.lesson_id = p_lesson and f.speaker_id is not distinct from v_spk and f.kind = 'source');
     end if;
-    insert into public.source_files (edition_id, lesson_id, cover, speaker_id, fallen_id, storage_path, display_name, mime, size_bytes, page_count, uploaded_by)
-    values (p_edition, p_lesson, p_lesson is null, v_spk, v_fallen, p_path, v_name, v_mime, v_size, v_pages, v_me)
+    insert into public.source_files (edition_id, lesson_id, cover, speaker_id, fallen_id, storage_path, display_name, mime, size_bytes, page_count, uploaded_by, kind)
+    values (p_edition, p_lesson, p_lesson is null and p_kind = 'source', v_spk, v_fallen, p_path, v_name, v_mime, v_size, v_pages, v_me, p_kind)
     returning * into v_row;
-    if p_lesson is not null and v_l.kind = 'memorial' then
+    if p_kind = 'presentation' then
+      null;   -- a presentation: nothing of the lesson or the reader changes
+    elsif p_lesson is not null and v_l.kind = 'memorial' then
       null;   -- a memorial slot is always in the reader: nothing of the lesson changes
     elsif p_lesson is not null then
       v_kind := case when v_l.sources_kind = 'pending' then 'sheet' else v_l.sources_kind end;
@@ -4581,6 +4888,25 @@ create or replace function public.set_reader_cover(p_edition bigint, p_file bigi
     update public.editions
        set settings = case when p_file is null then settings - 'reader_cover' else settings || jsonb_build_object('reader_cover', p_file) end
      where id = p_edition;
+  end
+  $$;
+
+-- v19: «נשלח לדפוס» — the reader went to the printer: settings.reader_sent =
+-- {at: the instant (ISO UTC, ms), by: the member id}; sending again re-stamps it;
+-- false removes the key (nothing to remove: nothing happens). Logistics or an
+-- admin of the edition (app.require_logistics — not_member, a content member
+-- forbidden, a non-admin of an archive or archived edition archived), as
+-- set_book_order; then a null p_sent is bad_value. start_edition carries none.
+create or replace function public.set_reader_sent(p_edition bigint, p_sent boolean) returns void
+  language plpgsql security definer set search_path = ''
+  as $$
+  declare v_me bigint := app.require_logistics(p_edition);
+  begin
+    if p_sent is null then perform app.refuse('bad_value'); end if;
+    update public.editions
+       set settings = case when p_sent then settings || jsonb_build_object('reader_sent', jsonb_build_object('at', app.iso(now()), 'by', v_me))
+                           else settings - 'reader_sent' end
+     where id = p_edition and (p_sent or settings ? 'reader_sent');
   end
   $$;
 
@@ -5172,7 +5498,12 @@ create or replace function public.mark_day_seen(p_edition bigint, p_day integer)
 -- v11 the memorial plans and the names of the fallen they are for — never a
 -- family's contact (fallen_contacts is read one fallen at a time, by admins);
 -- v14 availability per slot instead of v6's per approach and part of a day;
--- v18 the days' owners (member ids and when each last looked).
+-- v18 the days' owners (member ids and when each last looked); v19 a speaker's
+-- public words and whether a photo is stored (has_photo — never its bytes:
+-- get_speaker_photo, one speaker at a time), the approval to appear on the
+-- guests' site (public_ok), a lesson's note for guests (public_note, with the
+-- lesson's row), a file's kind (a source or a presentation), «נשלח לדפוס» (the
+-- edition's settings.reader_sent).
 create or replace function public.load_week(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
@@ -5185,11 +5516,12 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
           'id', s.id, 'title', s.title, 'name', s.name, 'disambiguator', s.disambiguator, 'gender', s.gender,
           'affiliation', s.affiliation, 'bio_short', s.bio_short, 'topics', s.topics, 'contact_pref', s.contact_pref,
           'vetted', s.vetted, 'vetted_by', s.vetted_by, 'vetted_note', s.vetted_note, 'retired', s.retired,
-          'name_key', s.name_key, 'version', s.version)
+          'name_key', s.name_key, 'version', s.version, 'public_bio', s.public_bio,
+          'has_photo', exists (select 1 from public.speaker_photos ph where ph.speaker_id = s.id))
           order by s.id) from public.speakers s), '[]'),
       'approaches', coalesce((select jsonb_agg(jsonb_build_object(
           'id', a.id, 'speaker_id', a.speaker_id, 'owner_member_id', a.owner_member_id, 'status', a.status,
-          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version) order by a.id)
+          'avail_note', a.avail_note, 'offered_to', a.offered_to, 'version', a.version, 'public_ok', a.public_ok) order by a.id)
           from public.approaches a where a.edition_id = p_edition), '[]'),
       'slotAvailability', coalesce((select jsonb_agg(jsonb_build_object(
           'id', v.id, 'speaker_id', v.speaker_id, 'day', v.day, 'row_id', v.row_id,
@@ -5209,7 +5541,8 @@ create or replace function public.load_week(p_edition bigint) returns jsonb
           from public.escort_ticks t join public.lessons l on l.id = t.lesson_id where l.edition_id = p_edition), '[]'),
       'sourceFiles', coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'lesson_id', f.lesson_id, 'cover', f.cover, 'speaker_id', f.speaker_id,
           'storage_path', f.storage_path, 'display_name', f.display_name, 'mime', f.mime, 'size_bytes', f.size_bytes, 'page_count', f.page_count,
-          'uploaded_by', f.uploaded_by, 'uploaded_at', to_char(f.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'fallen_id', f.fallen_id) order by f.id)
+          'uploaded_by', f.uploaded_by, 'uploaded_at', to_char(f.uploaded_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'fallen_id', f.fallen_id,
+          'kind', f.kind) order by f.id)
           from public.source_files f where f.edition_id = p_edition), '[]'),
       'memorialPlans', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'fallen_id', p.fallen_id, 'lesson_id', p.lesson_id,
           'family_status', p.family_status, 'speaker_text', p.speaker_text, 'planned_minutes', p.planned_minutes, 'hard_stop', p.hard_stop,
@@ -6240,6 +6573,11 @@ create table if not exists public.rota_cohorts (
   unique (id, edition_id),
   unique (edition_id, letter)
 );
+-- v19: «עוזרת בתורנויות» (off: the fair suggestion leaves its groups out; its
+-- presence still counts for the meals) and «הצוות שלה יכול להסיע» (the transport
+-- board lists such cohorts beside the staff's shifts — names only).
+alter table public.rota_cohorts add column if not exists helps_rota boolean not null default true;
+alter table public.rota_cohorts add column if not exists can_drive boolean not null default false;
 alter table public.rota_cohorts enable row level security;
 
 create table if not exists public.rota_presence (
@@ -6343,6 +6681,10 @@ create table if not exists public.rota_prep_tasks (
   sort       integer not null default 0,
   foreign key (group_id, edition_id) references public.rota_groups (id, edition_id) on delete set null (group_id)
 );
+-- v19: Saturday night's two lists — a task, or an item of the shopping list with
+-- its quantity as typed (an item's only: the guard clears a task's). «נקנה» is `done`.
+alter table public.rota_prep_tasks add column if not exists kind text not null default 'task' check (kind in ('task', 'item'));
+alter table public.rota_prep_tasks add column if not exists qty text check (char_length(qty) <= 40);
 create index if not exists rota_prep_tasks_edition on public.rota_prep_tasks (edition_id);
 create index if not exists rota_prep_tasks_group on public.rota_prep_tasks (group_id);
 alter table public.rota_prep_tasks enable row level security;
@@ -6459,6 +6801,8 @@ create or replace function app.rota_cohorts_guard() returns trigger
     if new.name is null then perform app.refuse('name_required'); end if;
     new.diets := app.rota_clean_diets(new.diets);
     new.sort := coalesce(new.sort, 0);
+    -- v19: the two flags, each true or false (a null is bad_value, before the NOT NULL)
+    if new.helps_rota is null or new.can_drive is null then perform app.refuse('bad_value'); end if;
     return new;
   end
   $$;
@@ -6567,6 +6911,11 @@ create or replace function app.rota_prep_guard() returns trigger
     if tg_op = 'UPDATE' and new.edition_id is distinct from old.edition_id then perform app.refuse('bad_value'); end if;
     new.text := app.rota_no_contact(app.clean_line(new.text, 200));
     if new.text is null then perform app.refuse('name_required'); end if;
+    -- v19: a task or an item; the quantity is cleaned whatever the kind (one line ≤ 40, no phone or e-mail), and only
+    -- an item keeps it
+    if new.kind is null or new.kind not in ('task', 'item') then perform app.refuse('bad_value'); end if;
+    new.qty := app.rota_no_contact(app.clean_line(new.qty, 40));
+    if new.kind = 'task' then new.qty := null; end if;
     new.done := coalesce(new.done, false);
     new.sort := coalesce(new.sort, 0);
     return new;
@@ -6659,7 +7008,8 @@ create or replace function public.load_rota(p_edition bigint) returns jsonb
   as $$
     select jsonb_build_object(
       'cohorts', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'edition_id', c.edition_id, 'letter', c.letter, 'name', c.name,
-                                                               'diets', c.diets, 'sort', c.sort) order by c.sort, c.letter collate "C", c.id)
+                                                               'diets', c.diets, 'sort', c.sort, 'helps_rota', c.helps_rota, 'can_drive', c.can_drive)
+                                                order by c.sort, c.letter collate "C", c.id)
                              from public.rota_cohorts c where c.edition_id = p_edition), '[]'::jsonb),
       'presence', coalesce((select jsonb_agg(jsonb_build_object('cohort_id', p.cohort_id, 'day', p.day, 'shift', p.shift) order by p.cohort_id, p.day, p.shift)
                               from public.rota_presence p where p.edition_id = p_edition), '[]'::jsonb),
@@ -6679,7 +7029,7 @@ create or replace function public.load_rota(p_edition bigint) returns jsonb
                                                              'kind', s.kind, 'note', s.note) order by s.day, s.start_min, s.id)
                            from public.rota_staff_shifts s where s.edition_id = p_edition), '[]'::jsonb),
       'prep', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'edition_id', t.edition_id, 'text', t.text, 'group_id', t.group_id,
-                                                            'done', t.done, 'sort', t.sort) order by t.sort, t.id)
+                                                            'done', t.done, 'sort', t.sort, 'kind', t.kind, 'qty', t.qty) order by t.sort, t.id)
                           from public.rota_prep_tasks t where t.edition_id = p_edition), '[]'::jsonb)
     )
     where app.can_see_edition(p_edition)
@@ -6921,10 +7271,11 @@ grant select on public.source_files to authenticated;
 grant execute on function app.may_read_source(text) to authenticated;
 grant execute on function app.may_upload_source(text) to authenticated;
 grant execute on function app.may_delete_source(text, text) to authenticated;
-grant execute on function public.register_source_file(bigint, bigint, text, text, integer) to authenticated;
+grant execute on function public.register_source_file(bigint, bigint, text, text, integer, text) to authenticated;   -- v19: p_kind
 grant execute on function public.remove_source_file(bigint) to authenticated;
 grant execute on function public.set_reader_headers(bigint, text, text) to authenticated;
 grant execute on function public.set_reader_cover(bigint, bigint) to authenticated;
+grant execute on function public.set_reader_sent(bigint, boolean) to authenticated;   -- v19: «נשלח לדפוס»
 
 -- Memorial times and logistics (v11). fallen, fallen_contacts and memorial_plans
 -- are read under RLS (the policies' predicates run as the browser's role) and
@@ -6981,7 +7332,8 @@ grant execute on function public.start_edition_preview(boolean) to authenticated
 -- helpers run inside the definer guards only.
 grant select, delete on public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_duties,
                         public.rota_assignments, public.rota_staff_shifts, public.rota_prep_tasks to authenticated;
-grant insert (edition_id, letter, name, diets, sort), update (letter, name, diets, sort) on public.rota_cohorts to authenticated;
+grant insert (edition_id, letter, name, diets, sort, helps_rota, can_drive),
+      update (letter, name, diets, sort, helps_rota, can_drive) on public.rota_cohorts to authenticated;   -- v19: the two flags
 grant insert (edition_id, cohort_id, day, shift) on public.rota_presence to authenticated;
 grant insert (edition_id, cohort_id, number, size, head_name), update (cohort_id, number, size, head_name) on public.rota_groups to authenticated;
 grant insert (edition_id, name, description, need_morning, need_afternoon, need_night, min_people, sort),
@@ -6989,7 +7341,8 @@ grant insert (edition_id, name, description, need_morning, need_afternoon, need_
 grant insert (edition_id, day, shift, duty_id, group_id, source), update (day, shift, duty_id, group_id) on public.rota_assignments to authenticated;
 grant insert (edition_id, day, start_min, end_min, member_id, name, cohort_id, kind, note),
       update (day, start_min, end_min, member_id, name, cohort_id, kind, note) on public.rota_staff_shifts to authenticated;
-grant insert (edition_id, text, group_id, done, sort), update (text, group_id, done, sort) on public.rota_prep_tasks to authenticated;
+grant insert (edition_id, text, group_id, done, sort, kind, qty),
+      update (text, group_id, done, sort, kind, qty) on public.rota_prep_tasks to authenticated;               -- v19: tasks and items
 grant select on public.rota_group_contacts to authenticated;
 grant execute on function app.may_write_rota(bigint) to authenticated;
 grant execute on function app.may_see_rota_contacts(bigint) to authenticated;
@@ -7003,6 +7356,16 @@ grant execute on function public.set_rota_shifts(bigint, jsonb) to authenticated
 grant select on public.day_owners to authenticated;
 grant execute on function public.set_day_owners(bigint, integer, bigint[]) to authenticated;
 grant execute on function public.mark_day_seen(bigint, integer) to authenticated;
+
+-- The guests' site's data (v19). speaker_photos is read under RLS (any member;
+-- get_speaker_photo is invoker) and written only by set_speaker_photo; anon has
+-- nothing of it — a guest sees a photo, a speaker's public words and a lesson's
+-- note only through schedule_view (above), only while set_public_ok says so.
+-- app.photo_ok runs inside set_speaker_photo only.
+grant select on public.speaker_photos to authenticated;
+grant execute on function public.get_speaker_photo(bigint) to authenticated;
+grant execute on function public.set_speaker_photo(bigint, bigint, text) to authenticated;
+grant execute on function public.set_public_ok(bigint, integer, boolean) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Realtime. Supabase sends a browser postgres_changes only for tables in the
@@ -7025,7 +7388,10 @@ grant execute on function public.mark_day_seen(bigint, integer) to authenticated
 -- and the imported lessons' notes (last year's transport words; read one lesson
 -- at a time); v16 every table of «תורנויות» (the group heads' phones among them;
 -- the screens reload after each write); v18 the days' owners (the week reloads
--- after the write; nobody needs «ראיתי» live).
+-- after the write; nobody needs «ראיתי» live); v19 the speakers' photos (bytes a
+-- guest may see only through the schedule link, and only with public_ok).
+-- speakers and approaches stay published: their new columns (public_bio, public_ok)
+-- are the team's to read anyway.
 -- -----------------------------------------------------------------------------
 do $$
 declare
@@ -7045,7 +7411,7 @@ begin
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
                            'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes',
                            'rota_cohorts', 'rota_presence', 'rota_groups', 'rota_group_contacts', 'rota_duties', 'rota_assignments',
-                           'rota_staff_shifts', 'rota_prep_tasks', 'day_owners'] loop
+                           'rota_staff_shifts', 'rota_prep_tasks', 'day_owners', 'speaker_photos'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

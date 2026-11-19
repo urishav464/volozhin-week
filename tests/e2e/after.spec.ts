@@ -234,6 +234,9 @@ test.describe("demo build", () => {
     const list = page.getByRole("list", { name: "מעבר לשנה הבאה" });
     await expect(list.locator("[data-step]")).toHaveCount(5);
     await expect(list.locator("[data-step='5']")).toContainText("מאגר המרצים");
+    // v19: Saturday night's two lists go on — the tasks and the shopping list with its quantities, nothing done or bought
+    await list.locator("[data-step='5']").getByText("מה עובר לשנה הבאה").click();
+    await expect(list.locator("[data-step='5']")).toContainText("רשימת ההכנות של מוצ״ש — המשימות ורשימת הקניות עם הכמויות (בלי קבוצה ובלי «בוצע»/«נקנה»)");
     await expect(list.locator("[data-step='2']")).toContainText(/נכתבו 3 מתוך \d+/);
     await expect(list.locator("[data-step='1']")).toHaveAttribute("data-done", "false");
 
@@ -430,7 +433,8 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
-    await page.goto(mockUrl());
+    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    await page.goto(`${mockUrl()}/grid`);
     const panel = await openLesson(page, info, "ראשון", "מרצה 01");
     await expect(panel.getByRole("region", { name: "תשלום/הסעה", exact: true })).toBeVisible();
     await expect(panel.getByRole("region", { name: "איך עבר", exact: true })).toHaveCount(0);
@@ -438,10 +442,10 @@ test.describe("mock build", () => {
     await expect(page).toHaveURL(/\/speakers\/1$/);
     await expect(page.getByRole("region", { name: "שיעורים במחזורים" })).toBeVisible();
     await expect(page.getByRole("region", { name: "איך עבר בשנים קודמות" })).toHaveCount(0);
-    // «אחרי השבוע» is not logistics': not in the header, and its address lands home
+    // «אחרי השבוע» is not logistics': not in the header, and its address lands on their home
     await expect(nav(page).getByRole("link", { name: "אחרי השבוע" })).toHaveCount(0);
     await page.goto(`${mockUrl()}/after`);
-    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/$`));
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`));
     await nav(page).getByRole("link", { name: "ידע" }).click();
     await expect(page.getByRole("heading", { name: "ידע ואבני דרך" })).toBeVisible();
     await expect(page.getByRole("link", { name: "סיכום המחזור" })).toHaveCount(0);

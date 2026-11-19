@@ -4,9 +4,11 @@
 // HTTP, with the session's token, then the v10 functions) and DemoSources (an
 // in-memory bucket on the engine, synthetic files made in the browser).
 // Semantics: docs/CONTRACT.md «Sources and the reader».
-import type { SourceFile } from "../domain/types";
+import type { SourceFile, SourceKind } from "../domain/types";
 
 export interface UploadOptions {
+  /** v19: "source" (absent) or "presentation" — never in the reader; a pptx only as one. SupabaseSources always sends p_kind. */
+  kind?: SourceKind;
   /** What the browser read of it as the reader would (src/reader/pages.ts): a PDF's pages, a picture 1; null — not readable (or Word). */
   pages: number | null;
   /** 0…1 while the bytes go up. */
@@ -30,6 +32,11 @@ export interface SourcesPort {
   setHeaders(editionId: number, left: string | null, right: string | null): Promise<void>;
   /** settings.reader_cover — one of the edition's posters, or null (a schedule page instead). */
   setCover(editionId: number, fileId: number | null): Promise<void>;
+  /**
+   * v19 «נשלח לדפוס» (public.set_reader_sent): logistics or an admin (an archived edition: its admins). true stamps
+   * settings.reader_sent {at, by} (again: re-stamps); false removes it.
+   */
+  setReaderSent(editionId: number, sent: boolean): Promise<void>;
 }
 
 /** How long a signed URL reads a file: long enough to fetch a reader's files, short enough not to linger. */

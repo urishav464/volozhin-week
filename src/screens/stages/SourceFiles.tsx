@@ -16,7 +16,7 @@
 import { type DragEvent, type ReactNode, useId, useRef, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
-import { checkPicked, DOCX, fromPreviousSpeaker, SOURCE_ACCEPT, sizeText } from "../../data/sourceRules";
+import { checkPicked, DOCX, fromPreviousSpeaker, isPresentation, SOURCE_ACCEPT, sizeText } from "../../data/sourceRules";
 import type { Lesson, SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { memorialFiles, memorialLeftovers, planOn } from "../../reader/model";
@@ -37,7 +37,9 @@ interface Upload {
  * «PDF · 3 עמודים», «Word · צריך PDF», «תמונה · עמוד אחד» — and a PDF or a picture the browser could not read on
  * upload (no page count: the reader leaves it out, src/reader/model.ts readableFile) «… · לא נקרא — …; צריך קובץ אחר».
  */
-export function fileKind(f: Pick<SourceFile, "mime" | "page_count">): string {
+export function fileKind(f: Pick<SourceFile, "mime" | "page_count" | "kind">): string {
+  // v19: a presentation is shown in the room, never printed — no «צריך PDF», no page count
+  if (isPresentation(f)) return "מצגת";
   if (f.mime === DOCX) return "Word · צריך PDF";
   const pdf = f.mime === "application/pdf";
   if (f.page_count == null) return pdf ? "PDF · לא נקרא — מוגן או פגום; צריך קובץ אחר" : "תמונה · לא נקרא — פגום או בפורמט אחר; צריך קובץ אחר";

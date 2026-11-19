@@ -12,7 +12,7 @@ import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
 import { ScreenBoundary } from "./screens/ScreenBoundary";
 import { MyDayScreen } from "./screens/myday/MyDayScreen";
-import { afterRedirect, mineRedirect, myDayRedirect, navFor } from "./screens/nav";
+import { afterRedirect, homeRedirect, mineRedirect, myDayRedirect, navFor } from "./screens/nav";
 import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
 import { Shell, UpdateBanner } from "./screens/Shell";
@@ -189,7 +189,7 @@ export default function App() {
     <WeekCtx.Provider value={store}>
       <Shell
         demo={demo}
-        full={(!!me && ((path === "/" && persona !== "trainee") || FULL_WIDTH.has(path) || path.startsWith("/logistics/transports"))) || !!offlineMe}
+        full={(!!me && ((path === "/" && persona === "staff") || FULL_WIDTH.has(path) || path.startsWith("/logistics/transports"))) || !!offlineMe}
         user={header ? { name: header.display_name || header.email, roleLabel: ROLE_LABEL[topRole(header)] } : null}
         nav={me && persona ? navFor(me, persona, store.week) : undefined}
         onSignOut={signedIn && !demo ? () => void signOut() : undefined}
@@ -234,11 +234,19 @@ export default function App() {
   );
 }
 
-/** The pages that draw on the whole width: the week (the staff's `/` too), the tracking table, the transport board. */
-const FULL_WIDTH = new Set(["/tracking", "/week", "/grid", "/logistics"]);
+/**
+ * The pages that draw on the whole width: the week (the staff's `/` too), the tracking table, the transport board
+ * (`/logistics/transports`, above). The logistics home (`/logistics`, phase 4) is a reading column.
+ */
+const FULL_WIDTH = new Set(["/tracking", "/week", "/grid"]);
 
-/** `/`: a trainee's home is «היום שלי»; staff and logistics keep the writing grid there (the staff's overview). */
+/**
+ * `/`: a trainee's home is «היום שלי»; staff keep the writing grid there (their overview); logistics' home is
+ * «לוגיסטיקה ← בית» (`/logistics`, the reset, phase 4 — nav.ts homeRedirect).
+ */
 function Home({ port, me, persona }: { port: DataPort; me: Me; persona: Persona | null }) {
+  const to = homeRedirect(persona);
+  if (to) return <Navigate replace to={to} />;
   if (persona !== "trainee") return <WeekScreen port={port} me={me} />;
   return <MyDayScreen port={port} me={me} />;
 }
@@ -302,13 +310,16 @@ function GateScreen(props: {
       // The gate above stays in front of every route. «הגדרות» is for admins only; «אישורים» for a global admin, an
       // edition's admin and logistics (handlesLogistics — the page shows each what they may do); anyone else who opens
       // one lands on `/`. The outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the
-      // designer's export an admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the
+      // designer's export an admin's; the reader (v19) every member's — content and admins build it whole, logistics
+      // build, download and mark «נשלח לדפוס» — «לוגיסטיקה» logistics' and admins' (the
       // screens also check the edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and
       // printed from «תוצרים» (/print/rota), which every member reads. The reset, phase 2: a trainee's `/` is «היום
       // שלי» (Home); the trainee's pages — /week, /speakers…, /lesson/:id — are every member's by address (the
       // commands decide what each may do), and the old grid stays at /grid. Phase 3: the staff's «ימים» is /day/:d
       // (DayScreen sends a trainee or logistics elsewhere by itself), /myday is a trainee's — staff go to /day,
       // logistics home; «אחרי השבוע» (/after) is content's and admins', never logistics'; /mine only redirects.
+      // Phase 4: logistics' home is /logistics (no tab; an unknown tab goes there too) — their `/`, /myday, /day/* and
+      // /after all land there, and the catch-all `*` → `/` → /logistics.
       return (
         <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>

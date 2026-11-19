@@ -7,7 +7,7 @@ import type { AvailabilityRange, SlotKind } from "../domain/availability";
 import type { Day } from "../domain/time";
 import type { ApproachStatus, SpeakerContacts, Vetting } from "../domain/types";
 import type { Engine, PoolShared } from "./engine";
-import type { ActivityEntry, CreateOptions, HistoryLesson, NewSpeaker, SpeakerMatch, SpeakerPatch, SpeakerPort } from "./speakers";
+import type { ActivityEntry, CreateOptions, HistoryLesson, NewSpeaker, SpeakerMatch, SpeakerPatch, SpeakerPhoto, SpeakerPort } from "./speakers";
 
 /** What DemoPort shares with its pool. */
 export interface DemoPool {
@@ -110,5 +110,18 @@ export class DemoSpeakers implements SpeakerPort {
 
   setAvailabilityRanges(editionId: number, speakerId: number, days: Day[], ranges: AvailabilityRange[], rest?: SlotKind | null) {
     return this.run(this.p.engine(editionId), (e) => e.setAvailabilityRanges(speakerId, days, ranges, rest ?? null));
+  }
+
+  // v19 — the photo is one row across the years (shared.photos), read by any member
+  async photo(speakerId: number): Promise<SpeakerPhoto | null> {
+    return structuredClone(this.any().speakerPhoto(speakerId));
+  }
+
+  setPhoto(editionId: number, speakerId: number, photo: string | null) {
+    return this.run(this.p.engine(editionId), (e) => e.setSpeakerPhoto(speakerId, photo));
+  }
+
+  setPublicOk(editionId: number, approachId: number, version: number, ok: boolean) {
+    return this.run(this.p.engine(editionId), (e) => e.setPublicOk(approachId, version, ok));
   }
 }

@@ -111,3 +111,16 @@ export function kkStatus(kk: KkData, roster: readonly RosterMember[]): KkStatus 
     ordered: books.filter((g) => orderedIds.has(g.id)).length,
   };
 }
+
+/**
+ * v19 «הצעה» for a book's copies: one for each trainee signed up and one for each leader. Only a suggestion — the
+ * order screen fills the field with it on «למלא», and nothing is saved until «שמירה».
+ */
+export function suggestedCopies(signed: number, leaders: number): number {
+  return Math.max(0, signed) + Math.max(0, leaders);
+}
+
+/** «למלא»'s name, by the count: «עותק אחד», «N עותקים». */
+export function fillCopiesLabel(n: number): string {
+  return `למלא את ההצעה: ${n === 1 ? "עותק אחד" : `${n} עותקים`}`;
+}

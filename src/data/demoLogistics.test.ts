@@ -2,9 +2,15 @@
 // request can be decided and a driver set as in production — and the transport board has synthetic pickups and staff
 // shifts to draw. The default and the trainee's demos keep no pickup_min and the rota's own three staff shifts.
 import { describe, expect, it } from "vitest";
+import { photoToBase64 } from "../domain/photo";
 import { CommandError } from "./commands";
+import { demoPhotoBytes } from "./demoPhoto";
 import { DEMO_LOGISTICS, DEMO_TRAINEE, DemoPort } from "./demoPort";
+import { demoLogisticsStart } from "./demoWeek";
+import { Engine } from "./engine";
 import { personaOf } from "./gate";
+
+const NOW = "2026-11-19T10:00:00.000Z";
 
 const code = async (p: Promise<unknown>) => {
   try {
@@ -77,4 +83,42 @@ describe("the other demos keep no pickup times and the rota's own staff shifts",
       expect((await port.rota.load(1)).staff).toHaveLength(3);
     });
   }
+});
+
+describe("v19 (the reset, phase 4): the logistics home's demo", () => {
+  it("`?as=logistics`: a date three weeks ahead (a Sunday), the two flags, a shopping list, one approved speaker with a photo", async () => {
+    const port = new DemoPort(DEMO_LOGISTICS, { logistics: true, now: () => NOW });
+    const week = await port.loadWeek(1);
+    expect(week.edition.start_date).toBe(demoLogisticsStart(NOW));
+    const rota = await port.rota.load(1);
+    expect(rota.cohorts.map((c) => [c.letter, c.helps_rota, c.can_drive])).toEqual([["א", true, false], ["ב", true, true], ["נ", false, false]]);
+    expect(rota.prep.filter((p) => p.kind === "item").map((p) => [p.text, p.qty, p.done])).toEqual([
+      ["פריט לדוגמה 1", "2 (לדוגמה)", false],
+      ["פריט לדוגמה 2", "2 (לדוגמה)", false],
+    ]);
+    expect(rota.prep.filter((p) => p.kind === "task").every((p) => p.qty === null)).toBe(true);
+    const sunday = week.lessons.find((l) => l.kind === "lesson" && l.day === 0 && l.start_min === 510 && l.state === "closed")!;
+    const lead = week.lessonSpeakers.find((x) => x.lesson_id === sunday.id && x.role === "lead")!.speaker_id;
+    expect(week.approaches.filter((a) => a.public_ok).map((a) => a.speaker_id)).toEqual([lead]);
+    expect(week.speakers.find((s) => s.id === lead)).toMatchObject({ public_bio: "תיאור לדוגמה", has_photo: true });
+    expect((await port.speakers.photo(lead))?.photo).toBe(photoToBase64(demoPhotoBytes()));
+    // the guests' schedule shows them (a link the demo's instructor issues — logistics issues none)
+    const { token } = new Engine(port.engine(1).week, { memberId: 1, role: "admin", global: true }, undefined, port.shared).issueLink("schedule");
+    const view = await port.public.scheduleView(token);
+    expect(view.people.map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true]]);
+  });
+
+  it("the default demo and `?as=trainee` stay as they were: no date, no flags set, no items, nobody approved, no photo", async () => {
+    for (const port of [new DemoPort(), new DemoPort(DEMO_TRAINEE, { trainee: true })]) {
+      const week = await port.loadWeek(1);
+      expect(week.edition.start_date).toBeNull();
+      const rota = await port.rota.load(1);
+      expect(rota.cohorts.every((c) => c.helps_rota === true && c.can_drive === false)).toBe(true);
+      expect(rota.prep.every((p) => p.kind === "task" && p.qty === null)).toBe(true);
+      expect(week.approaches.some((a) => a.public_ok)).toBe(false);
+      expect(week.speakers.some((s) => s.has_photo || s.public_bio != null)).toBe(false);
+      expect(Object.keys(port.shared.photos)).toEqual([]);
+    }
+  });
+
 });

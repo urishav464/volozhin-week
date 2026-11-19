@@ -133,7 +133,7 @@ export function Board({ ctx }: { ctx: RotaCtx }) {
     setDay(w.day);
     setJump((j) => ({ day: w.day!, shift: w.shift, duty: w.dutyId, n: (j?.n ?? 0) + 1 }));
   };
-  const range = loadRange(loads);
+  const range = loadRange(loads, data);
 
   return (
     <div className="space-y-3">

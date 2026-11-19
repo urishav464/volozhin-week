@@ -7,7 +7,8 @@
 // runs the same inputs through both.
 import type { DutyPhrase, DutyWhen, PrintWhen, SourcesKind, Transport, TransportDetails } from "../domain/types";
 import { CommandError, type TransportDriverPatch, type TransportRequestPatch } from "./commands";
-import { cleanLine, cleanPhone } from "./speakerRules";
+import { hasContact } from "../import/phone";
+import { asText, cleanBlock, cleanLine, cleanPhone } from "./speakerRules";
 
 const fail = (code: string): never => {
   throw new CommandError(code);
@@ -29,7 +30,19 @@ export const STAGE_LIMITS = {
   driver_name: 80,
   /** v18: transport_details.pickup_min — minutes from 00:00 of the lesson's grid day, 0 … 1830. */
   pickup_min_max: 1830,
+  /** v19: lessons.public_note — the guests' schedule's line about the lesson. */
+  public_note: 400,
 } as const;
+
+/**
+ * v19 lessons.public_note (update_lesson's `public_note`, read as `->>` reads it): app.clean_block ≤ 400, then no phone
+ * or e-mail (contact_in_text) — a guest reads it.
+ */
+export function cleanPublicNote(v: unknown): string | null {
+  const s = cleanBlock(asText(v), STAGE_LIMITS.public_note);
+  if (s != null && hasContact(s)) fail("contact_in_text");
+  return s;
+}
 
 export const TRANSPORTS: readonly Transport[] = ["none", "one_way", "round_trip"];
 export const SOURCES_KINDS: readonly SourcesKind[] = ["pending", "sheet", "presentation", "sheet_presentation", "sheet_video", "none", "other"];

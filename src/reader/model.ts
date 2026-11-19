@@ -16,13 +16,14 @@
 // one whose files are all Word (they cannot be merged in the browser: «צריך
 // PDF»), a file the browser could not read on upload (its page_count NULL:
 // src/reader/pages.ts — «צריך קובץ אחר»), and a previous speaker's files
-// (reopen_lesson keeps them, for removal).
+// (reopen_lesson keeps them, for removal). Never a presentation (v19: source_files.kind) — shown in the room, not
+// printed: no row, no leftover, never waiting, never the cover.
 import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
 import type { Lesson, MemorialPlan, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { LRM } from "../exports/table";
-import { printableMime } from "../data/sourceRules";
+import { isPresentation, printableMime } from "../data/sourceRules";
 import { planReader, scheduleCoverPages } from "./layout";
 import type { ScheduleLine } from "./render";
 
@@ -200,7 +201,9 @@ function statusOf(l: Lesson, printable: SourceFile[], word: SourceFile[], unread
 }
 
 /** The manifest: every closed lesson and memorial slot, in schedule order, and what the reader has of it. */
-export function readerManifest(week: Week): Manifest {
+export function readerManifest(all: Week): Manifest {
+  // a presentation is never the reader's — dropped before anything is counted (v19)
+  const week: Week = { ...all, sourceFiles: (all.sourceFiles ?? []).filter((f) => !isPresentation(f)) };
   const lessons = new Map(week.lessons.map((l) => [l.id, l]));
   const lead = new Map(week.lessonSpeakers.filter((x) => x.role === "lead").map((x) => [x.lesson_id, x.speaker_id]));
   const files = [...(week.sourceFiles ?? [])].sort((a, b) => a.id - b.id);
@@ -245,6 +248,17 @@ export function readerManifest(week: Week): Manifest {
   const marked = week.edition.settings?.reader_cover;
   const cover = covers.find((f) => f.id === marked && readableFile(f)) ?? null;
   return { rows, leftovers, waiting, covers, cover };
+}
+
+/**
+ * v19 «נשלח לדפוס»: how many of the reader's files (every file but a presentation) were uploaded after the reader was
+ * marked sent (settings.reader_sent.at) — «נוספו N קבצים אחרי השליחה». 0 when it was not sent.
+ */
+export function filesAfterSent(week: Pick<Week, "edition" | "sourceFiles">): number {
+  const sent = week.edition.settings?.reader_sent?.at;
+  const at = sent ? Date.parse(sent) : NaN;
+  if (!Number.isFinite(at)) return 0;
+  return (week.sourceFiles ?? []).filter((f) => !isPresentation(f) && Date.parse(f.uploaded_at) > at).length;
 }
 
 /** What the reader prints, in order: the rows whose status puts them in. */
