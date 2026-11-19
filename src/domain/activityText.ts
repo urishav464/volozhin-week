@@ -5,6 +5,7 @@
 // Never a contact value: the log holds field names only (CONTRACT «activity»).
 import type { ActivityEntry } from "../data/speakers";
 import { statusLabel } from "../lib/labels";
+import { israelDate } from "./israelTime";
 import { byGender } from "./names";
 import { DAY_NAMES, type Day, dayRange } from "./time";
 import type { ApproachStatus, Gender } from "./types";
@@ -35,7 +36,7 @@ const SPEAKER_FIELD: Record<string, string> = {
   affiliation: "מוסד",
   bio_short: "תיאור קצר",
   topics: "נושאים",
-  contact_pref: "ערוץ קשר מועדף",
+  contact_pref: "דרך תקשורת",
   retired: "פעיל/ה",
 };
 
@@ -126,4 +127,52 @@ export function timeline(entries: ActivityEntry[], ctx: TimelineContext): Timeli
     } else text = e.kind;
     return { id: e.id, at: e.at, who: member(e.actor), text, note };
   });
+}
+
+/**
+ * «מה קרה» on the speaker page (the reset, phase 2), curated: what a teammate needs to know — the speaker added to the
+ * pool and vetted, the approach (who handles them, the call's results, hand-overs), the pitches (proposed, closed,
+ * withdrawn). Edits of the record and of the contacts are left out (the page shows them as they are now), and the
+ * availability taps one member made on one day in Israel become ONE line: how many slots, on which days — a set of
+ * time ranges (v18) is one line already, and a single tap keeps its own line (it says which slot). Newest first, as
+ * given; the line stands where the group's newest entry stood, with its id and time.
+ */
+export function curate(entries: readonly ActivityEntry[]): ActivityEntry[] {
+  const out: ActivityEntry[] = [];
+  const groups = new Map<string, { at: number; slots: Set<string>; days: Set<number>; n: number }>();
+  for (const e of entries) {
+    if (e.entity === "speakers") {
+      if (e.kind === "insert" || e.kind === "vet") out.push(e);
+      continue;
+    }
+    if (e.entity === "pitches") {
+      out.push(e);
+      continue;
+    }
+    if (e.entity !== "approaches") continue;
+    const d = e.detail ?? {};
+    if (e.kind !== "availability" || num(d.marked) != null) {
+      out.push(e);
+      continue;
+    }
+    // one slot's tap (v14), or a part of a day (before): by who and the Israel date
+    const ms = Date.parse(e.at);
+    const key = `${e.actor ?? ""}|${e.edition_id ?? ""}|${Number.isNaN(ms) ? e.at : israelDate(e.at)}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { at: out.length, slots: new Set(), days: new Set(), n: 0 };
+      groups.set(key, g);
+      out.push(e);
+    }
+    g.n += 1;
+    const day = num(d.day);
+    g.slots.add(`${day ?? ""}:${num(d.start) ?? String(d.part ?? "")}`);
+    if (day != null) g.days.add(day);
+  }
+  for (const g of groups.values()) {
+    if (g.n < 2) continue;
+    const first = out[g.at];
+    out[g.at] = { ...first, detail: { speaker: first.detail?.speaker, marked: g.slots.size, days: [...g.days].sort((a, b) => a - b) } };
+  }
+  return out;
 }

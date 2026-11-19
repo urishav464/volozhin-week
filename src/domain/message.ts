@@ -23,12 +23,16 @@
 //   {{אני:זכר|נקבה}}             by the sender's gender (the team member sending it)
 //   [[תשלום:כשיש תשלום|בהתנדבות]]  the first text when an amount was asked, else the second —
 //                                   the only way a volunteer's wording enters: the template's own
-// Brackets nest ([[תשלום:…[[זכר|נקבה]]…|…]]); a variable does not.
+//   [[הסעה:כשיש הסעה|בלי]]         the first text when a transport was asked (one way or both), else the second
+//   [[מקורות:כשחסרים|כשהתקבלו]]    the first text while the sources were not received yet («טרם התקבלו»), else the second
+// Brackets nest ([[תשלום:…[[זכר|נקבה]]…|…]]); a variable does not. The three switches (the reset, phase 2) let one
+// template say a payment, a transport or a request for the sources only when there is one: «הנוסח המוצע»
+// (PROPOSED_TEMPLATE) is the owner's own wording in this language, offered in «תבניות» — never saved by itself.
 import { LRM, dateOf, fmtRange } from "./time";
 
 const RLM = "\u200F";
 import { displayName } from "./names";
-import type { Approval, Gender, Lesson } from "./types";
+import type { Approval, Gender, Lesson, SourcesKind, Transport } from "./types";
 import { hebrewNumeral } from "../settings/hebrewYear";
 
 /** The variables a template may use, in the order the settings tab lists them. */
@@ -62,7 +66,7 @@ export interface Problem {
 export interface MessageInput {
   /** editions.settings.confirm_template — null/empty until the instructor pastes it. */
   template: string | null | undefined;
-  lesson: Pick<Lesson, "state" | "day" | "start_min" | "end_min" | "title" | "teach_min" | "pay_amount"> & { approval: Approval };
+  lesson: Pick<Lesson, "state" | "day" | "start_min" | "end_min" | "title" | "teach_min" | "pay_amount"> & { approval: Approval; transport: Transport; sources_kind: SourcesKind };
   /** The lead speaker; null when the lesson has none. */
   speaker: { title: string | null; name: string; gender: Gender | null } | null;
   /** The team member sending it (their gender, from the team list). */
@@ -153,15 +157,23 @@ export function amountText(n: number): string {
 
 // ------------------------------------------------------------------ the template's grammar
 
+/** A bracket that chooses by the lesson, not by gender: «[[תשלום:…|…]]», «[[הסעה:…|…]]», «[[מקורות:…|…]]». */
+export type TemplateSwitch = "תשלום" | "הסעה" | "מקורות";
+
 export type TemplateNode =
   | { t: "text"; v: string }
   | { t: "var"; name: string }
   | { t: "me"; m: string; f: string }
   | { t: "gender"; m: TemplateNode[]; f: TemplateNode[] }
-  | { t: "pay"; paid: TemplateNode[]; free: TemplateNode[] };
+  | { t: "pay"; paid: TemplateNode[]; free: TemplateNode[] }
+  /** The reset, phase 2: `yes` when a transport was asked / while the sources are missing, else `no`. */
+  | { t: "when"; on: Exclude<TemplateSwitch, "תשלום">; yes: TemplateNode[]; no: TemplateNode[] };
 
-/** «[[תשלום:» and «{{אני:» — spaces around the word and the colon are forgiven, so a payment switch is never read as a gender pair. */
-const PAY_PREFIX = /^[ \t]*תשלום[ \t]*:[ \t]*/;
+/** What each switch's two branches are, for a bracket with the wrong number of them. */
+const SWITCH_FORMS: Record<TemplateSwitch, string> = { תשלום: "כשיש תשלום|בהתנדבות", הסעה: "כשיש הסעה|בלי הסעה", מקורות: "כשהמקורות חסרים|כשהתקבלו" };
+
+/** «[[תשלום:», «[[הסעה:», «[[מקורות:» and «{{אני:» — spaces around the word and the colon are forgiven, so a switch is never read as a gender pair. */
+const SWITCH_PREFIX = /^[ \t]*(תשלום|הסעה|מקורות)[ \t]*:[ \t]*/;
 const ME_PREFIX = /^אני[ \t]*:/;
 
 /** The template as a tree, and what is wrong with its brackets (Hebrew). */
@@ -225,8 +237,9 @@ export function parseTemplate(src: string): { nodes: TemplateNode[]; errors: str
   const bracket = (): TemplateNode => {
     const from = i;
     i += 2;
-    const pay = PAY_PREFIX.exec(s.slice(i));
-    if (pay) i += pay[0].length;
+    const sw = SWITCH_PREFIX.exec(s.slice(i));
+    if (sw) i += sw[0].length;
+    const on = sw ? (sw[1] as TemplateSwitch) : null;
     const alts: TemplateNode[][] = [];
     for (;;) {
       alts.push(seq(true));
@@ -242,10 +255,11 @@ export function parseTemplate(src: string): { nodes: TemplateNode[]; errors: str
       break;
     }
     if (alts.length !== 2) {
-      errors.push(pay ? `«[[תשלום:…]]»: צריך בדיוק שתי חלופות, כשיש תשלום|בהתנדבות` : `«[[…]]»: צריך בדיוק שתי צורות, זכר|נקבה`);
+      errors.push(on ? `«[[${on}:…]]»: צריך בדיוק שתי חלופות, ${SWITCH_FORMS[on]}` : `«[[…]]»: צריך בדיוק שתי צורות, זכר|נקבה`);
     }
     const [a = [], b = []] = alts;
-    return pay ? { t: "pay", paid: a, free: b } : { t: "gender", m: a, f: b };
+    if (on === "תשלום") return { t: "pay", paid: a, free: b };
+    return on ? { t: "when", on, yes: a, no: b } : { t: "gender", m: a, f: b };
   };
 
   const nodes = seq(false);
@@ -278,6 +292,7 @@ function templateVariables(list: TemplateNode[], out: string[] = []): string[] {
     if (n.t === "var" && !out.includes(n.name)) out.push(n.name);
     else if (n.t === "gender") templateVariables([...n.m, ...n.f], out);
     else if (n.t === "pay") templateVariables([...n.paid, ...n.free], out);
+    else if (n.t === "when") templateVariables([...n.yes, ...n.no], out);
   }
   return out;
 }
@@ -364,6 +379,8 @@ export function composeConfirmation(input: MessageInput): Composed {
           }
           case "pay":
             return l.pay_amount != null ? render(n.paid) : render(n.free);
+          case "when":
+            return (n.on === "הסעה" ? l.transport !== "none" : l.sources_kind === "pending") ? render(n.yes) : render(n.no);
         }
       })
       .join("");
@@ -371,6 +388,22 @@ export function composeConfirmation(input: MessageInput): Composed {
   const text = render(nodes);
   return { ok: problems.length === 0, text, problems };
 }
+
+// ------------------------------------------------------------------ the proposed wording
+
+/**
+ * «הנוסח המוצע» («הצעה», the owner's own words, 18.11): the date and the time, then the payment and the transport only
+ * if there are any, then a request for the sources only while they were not received. Offered in «תבניות» to fill the
+ * editor; saved only by the admin's «שמירה» — never seeded, never sent as it is without that.
+ */
+export const PROPOSED_TEMPLATE = [
+  "שלום {{פנייה}},",
+  "השיעור יתקיים ב{{תאריך}} בשעה {{שעה}}.",
+  "[[תשלום:סוכם על תשלום של {{תשלום}} ש״ח.",
+  "|]][[הסעה:נדאג להסעה, ופרטי הנהג/ת יישלחו לפני השיעור.",
+  "|]][[מקורות:נשמח לקבל מראש את דף המקורות או המצגת.",
+  "|]]תודה רבה!",
+].join("\n");
 
 // ------------------------------------------------------------------ sending
 

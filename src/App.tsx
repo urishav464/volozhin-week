@@ -1,10 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
-import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, type Gate } from "./data/gate";
+import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, type Gate, type Persona, personaOf } from "./data/gate";
 import { makePort } from "./data";
 import type { Me } from "./data/types";
-import { waitingForApproval } from "./domain/mine";
-import type { Week } from "./domain/types";
+import { lessonPath, pageStepOf, speakerPath } from "./domain/routes";
 import { EXPECTED_SCHEMA_VERSION } from "./lib/schema";
 import { ROLE_LABEL, topRole } from "./lib/labels";
 import { isNetworkError } from "./offline/network";
@@ -13,13 +12,15 @@ import type { WeekSnapshot } from "./offline/snapshot";
 import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
 import { ScreenBoundary } from "./screens/ScreenBoundary";
+import { MyDayScreen } from "./screens/myday/MyDayScreen";
+import { navFor } from "./screens/nav";
 import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
-import { type NavItem, Shell, UpdateBanner } from "./screens/Shell";
+import { Shell, UpdateBanner } from "./screens/Shell";
 import { SignIn } from "./screens/SignIn";
 import { ApprovalsScreen } from "./screens/speakers/ApprovalsScreen";
 import { MineScreen } from "./screens/speakers/MineScreen";
-import { WeekScreen } from "./screens/WeekScreen";
+import { type WeekVisit, WeekScreen } from "./screens/WeekScreen";
 import { WeekCtx, type WeekStore, useWeekStoreState } from "./screens/weekStore";
 import type { DataPort } from "./data/port";
 
@@ -35,6 +36,12 @@ const KkScreen = lazy(() => import("./screens/kk/KkScreen").then((m) => ({ defau
 const ReaderScreen = lazy(() => import("./screens/reader/ReaderScreen").then((m) => ({ default: m.ReaderScreen })));
 const MemorialScreen = lazy(() => import("./screens/memorial/MemorialScreen").then((m) => ({ default: m.MemorialScreen })));
 const LogisticsScreen = lazy(() => import("./screens/logistics/LogisticsScreen").then((m) => ({ default: m.LogisticsScreen })));
+// The reset, phase 2 — the trainee's pages (every member may open them by address; only a trainee's header lists them)
+const ReadOnlyWeek = lazy(() => import("./screens/ReadOnlyWeek").then((m) => ({ default: m.ReadOnlyWeek })));
+const SpeakersScreen = lazy(() => import("./screens/speakerPages/SpeakersScreen").then((m) => ({ default: m.SpeakersScreen })));
+const NewSpeakerScreen = lazy(() => import("./screens/speakerPages/NewSpeakerScreen").then((m) => ({ default: m.NewSpeakerScreen })));
+const SpeakerScreen = lazy(() => import("./screens/speakerPages/SpeakerScreen").then((m) => ({ default: m.SpeakerScreen })));
+const LessonScreen = lazy(() => import("./screens/lesson/LessonScreen").then((m) => ({ default: m.LessonScreen })));
 
 /** How long the first check may go unanswered before the device's snapshot is shown meanwhile (src/offline/). */
 const SLOW_FIRST_CHECK_MS = 8000;
@@ -166,6 +173,8 @@ export default function App() {
   }, [lostConnection, showOffline]);
   const offlineMe = state.kind === "offline" ? state.me : null;
   const header = me ?? offlineMe;
+  // whose screens: a trainee's (the reset, phase 2), staff's or logistics' — by the edition on screen
+  const persona: Persona | null = me ? personaOf(me, store.editionId) : null;
   // Back from «הגדרות»: an edition may have been opened, renamed or re-dated there.
   const inSettings = path.startsWith("/settings");
   const wasInSettings = useRef(inSettings);
@@ -179,9 +188,9 @@ export default function App() {
     <WeekCtx.Provider value={store}>
       <Shell
         demo={demo}
-        full={(!!me && (path === "/" || path === "/tracking")) || !!offlineMe}
+        full={(!!me && ((path === "/" && persona !== "trainee") || path === "/tracking" || path === "/week" || path === "/grid")) || !!offlineMe}
         user={header ? { name: header.display_name || header.email, roleLabel: ROLE_LABEL[topRole(header)] } : null}
-        nav={me ? navFor(me, store.week) : undefined}
+        nav={me && persona ? navFor(me, persona, store.week) : undefined}
         onSignOut={signedIn && !demo ? () => void signOut() : undefined}
         notice={update.ready ? <UpdateBanner onApply={update.apply} /> : undefined}
       >
@@ -217,7 +226,7 @@ export default function App() {
         )}
         {state.kind === "offline" && <OfflineWeek snapshot={state.snapshot} path={path} />}
         {state.kind === "gate" && (
-          <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} onRefresh={refresh} store={store} />
+          <GateScreen port={port} gate={state.gate} email={state.email} busy={busy} authError={authError} onSignIn={signIn} onSignOut={signOut} onRefresh={refresh} store={store} persona={persona} />
         )}
       </Shell>
     </WeekCtx.Provider>
@@ -225,30 +234,16 @@ export default function App() {
 }
 
 /**
- * The header's sections: what this member may open. The approvals queue is a global admin's (only they vet
- * speakers and decide payment and transport); its badge counts what holds the team up — speakers who agreed and
- * wait for the approval before their time is closed, and the requests (src/domain/mine.ts waitingForApproval).
- * «המרצים שלי» holds the team's board too (/mine/team), so the header keeps its ten sections.
+ * A trainee's home (`/`): a visit sent to the week by an older screen («המרצים שלי», the outputs, the approvals) goes
+ * to the page that does that work now — a lesson, at its step; a speaker to place, at «איפה אפשר לשבץ» — else
+ * «היום שלי». Staff and logistics keep the week there.
  */
-function navFor(me: Me, week: Week | null): NavItem[] {
-  const items: NavItem[] = [{ to: "/", label: "השבוע" }];
-  if (handlesSpeakers(me)) items.push({ to: "/mine", label: "המרצים שלי" });
-  // the outputs (milestone 4): the tracking table, the escorts' list, the designer's export — one section
-  items.push({ to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/", "/reader"] });
-  // the logistics team's lists (5ב-2): transports, payments, books, prints — logistics and admins
-  if (handlesLogistics(me)) items.push({ to: "/logistics", label: "לוגיסטיקה" });
-  // memorial times (5ב-2): every member reads them; admins plan and place
-  items.push({ to: "/memorial", label: "זמני זיכרון" });
-  // מכריכה לכריכה (milestone 5a): every member reads it; admins write, logistics the book orders
-  items.push({ to: "/kk", label: "מכריכה לכריכה" });
-  items.push({ to: "/knowledge", label: "ידע" });
-  if (me.global_admin) {
-    const waiting = week ? waitingForApproval(week) : 0;
-    items.push({ to: "/approvals", label: "אישורים", badge: waiting, badgeLabel: waiting === 1 ? "ממתין" : "ממתינים" });
-  }
-  if (isSettingsAdmin(me)) items.push({ to: "/settings", label: "הגדרות" });
-  items.push({ to: "/help", label: "עזרה" });
-  return items;
+function Home({ port, me, persona }: { port: DataPort; me: Me; persona: Persona | null }) {
+  const visit = useLocation().state as WeekVisit;
+  if (persona !== "trainee") return <WeekScreen port={port} me={me} />;
+  if (visit?.lesson != null) return <Navigate replace to={lessonPath(visit.lesson, visit.stage ? pageStepOf(visit.stage) : null)} />;
+  if (visit?.place != null) return <Navigate replace to={speakerPath(visit.place, "placement")} />;
+  return <MyDayScreen port={port} me={me} />;
 }
 
 function GateScreen(props: {
@@ -262,6 +257,7 @@ function GateScreen(props: {
   /** Re-reads whoami() — after an admin renames themselves, the header follows. */
   onRefresh: () => Promise<void>;
   store: WeekStore;
+  persona: Persona | null;
 }) {
   const { gate, email } = props;
   switch (gate.screen) {
@@ -301,12 +297,21 @@ function GateScreen(props: {
       // outputs, זמני זיכרון, מכריכה לכריכה, «ידע» and «עזרה» are every member's — the designer's export an
       // admin's, the reader content's and admins', «לוגיסטיקה» logistics' and admins' (the screens also check the
       // edition on screen). «תורנויות» is edited in «לוגיסטיקה» (/logistics/rota/<view>) and printed from
-      // «תוצרים» (/print/rota), which every member reads.
+      // «תוצרים» (/print/rota), which every member reads. The reset, phase 2: a trainee's `/` is «היום שלי» (Home);
+      // the trainee's pages — /myday, /week, /speakers…, /lesson/:id — are every member's by address (staff preview
+      // them; the commands decide what each may do), and the old grid stays at /grid.
       return (
         <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
         <Routes>
-          <Route path="/" element={<WeekScreen port={props.port} me={gate.me} />} />
+          <Route path="/" element={<Home port={props.port} me={gate.me} persona={props.persona} />} />
+          <Route path="/myday" element={<MyDayScreen port={props.port} me={gate.me} />} />
+          <Route path="/week" element={<ReadOnlyWeek port={props.port} me={gate.me} />} />
+          <Route path="/grid" element={<WeekScreen port={props.port} me={gate.me} />} />
+          <Route path="/speakers" element={<SpeakersScreen port={props.port} me={gate.me} />} />
+          <Route path="/speakers/new" element={<NewSpeakerScreen port={props.port} me={gate.me} />} />
+          <Route path="/speakers/:id" element={<SpeakerScreen port={props.port} me={gate.me} />} />
+          <Route path="/lesson/:id" element={<LessonScreen port={props.port} me={gate.me} />} />
           <Route path="/mine/:tab?" element={handlesSpeakers(gate.me) ? <MineScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/approvals" element={gate.me.global_admin ? <ApprovalsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/tracking" element={<TrackingScreen port={props.port} me={gate.me} />} />

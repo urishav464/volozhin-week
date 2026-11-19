@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Day } from "../domain/time";
 import type { SlotAvailability, Week } from "../domain/types";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek, pitch } from "../testing/week";
-import { buildModel, fitFor, fitText } from "./model";
+import { buildModel, fitFor, fitText, openSlots } from "./model";
 import { lessonOwner } from "./owners";
 
 // TEMPLATE_2026's lesson rows by id: 1 06:30, 4 08:30, 5 10:00, 6 11:30, 18 00:30, 19 02:00, 20 03:30.
@@ -93,5 +93,42 @@ describe("a lesson's pitches, most advanced first (v14: by the approach's status
     agreed.owner_member_id = 3;
     pitch(w, l, agreed, "candidate");
     expect(lessonOwner(buildModel(w), l)).toBe(3);
+  });
+});
+
+describe("openSlots (the reset, phase 2)", () => {
+  it("a day's free cells and its draft lessons, by start; closed lessons and memorial slots never", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600), addSpeaker(w, "m"));
+    const draft = addLesson(w, 1, 960, 1050);
+    pitch(w, draft, addApproach(w, addSpeaker(w, "f")));
+    pitch(w, draft, addApproach(w, addSpeaker(w, "m")), "candidate");
+    pitch(w, draft, addApproach(w, addSpeaker(w, "m")), "declined");
+    const bare = addLesson(w, 1, 690, 780, { title: "שיעור לדוגמה" });
+    addLesson(w, 1, 780, 795, { kind: "memorial" });
+    addLesson(w, 1, 1200, 1290, { state: "cancelled" }); // a cancelled lesson leaves its cell free
+    const slots = openSlots(buildModel(w), 1);
+    expect(slots.map((x) => x.start)).toEqual([390, 600, 690, 870, 960, 1050, 1200, 1350, 1470, 1560, 1650]);
+    expect(slots[0]).toEqual({ day: 1, start: 390, end: 435, label: "פתיחת יום", lessonId: null, candidates: 0 });
+    expect(slots.find((x) => x.start === 600)).toEqual({ day: 1, start: 600, end: 690, label: null, lessonId: null, candidates: 0 });
+    expect(slots.find((x) => x.start === 690)).toMatchObject({ lessonId: bare.id, candidates: 0, label: "שיעור לדוגמה" });
+    expect(slots.find((x) => x.start === 960)).toMatchObject({ lessonId: draft.id, candidates: 2 }); // the declined one is not live
+    expect(slots.some((x) => x.start === 510 || x.start === 780)).toBe(false);
+  });
+
+  it("a parallel pair of drafts: both, by id — and the row they shape is no longer a free cell", () => {
+    const w = emptyWeek();
+    const a = addLesson(w, 2, 870, 960, { room_id: 2 });
+    const b = addLesson(w, 2, 870, 960, { room_id: 1 });
+    const slots = openSlots(buildModel(w), 2).filter((x) => x.start === 870);
+    expect(slots.map((x) => x.lessonId)).toEqual([Math.min(a.id, b.id), Math.max(a.id, b.id)]);
+    expect(openSlots(buildModel(w), 2).filter((x) => x.lessonId == null && x.start === 870)).toEqual([]);
+  });
+
+  it("follows the edition's window: Sunday opens late, Thursday closes early", () => {
+    const w = emptyWeek();
+    const m = buildModel(w);
+    expect(openSlots(m, 0)[0].start).toBe(510);
+    expect(openSlots(m, 4).at(-1)?.end).toBe(1140);
   });
 });

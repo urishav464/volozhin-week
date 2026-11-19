@@ -254,8 +254,9 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page);
     sb.token = session.access_token;
-    await page.goto(mockUrl());
-    await nav(page).getByRole("link", { name: "המרצים שלי" }).click();
+    // a content member's header lists only the trainee's pages (the reset, phase 2); «המרצים שלי» stays theirs by address
+    await page.goto(`${mockUrl()}/mine`);
+    await expect(nav(page).getByRole("link", { name: "המרצים שלי" })).toHaveCount(0);
     await expect(nav(page).getByRole("link", { name: /אישורים/ })).toHaveCount(0);
 
     // who agreed: the chip, never «אישור» — the instructor approves

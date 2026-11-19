@@ -12,7 +12,7 @@ describe("dayBalance", () => {
     expect(b.open).toBe(5);
   });
 
-  it("a day with more men tints its open cells for women — pending pitches count", () => {
+  it("a day whose closed lessons have more men needs women — a candidate is kept apart, never counted (phase 2)", () => {
     const w = emptyWeek();
     closeWith(w, addLesson(w, 1, 510, 600), addSpeaker(w, "m"));
     const draft = addLesson(w, 1, 600, 690);
@@ -21,8 +21,46 @@ describe("dayBalance", () => {
     expect(b.closed.m).toBe(1);
     expect(b.pending.m).toBe(1);
     expect(b.need).toBe("f");
+    expect(b.deficit).toBe(1);
+    expect(b.unreachable).toBe(false);
+  });
+
+  it("a lone male candidate on an empty day asks for nobody", () => {
+    const w = emptyWeek();
+    const draft = addLesson(w, 0, 960, 1050);
+    pitch(w, draft, addApproach(w, addSpeaker(w, "m")));
+    const b = dayBalance(0, w, 7);
+    expect(b.pending).toEqual({ m: 1, f: 0, unknown: 0 });
+    expect(b.need).toBeNull();
+    expect(b.deficit).toBe(0);
+    expect(b.unreachable).toBe(false);
+  });
+
+  it("candidates of the other side do not even the day either", () => {
+    const w = emptyWeek();
+    closeWith(w, addLesson(w, 1, 510, 600), addSpeaker(w, "m"));
+    closeWith(w, addLesson(w, 1, 600, 690), addSpeaker(w, "m"));
+    for (const start of [690, 870]) pitch(w, addLesson(w, 1, start, start + 90), addApproach(w, addSpeaker(w, "f")));
+    const b = dayBalance(1, w, 0);
+    expect(b.pending.f).toBe(2);
+    expect(b.need).toBe("f");
+    expect(b.deficit).toBe(2);
+  });
+
+  it("a slot in process still counts as one that could even the day", () => {
+    const w = emptyWeek();
+    for (const start of [510, 600]) closeWith(w, addLesson(w, 2, start, start + 90), addSpeaker(w, "m"));
+    // two short of women, no free cell — but two drafts in process (a man pitched in one): not yet beyond reach
+    pitch(w, addLesson(w, 2, 690, 780), addApproach(w, addSpeaker(w, "m")));
+    pitch(w, addLesson(w, 2, 870, 960), addApproach(w, addSpeaker(w, null)));
+    const b = dayBalance(2, w, 0);
+    expect(b.need).toBe("f");
     expect(b.deficit).toBe(2);
     expect(b.unreachable).toBe(false);
+    // one fewer: beyond reach
+    w.pitches = w.pitches.slice(0, 1);
+    w.lessons = w.lessons.filter((l) => l.start_min !== 870);
+    expect(dayBalance(2, w, 0).unreachable).toBe(true);
   });
 
   it("counts a draft with no live pitch as an open cell", () => {

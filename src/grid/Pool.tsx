@@ -2,12 +2,12 @@
 // placement (drag on a desktop, «שבץ» everywhere). A speaker's name opens their
 // sheet; «+ מרצה חדש/ה» starts the search-first create flow with what was typed.
 import { useMemo, useState } from "react";
-import { activeLessonRows, dayKind, slotKey } from "../domain/availability";
-import { byGender, displayName } from "../domain/names";
-import { DAYS, DAY_NAMES, fmt, fmtRange } from "../domain/time";
+import { displayName } from "../domain/names";
+import { DAY_NAMES, fmtRange } from "../domain/time";
 import type { Gender, Speaker } from "../domain/types";
 import { statusLabel, vettingLabel } from "../lib/labels";
 import { Button } from "../screens/settings/kit";
+import { AvailabilityStrip } from "./AvailabilityStrip";
 import { Chip, GenderDot, TopicChip, topicsOf } from "./bits";
 import { type GridModel, POOL_SECTION_LABEL, type PoolSection, poolSection, speakerMatches } from "./model";
 
@@ -180,35 +180,8 @@ function SpeakerCard({
             {DAY_NAMES[closedLesson.day]} <bdi>{fmtRange(closedLesson.start_min, closedLesson.end_min)}</bdi>
           </span>
         )}
-        <Availability model={model} speaker={s} />
+        <AvailabilityStrip model={model} speaker={s} className="relative z-10 ms-auto" />
       </div>
     </li>
-  );
-}
-
-/**
- * The speaker's availability day by day (v14: per slot — src/domain/availability.ts): red when any of the day's lesson
- * rows is «לא», green when one is «יכול/ה». The squares say it to the eye; the strip's name, to a screen reader.
- */
-function Availability({ model, speaker: s }: { model: GridModel; speaker: Speaker }) {
-  const mine = model.slots.get(s.id);
-  if (!mine) return null;
-  const { rows, edition } = model.week;
-  const days = DAYS.map((d) => {
-    const active = activeLessonRows(rows, edition, d);
-    const at = (kind: "can" | "cannot") => active.filter((r) => mine.get(slotKey(d, r.id))?.kind === kind).map((r) => fmt(r.start_min));
-    const can = at("can");
-    const cannot = at("cannot");
-    const said = [cannot.length > 0 && `${byGender(s.gender, "לא יכול", "לא יכולה")} ${cannot.join(", ")}`, can.length > 0 && `${byGender(s.gender, "יכול", "יכולה")} ${can.join(", ")}`].filter(Boolean);
-    return { d, kind: dayKind(mine, d, active), text: `${DAY_NAMES[d]}: ${said.join("; ") || "לא נמסר"}` };
-  });
-  // nothing said — or only of rows the week no longer holds
-  if (!days.some((x) => x.kind)) return null;
-  return (
-    <span role="img" className="relative z-10 ms-auto inline-flex gap-0.5" aria-label={`זמינות — ${days.filter((x) => x.kind).map((x) => x.text).join(" · ")}`}>
-      {days.map(({ d, kind, text }) => (
-        <span key={d} title={text} className={`h-2 w-2.5 rounded-sm ${kind === "cannot" ? "bg-red-300" : kind === "can" ? "bg-emerald-400" : "bg-line"}`} />
-      ))}
-    </span>
   );
 }

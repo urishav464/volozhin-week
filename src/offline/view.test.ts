@@ -39,5 +39,11 @@ describe("sectionNeedingConnection", () => {
     expect(sectionNeedingConnection("/print/escorts")).toBe("תוצרים");
     expect(sectionNeedingConnection("/settings/team")).toBe("הגדרות");
     expect(sectionNeedingConnection("/nowhere")).toBe("המסך הזה");
+    // the reset, phase 2: «השבוע» (/week) and the old grid (/grid) are the week; the trainee's pages need a connection
+    expect(sectionNeedingConnection("/week")).toBeNull();
+    expect(sectionNeedingConnection("/grid")).toBeNull();
+    expect(sectionNeedingConnection("/myday")).toBe("היום שלי");
+    expect(sectionNeedingConnection("/speakers/7")).toBe("מרצים");
+    expect(sectionNeedingConnection("/lesson/7")).toBe("עמוד השיעור");
   });
 });

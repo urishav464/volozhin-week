@@ -54,6 +54,12 @@ describe("the call points (v14)", () => {
     expect(c.problems).toHaveLength(4); // the bracket left open (twice: unclosed, one form), the variable, the payment switch
   });
 
+  it("the summary message's transport and sources switches are named as its own, and shown both ways — never dropped", () => {
+    const c = composeCallPoints({ template: "א [[הסעה:נדאג להסעה|בלי הסעה]] ב [[מקורות:נשמח למקורות|תודה]]", speakerGender: "m", caller });
+    expect(c.text).toBe("א נדאג להסעה/בלי הסעה ב נשמח למקורות/תודה");
+    expect(c.problems).toEqual(["[[הסעה:…]] שייך להודעת הסיכום, לא לנקודות לשיחה.", "[[מקורות:…]] שייך להודעת הסיכום, לא לנקודות לשיחה."]);
+  });
+
   it("slashes by what the feminine adds, or whole when it does not extend the masculine", () => {
     expect(slashed("שתגיע", "שתגיעי")).toBe("שתגיע/י");
     expect(slashed("תסכים", "תסכימי")).toBe("תסכים/י"); // a final mem

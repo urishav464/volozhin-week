@@ -16,7 +16,6 @@ import { type Act, archivedEdition, Choice, LINK_BUTTON, memberName, Problem, ty
 
 export function PaymentStage(ctx: StageCtx) {
   const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
-  const mayMarkPaid = (actor.role === "logistics" || actor.isAdmin) && (actor.isAdmin || !archivedEdition(week));
   const asked = requestText(l);
   // A request already made sits behind «שינוי הבקשה», so the section's one primary action is the decision
   // (or «בקשה מחדש» after a rejection). Open at the version it was opened on: a save closes it again.
@@ -77,12 +76,7 @@ export function PaymentStage(ctx: StageCtx) {
 
       {deciding && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
 
-      {/* an undo is quiet beside the stage's one main action */}
-      {mayMarkPaid && l.pay_amount != null && l.approval === "approved" && (
-        <Button kind={l.paid_at ? "quiet" : "secondary"} busy={busy === "paid"} onClick={() => void act("paid", () => cmds.setPaid(l.id, !l.paid_at), l.paid_at ? "הסימון «שולם» בוטל" : "סומן ששולם")}>
-          {l.paid_at ? "ביטול הסימון «שולם»" : "סימון ששולם"}
-        </Button>
-      )}
+      <PaidButton {...ctx} />
 
       {week.edition.kind === "archive" ? null : mine ? (
         formShown ? (
@@ -107,8 +101,22 @@ export function PaymentStage(ctx: StageCtx) {
   );
 }
 
+/**
+ * «שולם» for logistics or an admin, once an amount was approved (an undo is quiet beside the stage's one main action);
+ * nothing for anyone else. The panel's and the lesson page's.
+ */
+export function PaidButton({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {
+  const mayMarkPaid = (actor.role === "logistics" || actor.isAdmin) && (actor.isAdmin || !archivedEdition(week));
+  if (!mayMarkPaid || l.pay_amount == null || l.approval !== "approved") return null;
+  return (
+    <Button kind={l.paid_at ? "quiet" : "secondary"} busy={busy === "paid"} onClick={() => void act("paid", () => cmds.setPaid(l.id, !l.paid_at), l.paid_at ? "הסימון «שולם» בוטל" : "סומן ששולם")}>
+      {l.paid_at ? "ביטול הסימון «שולם»" : "סימון ששולם"}
+    </Button>
+  );
+}
+
 /** A global admin approves or rejects this one request, with an optional note, at the version on screen. */
-function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string | null; act: Act; decide: StageCtx["cmds"]["decidePayments"] }) {
+export function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string | null; act: Act; decide: StageCtx["cmds"]["decidePayments"] }) {
   const id = useId();
   const [note, setNote] = useState("");
   const go = (decision: "approved" | "rejected") =>
@@ -131,7 +139,17 @@ function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string
   );
 }
 
-type AmountValue = number | null | "empty" | "bad";
+export type AmountValue = number | null | "empty" | "bad";
+
+/**
+ * What the amount field says: null for «בלי תשלום», a whole number of shekels (spaces, commas and «₪» dropped), «empty»
+ * when «תשלום» was chosen with nothing typed, «bad» for anything else.
+ */
+export function amountValue(kind: "none" | "paid", raw: string): AmountValue {
+  if (kind === "none") return null;
+  const digits = raw.replace(/[\s,₪]/g, "");
+  return digits === "" ? "empty" : /^\d+$/.test(digits) ? Number(digits) : "bad";
+}
 
 /**
  * The handler's request: no payment (a volunteer) or an amount typed in whole shekels, and the transport.
@@ -158,8 +176,7 @@ function RequestForm({
   const [amount, setAmount] = useState(l.pay_amount != null ? String(l.pay_amount) : "");
   const [transport, setTransport] = useState<Transport>(l.transport);
   const [problem, setProblem] = useState<string | null>(null);
-  const raw = amount.replace(/[\s,₪]/g, "");
-  const value: AmountValue = kind === "none" ? null : raw === "" ? "empty" : /^\d+$/.test(raw) ? Number(raw) : "bad";
+  const value = amountValue(kind, amount);
   const same = value === l.pay_amount && transport === l.transport;
   const asks = value !== null || transport !== "none";
   const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : decider ? "שמירת הבקשה" : "שליחה לאישור המדריך/ה";
@@ -230,7 +247,7 @@ function RequestForm({
 const EMPTY: TransportDetails = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
 
 /** Pickup and driver: read through app.may_see_transport (null = not the caller's to see), written by the same people. */
-function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
+export function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   const id = useId();
   const [d, setD] = useState<TransportDetails | null | undefined>(undefined);
   const [failed, setFailed] = useState(false);

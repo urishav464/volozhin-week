@@ -1,5 +1,5 @@
 // A day at a glance (v13) — what the day header opens: its women and men (closed,
-// in process, still open) against the tolerance, its topics in time order (the axis)
+// in process, still open) against the tolerance (what it is short of: the closed alone, phase 2), its topics in time order (the axis)
 // and what it has none of yet, its warnings, and every hour of it, folded. An edition
 // admin also sets the grid's two rules here (set_grid_rules); unset, each is «הצעה».
 import { useState } from "react";
@@ -65,10 +65,10 @@ export function DayPanel({ model, day, isAdmin, onLesson, onCell, onRules, onClo
           </span>
           <span className="text-[13px] text-ink-soft">{ruleText}</span>
         </p>
-        {/* the header's words; it counts the lessons in process too, so it may ask for women on a day closed even */}
+        {/* the header's words — the closed lessons alone (the reset, phase 2: who is in process is the tiles' «בתהליך») */}
         {b.need && (
           <p className={`mt-1.5 text-[13px] ${b.unreachable ? "text-bad" : b.need === "f" ? "text-pink-800" : "text-sky-800"}`}>
-            כולל מי שבתהליך: {needText(b.need, b.deficit)}
+            {needText(b.need, b.deficit)}
             {b.unreachable && " · לא ייסגר מאוזן"}
           </p>
         )}

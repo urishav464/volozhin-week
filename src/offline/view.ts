@@ -26,8 +26,14 @@ export function todayColumn(startDate: string | null, nowIso: string): Day | nul
   return null;
 }
 
+/** The week's own addresses (the reset, phase 2: a trainee's «השבוע» is /week, the old grid /grid): the day view is them. */
+const WEEK = new Set(["week", "grid"]);
+
 /** The team's sections by their first path segment, as the header names them — every one but the week needs a connection. */
 const SECTIONS: Record<string, string> = {
+  myday: "היום שלי",
+  speakers: "מרצים",
+  lesson: "עמוד השיעור",
   mine: "המרצים שלי",
   approvals: "אישורים",
   tracking: "תוצרים",
@@ -48,6 +54,6 @@ const SECTIONS: Record<string, string> = {
  */
 export function sectionNeedingConnection(path: string): string | null {
   const first = path.split("/").filter(Boolean)[0];
-  if (!first) return null;
+  if (!first || WEEK.has(first)) return null;
   return SECTIONS[first] ?? "המסך הזה";
 }

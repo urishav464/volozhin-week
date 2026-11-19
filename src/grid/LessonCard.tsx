@@ -182,7 +182,11 @@ export function LessonCard({ model, lesson, lens, height, active, placeable, fit
         <span className="truncate text-xs font-bold text-navy">{lead ? displayName(lead) : "—"}</span>
         {parallel}
         {reconfirm && <ReconfirmDot />}
-        {warnings > 0 && <span className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">{warnings}</span>}
+        {warnings > 0 && (
+          <span data-warning-count={warnings} className="ms-auto shrink-0 rounded-full bg-amber-400 px-1 text-[10px] font-bold text-ink">
+            {warnings}
+          </span>
+        )}
       </span>
       {!tiny && <span className="block truncate text-[11px] text-ink-soft">{lesson.title ?? "כותרת: TBD"}</span>}
       {!compact && lens !== "owner" && (

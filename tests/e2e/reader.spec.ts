@@ -537,7 +537,8 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "a@example.org");
     sb.token = session.access_token;
-    await page.goto(mockUrl());
+    // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+    await page.goto(`${mockUrl()}/grid`);
     const panel = await openLesson(page, info, "ראשון", "מרצה 05");
     await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
     await panel.locator("input[type=file]").setInputFiles({ name: "a.pdf", mimeType: "application/pdf", buffer: await pdf([[100, 100]]) });

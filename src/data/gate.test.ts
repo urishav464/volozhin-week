@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, managedEditionIds } from "./gate";
+import { gateFor, gateForError, handlesLogistics, handlesSpeakers, isSettingsAdmin, managedEditionIds, personaOf } from "./gate";
 import { type Me, PortError, type WhoAmI } from "./types";
 
 const ok: WhoAmI = {
@@ -87,5 +87,35 @@ describe("who has «לוגיסטיקה»", () => {
   });
   it("not someone who is content only", () => {
     expect(handlesLogistics(me({ global_admin: false, memberships: [{ edition_id: 3, role: "content", member_id: 7 }] }))).toBe(false);
+  });
+});
+
+describe("personaOf (the reset, phase 2)", () => {
+  const me = (patch: Partial<Me>): Me => ({ ...(ok as Me), ...patch });
+  it("a global admin is staff, whatever the edition", () => {
+    const g = me({ global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] });
+    expect(personaOf(g, 3)).toBe("staff");
+    expect(personaOf(g, null)).toBe("staff");
+    expect(personaOf(me({ global_admin: true, memberships: [] }), 3)).toBe("staff");
+  });
+  it("a content member is a trainee; an edition's admin is staff; logistics is logistics", () => {
+    expect(personaOf(me({}), 3)).toBe("trainee");
+    expect(personaOf(me({ memberships: [{ edition_id: 3, role: "admin", member_id: 2 }] }), 3)).toBe("staff");
+    expect(personaOf(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 2 }] }), 3)).toBe("logistics");
+  });
+  it("the edition on screen decides: its own membership first, then the all-editions one", () => {
+    const two = me({ memberships: [{ edition_id: 3, role: "content", member_id: 2 }, { edition_id: 4, role: "admin", member_id: 5 }] });
+    expect(personaOf(two, 3)).toBe("trainee");
+    expect(personaOf(two, 4)).toBe("staff");
+    const both = me({ memberships: [{ edition_id: null, role: "logistics", member_id: 2 }, { edition_id: 4, role: "content", member_id: 5 }] });
+    expect(personaOf(both, 4)).toBe("trainee");
+    expect(personaOf(both, 3)).toBe("logistics"); // not a member of 3 itself: the all-editions row
+  });
+  it("no edition yet, or no membership in it: the highest role anywhere", () => {
+    const two = me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 2 }, { edition_id: 4, role: "content", member_id: 5 }] });
+    expect(personaOf(two, null)).toBe("trainee");
+    expect(personaOf(two, 9)).toBe("trainee");
+    expect(personaOf(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 2 }, { edition_id: 4, role: "admin", member_id: 5 }] }), null)).toBe("staff");
+    expect(personaOf(me({ memberships: [{ edition_id: 3, role: "logistics", member_id: 2 }] }), null)).toBe("logistics");
   });
 });

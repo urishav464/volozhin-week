@@ -1,5 +1,5 @@
 // «הגדרות» — admins run the year from here instead of the SQL Editor: the
-// edition, the team, the trainees' roster, the rooms, the templates (the
+// edition, the team (and, since the reset's phase 2, each day's owners), the trainees' roster, the rooms, the templates (the
 // summary message and the escorts' phrases), the links without an account
 // (an escort's, the sign-up's, the schedule's), the categories, and the import
 // of 5786 (a global admin's: src/screens/settings/ImportTab.tsx). One tab
@@ -135,7 +135,7 @@ export function SettingsScreen({
           />
         );
       case "team":
-        return <TeamTab {...picked} />;
+        return <TeamTab {...picked} data={port} />;
       case "roster":
         return <RosterTab {...picked} />;
       case "rooms":

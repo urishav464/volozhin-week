@@ -205,7 +205,36 @@ export function weekTopics(m: GridModel): { category: Category; count: number }[
     .filter((x) => x.category.active || x.count > 0);
 }
 
-export const GENDER_NEED_LABEL: Record<Gender, string> = { f: "דרושה מרצה", m: "דרוש מרצה" };
+/**
+ * A slot of a day a speaker can still be placed in (the reset, phase 2): a free lesson cell (`lessonId` null, no
+ * candidates), or a draft lesson — shaped, with or without live candidates (`candidates`: its live pitches).
+ */
+export interface OpenSlot {
+  day: Day;
+  start: number;
+  end: number;
+  /** The row's own words (the poster's «פתיחת יום»), or a draft's title; null when neither says anything. */
+  label: string | null;
+  lessonId: number | null;
+  candidates: number;
+}
+
+/** The day's open slots — its free cells, then its draft lessons (memorial slots never) — by start, then id (a free cell first). */
+export function openSlots(m: GridModel, day: Day): OpenSlot[] {
+  const dm = m.days[day];
+  const free: OpenSlot[] = dm.free.map((c) => ({ day, start: c.row.start_min, end: c.row.end_min, label: c.row.label || null, lessonId: null, candidates: 0 }));
+  const drafts: OpenSlot[] = m.week.lessons
+    .filter((l) => l.day === day && l.kind === "lesson" && l.state === "draft")
+    .map((l) => ({
+      day,
+      start: l.start_min,
+      end: l.end_min,
+      label: l.title || m.week.rows.find((r) => r.kind === "lesson" && r.start_min === l.start_min)?.label || null,
+      lessonId: l.id,
+      candidates: (m.pitchesByLesson.get(l.id) ?? []).filter((p) => LIVE_PITCH.has(p.state)).length,
+    }));
+  return [...free, ...drafts].sort((a, b) => a.start - b.start || (a.lessonId ?? -1) - (b.lessonId ?? -1));
+}
 
 /**
  * A memorial row an edition admin can take a slot in from the grid (v13): nothing of that day in the default room

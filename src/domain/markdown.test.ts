@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, plainText } from "./markdown";
+import { parseInline, parseMarkdown, plainText, timeRuns } from "./markdown";
 
 describe("markdown-lite", () => {
   it("reads paragraphs, line breaks, bullet and numbered lists, headings and bold", () => {
@@ -35,6 +35,26 @@ describe("markdown-lite", () => {
     expect(parseMarkdown("")).toEqual([]);
     expect(parseMarkdown(null)).toEqual([]);
     expect(plainText(parseMarkdown("# א\n\nב **ג**"))).toBe("א\n\nב ג");
+  });
+
+  it("cuts a time range out of Hebrew text, to be drawn left to right (17:00 before 19:00)", () => {
+    expect(timeRuns("למשל «רק בשעות…» 17:00–19:00), ועוד")).toEqual([
+      { text: "למשל «רק בשעות…» ", range: false },
+      { text: "17:00–19:00", range: true },
+      { text: "), ועוד", range: false },
+    ]);
+    expect(timeRuns("בוקר 06:30–14:30, אחר צהריים 14:30 – 22:30")).toEqual([
+      { text: "בוקר ", range: false },
+      { text: "06:30–14:30", range: true },
+      { text: ", אחר צהריים ", range: false },
+      { text: "14:30 – 22:30", range: true },
+    ]);
+    // a lone time, a verse, a date: text
+    expect(timeRuns("בשעה 17:00, בראשית 1:1-3, 20.10")).toEqual([{ text: "בשעה 17:00, בראשית 1:1-3, 20.10", range: false }]);
+    expect(timeRuns("")).toEqual([{ text: "", range: false }]);
+    // every range the guide writes is one
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    expect(guide.match(/\d{1,2}:\d{2}\s?[–-]\s?\d{1,2}:\d{2}/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
   it("reads the user guide (docs/GUIDE.he.md): a title, sections, and nothing it cannot draw", () => {

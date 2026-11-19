@@ -630,7 +630,8 @@ test.describe("mock build", () => {
   test("the week's «תורנויות» lens: load_rota only once it is on, never a phone; a content member's shift leads to the printout", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the wire");
     const { sb, session } = await signedIn(page, "content");
-    await page.goto(`${mockUrl()}/`);
+    // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+    await page.goto(`${mockUrl()}/grid`);
     await expect(page.locator("[data-lesson-id]").first()).toBeVisible();
     expect(sb.rpc.get("load_rota")).toBeUndefined(); // the other lenses never read it
     await page.getByRole("radio", { name: "תורנויות" }).click();

@@ -339,8 +339,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `settings.titles` (its dry run says so: `titles`); the import reads «עו"ד» and two-word titles in a sheet's spellings
   (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
   DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
-- **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — no screen was rebuilt and none calls
-  the five new functions yet; what an old screen shows changes only through the wider transport visibility below — the lesson
+- **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — phase 1 rebuilt no screen (phase 2's
+  pages call four of the five new functions; `set_transport_driver` waits for phase 3's transport board); what an old screen shows changes only through the wider transport visibility below — the lesson
   panel's transport block opens for an edition admin and for logistics on a pending request, and «לוגיסטיקה ← הסעות» shows an
   edition admin every approved row's details — plus a few sentences of wording (the hints, «עזרה») (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»: five phases, the screens rebuilt per role — trainees,
   staff, logistics; the database, the SQL rules, the engine, parity and the exports stay). No new role (trainees = `content`, the
@@ -368,6 +368,40 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   more definer functions for `authenticated` (Advisor 80). CONTRACT «v18 — day owners, availability by ranges, transport in two
   parts»; tests `tests/sql/reset.test.ts`, parity's v18 scenarios (a parity step can pin its answer with `is`, so a twin that
   agrees with the other on a WRONG answer still fails).
+- **The reset, phase 2 — the trainee's screens (no schema change):** a content member who is not an admin is a trainee
+  (`personaOf(me, editionId)` in `src/data/gate.ts`: a global admin is staff, else the role of `actorIn`'s membership);
+  the header is `navFor` (`src/screens/nav.ts`) — a trainee's four sections «היום שלי» `/` · «מרצים» `/speakers` · «השבוע»
+  `/week` · «עזרה»; staff and logistics keep theirs until phases 3–4 and may open the new pages by address. The old screens
+  stay reachable (the writing grid at `/grid`, `/mine`); guards come in phase 5. Addresses are built and parsed in ONE place,
+  `src/domain/routes.ts` (`lessonPath(id, step)`, `speakerPath(id, section)`, `speakersPath(query)` — filters live in the
+  query; a slot is `?slot=d:start-end&lesson=<id>`, so a parallel draft's link names its own draft — `slotFor`).
+  **«היום שלי»** (`src/screens/myday/`, pure `myDay(model, day, me)` in `src/domain/myDay.ts`): the days `week.dayOwners`
+  gives me (a tab each), each slot one next step; «משבצות ביום שלכם שמטופלות על ידי אחרים» is the pair's in-site notice —
+  «חדש» from `pitches.at` after my `seen_at` (a lesson has no updated-at), «ראיתי» = `markDaySeen`; an admin with no day sees
+  `/myday` as each day's first owner. **«מרצים»** (`src/screens/speakerPages/`): the list (`filters.ts` `filterSpeakers`; a table
+  from a tablet up — the institution under the name below 1024px — cards on a phone; a whole row or card opens the speaker), «מרצה חדש/ה» (`/speakers/new`: «פרט מבחין» only when the
+  name check or the server asks; «דרך תקשורת» = `CONTACT_WAY_LABEL` everywhere the field shows), the speaker page: the
+  vetting chip, «הפנייה», «זמינות» — `RangesEditor` on `src/domain/rangesForm.ts` (per day «לא ידוע / כל היום / רק בשעות… /
+  לא יכול/ה», up to three pairs; a preview by `rangesToSlots` before the ONE `setAvailabilityRanges` call for the days
+  touched, `rest` null; the saved form reads back the slots stored — 17:00–19:00 returns as 17:30–19:00; per-slot grid in
+  «דיוק לפי משבצת»), «איפה אפשר לשבץ» (`src/domain/placement.ts` `placementFor`: «יכול/ה» or unknown, no clash with the
+  speaker's closed lessons, my days first; another pair's day asks a `Confirm` naming them), «מה קרה» folded through
+  `curate` (`src/domain/activityText.ts`). `dayKind` (`src/domain/availability.ts`) has «some» — a «רק בשעות…» day is a day the
+  speaker CAN, drawn half and half (`src/grid/AvailabilityStrip.tsx`). **The lesson page** (`src/screens/lesson/`,
+  `/lesson/:id?step=`): a stepper שיבוץ → סגירה → תשלום והסעה → הודעת סיכום → מקורות ומצגת → מלווה (`steps.ts`), built of the
+  panel's pieces, never «איך עבר»; the trainee's transport is `TransportRequest.tsx` (`set_payment` only when the amount or
+  kind changed or a request was refused, then `set_transport_request` with `pickup_min`; a send stopped half-way keeps the form
+  and sends the pickup alone); the decide box follows `decide_payments`' rule. **«השבוע»** is `src/screens/ReadOnlyWeek.tsx`
+  (no drag, no placing, no warning counts; my days ringed; a card opens `/lesson/:id`). **Gender, for everyone:** a day's need
+  counts CLOSED lessons only (`src/rules/balance.ts`), said once in the day header — no free-cell tint, no per-cell «דרושה
+  מרצה». **Settings:** «ימים» in «צוות» (`DayOwnersPanel.tsx` → `setDayOwners`; an inactive owner is dropped, not resent);
+  «הנוסח המוצע» in «תבניות» (labelled «הצעה», never seeded) with two new switches `[[הסעה:…|…]]` and `[[מקורות:…|…]]`
+  (`src/domain/message.ts`; `callPoints.ts` lists them as the summary message's). Focus never falls to the page:
+  `useFocusRescue` (`kit.tsx`) moves it only when it reached `<body>`. Markdown-lite wraps every «HH:MM–HH:MM» in its own
+  `<bdi dir="ltr">` (`timeRuns`). **The demo's `?as=trainee`** (`src/lib/config.ts` `demoAs`, sticky per tab): «חניך/ה א׳»
+  (member 2) owns Sunday and Wednesday with partners, the demo edition becomes `real`, plus a few synthetic availability rows
+  (`src/data/demoWeek.ts`). e2e: `myday.spec.ts`, `speakers-page.spec.ts`, `lesson-page.spec.ts`; old-screen specs that sign
+  in a content member open `/grid` or `/mine`. DECISIONS «הריסט, שלב 2 — המסכים של החניך/ה».
 - `src/screens/speakers/` — the pool's screens: «מרצה חדש/ה» (search first), the speaker sheet (the
   grid's `Sheet`), «המרצים שלי» (`/mine`) and the approvals queue (`/approvals`, global admins). The
   week, /mine and /approvals share one loaded edition (`src/screens/weekStore.tsx`, which also feeds

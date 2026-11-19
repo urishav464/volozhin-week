@@ -338,7 +338,8 @@ test.describe("mock build", () => {
       sb.answers.set("get_speaker_contacts", null);
       await sb.attach(p);
       await signIn(p);
-      await p.goto(mockUrl());
+      // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+      await p.goto(`${mockUrl()}/grid`);
       const pool = p.getByRole("region", { name: "מאגר המרצים" });
       await pool.getByRole("tab", { name: /בטיפול אחרים/ }).click();
       await pool.getByRole("button", { name: "כרטיס ד״ר מרצה 09" }).click();
@@ -384,7 +385,8 @@ test.describe("mock build", () => {
     await page.route("**/rest/v1/rpc/create_speaker", (route) =>
       route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ code: "P0001", message: "speaker_similar", details: null, hint: null }) }),
     );
-    await page.goto(mockUrl());
+    // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+    await page.goto(`${mockUrl()}/grid`);
     await page.getByRole("region", { name: "מאגר המרצים" }).getByRole("button", { name: "+ מרצה חדש/ה" }).click();
     const create = page.getByRole("dialog", { name: "מרצה חדש/ה" });
     await create.getByLabel("שם המרצה (בלי תואר)").fill("פלונית לדוגמה");
