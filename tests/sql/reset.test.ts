@@ -11,7 +11,9 @@
 //     range must cover the row whole, two never add up, the rest, only the days
 //     listed are replaced, their notes go, ONE line in the log and no note in it);
 //   * the transport details in two parts — set_transport_request (the handler,
-//     before the approval) and set_transport_driver (logistics, after it), and
+//     before the approval) and set_transport_driver (logistics, after it), each
+//     only by who may read it back (never a practice week's team, never an
+//     archived edition's own admin, before the purge or after it), and
 //     who reads a pickup: the handler, the edition's admins, logistics from the
 //     request on — through get_transport_details, the table and
 //     get_transports_for, for every state of the approval;
@@ -600,10 +602,55 @@ describe("the reset's data foundation (v18)", () => {
         expect(await request(run, L, lesson.draft, "x")).toBe("forbidden");
         expect(await request(run, B, lesson.t, "x")).toBe("not_handler");
         expect(await request(run, A, lesson.plain, "x")).toBe("no_transport");
-        // last year's edition: content is told it is archived, logistics stay forbidden, its admin still writes
+        // last year's edition: content is told it is archived, logistics stay forbidden — and its admin, who reads
+        // no pickup there (may_see_transport), writes none either
         expect(await request(run, OLD_C, lesson.old, { pickup_time: "x" })).toBe("archived");
         expect(await request(run, OLD_L, lesson.old, { pickup_time: "x" })).toBe("forbidden");
-        expect(await request(run, OLD_ADMIN, lesson.old, { pickup_time: "x" })).toBe("ok");
+        expect(await request(run, OLD_ADMIN, lesson.old, { pickup_time: "x" })).toBe("transport_hidden");
+        expect(await request(run, OLD_ADMIN, lesson.old, "x")).toBe("transport_hidden"); // who reads, before the fields
+      });
+    });
+
+    it("writes only what the writer may read back: a practice week's handler and admin, and an archived edition's own admin, are `transport_hidden` — before the purge and after it", async () => {
+      await inTx(async (run) => {
+        const P_L = "practice.logistics@example.org";
+        await run("owner", "insert into public.members (email, display_name, role, edition_id) values ($1, $1, 'logistics', $2)", [P_L, edition.practice]);
+        const before = await stored(run, lesson.practice);
+        // a practice week: its handler (who asked) and its admin read nothing back, so they write nothing — the old writer's answer
+        for (const who of [P_C, P_ADMIN]) {
+          expect(await val(run, who, "select public.get_transport_details($1)", [lesson.practice]), who).toBeNull();
+          expect(await request(run, who, lesson.practice, { pickup_address: ADDRESS, pickup_time: "07:30", pickup_min: 420 }), who).toBe("transport_hidden");
+          expect(await code(run(who, "select public.set_transport_details($1, $2, null, null, null)", [lesson.practice, ADDRESS])), who).toBe("transport_hidden");
+          expect(await request(run, who, lesson.practice, { pickup_address: null }), `${who} a blind clear`).toBe("transport_hidden");
+        }
+        // once the global admin approves it: the practice week's logistics and its admin name no driver
+        await run(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved')", [lesson.practice, await val(run, "owner", "select version from public.lessons where id = $1", [lesson.practice])]);
+        for (const who of [P_L, P_ADMIN]) {
+          expect(await driver(run, who, lesson.practice, { driver_name: DRIVER, driver_phone: PHONE, arranged: true }), who).toBe("transport_hidden");
+          expect(await driver(run, who, lesson.practice, { driver_name: null }), `${who} a blind clear`).toBe("transport_hidden");
+          expect(await val(run, who, "select public.get_transports_for($1)", [edition.practice]), who).toEqual([]);
+        }
+        expect(await driver(run, P_C, lesson.practice, { arranged: true })).toBe("forbidden"); // a trainee never arranges a driver
+        expect(await stored(run, lesson.practice)).toEqual(before);
+        // the global admin reads it, so writes both halves, as before
+        expect(await request(run, ADMIN, lesson.practice, { pickup_time: "07:30" })).toBe("ok");
+        expect(await driver(run, ADMIN, lesson.practice, { arranged: true })).toBe("ok");
+        expect(await stored(run, lesson.practice)).toEqual({ ...before, pickup_time: "07:30", arranged: true });
+        expect((await logged(run, lesson.practice)).map((x) => x.actor)).toEqual([member[ADMIN], member[ADMIN]]);
+
+        // last year's edition, archived, then purged: its row is gone and stays gone — its own admin writes none back
+        expect(await val(run, ADMIN, "select public.purge_edition_private($1, $2)", [edition.old, "שנה קודמת"])).toMatchObject({ transport_details: 1 });
+        expect(await stored(run, lesson.old)).toBeNull();
+        const old = (await run("owner", "select approval from public.lessons where id = $1", [lesson.old])).rows[0];
+        expect(old.approval).toBe("approved");
+        expect(await request(run, OLD_ADMIN, lesson.old, { pickup_address: ADDRESS, pickup_min: 435 })).toBe("transport_hidden");
+        expect(await driver(run, OLD_ADMIN, lesson.old, { driver_name: DRIVER, driver_phone: PHONE, arranged: true })).toBe("transport_hidden");
+        expect(await code(run(OLD_ADMIN, "select public.set_transport_details($1, $2, null, $3, $4, true)", [lesson.old, ADDRESS, DRIVER, PHONE]))).toBe("transport_hidden");
+        expect(await request(run, OLD_C, lesson.old, { pickup_address: ADDRESS })).toBe("archived");
+        expect(await driver(run, OLD_L, lesson.old, { driver_name: DRIVER })).toBe("archived");
+        expect(await stored(run, lesson.old)).toBeNull();
+        expect(await logged(run, lesson.old)).toEqual([]);
+        expect(await val(run, "owner", "select purged_at is not null from public.editions where id = $1", [edition.old])).toBe(true);
       });
     });
 
@@ -700,10 +747,13 @@ describe("the reset's data foundation (v18)", () => {
         expect(await driver(run, L, lesson.plain, {})).toBe("no_transport");
         await approval(run, lesson.b, "approved");
         expect(await driver(run, L, lesson.b, {})).toBe("no_transport");
-        // last year's edition (its lesson approved): logistics is told it is archived, content stays forbidden, its admin still writes
+        // last year's edition (its lesson approved): logistics is told it is archived, content stays forbidden — its
+        // admin reads no driver there (may_see_transport), so writes none; the global admin does
         expect(await driver(run, OLD_L, lesson.old, { driver_name: DRIVER })).toBe("archived");
         expect(await driver(run, OLD_C, lesson.old, { driver_name: DRIVER })).toBe("forbidden");
-        expect(await driver(run, OLD_ADMIN, lesson.old, { driver_name: DRIVER })).toBe("ok");
+        expect(await driver(run, OLD_ADMIN, lesson.old, { driver_name: DRIVER })).toBe("transport_hidden");
+        expect(await driver(run, OLD_ADMIN, lesson.old, "x")).toBe("transport_hidden"); // who reads, before the fields
+        expect(await driver(run, ADMIN, lesson.old, { driver_name: DRIVER })).toBe("ok");
       });
     });
 

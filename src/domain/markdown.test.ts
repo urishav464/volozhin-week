@@ -45,4 +45,14 @@ describe("markdown-lite", () => {
     // no markup the renderer would show raw
     expect(guide).not.toMatch(/\]\(|<[a-z]/i);
   });
+
+  it("«עזרה» says who sees a transport's details as the database decides it (v18, app.may_see_transport)", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    const line = guide.split("\n").find((l) => l.includes("פרטי ההסעה (כתובת איסוף"));
+    expect(line).toBeDefined();
+    // the edition's admins on every lesson, logistics from the request on — not «only after the approval»
+    expect(line).toContain("למי שמנהל/ת את המחזור");
+    expect(line).toContain("ולצוות הלוגיסטי מרגע שהתבקשה הסעה");
+    expect(line).not.toContain("ולצוות הלוגיסטי אחרי האישור");
+  });
 });

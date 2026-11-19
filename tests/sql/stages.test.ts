@@ -249,6 +249,19 @@ describe("from placement to arrival", () => {
     await as(db, "authenticated", google(L), async (q) => {
       expect(await refusal(q("select public.set_paid($1, true)", [lesson]))).toBe("payment_not_approved");
     });
+    // v18 widened who decides to the edition's admins and logistics — never a content member: the trainee who asked
+    // (A, the handler), another trainee of the edition, a practice week's; whatever the call says, the role comes first
+    const waiting = await version(lesson);
+    for (const who of [A, B, PRACTICE]) {
+      await as(db, "authenticated", google(who), async (q) => {
+        for (const [ids, versions, decision] of [
+          [[lesson], [waiting], "approved"], [[lesson], [waiting], "rejected"], [[], [], "approved"], [[lesson], [waiting], "maybe"], [[999999], [1], "approved"],
+        ] as const) {
+          expect(await refusal(q("select public.decide_payments($1::bigint[], $2::integer[], $3)", [ids, versions, decision])), `${who} ${decision} ${ids}`).toBe("forbidden");
+        }
+      });
+    }
+    expect((await db.query("select approval, approved_by, version from public.lessons where id = $1", [lesson])).rows[0]).toEqual({ approval: "pending", approved_by: null, version: waiting });
     await commitAs(ADMIN, "select public.decide_payments(array[$1::bigint], array[$2::integer], 'approved', 'נתון לדוגמה')", [lesson, await version(lesson)]);
     const d = (await db.query("select approval, approval_note, approved_by, approved_at is not null as at from public.lessons where id = $1", [lesson])).rows[0];
     expect([d.approval, d.approval_note, Number(d.approved_by), d.at]).toEqual(["approved", "נתון לדוגמה", member[ADMIN], true]);

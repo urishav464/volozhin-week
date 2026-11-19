@@ -888,7 +888,8 @@ export class Engine {
   /**
    * public.set_transport_request (v18), the request's half — pickup_address, pickup_time, pickup_min: the lesson
    * (`stale`), an editor, its handler or an admin on a closed lesson (`not_closed`, `not_handler`) that asked for
-   * transport (`no_transport`) — whatever the instructor's decision, in an edition of any kind; then the patch
+   * transport (`no_transport`) — whatever the instructor's decision — and who may read it back (mayTransport,
+   * `transport_hidden`: never a practice, demo or archived edition's own team, as setTransport); then the patch
    * (cleanTransportRequest: `bad_value`). Only the keys present are written; nothing changed → nothing; the log names
    * the fields, never the values. The lesson's version stays.
    */
@@ -898,22 +899,23 @@ export class Engine {
       this.requireEditor();
       this.requireHandler(l);
       if (l.transport === "none") fail("no_transport");
+      if (!this.mayTransport(lessonId)) fail("transport_hidden");
       this.patchTransport(lessonId, cleanTransportRequest(patch), ["pickup_address", "pickup_time", "pickup_min"]);
     });
   }
 
   /**
    * public.set_transport_driver (v18), the driver's half — driver_name, driver_phone, arranged: the lesson (`stale`),
-   * logistics or an admin of the edition (requireLogistics), a transport asked for (`no_transport`) and approved
-   * (`transport_hidden`); then the patch (cleanTransportDriver: `bad_value`, `bad_phone`). Only the keys present are
-   * written; nothing changed → nothing; the log names the fields.
+   * logistics or an admin of the edition (requireLogistics), a transport asked for (`no_transport`) and approved, by
+   * who may read it back (mayTransport; either fault `transport_hidden`); then the patch (cleanTransportDriver:
+   * `bad_value`, `bad_phone`). Only the keys present are written; nothing changed → nothing; the log names the fields.
    */
   setTransportDriver(lessonId: number, patch: TransportDriverPatch): void {
     this.tx(() => {
       const l = this.stageLesson(lessonId);
       this.requireLogistics();
       if (l.transport === "none") fail("no_transport");
-      if (l.approval !== "approved") fail("transport_hidden");
+      if (l.approval !== "approved" || !this.mayTransport(lessonId)) fail("transport_hidden");
       this.patchTransport(lessonId, cleanTransportDriver(patch), ["driver_name", "driver_phone", "arranged"]);
     });
   }

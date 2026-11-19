@@ -2814,6 +2814,10 @@ create or replace function public.set_transport_details(
 -- 00:00 of the lesson's grid day; or null). The lesson's handler or an admin of
 -- its edition (set_payment's rule), on a closed lesson that asks for transport —
 -- whatever the approval says: the request is filled BEFORE it is approved.
+-- Whoever writes it can read it back: app.may_see_transport too, as
+-- set_transport_details checks it (`transport_hidden`) — so a practice or demo
+-- week's team, and an archived edition's own admin (after the purge too), write
+-- no pickup that only a global admin could read (public/privacy.html).
 create or replace function public.set_transport_request(p_lesson bigint, p_fields jsonb) returns void
   language plpgsql security definer set search_path = ''
   as $$
@@ -2828,6 +2832,7 @@ create or replace function public.set_transport_request(p_lesson bigint, p_field
   begin
     perform app.require_handler(v_l, v_me);
     if v_l.transport = 'none' then perform app.refuse('no_transport'); end if;
+    if not app.may_see_transport(p_lesson) then perform app.refuse('transport_hidden'); end if;
     if p_fields is null or jsonb_typeof(p_fields) <> 'object' then perform app.refuse('bad_value'); end if;
     if exists (select 1 from jsonb_object_keys(p_fields) as k(k) where k.k not in ('pickup_address', 'pickup_time', 'pickup_min'))
        or jsonb_typeof(p_fields -> 'pickup_address') not in ('string', 'null')
@@ -2859,7 +2864,9 @@ create or replace function public.set_transport_request(p_lesson bigint, p_field
 -- The driver's part: driver_name, driver_phone and arranged (a JSON boolean).
 -- Logistics or an admin of the lesson's edition (set_paid's rule), and only
 -- once the transport is approved — before that there is no driver to arrange
--- (`transport_hidden`, what set_transport_details gave logistics before v18).
+-- (`transport_hidden`, what set_transport_details gave logistics before v18) —
+-- and only by who may read it back (app.may_see_transport, the same refusal):
+-- never a practice or demo week's team, never an archived edition's own admin.
 create or replace function public.set_transport_driver(p_lesson bigint, p_fields jsonb) returns void
   language plpgsql security definer set search_path = ''
   as $$
@@ -2873,7 +2880,7 @@ create or replace function public.set_transport_driver(p_lesson bigint, p_fields
     v_fields text[];
   begin
     if v_l.transport = 'none' then perform app.refuse('no_transport'); end if;
-    if v_l.approval <> 'approved' then perform app.refuse('transport_hidden'); end if;
+    if v_l.approval <> 'approved' or not app.may_see_transport(p_lesson) then perform app.refuse('transport_hidden'); end if;
     if p_fields is null or jsonb_typeof(p_fields) <> 'object' then perform app.refuse('bad_value'); end if;
     if exists (select 1 from jsonb_object_keys(p_fields) as k(k) where k.k not in ('driver_name', 'driver_phone', 'arranged'))
        or jsonb_typeof(p_fields -> 'driver_name') not in ('string', 'null')

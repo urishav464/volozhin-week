@@ -340,21 +340,25 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (`titleOf`/`splitTitle`, the longer title wins). `app.name_key` is unchanged (the import splits the leading title off; a second one, «הרב עו"ד …», stays in the name and is «עמום» against «עו"ד …» — DECISIONS).
   DECISIONS «תארים — גרסה 17», «מגדר המרצים במאגר».
 - **The reset, phase 1 (schema v18):** the data the role-and-stage screens will ask for — no screen was rebuilt and none calls
-  the five new functions yet; the only visible effects are the wider transport visibility below (the lesson panel's transport
-  block now opens for an edition admin, and for logistics on a pending request) and that block's hint for logistics (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»: five phases, the screens rebuilt per role — trainees,
+  the five new functions yet; what an old screen shows changes only through the wider transport visibility below — the lesson
+  panel's transport block opens for an edition admin and for logistics on a pending request, and «לוגיסטיקה ← הסעות» shows an
+  edition admin every approved row's details — plus a few sentences of wording (the hints, «עזרה») (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»: five phases, the screens rebuilt per role — trainees,
   staff, logistics; the database, the SQL rules, the engine, parity and the exports stay). No new role (trainees = `content`, the
   two content staff = admins, logistics = `logistics`) and no new refusal code. **Day owners:** `day_owners` (edition, day,
   member, `seen_at`) — the team reads it in `load_week` as `dayOwners` (`WEEK_KEYS`), never in Realtime; `set_day_owners` (an
   edition admin: at most two members who `app.can_handle`, replaced as a set) and `mark_day_seen` (an owner, their own row);
   `start_edition` copies none. **Availability as time ranges is an INPUT method** — `slot_availability` stays the one store:
   `set_availability_ranges` (`port.speakers.setAvailabilityRanges`) replaces whole days by the v6→v14 conversion's rule («לא»
-  if ANY range touches a row, «יכול/ה» only if ONE range covers it whole, else `rest`); the pure twin `rangesToSlots`
+  if ANY «לא» range touches a row, else «יכול/ה» only if ONE «יכול/ה» range covers it whole, else `rest`); the pure twin `rangesToSlots`
   (`src/domain/availability.ts`) is what the engine writes with; ONE activity line per call (`marked` — `timeline()` in
   `src/domain/activityText.ts` labels both shapes). **Transport in two parts:** `set_transport_request` (pickup address, time and
   `pickup_min`; the handler or an edition admin, BEFORE the approval) and `set_transport_driver` (driver, phone, arranged;
-  `app.require_logistics`, only once approved — `transport_hidden`), both a JSON PATCH that logs field names;
+  `app.require_logistics`, only once approved — `transport_hidden`), both a JSON PATCH that logs field names, and both refuse
+  `transport_hidden` to anyone `app.may_see_transport` would not let read the row (who writes can read: never a practice or demo
+  week's team, never an archived edition's own admin; a global admin always);
   `set_transport_details` stays as it is for the old screens. `transport_details.pickup_min` is a `PERSONAL_KEYS` key, read
-  through `get_transports_for` alone. `app.may_see_transport`: a global admin; in a real live edition its admins, the handler,
+  under `transport_details`' own policy (the same `app.may_see_transport`) and returned by `get_transports_for`; never in a Week,
+  Realtime or the offline copy. `app.may_see_transport`: a global admin; in a real live edition its admins, the handler,
   and logistics while the request is `pending` or `approved` (before: approved only) — `public/privacy.html` says so.
   `get_transports_for` returns pending and approved, each with `approval` and `pickup_min`; «לוגיסטיקה ← הסעות» still lists
   the approved only (`transportRows`, `src/exports/logistics.ts`). `decide_payments`: a global admin, or an admin or a logistics

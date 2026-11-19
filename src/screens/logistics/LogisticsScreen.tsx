@@ -260,7 +260,7 @@ function Transports({ port, week, actor, notify, clear, label }: TabProps) {
           <Button onClick={() => void load()}>לנסות שוב</Button>
         </div>
       )}
-      <p className="text-sm text-ink-soft print:hidden">רק הסעות שהמדריך/ה אישר/ה. את ההסעה מבקשים בשלב «תשלום/הסעה» של השיעור.</p>
+      <p className="text-sm text-ink-soft print:hidden">רק הסעות שאושרו. את ההסעה מבקשים בשלב «תשלום/הסעה» של השיעור.</p>
       {details != null &&
         DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
           const ofDay = rows.filter((r) => r.day === d);
@@ -359,7 +359,7 @@ function Payments({ port, week, actor, notify, clear, reload, label }: TabProps 
           ))}
         </dl>
       )}
-      <p className="text-sm text-ink-soft print:hidden">רק סכומים שהמדריך/ה אישר/ה.</p>
+      <p className="text-sm text-ink-soft print:hidden">רק סכומים שאושרו.</p>
       {DAYS.filter((d) => rows.some((r) => r.day === d)).map((d) => {
         const ofDay = rows.filter((r) => r.day === d);
         return (

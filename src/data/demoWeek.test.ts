@@ -130,10 +130,16 @@ describe("the demo and schema v18", () => {
     for (const actor of [{ memberId: 5, role: "logistics" as const }, { memberId: 9, role: "admin" as const }]) {
       const port = new DemoPort(actor);
       const c = port.commands(1);
-      const p = (await port.loadWeek(1)).lessons.find((l) => l.approval === "pending")!;
+      const lessons = (await port.loadWeek(1)).lessons;
+      const p = lessons.find((l) => l.approval === "pending")!;
       expect(await code(c.decidePayments([{ lesson_id: p.id, version: p.version }], "approved"))).toBe("forbidden");
       expect(await c.transports()).toEqual([]);
       expect(await c.transport(p.id)).toBeNull();
+      // and who reads no pickup or driver writes none: the request (logistics never: `forbidden`), the driver
+      const asked = lessons.find((l) => l.state === "closed" && l.transport !== "none" && l.approval === "pending")!;
+      const approved = lessons.find((l) => l.state === "closed" && l.transport !== "none" && l.approval === "approved")!;
+      expect(await code(c.setTransportRequest(asked.id, { pickup_time: "07:15" }))).toBe(actor.role === "admin" ? "transport_hidden" : "forbidden");
+      expect(await code(c.setTransportDriver(approved.id, { arranged: true }))).toBe("transport_hidden");
     }
     const trainee = new DemoPort({ memberId: 2, role: "content" });
     const p = (await trainee.loadWeek(1)).lessons.find((l) => l.approval === "pending")!;

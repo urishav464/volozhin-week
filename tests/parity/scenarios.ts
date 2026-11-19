@@ -1753,13 +1753,19 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "E", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=true|ap=approved|min=420 ; 1|600-690|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=pending|min=500" },
     { as: "B", reopen: [1, 600], is: "ok" },
     { as: "E", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=true|ap=approved|min=420" },
-    // an archived edition: its own admin still writes both halves — what only the global admin reads
+    // an archived edition: who writes is who reads — its own admin reads nothing there, so writes neither half
+    // (`transport_hidden`, as set_transport_details); the global admin alone, both
     { archive: true },
     { as: "A", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "archived" },
     { as: "L", transportDriver: [1, 510], fields: { arranged: false }, is: "archived" },
-    { as: "E", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "ok" },
-    { as: "E", transportDriver: [1, 510], fields: { arranged: false }, is: "ok" },
+    { as: "E", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "transport_hidden" },
+    { as: "E", transportRequest: [1, 510], fields: "x", is: "transport_hidden" }, // who reads, before the fields
+    { as: "E", transportDriver: [1, 510], fields: { arranged: false }, is: "transport_hidden" },
+    { as: "E", setTransport: [1, 510], address: "כתובת לדוגמה", is: "transport_hidden" }, // the old writer's answer
     { as: "E", readTransports: true, is: "none" },
+    { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=true|ap=approved|min=420" }, // nothing written
+    { as: "admin", transportRequest: [1, 510], fields: { pickup_min: 430 }, is: "ok" },
+    { as: "admin", transportDriver: [1, 510], fields: { arranged: false }, is: "ok" },
     { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=-|time=-|drv=-|ph=-|arr=false|ap=approved|min=430" },
   ],
 
@@ -1806,13 +1812,19 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "admin", decide: [[1, 510]], decision: "approved", is: "ok" },
   ],
 
-  "v18 in a practice week: both halves are written, the staff decide nothing, the instructor alone reads": [
+  "v18 in a practice week: the team writes no pickup or driver it could not read back, the staff decide nothing, the instructor alone reads and writes": [
     { sandbox: true },
     { as: "A", propose: "אלפא", cell: [1, 510, 600] },
     { as: "A", close: "אלפא", at: [1, 510] },
     { as: "A", pay: [1, 510], amount: 200, transport: "one_way" },
-    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", pickup_min: 420 }, is: "ok" }, // no gate on the edition's kind, as set_payment has none …
-    { as: "A", readTransport: [1, 510], is: "hidden" }, // … but here the handler reads nothing back
+    // the handler reads nothing back here — so writes nothing (`transport_hidden`, set_transport_details' answer)
+    { as: "A", readTransport: [1, 510], is: "hidden" },
+    { as: "A", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", pickup_min: 420 }, is: "transport_hidden" },
+    { as: "A", setTransport: [1, 510], address: "כתובת לדוגמה", is: "transport_hidden" },
+    { as: "E", transportRequest: [1, 510], fields: { pickup_address: null }, is: "transport_hidden" }, // not even a blind clear
+    { as: "B", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "not_handler" }, // who, before who reads
+    { as: "L", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה" }, is: "forbidden" },
+    { as: "admin", transportRequest: [1, 510], fields: { pickup_address: "כתובת לדוגמה", pickup_min: 420 }, is: "ok" }, // the global admin reads, so writes
     { as: "A", readTransports: true, is: "none" },
     { as: "L", readTransports: true, is: "none" },
     { as: "E", readTransports: true, is: "none" },
@@ -1824,8 +1836,12 @@ export const SCENARIOS: Record<string, Step[]> = {
     { as: "L", decide: [[1, 510]], decision: "maybe", is: "bad_value" }, // the decision's word before the lesson's edition
     { as: "L", decide: [[4, 510]], decision: "approved", is: "stale" }, // a lesson that is not there, before its edition
     { as: "admin", decide: [[1, 510]], decision: "approved", is: "ok" },
-    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "ok" }, // logistics arranges the driver
+    // approved: the practice week's logistics and its admin read no driver, so name none
     { as: "L", readTransport: [1, 510], is: "hidden" },
+    { as: "L", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "transport_hidden" },
+    { as: "E", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "transport_hidden" },
+    { as: "A", transportDriver: [1, 510], fields: { arranged: true }, is: "forbidden" }, // a trainee never does
+    { as: "admin", transportDriver: [1, 510], fields: { driver_name: "נהג/ת לדוגמה", arranged: true }, is: "ok" },
     { as: "L", readTransports: true, is: "none" },
     { as: "admin", readTransports: true, is: "1|510-600|בית מדרש|addr=כתובת לדוגמה|time=-|drv=נהג/ת לדוגמה|ph=-|arr=true|ap=approved|min=420" },
     // day owners and availability know no kind of edition

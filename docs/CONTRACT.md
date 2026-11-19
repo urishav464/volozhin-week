@@ -13,8 +13,10 @@ Types are those of `src/domain/types.ts`. Times are minutes since the day column
 
 Every command runs as a signed-in member of the edition (`app.my_role(edition)` not null), else
 `not_member`. Roles: `admin`, `content`, `logistics`. **Logistics may not issue any command of the
-grid or the pool** (`forbidden`) — what logistics may do is said where it is: `set_paid` and an
-approved transport's details, the rota, and since v18 `decide_payments` and `set_transport_driver`. An `archive`-kind or `archived`-status
+grid or the pool** (`forbidden`) — what logistics may do is said where it is: `set_paid`, a
+transport's details (`get/set_transport_details` — since v18 from the request on, while it is
+`pending` or `approved`; before, approved only), the rota, and since v18 `decide_payments` and
+`set_transport_driver`. An `archive`-kind or `archived`-status
 edition refuses every command from non-admins (`archived`).
 
 `actor` = the caller's `members.id`. "Owner or admin" = the approach's `owner_member_id` is the
@@ -466,7 +468,10 @@ lesson's transport details (and so does `reopen_lesson`: they were the speaker's
    hand edit leaves one).
 
 Sets `approval`, `approval_note`, `approved_by` and `updated_by` (the caller's member row **for that
-lesson's edition** — `app.my_member_id`), `approved_at`; `version + 1`. Nothing else about it changed
+lesson's edition** — `app.my_member_id`), `approved_at`; `version + 1`. That is a change for one
+caller: a global admin who also has a member row in the lesson's edition is recorded by that row
+now (before v18, `approved_by` was always their all-editions row; `updated_by` already was the
+edition's), so the payment stage may name them by the edition row's `display_name`. Nothing else about it changed
 in v18: `set_payment` still sends a changed request back to `pending`, `mark_confirm_sent` still
 waits for the decision, `reopen_lesson`'s `approved_locked` is still lifted by an admin of the
 edition only. (The approvals screen is still the global admins': v18 changed the rule, no screen.)
@@ -1761,12 +1766,17 @@ needs PostgreSQL 15 or later (Supabase's).
 
 What the reset's new screens will ask of the data (DECISIONS «הריסט — מסכים לפי תפקיד ושלב»): a pair of
 trainees per day, availability typed as time ranges, a transport's request apart from its driver, and approvals
-by the staff of both teams. **No screen behaves differently in this phase**, and none calls the five new functions
-yet; one sentence of wording was corrected with the rule it states — the lesson panel's line for logistics whose
-details are closed (`src/screens/stages/PaymentStage.tsx`), beside `transport_hidden`'s text (`src/errors.ts`).
-What an old screen reads through a rule that changed, changes with the rule: the lesson panel's transport
-details now open for an edition's admin who is not the handler, and for logistics on a pending request (below);
-«לוגיסטיקה ← הסעות» lists the approved transports only, as before.
+by the staff of both teams. **No screen was rebuilt in this phase**, and none calls the five new functions
+yet; a few sentences of wording were corrected with the rules they state — the lesson panel's line for logistics
+whose details are closed (`src/screens/stages/PaymentStage.tsx`), beside `transport_hidden`'s text
+(`src/errors.ts`), the approvals queue's note on who sees, «לוגיסטיקה»'s «רק הסעות / סכומים שאושרו» (who approves is
+no longer the instructor alone: `ApprovalsScreen.tsx`, `LogisticsScreen.tsx`), and «עזרה» (`docs/GUIDE.he.md`). What an old screen reads through
+a rule that changed, changes with the rule (below): the lesson panel's transport details now open for an edition's
+admin who is not the handler, and for logistics on a pending request; and «לוגיסטיקה ← הסעות», which still lists
+the **approved** transports only (`transportRows`), now shows an edition's admin who handles none of them every
+row's details (the pickup time and the driver; the address and the phone behind «כולל כתובות וטלפונים»), its
+«סימון «סודר»» and «עריכה» (`set_transport_details`, which now lets that admin through), the «סודרו N» count and
+the files with personal data — where before every row read `transport_hidden`'s text.
 
 The same two implementations: `supabase/schema.sql` and `src/data/engine.ts` (behind `DemoPort`), held together by
 `tests/parity`; the permissions per role, every refusal and the visibility matrix are `tests/sql/reset.test.ts`.
@@ -1874,8 +1884,10 @@ pickup time as minutes from 00:00 of the lesson's grid day (the grid's conventio
 drawn along a time line. `pickup_time`, as typed, stays. It is the row's — personal data like the rest: never in
 `load_week`, Realtime or the offline copy (`pickup_min` is a `PERSONAL_KEYS` key, `src/offline/snapshot.ts`), and
 gone with the row (`set_payment` to `none`, `reopen_lesson`, the purge). Written by `set_transport_request` alone
-and read through `get_transports_for` alone: `get_transport_details` still answers its five fields,
-`set_transport_details` never touches it, and the archive's personal-data file keeps its five.
+(`set_transport_details` never touches it). Read by whoever may see the row — through `get_transports_for`, or the
+table itself, whose SELECT grant and policy (`transport_details_read`, `app.may_see_transport`) cover the new column
+as the rest (a direct `select pickup_min from transport_details`; the same people either way). `get_transport_details`
+still answers its five fields, and the archive's personal-data file keeps its five (`supabaseOutputs.ts` names them).
 
 Both functions PATCH. `p_fields` is a JSON object: a key that is there is written (a text cleaned and limited as
 `set_transport_details` does — one line, empty → null), a key that is not there stays as it is, any other key →
@@ -1893,13 +1905,17 @@ The request's part — where and when to collect the speaker. Definer; who as `s
 3. the lesson closed (`not_closed`), and the caller its handler or an admin of the edition (`not_handler`) —
    `app.require_handler`;
 4. `transport <> 'none'` (`no_transport`);
-5. `p_fields` an object (null, an array, a string → `bad_value`); its keys among `pickup_address`, `pickup_time`,
+5. the caller may read the row back — `app.may_see_transport` (below), as `set_transport_details` asks — else
+   `transport_hidden`: who writes a pickup is who reads it. So a practice or demo week's handler and admin, and an
+   archived edition's own admin (before the purge and after it — a purged edition's row stays gone), write none; a
+   global admin still does;
+6. `p_fields` an object (null, an array, a string → `bad_value`); its keys among `pickup_address`, `pickup_time`,
    `pickup_min` (`bad_value`); each text a JSON string or null (`bad_value`); `pickup_min` null or a whole number
    0–1830 (`bad_value`); `pickup_address` ≤ 200, `pickup_time` ≤ 60 (`bad_value`).
 
 **Whatever the approval says** — `pending`, `approved` or `rejected`: the request is filled BEFORE it is approved.
-No gate on the edition's kind, as `set_payment` has none (in a practice or demo week the handler writes what only a
-global admin reads). The changed names are logged in the order `pickup_address`, `pickup_time`, `pickup_min`.
+The changed names are logged in the order `pickup_address`, `pickup_time`, `pickup_min`. (`set_payment` itself has
+no gate on the edition's kind — an amount and the word «הסעה» are not personal data; the pickup is.)
 
 ### `setTransportDriver(lesson, patch)` — `set_transport_driver(p_lesson, p_fields jsonb)` → `void`
 
@@ -1908,8 +1924,10 @@ The driver's part. Definer; who as `set_paid`. In this order:
 2. logistics or an admin of its edition (`app.require_logistics`: `not_member`; a content member `forbidden`;
    `archived` for a non-admin of an archive or archived edition);
 3. `transport <> 'none'` (`no_transport`);
-4. `approval = 'approved'`, else `transport_hidden` — before the approval there is no driver to arrange (the code
-   `set_transport_details` gave logistics before v18);
+4. `approval = 'approved'`, and the caller may read the row back (`app.may_see_transport`); either fault is
+   `transport_hidden` — before the approval there is no driver to arrange (the code `set_transport_details` gave
+   logistics before v18), and a practice or demo week's logistics and admin, or an archived edition's own admin,
+   read no driver, so write none (a global admin still does);
 5. `p_fields` an object; its keys among `driver_name`, `driver_phone`, `arranged`; a name or a phone a JSON string
    or null; `arranged` a JSON boolean (a null is refused) → `bad_value`; `driver_name` ≤ 80, `driver_phone` ≤ 40
    (`bad_value`); a phone with fewer than 6 digits → `bad_phone`.
@@ -1936,7 +1954,9 @@ In a `real` edition that is not `archived`:
 
 In a practice, demo, archive or archived edition: a global admin alone, as before. «yes» with no transport asked
 is the read's five nulls; a write there is `no_transport`. The one predicate is the policy `transport_details_read`,
-`get_transport_details`, `set_transport_details`, every row of `get_transports_for` (pending and approved, each
+`get_transport_details`, every writer of the row — `set_transport_details`, `set_transport_request` and
+`set_transport_driver` (each `transport_hidden` for a caller it does not admit: nobody writes a pickup or a driver
+they cannot read back) — every row of `get_transports_for` (pending and approved, each
 with `approval` and `pickup_min` — «The logistics screen's transports», above) and `lesson_import_notes`
 (`get_import_note`: on an archive's lessons, a global admin alone — unchanged). The escort's link is unchanged:
 `escort_view` shows the driver once the transport is approved and arranged, never the pickup; `escort_pickup`
@@ -1949,18 +1969,19 @@ lesson — an admin or a logistics member of that lesson's own real, non-archive
 
 ## Who is refused, where the roles differ
 
-| caller | `set_day_owners` | `mark_day_seen` | ranges, request | driver | `decide_payments` |
-|---|---|---|---|---|---|
-| logistics of ANOTHER edition | `not_member` | `not_member` | `not_member` | `not_member` | `forbidden` (at the lesson) |
-| an archived edition's member, not an admin | `forbidden` | an owner passes | content `archived`, logistics `forbidden` | logistics `archived`, content `forbidden` | `forbidden` |
-| an archived edition's own admin (not global) | passes | an owner passes | passes | passes | `forbidden` (at the lesson) |
+| caller | `set_day_owners` | `mark_day_seen` | ranges | request | driver | `decide_payments` |
+|---|---|---|---|---|---|---|
+| logistics of ANOTHER edition | `not_member` | `not_member` | `not_member` | `not_member` | `not_member` | `forbidden` (at the lesson) |
+| an archived edition's member, not an admin | `forbidden` | an owner passes | content `archived`, logistics `forbidden` | content `archived`, logistics `forbidden` | logistics `archived`, content `forbidden` | `forbidden` |
+| an archived edition's own admin (not global) | passes | an owner passes | passes | `transport_hidden` | `transport_hidden` | `forbidden` (at the lesson) |
+| a practice or demo week's team | its admin passes | an owner passes | content, admin pass | handler, admin `transport_hidden` | logistics, admin `transport_hidden` | `forbidden` |
 
 ## Errors (v18)
 
 No new code: `bad_value forbidden not_member archived stale speaker_retired not_closed not_handler no_transport
 transport_hidden bad_phone`. `transport_hidden`'s Hebrew (`src/errors.ts`) now says who sees: the handler, the
 instructor, and the logistics staff from the moment a transport is asked — and that the driver is set after the
-approval.
+approval. It is also the two new writers' answer to a caller who may not read the row back (step 5 / step 4 above).
 
 ## RPC signatures (v18)
 

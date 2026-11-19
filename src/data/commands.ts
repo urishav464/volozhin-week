@@ -74,11 +74,15 @@ export interface WeekCommands {
   setTransport(lessonId: number, d: TransportDetails): Promise<void>;
   /**
    * v18, the request's half: the lesson's handler or an admin of the edition, on a closed lesson that asked for
-   * transport — whatever the instructor's decision (it is filled BEFORE the approval). Only the keys present are
-   * written (null clears one); the log names the fields, never the values.
+   * transport — whatever the instructor's decision (it is filled BEFORE the approval) — and only by who may read it
+   * back (app.may_see_transport, else `transport_hidden`). Only the keys present are written (null clears one); the
+   * log names the fields, never the values.
    */
   setTransportRequest(lessonId: number, patch: TransportRequestPatch): Promise<void>;
-  /** v18, the driver's half: logistics or an admin of the edition, once the transport is approved. Only the keys present are written. */
+  /**
+   * v18, the driver's half: logistics or an admin of the edition, once the transport is approved, and only by who may
+   * read it back (app.may_see_transport; either fault `transport_hidden`). Only the keys present are written.
+   */
   setTransportDriver(lessonId: number, patch: TransportDriverPatch): Promise<void>;
   /**
    * What last year's tracking sheet said about an imported lesson that has no field of its own (its transport and

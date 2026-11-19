@@ -861,18 +861,26 @@ describe("transport in two parts, approvals by both teams (v18)", () => {
     expect(code(() => e.setTransportRequest(id, {}))).toBe("stale");
   });
 
-  it("the request is filled whatever the decision and whatever the edition — the write has no edition gate, the read keeps its own", () => {
+  it("the request is filled whatever the decision — but only by who may read it back: never a practice, demo or archived edition's own team", () => {
     const { e, id, as, decide } = closedByMe();
     decide("rejected");
     expect(code(() => e.setTransportRequest(id, { pickup_time: "07:15" }))).toBe("ok"); // rejected: still the handler's to fix
-    e.week.edition.kind = "practice";
-    expect(code(() => e.setTransportRequest(id, { pickup_time: "07:20" }))).toBe("ok");
-    expect(e.transportOf(id)).toBeNull(); // a sandbox shows transport details to the global admin alone
-    expect(as(GLOBAL).transportOf(id)).toEqual({ ...FIVE_EMPTY, pickup_time: "07:20" });
+    for (const kind of ["practice", "demo"] as const) {
+      e.week.edition.kind = kind;
+      // a sandbox shows transport details to the global admin alone — so its handler and its admin write none either
+      expect(e.transportOf(id)).toBeNull();
+      expect(code(() => e.setTransportRequest(id, { pickup_time: "07:20" })), kind).toBe("transport_hidden");
+      expect(code(() => as(ADMIN).setTransportRequest(id, { pickup_time: "07:20" })), kind).toBe("transport_hidden");
+      expect(code(() => e.setTransportRequest(id, { nope: 1 } as never)), kind).toBe("transport_hidden"); // who reads, before the patch
+    }
+    expect(as(GLOBAL).transportOf(id)).toEqual({ ...FIVE_EMPTY, pickup_time: "07:15" }); // nothing was written
+    expect(code(() => as(GLOBAL).setTransportRequest(id, { pickup_time: "07:20" }))).toBe("ok"); // the global admin reads, so writes
     e.week.edition.kind = "real";
     e.week.edition.status = "archived";
     expect(code(() => e.setTransportRequest(id, { pickup_time: "07:25" }))).toBe("archived");
-    expect(code(() => as(ADMIN).setTransportRequest(id, { pickup_time: "07:25" }))).toBe("ok");
+    expect(code(() => as(ADMIN).setTransportRequest(id, { pickup_time: "07:25" }))).toBe("transport_hidden"); // its own admin reads nothing there
+    expect(code(() => as(GLOBAL).setTransportRequest(id, { pickup_time: "07:25" }))).toBe("ok");
+    expect(as(GLOBAL).transportOf(id)).toEqual({ ...FIVE_EMPTY, pickup_time: "07:25" });
   });
 
   it("the driver's half: logistics or an admin, only once the transport is approved — the request's fields stay", () => {
@@ -916,10 +924,18 @@ describe("transport in two parts, approvals by both teams (v18)", () => {
     expect(code(() => as(LOGISTICS).setTransportDriver(id, { driver_phone: "12-34" }))).toBe("bad_phone");
     expect(code(() => as(LOGISTICS).setTransportDriver(id, { driver_phone: "12-34", arranged: "yes" as never }))).toBe("bad_value");
     expect(e.shared.transport).toEqual({});
+    // a practice or demo week: its logistics and its admin read no driver, so they write none
+    for (const kind of ["practice", "demo"] as const) {
+      e.week.edition.kind = kind;
+      for (const actor of [LOGISTICS, ADMIN]) expect(code(() => as(actor).setTransportDriver(id, { arranged: true })), kind).toBe("transport_hidden");
+    }
+    e.week.edition.kind = "real";
     e.week.edition.status = "archived";
     expect(code(() => as(LOGISTICS).setTransportDriver(id, { arranged: true }))).toBe("archived");
     expect(code(() => as(ME).setTransportDriver(id, { arranged: true }))).toBe("forbidden");
-    expect(code(() => as(ADMIN).setTransportDriver(id, { arranged: true }))).toBe("ok");
+    expect(code(() => as(ADMIN).setTransportDriver(id, { arranged: true }))).toBe("transport_hidden"); // an archived edition's own admin reads nothing
+    expect(e.shared.transport).toEqual({});
+    expect(code(() => as(GLOBAL).setTransportDriver(id, { arranged: true }))).toBe("ok");
   });
 
   it("the details go with the transport and with the speaker: no transport any more, or a reopen, and the minute is gone too", () => {
