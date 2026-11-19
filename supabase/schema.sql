@@ -2229,9 +2229,14 @@ create or replace function public.set_approach_status(p_approach bigint, p_versi
 -- among the schedule link's people (schedule_view), for this edition only. Who, as
 -- set_approach_status: the approach, locked (missing: stale); editor of its edition
 -- (not_member / forbidden for logistics / archived); an admin of the edition or the
--- approach's owner (not_handler); the version (stale); p_ok not null (bad_value).
--- The same value again: nothing written. Else the flag and version + 1; the log
--- line (app.log_activity) carries public_ok. Taking it back hides them at once.
+-- approach's owner (not_handler); a MARK (p_ok true) needs the speaker-edit rule
+-- too, app.may_edit_speaker — a real live edition's admin or handler, or a global
+-- admin (not_handler): anyone may claim any pool speaker in a practice or demo
+-- week, so its link would publish the pool's photo and words nobody asked the
+-- speaker for; taking a mark back needs no more than before; the version (stale);
+-- p_ok not null (bad_value). The same value again: nothing written. Else the flag
+-- and version + 1; the log line (app.log_activity) carries public_ok. Taking it
+-- back hides them at once.
 create or replace function public.set_public_ok(p_approach bigint, p_version integer, p_ok boolean) returns void
   language plpgsql security definer set search_path = ''
   as $$
@@ -2243,6 +2248,7 @@ create or replace function public.set_public_ok(p_approach bigint, p_version int
     if v_a.id is null then perform app.refuse('stale'); end if;
     v_me := app.require_editor(v_a.edition_id);
     if not (app.my_role(v_a.edition_id) = 'admin' or coalesce(v_a.owner_member_id = v_me, false)) then perform app.refuse('not_handler'); end if;
+    if p_ok and not app.may_edit_speaker(v_a.edition_id, v_a.speaker_id, v_me) then perform app.refuse('not_handler'); end if;
     if v_a.version <> p_version then perform app.refuse('stale'); end if;
     if p_ok is null then perform app.refuse('bad_value'); end if;
     if p_ok = v_a.public_ok then return; end if;

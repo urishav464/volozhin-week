@@ -20,7 +20,11 @@ export const PHOTO_LIMITS = {
   maxBase64: 27308,
 } as const;
 
-/** app.photo_ok: the bytes are a small baseline JPEG with nothing but the picture in it (the grammar above). */
+/**
+ * app.photo_ok: the bytes are a small baseline JPEG with no metadata segment of its own (the grammar above). A segment
+ * it takes is held to its minimum length only, so a hand-made file can carry bytes inside one — APP0's tail, APP14 (a
+ * known residual, DECISIONS «הריסט, שלב 4» §14); a canvas re-encode writes none there.
+ */
 export function photoOk(b: Uint8Array): boolean {
   const n = b.length;
   if (n < PHOTO_LIMITS.minBytes || n > PHOTO_LIMITS.maxBytes) return false;

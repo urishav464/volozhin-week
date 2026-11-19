@@ -14,7 +14,7 @@ import { demoPhotoBytes } from "./demoPhoto";
 import { DEMO_LOGISTICS, DemoPort } from "./demoPort";
 import { demoLogisticsStart } from "./demoWeek";
 import { type Actor, emptyShared, Engine } from "./engine";
-import { PPTX } from "./sourceRules";
+import { BUCKET_MIMES, checkPicked, DOCX, PPTX, sourcePath } from "./sourceRules";
 
 const HANDLER: Actor = { memberId: 1, role: "content" };
 const OTHER: Actor = { memberId: 2, role: "content" };
@@ -123,6 +123,25 @@ describe("a file's kind (register_source_file's p_kind)", () => {
     engine(HANDLER).storeObject(m, PPTX, 100);
     expect(code(() => engine(HANDLER).registerSourceFile(slot.id, m, "מצגת.pptx", null, "presentation"))).toBe("bad_value");
     expect(code(() => engine(HANDLER).registerSourceFile(slot.id, m, "מצגת.pptx", null))).toBe("bad_file");
+  });
+
+  it("the browser's pre-check never lets through what the bucket then refuses (a Word presentation on the cover path) — each type, each kind, the cover and a lesson", () => {
+    const { L, engine } = real();
+    const NAMES: Record<string, string> = { "application/pdf": "a.pdf", "image/png": "a.png", "image/jpeg": "a.jpg", [DOCX]: "a.docx", [PPTX]: "a.pptx" };
+    let n = 0;
+    for (const [who, lesson] of [[ADMIN, null], [HANDLER, L().id]] as const) {
+      for (const mime of BUCKET_MIMES) {
+        for (const kind of ["source", "presentation"] as const) {
+          const picked = code(() => checkPicked({ name: NAMES[mime], type: mime, size: 10 }, lesson == null, kind));
+          if (picked !== "ok") continue; // refused before the bytes go up: said in its own words
+          n++;
+          const path = sourcePath(1, lesson, `00000000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`, NAMES[mime], mime);
+          expect(code(() => engine(who).storeObject(path, mime, 10)), `${lesson ?? "cover"} ${kind} ${mime}`).toBe("ok");
+        }
+      }
+    }
+    expect(code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("bad_file");
+    expect(n).toBe(16); // the cover: 3 as a source, 4 as a presentation; a lesson: 4 and 5 — pinned, so a twin cannot quietly drop one
   });
 });
 

@@ -325,7 +325,11 @@ test.describe("demo build", () => {
   test("«לוגיסטיקה»: transports (addresses and phones only when asked), payments, books, prints — each printed and downloaded", async ({ page }) => {
     await page.goto(demoUrl());
     await nav(page).getByRole("link", { name: "לוגיסטיקה" }).click();
+    // since phase 4 «לוגיסטיקה» opens the logistics home; the transport board is its tab «הסעות וצוות»
     await expect(page).toHaveURL(/\/logistics$/);
+    await expect(page.locator("[data-logistics-home]")).toBeVisible();
+    await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "הסעות וצוות" }).click();
+    await expect(page).toHaveURL(/\/logistics\/transports$/);
     // the transport board (the reset, phase 3): the requests that wait and the approved ones, a day at a time —
     // Sunday's, arranged, first; the files and the print keep the approved ones alone, as before
     const rows = page.locator("li[data-transport-row]");
@@ -416,7 +420,10 @@ test.describe("demo build", () => {
     expect(kk.groups.map((g: { title: string | null; place: string | null }) => [g.title, g.place])).toContainEqual(["ספר לדוגמה א׳", "הדשא"]);
     expect(kk.leaders.every((x: { name: string | null }) => typeof x.name === "string")).toBe(true);
     expect(kk.signups.every((s: { name: string | null }) => typeof s.name === "string")).toBe(true);
-    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(5); // v16: rota.json
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(6); // v16: rota.json; v19: its Saturday-night rows' kind and qty
+    const rota = JSON.parse(strFromU8(files["rota.json"]));
+    expect(rota.cohorts.map((c: { letter: string; helps_rota: boolean; can_drive: boolean }) => [c.letter, c.helps_rota, c.can_drive])).toEqual([["א", true, false], ["ב", true, false], ["נ", true, false]]);
+    expect(rota.prep.map((t: { kind: string; qty: string | null }) => [t.kind, t.qty])).toEqual([["task", null], ["task", null], ["task", null], ["task", null]]);
     const memorial = JSON.parse(strFromU8(files["memorial.json"]));
     expect(memorial.fallen).toHaveLength(9);
     expect(strFromU8(files["memorial.json"])).not.toContain("טלפון לדוגמה");
@@ -455,7 +462,7 @@ test.describe("mock build", () => {
     const { sb, week, session } = await signedIn(page, "logistics", false);
     const ride = week.lessons.find((l) => l.state === "closed" && l.transport !== "none" && l.approval === "approved")!;
     sb.answers.set("get_transports_for", [{ lesson_id: ride.id, pickup_address: "כתובת מהשרת לדוגמה", pickup_time: "07:00", driver_name: "נהג/ת מהשרת", driver_phone: null, arranged: false }]);
-    await page.goto(`${mockUrl()}/logistics`);
+    await page.goto(`${mockUrl()}/logistics/transports`); // the board is «הסעות וצוות» since phase 4 (`/logistics` is the home)
     await expect(page.locator(`li[data-transport-row="${ride.id}"]`)).toContainText("נהג/ת מהשרת");
     expect(sb.rpc.get("get_transports_for")).toEqual([{ p_edition: 7 }]);
     expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/get_transports_for")!.auth).toBe(`Bearer ${session.access_token}`);

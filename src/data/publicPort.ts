@@ -95,10 +95,9 @@ export interface PublicPerson {
 /**
  * v19: one row of the guests' schedule — the ten keys the designer's export has (ScheduleEntry, unchanged) and the
  * lesson's `public_note` (null for a memorial time) and the indexes of its speakers in `people` (a memorial time: []).
- * schedule_view and publicSchedule always send both; they are optional here only so a row written before v19 (the
- * e2e mocks) still compiles — a reader takes an absent one as null / [].
+ * schedule_view and publicSchedule always send both.
  */
-export type PublicScheduleRow = ScheduleEntry & { note?: string | null; people?: number[] };
+export type PublicScheduleRow = ScheduleEntry & { note: string | null; people: number[] };
 
 /** v19: a fixed row of the grid (a meal, a prayer, «מכריכה לכריכה») on one day — its label and times, no people. */
 export interface FixedRow {
@@ -108,21 +107,18 @@ export interface FixedRow {
   label: string;
 }
 
+/** What schedule_view answers since v19, every key present — publicSchedule's (src/exports/publicSchedule.ts) too. */
 export interface ScheduleView {
   edition: { label: string; start_date: string | null };
   rows: PublicScheduleRow[];
-  /** v19 — always sent (optional in TS for answers written before v19; absent reads as []). */
-  people?: PublicPerson[];
-  /** v19: by day, then start — always sent (as `people`). */
-  fixed?: FixedRow[];
-}
-
-/** What schedule_view answers since v19, every key present — publicSchedule's (src/exports/publicSchedule.ts) type. */
-export interface GuestSchedule extends ScheduleView {
-  rows: (ScheduleEntry & { note: string | null; people: number[] })[];
+  /** The speakers approved to appear (public_ok), each once, by first appearance. */
   people: PublicPerson[];
+  /** By day, then start. */
   fixed: FixedRow[];
 }
+
+/** publicSchedule's answer (src/exports/publicSchedule.ts): schedule_view's own shape, every key present. */
+export type GuestSchedule = ScheduleView;
 
 export interface PublicPort {
   readonly mode: "demo" | "live";

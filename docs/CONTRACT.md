@@ -2092,15 +2092,19 @@ Definer; `set_approach_status`'s rule. In this order:
 1. the approach, locked; none → `stale`;
 2. editor of its edition (`app.require_editor`);
 3. an admin of the edition, or the approach's owner — else `not_handler`;
-4. `p_version` ≠ the approach's version → `stale`;
-5. `p_ok` null → `bad_value`.
+4. a MARK (`p_ok` true) needs the speaker-edit rule too, `app.may_edit_speaker` (a global admin, or in a real edition
+   that is not archived its admin or the speaker's handler there) — else `not_handler`. A practice or demo week, where
+   anyone may claim any pool speaker, would otherwise publish the photo and words the real edition stored, which nobody
+   asked the speaker for. Taking a mark back (`false`) needs no more than 3;
+5. `p_version` ≠ the approach's version → `stale`;
+6. `p_ok` null → `bad_value`.
 
 The same value as stored: nothing written, no version change, nothing logged. Else `public_ok := p_ok`, `version + 1`;
 the approaches trigger (`app.log_activity`) logs the update with its usual detail `{status, owner, speaker}` and, on an
 UPDATE that changed it, `public_ok` (the new value) — `timeline()` reads it as «אושר/אושרה להופיע באתר האורחים» /
 «הוסר/הוסרה מאתר האורחים», never as a note. In `load_week`'s approaches. `start_edition` copies no approach: every year
-starts with nobody approved. No gate on the edition's kind (a practice week's handler may mark their own — a practice
-week has its own schedule link).
+starts with nobody approved. A practice week's link therefore shows nobody its own team marked (step 4) — only what
+a global admin chose to mark there.
 
 ## A speaker's public words — `public_bio` through `create_speaker` / `update_speaker`
 
@@ -2148,7 +2152,8 @@ A retry (a row already at the path) answers that row whatever `p_kind` says. A p
 any of the five types; it keeps the lesson's lead as `speaker_id`, exactly as a source does (so a reopen shows it «מהמרצה
 הקודם» too), and its `page_count` as for a source (a PDF's pages, a picture 1, else null); on the cover path the week's
 own («המצגת המלווה לשבוע»: the cover path is the edition's admins', as the poster — `app.source_refusal` is unchanged
-and refuses Word alone there) — an EDITION-LEVEL presentation is exactly `lesson_id` null, `cover` false (and
+and refuses Word alone there, so the browser's `checkPicked` refuses a Word presentation on that path before the bytes
+go up, `bad_file`) — an EDITION-LEVEL presentation is exactly `lesson_id` null, `cover` false (and
 `speaker_id` / `fallen_id` null), whatever the edition's cover is. **A presentation never touches the lesson** —
 `sources_kind`, `in_reader`, `version` — **is never the reader's cover** (`cover` false; `set_reader_cover` refuses it,
 `bad_value`) **and is never in the reader** (`readerFilesOf`, `readerManifest`, `unreadForReader`, `printRows` skip

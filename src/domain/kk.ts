@@ -119,3 +119,8 @@ export function kkStatus(kk: KkData, roster: readonly RosterMember[]): KkStatus 
 export function suggestedCopies(signed: number, leaders: number): number {
   return Math.max(0, signed) + Math.max(0, leaders);
 }
+
+/** «למלא»'s name, by the count: «עותק אחד», «N עותקים». */
+export function fillCopiesLabel(n: number): string {
+  return `למלא את ההצעה: ${n === 1 ? "עותק אחד" : `${n} עותקים`}`;
+}

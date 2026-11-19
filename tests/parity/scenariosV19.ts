@@ -150,7 +150,7 @@ export const V19: Record<string, Step[]> = {
     { as: "admin", photo: "אלפא", bytes: null, is: "ok" },
   ],
 
-  "v19 the guest schedule: people only with this edition's public_ok, in order of appearance; fixed rows; notes; taken back at once": [
+  "v19 the guest schedule: people only with this edition's public_ok, in order of appearance; fixed rows; notes; taken back at once; a practice week marks nobody": [
     { as: "E", issue: "schedule", name: "s", is: "ok" },
     { as: "B", propose: "בטא", cell: [1, 510, 600], is: "ok" },
     { as: "B", close: "בטא", at: [1, 510], is: "ok" },
@@ -194,6 +194,18 @@ export const V19: Record<string, Step[]> = {
     },
     { anon: "scheduleView", token: "s", part: "fixed", is: FIXED },
     { anon: "scheduleView", token: "s", is: WHOLE }, // and the whole answer
+    // a practice week (anyone there may claim any pool speaker): a MARK needs the right over the pool's record
+    // (app.may_edit_speaker) — the handler and the week's admin are refused, a global admin is not; taking one back
+    // needs no more than before, and the link shows nobody the sandbox marked
+    { sandbox: true, is: "ok" },
+    { as: "A", publicOk: "אלפא", ok: true, is: "not_handler" },
+    { as: "E", publicOk: "אלפא", ok: true, is: "not_handler" },
+    { as: "A", publicOk: "אלפא", ok: null, is: "bad_value" }, // not a mark: the old order
+    { as: "B", publicOk: "בטא", ok: true, is: "not_handler" }, // already marked: still a mark
+    { as: "B", publicOk: "בטא", ok: false, is: "ok" },
+    { anon: "scheduleView", token: "s", part: "people", is: "none" },
+    { as: "admin", publicOk: "אלפא", ok: true, is: "ok" },
+    { anon: "scheduleView", token: "s", part: "people", is: "אלפא|bio=תיאור לדוגמה|photo=clean" },
   ],
 
   "v19 the log: a photo set or removed (never its bytes), public_ok when it changed — nothing for what changed nothing": [

@@ -5,7 +5,7 @@
 // (useRota → public.load_rota), מכריכה לכריכה (port.kk.load → public.load_kk) and the transports (cmds.transports() →
 // public.get_transports_for) — the last only when this viewer may decide here (mayDecide): elsewhere it answers
 // nothing by rule. A failed read turns only its own tasks «לא נטען». Nothing is written here.
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { LessonTransport } from "../../data/commands";
 import type { KkData } from "../../data/kk";
@@ -14,7 +14,7 @@ import { mayDecide } from "../../domain/approvals";
 import type { Week } from "../../domain/types";
 import { Chip } from "../../grid/bits";
 import { useRota } from "../rota/shared";
-import { Button } from "../settings/kit";
+import { Button, useFocusRescue } from "../settings/kit";
 import type { Actor } from "../weekStore";
 import { logisticsTasks, type Task, type TaskGroup, TASK_STATE_LABEL, type TaskState } from "./tasks";
 
@@ -23,24 +23,42 @@ type Read<T> = { kind: "loading" } | { kind: "ok"; data: T } | { kind: "failed" 
 
 const TONE: Record<TaskState, "ok" | "warn" | "plain"> = { done: "ok", open: "warn", empty: "plain", unknown: "plain" };
 
-/** One read on opening (and again when `again` is called), its answer kept only while the component is the same edition's. */
-function useRead<T>(read: (() => Promise<T>) | null): { state: Read<T>; again: () => void } {
+/**
+ * One read on opening (and again when `again` is called), its answer kept only while the component is the same edition's.
+ * Asked again, the last outcome stays on screen (`asking` meanwhile) until the new answer comes — the home is never
+ * swapped for «טוען…» under the focused «לנסות שוב».
+ */
+function useRead<T>(read: (() => Promise<T>) | null): { state: Read<T>; asking: boolean; again: () => void } {
   const [state, setState] = useState<Read<T>>({ kind: "loading" });
+  const [asking, setAsking] = useState(false);
   const [asked, setAsked] = useState(0);
+  const lastRead = useRef(read);
   useEffect(() => {
+    if (lastRead.current !== read) {
+      lastRead.current = read;
+      setState({ kind: "loading" });
+    }
     if (!read) return;
     let live = true;
-    setState({ kind: "loading" });
+    setAsking(true);
     read().then(
-      (data) => live && setState({ kind: "ok", data }),
-      () => live && setState({ kind: "failed" }),
+      (data) => {
+        if (!live) return;
+        setState({ kind: "ok", data });
+        setAsking(false);
+      },
+      () => {
+        if (!live) return;
+        setState({ kind: "failed" });
+        setAsking(false);
+      },
     );
     return () => {
       live = false;
     };
   }, [read, asked]);
   const again = useCallback(() => setAsked((n) => n + 1), []);
-  return { state, again };
+  return { state, asking, again };
 }
 
 export function LogisticsHome({ port, week, actor }: { port: DataPort; week: Week; actor: Actor }) {
@@ -51,6 +69,17 @@ export function LogisticsHome({ port, week, actor }: { port: DataPort; week: Wee
   const readTransports = useCallback(() => port.commands(editionId).transports(), [port, editionId]);
   const kk = useRead<KkData>(readKk);
   const transports = useRead<LessonTransport[]>(deciding ? readTransports : null);
+  const [rotaAsking, setRotaAsking] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const rescue = useFocusRescue();
+  // a read asked again ends: once all have answered, a focus that fell to the page (the alert and its button left with
+  // the failure) goes to the home; a read that failed again keeps the same button, focused
+  const retrying = rotaAsking || (kk.asking && kk.state.kind === "failed") || (transports.asking && transports.state.kind === "failed");
+  const wasRetrying = useRef(false);
+  useEffect(() => {
+    if (wasRetrying.current && !retrying) rescue(() => root.current);
+    wasRetrying.current = retrying;
+  }, [retrying, rescue]);
 
   const rotaSettled = rota.data != null || rota.failed != null;
   const settled = rotaSettled && kk.state.kind !== "loading" && (!deciding || transports.state.kind !== "loading");
@@ -61,17 +90,22 @@ export function LogisticsHome({ port, week, actor }: { port: DataPort; week: Wee
   const { groups } = logisticsTasks({ week, rota: rota.data, kk: kkData, transports: transportData, mayDecide: deciding }, new Date().toISOString());
   const failed = rota.data == null || kk.state.kind === "failed" || (deciding && transports.state.kind === "failed");
   const retry = () => {
-    if (rota.data == null) void rota.reload();
+    if (rota.data == null) {
+      setRotaAsking(true);
+      void rota.reload().finally(() => setRotaAsking(false));
+    }
     if (kk.state.kind === "failed") kk.again();
     if (deciding && transports.state.kind === "failed") transports.again();
   };
 
   return (
-    <div data-logistics-home className="space-y-4">
+    <div ref={root} tabIndex={-1} role="group" aria-label="המשימות של הלוגיסטיקה" data-logistics-home className="space-y-4 outline-none">
       {failed && (
         <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-bad/30 bg-bad/5 p-3 text-sm">
           <p className="min-w-0 flex-1">לא הצלחנו לטעון חלק מהנתונים.</p>
-          <Button onClick={retry}>לנסות שוב</Button>
+          <Button busy={retrying} busyLabel="טוען…" onClick={retry}>
+            לנסות שוב
+          </Button>
         </div>
       )}
       <TaskGroups groups={groups} />
@@ -119,7 +153,7 @@ function TaskRow({ task: t }: { task: Task }) {
   return (
     <li data-task={t.key} data-state={t.state} className="min-w-0 rounded-lg border border-line bg-paper-light px-3 pb-2">
       <div className="flex flex-wrap items-center gap-x-2">
-        <Link to={t.to} aria-describedby={`${id}-state ${id}-line`} className="inline-flex min-h-11 min-w-0 items-center font-bold break-words text-navy underline-offset-4 hover:underline">
+        <Link to={t.to} aria-describedby={`${id}-state ${id}-line`} className="inline-flex min-h-11 min-w-11 items-center font-bold break-words text-navy underline-offset-4 hover:underline">
           {t.title}
         </Link>
         <span id={`${id}-state`}>

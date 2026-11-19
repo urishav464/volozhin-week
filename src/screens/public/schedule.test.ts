@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { ScheduleView } from "../../data/publicPort";
+import type { ScheduleEntry } from "../../exports/designer";
 
 // the page's module reaches src/lib/config.ts (through the public pages' port), which reads the address when it loads:
 // a window of our own, with no ?demo and no stored persona, before it is imported
@@ -20,8 +21,14 @@ const NOTE = "הערה לדוגמה לאורחים";
 const FIXED = "ארוחה לדוגמה";
 const PHOTO = "data:image/jpeg;base64,/9j/AAAA";
 
-/** The ten keys a row had before v19: a closed lesson and a memorial slot, the week's date TBD. */
-const before: ScheduleView = {
+/**
+ * What schedule_view answered before v19 (a database the owner has not re-run yet): the ten keys a row had, no `people`
+ * and no `fixed` — not a ScheduleView any more (its v19 keys are required), yet the page must draw it as it did.
+ */
+type AnswerBefore19 = Pick<ScheduleView, "edition"> & { rows: ScheduleEntry[] };
+
+/** A closed lesson and a memorial slot, the week's date TBD. */
+const before: AnswerBefore19 = {
   edition: { label: "מחזור לדוגמה", start_date: null },
   rows: [
     { kind: "lesson", day: 0, date: null, start_min: 510, end_min: 600, speaker: "מרצה לדוגמה · מרצה לדוגמה ב", title: "שיעור לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false },
@@ -43,7 +50,7 @@ const v19: ScheduleView = {
   ],
 };
 
-const render = (view: ScheduleView) => renderToStaticMarkup(createElement(Schedule, { view }));
+const render = (view: ScheduleView | AnswerBefore19) => renderToStaticMarkup(createElement(Schedule, { view: view as ScheduleView }));
 
 describe("the schedule link's page tolerates v19's answer (the guests' site is phase 5's)", () => {
   it("draws a v19 answer exactly as the same answer written before v19", () => {

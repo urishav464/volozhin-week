@@ -49,6 +49,15 @@ const WORDS = {
 /** A quantity's refusal, said beside its form. */
 const QTY_WORDS = { bad_value: "הכמות ארוכה מדי: עד 40 תווים." };
 
+/**
+ * A phone or an e-mail in a Saturday-night line — a task, an item or its quantity (rota_contact_in_text): said for
+ * these lists; errors.ts's words speak of a group head's phone, which has nothing to do with them.
+ */
+export const PREP_CONTACT_WORDS = { rota_contact_in_text: "יש כאן טלפון או מייל. ברשימות של מוצ״ש לא כותבים טלפונים או מיילים." };
+
+/** A list's form refusals: its own «required», the phone, and (an item) the quantity's length. */
+const formWords = (kind: PrepKind) => ({ name_required: WORDS[kind].required, ...PREP_CONTACT_WORDS, ...(kind === "item" ? QTY_WORDS : {}) });
+
 export function PrepTasks({ ctx }: { ctx: RotaCtx }) {
   return (
     <div className="space-y-4">
@@ -92,7 +101,7 @@ function PrepList({ ctx, kind }: { ctx: RotaCtx; kind: PrepKind }) {
     ev.preventDefault();
     setProblem(null);
     const row = kind === "item" ? { text, qty: qty.trim() ? qty : null } : text;
-    void act(k("new"), () => port.rota.addPrepTasks(week.edition.id, [row], kind), w.added, formRefusal(setProblem, { name_required: w.required, ...(kind === "item" ? QTY_WORDS : {}) })).then((ok) => {
+    void act(k("new"), () => port.rota.addPrepTasks(week.edition.id, [row], kind), w.added, formRefusal(setProblem, formWords(kind))).then((ok) => {
       if (!ok) return;
       setText("");
       setQty("");
@@ -251,7 +260,6 @@ function PrepEdit({ kind, name, initial, busy, onSave, onCancel }: {
   onCancel: () => void;
 }) {
   const id = useId();
-  const w = WORDS[kind];
   const [text, setText] = useState(initial.text);
   const [qty, setQty] = useState(initial.qty ?? "");
   const [problem, setProblem] = useState<string | null>(null);
@@ -261,7 +269,7 @@ function PrepEdit({ kind, name, initial, busy, onSave, onCancel }: {
       onSubmit={(ev) => {
         ev.preventDefault();
         setProblem(null);
-        void onSave({ text, qty: qty.trim() ? qty : null }, formRefusal(setProblem, { name_required: w.required, ...(kind === "item" ? QTY_WORDS : {}) }));
+        void onSave({ text, qty: qty.trim() ? qty : null }, formRefusal(setProblem, formWords(kind)));
       }}
       className="space-y-2 rounded-lg bg-sand-soft p-3"
     >
@@ -306,7 +314,8 @@ function Paste({ ctx, kind }: { ctx: RotaCtx; kind: PrepKind }) {
     parsed = text.trim() ? (kind === "item" ? parsePrepItems(text) : parsePrepList(text)) : null;
   } catch (e) {
     const tooLong = kind === "item" ? "הרשימה ארוכה מדי: עד 200 שורות, עד 200 תווים לפריט ועד 40 לכמות." : "הרשימה ארוכה מדי: עד 200 שורות, ועד 200 תווים בשורה.";
-    refused = e instanceof CommandError && e.code === "bad_value" ? tooLong : errorMessage(e instanceof CommandError ? e.code : null);
+    const code = e instanceof CommandError ? e.code : null;
+    refused = code === "bad_value" ? tooLong : code === "rota_contact_in_text" ? PREP_CONTACT_WORDS.rota_contact_in_text : errorMessage(code);
   }
   const key = `paste-${kind}`;
   const submit = (ev: FormEvent) => {
@@ -314,7 +323,7 @@ function Paste({ ctx, kind }: { ctx: RotaCtx; kind: PrepKind }) {
     setProblem(null);
     if (!parsed || refused) return;
     const list = parsed;
-    void act(key, () => port.rota.addPrepTasks(week.edition.id, list, kind), countWords(kind, list.length).done, formRefusal(setProblem)).then((ok) => ok && setText(""));
+    void act(key, () => port.rota.addPrepTasks(week.edition.id, list, kind), countWords(kind, list.length).done, formRefusal(setProblem, PREP_CONTACT_WORDS)).then((ok) => ok && setText(""));
   };
   const hint =
     kind === "item"

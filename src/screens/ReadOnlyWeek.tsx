@@ -63,7 +63,7 @@ export function ReadOnlyWeek({ me }: { port: DataPort; me: Me }) {
         <h2 className="font-display text-xl font-extrabold text-navy">השבוע — לצפייה בלבד</h2>
         <EditionSelect />
         {/* staff preview this page by its address: their «/» is the week that writes; logistics read it from their header */}
-        <Link to={back.to} className="ms-auto inline-flex min-h-11 items-center text-sm font-bold text-navy underline-offset-4 hover:underline">
+        <Link to={back.to} className="ms-auto inline-flex min-h-11 min-w-11 items-center justify-center text-sm font-bold text-navy underline-offset-4 hover:underline">
           {back.label}
         </Link>
       </div>

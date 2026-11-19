@@ -20,6 +20,7 @@
 //   * and the file run again on all of it: nothing lost.
 // (What each command does on the engine as well is tests/parity; the rota's shared cases are tests/sql/rota.test.ts.)
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
 import { photoOk, photoToBase64 } from "../../src/domain/photo";
@@ -589,8 +590,25 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
         await run(A, "select public.set_public_ok($1, $2, true)", [appr.alpha, v + 3]);
         const w = (await val(run, L, "select public.load_week($1)", [ed])) as { approaches: { id: number; public_ok: boolean }[] };
         expect(w.approaches.map((a) => [Number(a.id), a.public_ok])).toEqual([[appr.alpha, true], [appr.beta, false]].sort((x, y) => (x[0] as number) - (y[0] as number)));
-        // a practice week's handler may mark their own (the rule has no gate on the edition's kind)
-        expect(await set(run, P_C, appr.delta, await versionOf(run, appr.delta), true)).toBe("ok");
+      });
+    });
+
+    it("a MARK needs the right over the pool's record too (app.may_edit_speaker): never a practice week's handler or admin, nor an archive's admin — a global admin always; taking it back needs no more", async () => {
+      await inTx(async (run) => {
+        // anyone may claim any pool speaker in a practice week: its mark would publish what the real edition stored
+        expect(await set(run, P_C, appr.delta, await versionOf(run, appr.delta), true)).toBe("not_handler");
+        expect(await set(run, P_ADMIN, appr.delta, await versionOf(run, appr.delta), true)).toBe("not_handler");
+        expect(await set(run, P_C, appr.delta, (await versionOf(run, appr.delta)) + 1, true)).toBe("not_handler"); // who first, then the version
+        expect(await set(run, P_C, appr.delta, await versionOf(run, appr.delta), null)).toBe("bad_value"); // not a mark: the old order
+        expect(await set(run, OLD_ADMIN, appr.old, await versionOf(run, appr.old), true)).toBe("not_handler"); // an archived edition's admin
+        expect(await val(run, "owner", "select public_ok from public.approaches where id = $1", [appr.delta])).toBe(false);
+        expect(await set(run, ADMIN, appr.delta, await versionOf(run, appr.delta), true)).toBe("ok"); // the global admin's own choice
+        // already marked: marking again is still a mark; taking it back is the handler's and the admin's, as before
+        expect(await set(run, P_C, appr.delta, await versionOf(run, appr.delta), true)).toBe("not_handler");
+        expect(await set(run, P_C, appr.delta, await versionOf(run, appr.delta), false)).toBe("ok");
+        await run("owner", "update public.approaches set public_ok = true where id = $1", [appr.old]);
+        expect(await set(run, OLD_ADMIN, appr.old, await versionOf(run, appr.old), false)).toBe("ok");
+        expect(await val(run, "owner", "select public_ok from public.approaches where id = $1", [appr.old])).toBe(false);
       });
     });
 
@@ -765,6 +783,45 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
         expect(text).not.toContain(BIO);
         expect(text).not.toContain("data:image");
         expect(elsewhere).toBeGreaterThan(0);
+      });
+    });
+
+    it("lists a marked speaker apart even with no words or photo: who is marked HERE is what a link holder learns — public/privacy.html says so, and never the opposite", async () => {
+      await inTx(async (run) => {
+        // אלפא leads Monday 10:00 and is marked only in another edition; גמא, beside, is marked here, with nothing to show
+        await run("owner", "insert into public.approaches (edition_id, speaker_id, public_ok) values ($1, $2, true)", [other, sp.alpha]);
+        const here = Number(await val(run, ED_ADMIN, "select public.claim_speaker($1, $2)", [ed, sp.gamma]));
+        await okFor(run, ED_ADMIN, here);
+        const v = (await view(run)) as View;
+        expect(v.people).toEqual([{ label: GAMMA, bio: null, photo: null }]);
+        expect(rowsOf(v)).toContain(`lesson|1|600|${ALPHA} · ${GAMMA}|note=-|people=0`);
+        expect(rowsOf(v)).toContain(`lesson|2|510|${ALPHA}|note=-|people=-`);
+        const privacy = readFileSync(new URL("../../public/privacy.html", import.meta.url), "utf8");
+        expect(privacy).toContain("המרצים שסומנו מופיעים ברשימה משלהם, ולכן מי שמחזיק/ה בקישור יודע/ת מי מהם סומן/ה במחזור הזה (סימון במחזור אחר לא נחשב).");
+        expect(privacy).not.toContain("ואם מרצה מסומן/ת או לא");
+      });
+    });
+
+    it("a practice week's link publishes nobody its sandbox claimed: the pool's photo and words, stored by the real edition, stay off it", async () => {
+      await inTx(async (run) => {
+        // the real edition stored דלתא's photo and words; nobody marked them anywhere
+        await run(ADMIN, "select public.set_speaker_photo($1, $2, $3)", [ed, sp.delta, photoBase64("clean")]);
+        await run(ADMIN, "select public.update_speaker($1, $2, $3, $4::jsonb)", [ed, sp.delta, Number(await val(run, "owner", "select version from public.speakers where id = $1", [sp.delta])), JSON.stringify({ public_bio: BIO })]);
+        const t = ((await val(run, P_ADMIN, "select public.issue_link($1, 'schedule')", [practice])) as { token: string }).token;
+        // the practice week's handler and admin try to mark the speaker they claimed: refused, and the link names nobody
+        for (const who of [P_C, P_ADMIN]) expect(await code(okFor(run, who, appr.delta)), who).toBe("not_handler");
+        let v = (await view(run, t)) as View;
+        expect(v.people).toEqual([]);
+        expect(rowsOf(v)).toEqual(["lesson|1|510|מרצה לדוגמה דלתא|note=-|people=-"]);
+        const text = JSON.stringify(v);
+        expect(text).not.toContain(BIO);
+        expect(text).not.toContain("data:image");
+        // a global admin may (their own choice, the speaker's record theirs to edit); the week's handler takes it back
+        await okFor(run, ADMIN, appr.delta);
+        v = (await view(run, t)) as View;
+        expect(peopleOf(v)).toEqual([`מרצה לדוגמה דלתא|bio=${BIO}|photo=clean`]);
+        await okFor(run, P_C, appr.delta, false);
+        expect(((await view(run, t)) as View).people).toEqual([]);
       });
     });
 

@@ -105,7 +105,7 @@ describe("v19 (the reset, phase 4): the logistics home's demo", () => {
     // the guests' schedule shows them (a link the demo's instructor issues — logistics issues none)
     const { token } = new Engine(port.engine(1).week, { memberId: 1, role: "admin", global: true }, undefined, port.shared).issueLink("schedule");
     const view = await port.public.scheduleView(token);
-    expect((view.people ?? []).map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true]]);
+    expect(view.people.map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true]]);
   });
 
   it("the default demo and `?as=trainee` stay as they were: no date, no flags set, no items, nobody approved, no photo", async () => {

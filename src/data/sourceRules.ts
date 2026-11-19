@@ -106,12 +106,14 @@ export function sourcePath(edition: number, lesson: number | null, uuid: string,
 /**
  * What a picked file must be before it is sent, each with its own reason: a type we take (bad_file; the poster —
  * a PDF or a picture, never Word: cover_bad_file), then at most 25 MB (file_too_big). v19: a pptx only as a
- * presentation (bad_file as a source); a presentation may be any of the five types.
+ * presentation (bad_file as a source); a lesson's presentation may be any of the five types, the week's own (the
+ * cover path) any but Word — the bucket refuses a docx there whatever it is meant to be (app.source_refusal ≡
+ * Engine.sourceRefusal: a path carries no kind), so it is refused here first, with the server's own code (bad_file).
  */
 export function checkPicked(f: { name: string; type: string; size: number }, cover: boolean, kind: SourceKind = "source"): SourceMime {
   const mime = mimeOfFile(f);
   if (cover && kind === "source" && (mime == null || !printableMime(mime))) fail("cover_bad_file");
-  if (mime == null || (mime === PPTX && kind !== "presentation")) fail("bad_file");
+  if (mime == null || (mime === PPTX && kind !== "presentation") || (cover && mime === DOCX)) fail("bad_file");
   if (f.size > MAX_SOURCE_BYTES) fail("file_too_big");
   return mime!;
 }

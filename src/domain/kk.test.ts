@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { KkData } from "../data/kk";
 import { emptyWeek } from "../testing/week";
-import { andList, groupName, kkSessions, kkStatus, leaderInput, leaderName, notYet, offered, suggestedCopies, traineeLeaders } from "./kk";
+import { andList, fillCopiesLabel, groupName, kkSessions, kkStatus, leaderInput, leaderName, notYet, offered, suggestedCopies, traineeLeaders } from "./kk";
 import type { RosterMember } from "./types";
 
 const w = emptyWeek(); // opens Sunday 08:30 (510), closes Thursday at 19:00 (1140)
@@ -76,5 +76,11 @@ describe("suggestedCopies (v19 «הצעה»)", () => {
     expect(suggestedCopies(12, 2)).toBe(14);
     expect(suggestedCopies(0, 3)).toBe(3);
     expect(suggestedCopies(-1, 2)).toBe(2); // never below zero
+  });
+
+  it("«למלא»'s name says the count in both forms", () => {
+    expect(fillCopiesLabel(1)).toBe("למלא את ההצעה: עותק אחד");
+    expect(fillCopiesLabel(2)).toBe("למלא את ההצעה: 2 עותקים");
+    expect(fillCopiesLabel(0)).toBe("למלא את ההצעה: 0 עותקים");
   });
 });

@@ -30,7 +30,7 @@ import {
 } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
 import { OutputsTabs } from "../outputs/parts";
-import { Badge, Button, Field, Fold, INPUT, Panel } from "../settings/kit";
+import { Badge, Button, Field, Fold, INPUT, Panel, useFocusRescue } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { FileRow } from "../stages/SourceFiles";
 import { actorIn, type Actor, useWeekStore } from "../weekStore";
@@ -255,6 +255,10 @@ function SentPanel({ port, week, actor, notify, clear, reload }: { port: DataPor
   const after = filesAfterSent(week);
   const afterLine = afterSentLine(after);
   const may = maySendReader(actor, week.edition);
+  const send = useRef<HTMLButtonElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // «ביטול הסימון» leaves once the mark is gone: the focus goes to the button that stays (or the panel)
+  const rescue = useFocusRescue();
   const set = async (value: boolean) => {
     clear();
     setBusy(value ? "send" : "undo");
@@ -266,11 +270,12 @@ function SentPanel({ port, week, actor, notify, clear, reload }: { port: DataPor
       notify("error", errorMessage(e instanceof CommandError ? e.code : null));
     } finally {
       setBusy(null);
+      rescue(() => send.current ?? root.current);
     }
   };
   return (
     <Panel title="נשלח לדפוס">
-      <div data-reader-sent data-sent={sent ? "y" : "-"} data-after-sent={after} className="space-y-2">
+      <div ref={root} tabIndex={-1} data-reader-sent data-sent={sent ? "y" : "-"} data-after-sent={after} className="space-y-2 outline-none">
         <p className="text-sm">{sentLine(week)}</p>
         {afterLine && (
           <p role="status" className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900">
@@ -279,11 +284,13 @@ function SentPanel({ port, week, actor, notify, clear, reload }: { port: DataPor
         )}
         {may && (
           <div className="flex flex-wrap gap-2">
-            <Button kind={sent ? "secondary" : "primary"} disabled={busy != null} busy={busy === "send"} busyLabel="שומר…" onClick={() => void set(true)}>
+            {/* busy = aria-disabled (kit.tsx): the pressed button keeps the focus while the call runs; the other one is
+                inert the same way (keepFocus), never natively disabled */}
+            <Button ref={send} kind={sent ? "secondary" : "primary"} keepFocus disabled={busy != null} busy={busy === "send"} busyLabel="שומר…" onClick={() => void set(true)}>
               {sent ? "שליחה מחדש" : "סימון שנשלחה לדפוס"}
             </Button>
             {sent && (
-              <Button kind="quiet" disabled={busy != null} busy={busy === "undo"} busyLabel="שומר…" onClick={() => void set(false)}>
+              <Button kind="quiet" keepFocus disabled={busy != null} busy={busy === "undo"} busyLabel="שומר…" onClick={() => void set(false)}>
                 ביטול הסימון
               </Button>
             )}

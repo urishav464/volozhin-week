@@ -69,7 +69,7 @@ describe("the path convention", () => {
     expect(mimeMatches("image/png", "pdf")).toBe(false);
   });
 
-  it("v19: a pptx — the bucket's fifth type — only as a presentation; a presentation may be any of the five, on the cover path too", async () => {
+  it("v19: a pptx — the bucket's fifth type — only as a presentation; a lesson's presentation may be any of the five, the week's (the cover path) any but Word", async () => {
     expect(SOURCE_MIMES).toHaveLength(4);
     expect(BUCKET_MIMES).toEqual(["application/pdf", "image/png", "image/jpeg", DOCX, PPTX]);
     expect(mimeOfFile({ name: "a.pptx", type: PPTX })).toBe(PPTX);
@@ -83,7 +83,12 @@ describe("the path convention", () => {
     expect(await code(() => checkPicked(deck, false, "source"))).toBe("bad_file");
     expect(checkPicked(deck, false, "presentation")).toBe(PPTX);
     expect(checkPicked(deck, true, "presentation")).toBe(PPTX); // the week's presentation, on the cover path
-    expect(checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation")).toBe(DOCX);
+    expect(checkPicked({ name: "a.docx", type: DOCX, size: 10 }, false, "presentation")).toBe(DOCX); // a lesson's
+    // the cover path refuses Word whatever it is meant to be (app.source_refusal: a path carries no kind) — said
+    // before the bytes go up, with the server's own code, never as «upload_refused»
+    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("bad_file");
+    expect(checkPicked({ name: "a.pdf", type: "application/pdf", size: 10 }, true, "presentation")).toBe("application/pdf");
+    expect(checkPicked({ name: "a.png", type: "image/png", size: 10 }, true, "presentation")).toBe("image/png");
     expect(await code(() => checkPicked({ ...deck, size: MAX_SOURCE_BYTES + 1 }, false, "presentation"))).toBe("file_too_big");
     expect(safeName("מצגת.pptx", PPTX)).toBe("file.pptx");
     expect(SOURCE_PATH_RE.test(sourcePath(7, 42, UUID, "deck.pptx", PPTX))).toBe(true);

@@ -6,7 +6,8 @@
 // «גרסה חדשה של האתר זמינה» and takes over only on «רענון»; the kill switch's worker clears the caches and leaves.
 // A link's page offline says plainly that it needs a connection, and keeps its token off the device. The memorial
 // times (5ב-2's other half) travel in the snapshot as the team reads them — the yellow card and its plan, never a
-// family's contact — and «זמני זיכרון» or «לוגיסטיקה» asked for offline say they need a connection. Synthetic data.
+// family's contact — and «זמני זיכרון» or «לוגיסטיקה» asked for offline say they need a connection. A logistics member
+// (the reset, phase 4) whose `/` is «לוגיסטיקה ← בית» online opens the copy at `/` offline — nothing redirects. Synthetic data.
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { ScheduleView } from "../../src/data/publicPort";
@@ -35,9 +36,12 @@ const member = {
   memberships: [{ edition_id: 7, role: "content", member_id: 2 }],
 };
 
+/** schedule_view's answer as v19 sends it: a row's note and people, the approved speakers, the grid's fixed rows. */
 const scheduleView: ScheduleView = {
   edition: { label: "מחזור לדוגמה", start_date: null },
-  rows: [{ kind: "lesson", day: 0, date: null, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false }],
+  rows: [{ kind: "lesson", day: 0, date: null, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false, note: null, people: [0] }],
+  people: [{ label: "ד״ר מרצה לדוגמה", bio: null, photo: null }],
+  fixed: [{ day: 0, start_min: 420, end_min: 480, label: "ארוחת בוקר (לדוגמה)" }],
 };
 
 const offlineBanner = (page: Page) => page.getByRole("status").filter({ hasText: "אין חיבור לאינטרנט — מוצג המצב מ" });
@@ -50,11 +54,11 @@ const home = (page: Page) => page.getByRole("heading", { name: "היום שלי"
  * per load through sessionStorage — «other» another user's, «expired» this user's past its expiry — so a reload can
  * change it. `offline.on` makes every request to the fake Supabase fail as with no connection, whatever page.route does.
  */
-async function signedIn(context: BrowserContext, page: Page) {
+async function signedIn(context: BrowserContext, page: Page, body: typeof member = member) {
   const week = demoWeek();
   week.edition.id = 7;
   week.edition.kind = "real";
-  const sb = new FakeSupabase({ status: 200, body: member });
+  const sb = new FakeSupabase({ status: 200, body });
   sb.answers.set("editions", [week.edition]);
   sb.answers.set("load_week", week);
   await sb.attach(context);
@@ -217,7 +221,8 @@ test.describe("mock build", () => {
       ["approaches", "categories", "dayOwners", "edition", "escortTicks", "fallen", "lessonSpeakers", "lessons", "memorialPlans", "pitches", "roster", "rooms", "rows", "slotAvailability", "sourceFiles", "speakers", "team"].sort(),
     );
     expect(saved.week!.week.dayOwners).toEqual([]);
-    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|pickup_min|driver_phone|driver_name|secretary_note|contact_name|relation)"/);
+    // (v19: a speaker's photo never — only load_week's has_photo; get_speaker_photo is one speaker at a time, never kept)
+    expect(JSON.stringify(saved.week!.week)).not.toMatch(/"(phone|email|pickup_address|pickup_min|driver_phone|driver_name|secretary_note|contact_name|relation|image|photo)"/);
 
     offline.on = true;
     await noConnection(context, true);
@@ -259,6 +264,38 @@ test.describe("mock build", () => {
     await expect(offlineBanner(page)).toHaveCount(0);
     expect(sb.count("/rest/v1/rpc/whoami")).toBeGreaterThan(whoamis);
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1);
+  });
+
+  test("a logistics member: home is «לוגיסטיקה ← בית» online; offline `/` opens the week's copy where it is — no redirect — and «לוגיסטיקה» needs a connection", async ({ context, page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for where an address lands");
+    const { sb, offline } = await signedIn(context, page, { ...member, memberships: [{ edition_id: 7, role: "logistics", member_id: 5 }] });
+    sb.answers.set("load_rota", { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] });
+    sb.answers.set("load_kk", { groups: [], leaders: [], signups: [], orders: [] });
+    sb.answers.set("get_transports_for", []);
+    await page.goto(mockUrl());
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`)); // the phase-4 home
+    await expect(page.locator("[data-logistics-home]")).toBeVisible();
+    await readyOffline(page);
+
+    offline.on = true;
+    await noConnection(context, true);
+    await page.goto(mockUrl());
+    await expect(offlineBanner(page)).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "ימים" })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/"); // the copy where the address is: nothing redirects offline
+    await expect(page.locator("[data-offline-elsewhere]")).toHaveCount(0);
+    await page.goto(`${mockUrl()}/logistics`);
+    await expect(offlineBanner(page)).toContainText("«לוגיסטיקה» צריך חיבור לאינטרנט");
+    await noSidewaysScroll(page);
+
+    // back online at `/`: live again, and home is the logistics home
+    await page.goto("about:blank");
+    offline.on = false;
+    await noConnection(context, false);
+    await page.goto(mockUrl());
+    await expect(page.locator("[data-logistics-home]")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`));
+    await expect(offlineBanner(page)).toHaveCount(0);
   });
 
   test("memorial times offline: the yellow card and its plan from the snapshot, never a family's contact — «זמני זיכרון», «לוגיסטיקה», «אחרי השבוע» and «אישורים» say they need a connection; «ימים» opens at its day", async ({ context, page }) => {

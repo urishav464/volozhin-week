@@ -666,14 +666,16 @@ export class Engine {
   /**
    * public.set_public_ok (v19): the approach's handler or an admin of the edition shows (or stops showing) the speaker
    * on this edition's guests' schedule — set_approach_status's rule: gone `stale`; an editor; neither admin nor the
-   * owner `not_handler`; the version `stale`; not a boolean `bad_value`; unchanged nothing (no version); else the flag
-   * and the version, logged with `public_ok` (app.log_activity).
+   * owner `not_handler`; a MARK (true) also needs app.may_edit_speaker — a real live edition, or a global admin — else
+   * `not_handler` (a practice week's claim would publish the pool's photo and words); the version `stale`; not a boolean
+   * `bad_value`; unchanged nothing (no version); else the flag and the version, logged with `public_ok` (app.log_activity).
    */
   setPublicOk(approachId: number, version: number, ok: unknown): void {
     this.tx(() => {
       const a = this.week.approaches.find((x) => x.id === approachId) ?? fail("stale");
       this.requireEditor();
       if (!this.isAdmin() && a.owner_member_id !== this.actor.memberId) fail("not_handler");
+      if (ok === true && !this.mayEditSpeaker(a.speaker_id)) fail("not_handler");
       if (a.version !== version) fail("stale");
       if (typeof ok !== "boolean") fail("bad_value");
       if ((a.public_ok === true) === ok) return;

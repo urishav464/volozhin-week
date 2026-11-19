@@ -472,9 +472,11 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `app.source_path_re`; `register_source_file(…, p_kind)`, the 5-argument overload dropped with its grant; never in the reader,
   the manifest or `printRows` — `isPresentation`; an edition-level one is admins', `lesson_id` null, never the cover);
   `speakers.public_bio` (≤ 600) and `lessons.public_note` (≤ 400, `update_lesson`), both `contact_in_text`;
-  `approaches.public_ok` (`set_public_ok(p_approach, p_version, p_ok)`, the handler or an admin, logged; never carried);
+  `approaches.public_ok` (`set_public_ok(p_approach, p_version, p_ok)`, the handler or an admin, logged; never carried;
+  a MARK also needs `app.may_edit_speaker` — a real live edition or a global admin — so a practice week's claim publishes nothing);
   **the speaker's photo** — `speaker_photos` (a JPEG `bytea`, 100–20480 bytes, ≤ 512 px), `app.photo_ok` ≡ `photoOk`
-  (`src/domain/photo.ts`: the file's own structure — no EXIF/XMP/ICC/comments, baseline, nothing after FFD9), written by
+  (`src/domain/photo.ts`: the file's own structure — no EXIF/XMP/ICC/comments, baseline, nothing after FFD9; a segment
+  it takes is held to its minimum length only, a residual in DECISIONS), written by
   `set_speaker_photo(p_edition, p_speaker, p_photo)` (base64; null deletes; the speaker-edit rule), read one at a time by
   `get_speaker_photo` (invoker); `load_week` carries `has_photo` only; never in Realtime, the offline copy (`image`/`photo`
   are `PERSONAL_KEYS`), a log detail or the archive. Fixtures are built byte by byte (`src/testing/photos.ts`,

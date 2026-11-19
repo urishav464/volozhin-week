@@ -4,7 +4,7 @@ import type { KkData, KkGroup } from "../../data/kk";
 import { KK_LIMITS } from "../../data/kk";
 import type { DataPort } from "../../data/port";
 import { israelMoment } from "../../domain/israelTime";
-import { suggestedCopies } from "../../domain/kk";
+import { fillCopiesLabel, suggestedCopies } from "../../domain/kk";
 import { errorMessage } from "../../errors";
 import { Button, Field, Fold, INPUT } from "../settings/kit";
 import type { Act } from "./parts";
@@ -54,7 +54,7 @@ export function BookOrder({ g, kk, signed, leaders, editable, folded = false, bu
           הצעה: {suggestion}
         </span>
         {/* fills the field only: «שמירה» saves it, as anything typed */}
-        <Button kind="quiet" keepFocus data-fill-copies disabled={copies.trim() === String(suggestion)} onClick={() => setCopies(String(suggestion))} aria-label={`למלא את ההצעה: ${suggestion} עותקים`}>
+        <Button kind="quiet" keepFocus data-fill-copies disabled={copies.trim() === String(suggestion)} onClick={() => setCopies(String(suggestion))} aria-label={fillCopiesLabel(suggestion)}>
           למלא
         </Button>
       </div>

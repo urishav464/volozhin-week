@@ -42,20 +42,24 @@ function Part({ title, aside, children }: { title: string; aside?: ReactNode; ch
   );
 }
 
-/** «עריכה» / «מחיקה» of a line, the delete behind a Confirm whose «ביטול» gives the button the focus back. */
-function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, focus }: {
+/**
+ * «עריכה» / «מחיקה» of a line, the delete behind a Confirm whose «ביטול» gives the button the focus back; the edit form
+ * stands in for the line, so its save and its «ביטול» give «עריכה» the focus back (`editKey`).
+ */
+function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, editKey, focus }: {
   name: string;
   deleting: boolean;
   onEdit: () => void;
   onDelete: () => void;
   confirm: ReactNode;
   focusKey: string;
+  editKey: string;
   focus: ReturnType<typeof useFocusBack>;
 }) {
   if (deleting) return <div className="basis-full">{confirm}</div>;
   return (
     <div className="flex shrink-0 flex-wrap gap-1 sm:ms-auto">
-      <Button kind="quiet" onClick={onEdit} aria-label={`עריכה: ${name}`}>
+      <Button kind="quiet" ref={focus.ref(editKey)} onClick={onEdit} aria-label={`עריכה: ${name}`}>
         עריכה
       </Button>
       <Button kind="danger" ref={focus.ref(focusKey)} onClick={onDelete} aria-label={`מחיקה: ${name}`}>
@@ -86,9 +90,14 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                 title={`עריכת המכינה: ${c.name}`}
                 initial={c}
                 busy={busy === `cohort-${c.id}`}
-                onCancel={() => setEditing(null)}
+                onCancel={() => {
+                  setEditing(null);
+                  focus.back(`edit-${c.id}`);
+                }}
                 onSave={async (v, refused) => {
-                  if (await act(`cohort-${c.id}`, () => port.rota.updateCohort(c.id, v), "המכינה נשמרה", refused)) setEditing(null);
+                  if (!(await act(`cohort-${c.id}`, () => port.rota.updateCohort(c.id, v), "המכינה נשמרה", refused))) return;
+                  setEditing(null);
+                  focus.back(`edit-${c.id}`);
                 }}
               />
             </li>
@@ -118,6 +127,7 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                   name={c.name}
                   focus={focus}
                   focusKey={`delete-${c.id}`}
+                  editKey={`edit-${c.id}`}
                   deleting={deleting === c.id}
                   onEdit={() => setEditing(c.id)}
                   onDelete={() => {
@@ -157,14 +167,21 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
           <CohortForm
             title="מכינה חדשה"
             busy={busy === "cohort-new"}
-            onCancel={() => setEditing(null)}
+            onCancel={() => {
+              setEditing(null);
+              focus.back("new");
+            }}
             onSave={async (v, refused) => {
               const sort = cohorts.reduce((m, c) => Math.max(m, c.sort), 0) + 1;
-              if (await act("cohort-new", () => port.rota.addCohort(week.edition.id, { ...v, sort }), "המכינה נוספה", refused)) setEditing(null);
+              if (!(await act("cohort-new", () => port.rota.addCohort(week.edition.id, { ...v, sort }), "המכינה נוספה", refused))) return;
+              setEditing(null);
+              focus.back("new");
             }}
           />
         ) : (
-          <Button onClick={() => setEditing("new")}>+ מכינה</Button>
+          <Button ref={focus.ref("new")} onClick={() => setEditing("new")}>
+            + מכינה
+          </Button>
         ))}
     </Part>
   );
@@ -394,7 +411,10 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
                         initial={g}
                         phone={phones ? (phones.get(g.id) ?? "") : null}
                         busy={busy === `group-${g.id}`}
-                        onCancel={() => setEditing(null)}
+                        onCancel={() => {
+                          setEditing(null);
+                          focus.back(`edit-${g.id}`);
+                        }}
                         onSave={async (v, phone, refused) => {
                           // the form sends a phone only when it differs from the one its field was filled with — never
                           // compared with the phones as they are now (a later answer would read as a change: a deletion)
@@ -410,7 +430,9 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
                             refused,
                           );
                           if (changed) heads.reload();
-                          if (ok) setEditing(null);
+                          if (!ok) return;
+                          setEditing(null);
+                          focus.back(`edit-${g.id}`);
                         }}
                       />
                     </li>
@@ -433,6 +455,7 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
                         name={code}
                         focus={focus}
                         focusKey={`delete-${g.id}`}
+                        editKey={`edit-${g.id}`}
                         deleting={deleting === g.id}
                         onEdit={() => setEditing(g.id)}
                         onDelete={() => setDeleting(g.id)}
@@ -656,9 +679,14 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
                 initial={d}
                 labels={labels}
                 busy={busy === `duty-${d.id}`}
-                onCancel={() => setEditing(null)}
+                onCancel={() => {
+                  setEditing(null);
+                  focus.back(`edit-${d.id}`);
+                }}
                 onSave={async (v, refused) => {
-                  if (await act(`duty-${d.id}`, () => port.rota.updateDuty(d.id, v), "התורנות נשמרה", refused)) setEditing(null);
+                  if (!(await act(`duty-${d.id}`, () => port.rota.updateDuty(d.id, v), "התורנות נשמרה", refused))) return;
+                  setEditing(null);
+                  focus.back(`edit-${d.id}`);
                 }}
               />
             </li>
@@ -677,6 +705,7 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
                   name={d.name}
                   focus={focus}
                   focusKey={`delete-${d.id}`}
+                  editKey={`edit-${d.id}`}
                   deleting={deleting === d.id}
                   onEdit={() => setEditing(d.id)}
                   onDelete={() => setDeleting(d.id)}
@@ -714,13 +743,20 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
             labels={labels}
             sort={duties.reduce((m, d) => Math.max(m, d.sort), 0) + 1}
             busy={busy === "duty-new"}
-            onCancel={() => setEditing(null)}
+            onCancel={() => {
+              setEditing(null);
+              focus.back("new");
+            }}
             onSave={async (v, refused) => {
-              if (await act("duty-new", () => port.rota.addDuty(week.edition.id, v as NewDuty), "התורנות נוספה", refused)) setEditing(null);
+              if (!(await act("duty-new", () => port.rota.addDuty(week.edition.id, v as NewDuty), "התורנות נוספה", refused))) return;
+              setEditing(null);
+              focus.back("new");
             }}
           />
         ) : (
-          <Button onClick={() => setEditing("new")}>+ תורנות</Button>
+          <Button ref={focus.ref("new")} onClick={() => setEditing("new")}>
+            + תורנות
+          </Button>
         ))}
     </Part>
   );
