@@ -90,6 +90,10 @@ export function composeCallPoints(input: CallInput): CallPointsText {
           case "pay":
             add("[[תשלום:…]] שייך להודעת הסיכום, לא לנקודות לשיחה.");
             return slashed(render(n.paid), render(n.free));
+          case "when":
+            // the reset, phase 2: «[[הסעה:…|…]]», «[[מקורות:…|…]]» — the summary message's too, never silently dropped
+            add(`[[${n.on}:…]] שייך להודעת הסיכום, לא לנקודות לשיחה.`);
+            return slashed(render(n.yes), render(n.no));
         }
       })
       .join("");

@@ -12,7 +12,7 @@ import { readerFilesOf, reopenLoses, stagesOf } from "../domain/stages";
 import { errorMessage } from "../errors";
 import { statusLabel, vettingLabel } from "../lib/labels";
 import { DEFAULT_MAX_CATEGORY_PER_DAY } from "../rules/warnings";
-import { Button, Confirm, Fold, INPUT, useFocusBack } from "../screens/settings/kit";
+import { Button, Confirm, Fold, focusLost, INPUT, useFocusBack } from "../screens/settings/kit";
 import { CallPoints, CallResults } from "../screens/speakers/call";
 import { Chip, GenderDot, NO_TOPIC_COLOR, SeverityMark, STAGE_DOT } from "./bits";
 import { needText } from "./DayHeader";
@@ -286,7 +286,7 @@ function SpeakerTitle({ speaker: s, onOpen }: { speaker: Speaker; onOpen: () => 
 }
 
 /** The lesson's topic beside its title: a dot and the name on a wash of the topic's colour — the card's stripe. */
-function TopicPill({ category: c }: { category: Category | undefined }) {
+export function TopicPill({ category: c }: { category: Category | undefined }) {
   if (!c)
     return (
       <Meta>
@@ -343,8 +343,8 @@ function ProposeSection({ model, me, day, start, end, onPick }: { model: GridMod
   );
 }
 
-/** A draft's «הצעת מרצה»: one button opens the chooser right under it, and closes it again. */
-function AddSpeaker({ model, me, lesson: l, onPick }: { model: GridModel; me: number; lesson: Lesson; onPick: (speakerId: number, mode: "self" | "offer") => void }) {
+/** A draft's «הצעת מרצה»: one button opens the chooser right under it, and closes it again (also the lesson page's, src/screens/lesson/). */
+export function AddSpeaker({ model, me, lesson: l, onPick }: { model: GridModel; me: number; lesson: Lesson; onPick: (speakerId: number, mode: "self" | "offer") => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mt-3 space-y-2">
@@ -362,9 +362,10 @@ function AddSpeaker({ model, me, lesson: l, onPick }: { model: GridModel; me: nu
   );
 }
 
-type CardProps = Pick<LessonPanelProps, "model" | "me" | "isAdmin" | "global" | "canEdit" | "actions">;
+/** What a candidate's card is handed: the panel's, or the lesson page's (src/screens/lesson/LessonScreen.tsx). */
+export type CardProps = Pick<LessonPanelProps, "model" | "me" | "isAdmin" | "global" | "canEdit" | "actions">;
 
-function Candidates({ pitches, ...props }: CardProps & { pitches: Pitch[] }) {
+export function Candidates({ pitches, ...props }: CardProps & { pitches: Pitch[] }) {
   if (pitches.length === 0) return <p className="text-sm text-ink-soft">עוד אין מרצה מוצע/ת למשבצת הזו.</p>;
   return (
     <ul className="space-y-2">
@@ -376,7 +377,7 @@ function Candidates({ pitches, ...props }: CardProps & { pitches: Pitch[] }) {
 }
 
 /** Who declined this cell (folded): a free draft's chooser comes first, and «החזרה לתהליך» is here. */
-function Declined({ pitches, small, ...props }: CardProps & { pitches: Pitch[]; small?: boolean }) {
+export function Declined({ pitches, small, ...props }: CardProps & { pitches: Pitch[]; small?: boolean }) {
   return (
     <Fold size={small ? "sm" : "md"} title="סירבו כאן" hint={pitches.length} className={small ? "mt-3" : undefined}>
       <Candidates {...props} pitches={pitches} />
@@ -392,7 +393,7 @@ const STATUS_TONE: Record<ApproachStatus, "ok" | "info" | "warn" | "plain" | "ba
  * the lesson closes). Before the call, no answer, talked and waiting: the points to say, folded, and the call's results.
  * Agreed: closing once the instructor approved — before that, the instructor's «אישור» right here. Declined: back to the process.
  */
-function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions }: CardProps & { pitch: Pitch }) {
+export function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions }: CardProps & { pitch: Pitch }) {
   const s = pitchSpeaker(model, p);
   const a = model.approachById.get(p.approach_id);
   const g = s?.gender ?? null;
@@ -511,113 +512,13 @@ function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, actions 
 
 function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages }: LessonPanelProps) {
   const lead = model.leadOf.get(l.id);
-  const [title, setTitle] = useState(l.title ?? "");
-  const [category, setCategory] = useState(l.category_id ?? 0);
-  const [audience, setAudience] = useState(l.audience ?? "");
-  const [teach, setTeach] = useState(l.teach_min ?? 0);
-  // read first; «עריכה» opens the form, a saved version closes it
-  const [editing, setEditing] = useState(false);
-  useEffect(() => {
-    setTitle(l.title ?? "");
-    setCategory(l.category_id ?? 0);
-    setAudience(l.audience ?? "");
-    setTeach(l.teach_min ?? 0);
-    setEditing(false);
-  }, [l.id, l.version, l.title, l.category_id, l.audience, l.teach_min]);
   const owner = lead ? model.approachBySpeaker.get(lead.id)?.owner_member_id : undefined;
   const mine = isAdmin || owner === me;
   const row = l.kind === "lesson" ? rowOf(model, l) : undefined;
-  const lessonMinutes = model.week.edition.settings.lesson_minutes ?? 75;
-  const dirty = title !== (l.title ?? "") || category !== (l.category_id ?? 0) || audience !== (l.audience ?? "") || teach !== (l.teach_min ?? 0);
-  const save = () =>
-    actions.update(l.id, l.version, {
-      title: title.trim() || null,
-      category_id: category || null,
-      audience: audience.trim() || null,
-      teach_min: teach || null,
-    });
 
   return (
     <>
-      <Section
-        title="פרטי השיעור"
-        aside={
-          canEdit &&
-          !editing && (
-            <Button kind="quiet" onClick={() => setEditing(true)}>
-              עריכה
-            </Button>
-          )
-        }
-      >
-        {editing ? (
-          <div className="space-y-3">
-            <label className="block text-sm font-medium">
-              כותרת
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-1`} autoFocus />
-            </label>
-            <label className="block text-sm font-medium">
-              נושא
-              <select value={category} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-1`}>
-                <option value={0}>— לא נבחר —</option>
-                {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex gap-2">
-              <label className="block min-w-0 flex-1 text-sm font-medium">
-                קהל מיוחד
-                <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-1`} />
-              </label>
-              <label className="block w-28 text-sm font-medium">
-                דקות הוראה
-                <input
-                  type="number"
-                  min={15}
-                  step={5}
-                  max={l.end_min - l.start_min}
-                  value={teach || ""}
-                  placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
-                  onChange={(e) => setTeach(Number(e.target.value))}
-                  className={`${INPUT} mt-1 tabular-nums`}
-                />
-              </label>
-            </div>
-            <div className="flex gap-1.5">
-              <Button kind="primary" disabled={!dirty} onClick={save}>
-                שמירה
-              </Button>
-              <Button kind="quiet" onClick={() => setEditing(false)}>
-                ביטול
-              </Button>
-            </div>
-          </div>
-        ) : (
-          // the topic is the header's pill (LessonPanel)
-          <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2 text-sm">
-            <dt className="text-ink-soft">כותרת</dt>
-            <dd className="font-medium">{l.title ?? <span className="text-ink-faint">TBD</span>}</dd>
-            {l.audience && (
-              <>
-                <dt className="text-ink-soft">קהל מיוחד</dt>
-                <dd>{l.audience}</dd>
-              </>
-            )}
-            <dt className="text-ink-soft">דקות הוראה</dt>
-            <dd className="tabular-nums">
-              {l.teach_min ?? (
-                <>
-                  {Math.min(lessonMinutes, l.end_min - l.start_min)} <span className="text-ink-faint">(ברירת המחדל)</span>
-                </>
-              )}
-            </dd>
-          </dl>
-        )}
-      </Section>
-
+      <LessonDetails model={model} lesson={l} canEdit={canEdit} onSave={(patch) => actions.update(l.id, l.version, patch)} />
       {stages ? (
         stages(l)
       ) : (
@@ -655,11 +556,121 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
 }
 
 /**
+ * «פרטי השיעור» of a closed lesson — the title, the topic, a special audience, the teaching minutes: read first, «עריכה»
+ * opens the form, a saved version closes it. The panel's, and the lesson page's «סגירה» step (src/screens/lesson/).
+ */
+export function LessonDetails({ model, lesson: l, canEdit, onSave }: { model: GridModel; lesson: Lesson; canEdit: boolean; onSave: (patch: LessonPatch) => void }) {
+  const [title, setTitle] = useState(l.title ?? "");
+  const [category, setCategory] = useState(l.category_id ?? 0);
+  const [audience, setAudience] = useState(l.audience ?? "");
+  const [teach, setTeach] = useState(l.teach_min ?? 0);
+  // read first; «עריכה» opens the form, a saved version closes it
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    setTitle(l.title ?? "");
+    setCategory(l.category_id ?? 0);
+    setAudience(l.audience ?? "");
+    setTeach(l.teach_min ?? 0);
+    setEditing(false);
+  }, [l.id, l.version, l.title, l.category_id, l.audience, l.teach_min]);
+  const lessonMinutes = model.week.edition.settings.lesson_minutes ?? 75;
+  const dirty = title !== (l.title ?? "") || category !== (l.category_id ?? 0) || audience !== (l.audience ?? "") || teach !== (l.teach_min ?? 0);
+  const save = () =>
+    onSave({
+      title: title.trim() || null,
+      category_id: category || null,
+      audience: audience.trim() || null,
+      teach_min: teach || null,
+    });
+
+  return (
+    <Section
+      title="פרטי השיעור"
+      aside={
+        canEdit &&
+        !editing && (
+          <Button kind="quiet" onClick={() => setEditing(true)}>
+            עריכה
+          </Button>
+        )
+      }
+    >
+      {editing ? (
+        <div className="space-y-3">
+          <label className="block text-sm font-medium">
+            כותרת
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="TBD" className={`${INPUT} mt-1`} autoFocus />
+          </label>
+          <label className="block text-sm font-medium">
+            נושא
+            <select value={category} onChange={(e) => setCategory(Number(e.target.value))} className={`${INPUT} mt-1`}>
+              <option value={0}>— לא נבחר —</option>
+              {model.week.categories.filter((c) => c.active || c.id === l.category_id).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <label className="block min-w-0 flex-1 text-sm font-medium">
+              קהל מיוחד
+              <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="למשל: שיעור להורים" className={`${INPUT} mt-1`} />
+            </label>
+            <label className="block w-28 text-sm font-medium">
+              דקות הוראה
+              <input
+                type="number"
+                min={15}
+                step={5}
+                max={l.end_min - l.start_min}
+                value={teach || ""}
+                placeholder={String(Math.min(lessonMinutes, l.end_min - l.start_min))}
+                onChange={(e) => setTeach(Number(e.target.value))}
+                className={`${INPUT} mt-1 tabular-nums`}
+              />
+            </label>
+          </div>
+          <div className="flex gap-1.5">
+            <Button kind="primary" disabled={!dirty} onClick={save}>
+              שמירה
+            </Button>
+            <Button kind="quiet" onClick={() => setEditing(false)}>
+              ביטול
+            </Button>
+          </div>
+        </div>
+      ) : (
+        // the topic is the header's pill (LessonPanel)
+        <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2 text-sm">
+          <dt className="text-ink-soft">כותרת</dt>
+          <dd className="font-medium">{l.title ?? <span className="text-ink-faint">TBD</span>}</dd>
+          {l.audience && (
+            <>
+              <dt className="text-ink-soft">קהל מיוחד</dt>
+              <dd>{l.audience}</dd>
+            </>
+          )}
+          <dt className="text-ink-soft">דקות הוראה</dt>
+          <dd className="tabular-nums">
+            {l.teach_min ?? (
+              <>
+                {Math.min(lessonMinutes, l.end_min - l.start_min)} <span className="text-ink-faint">(ברירת המחדל)</span>
+              </>
+            )}
+          </dd>
+        </dl>
+      )}
+    </Section>
+  );
+}
+
+/**
  * «פתיחה מחדש»: the lesson goes back to a draft, and its stages — the speaker's — start over
  * (CONTRACT reopen_lesson). When any stage holds something, it says what goes before doing it.
  * Paid money is never erased (paid_locked); an approved request is the instructor's to reopen.
  */
-function Reopen({ lesson: l, isAdmin, files, onReopen }: { lesson: Lesson; isAdmin: boolean; files: number; onReopen: () => void }) {
+export function Reopen({ lesson: l, isAdmin, files, onReopen }: { lesson: Lesson; isAdmin: boolean; files: number; onReopen: () => void }) {
   const [asking, setAsking] = useState(false);
   // «ביטול» takes the confirm (and its focus) away: «פתיחה מחדש» takes it back
   const focusBack = useFocusBack();
@@ -779,6 +790,8 @@ export function SpeakerChooser({ model, me, day, start, end, need, onPick }: { m
     const id = picked.current;
     if (id == null) return;
     picked.current = null;
+    // only a focus that fell with the row: a pick asked first (a Confirm) and cancelled leaves the reader where they are
+    if (!focusLost()) return;
     (root.current?.querySelector<HTMLElement>(`[data-chooser-speaker="${id}"] button`) ?? root.current?.querySelector<HTMLElement>("input"))?.focus();
   }, [ranked]);
 

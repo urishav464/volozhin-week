@@ -42,6 +42,8 @@ const scheduleView: ScheduleView = {
 
 const offlineBanner = (page: Page) => page.getByRole("status").filter({ hasText: "אין חיבור לאינטרנט — מוצג המצב מ" });
 const lens = (page: Page) => page.getByRole("radiogroup", { name: "עדשה" });
+/** The signed-in member is content — a trainee, whose live home is «היום שלי» (the reset, phase 2); the demo's is the week. */
+const home = (page: Page) => page.getByRole("heading", { name: "היום שלי", level: 2 });
 
 /**
  * A member signed in on the mock build, the week the demo's (edition 7). Which session the page starts with is chosen
@@ -160,7 +162,7 @@ test.describe("mock build", () => {
   test("the production build registers /sw.js and keeps the shell — nothing sent to Supabase, nothing with a key", async ({ context, page }) => {
     const { sb } = await signedIn(context, page);
     await page.goto(mockUrl());
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await readyOffline(page);
     const reg = await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.scriptURL);
     expect(reg).toBe(`${mockUrl()}/sw.js`);
@@ -206,7 +208,7 @@ test.describe("mock build", () => {
     const { dayOwners: _none, ...before18 } = week;
     sb.answers.set("load_week", before18);
     await page.goto(mockUrl());
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await readyOffline(page);
     const saved = await stored(page);
     expect(saved.week!.userId).toBe(fakeSession().user.id);
@@ -253,7 +255,7 @@ test.describe("mock build", () => {
     const whoamis = sb.count("/rest/v1/rpc/whoami");
     offline.on = false;
     await noConnection(context, false);
-    await expect(lens(page)).toBeVisible({ timeout: 10_000 });
+    await expect(home(page)).toBeVisible({ timeout: 10_000 });
     await expect(offlineBanner(page)).toHaveCount(0);
     expect(sb.count("/rest/v1/rpc/whoami")).toBeGreaterThan(whoamis);
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1);
@@ -269,7 +271,7 @@ test.describe("mock build", () => {
     const second = { ...slot, id: Math.max(...week.lessons.map((l) => l.id)) + 1, room_id: week.rooms.find((r) => r.id !== slot.room_id)!.id, escort_roster_id: null, version: 1 };
     week.lessons.push(second);
     await page.goto(mockUrl());
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await readyOffline(page);
     const saved = (await stored(page)).week!.week;
     expect(saved.memorialPlans).toEqual(week.memorialPlans);
@@ -419,7 +421,7 @@ test.describe("mock build", () => {
     await expect(page.getByText("טוען…")).toBeVisible();
     await expect(offlineBanner(page)).toBeVisible({ timeout: 15_000 });
     answer();
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await expect(offlineBanner(page)).toHaveCount(0);
     await context.clearCookies({ name: "e2e-net" });
   });
@@ -476,7 +478,7 @@ test.describe("mock build", () => {
     await banner.getByRole("button", { name: "רענון" }).click();
     await reloaded;
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay ?? "reloaded")).toBe("reloaded");
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await expect(banner).toHaveCount(0);
     // the new worker took over and deleted the old version's cache
     await expect.poll(async () => (await cached(page)).map((c) => c.name).filter((n) => n.startsWith("volozhin-shell-"))).toEqual([`${before}-next`]);
@@ -491,11 +493,11 @@ test.describe("mock build", () => {
       await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
       if (reloadedFirst) {
         await page.reload();
-        await expect(lens(page)).toBeVisible();
+        await expect(home(page)).toBeVisible();
       }
       const b = await context.newPage(); // tab B, the same browser
       await b.goto(mockUrl());
-      await expect(lens(b)).toBeVisible();
+      await expect(home(b)).toBeVisible();
       const before = (await cached(page)).find((c) => c.name.startsWith("volozhin-shell-"))!.name;
       await page.evaluate(() => ((window as unknown as { stay: number }).stay = 1));
 
@@ -519,7 +521,7 @@ test.describe("mock build", () => {
       await banner(page).getByRole("button", { name: "רענון" }).click();
       await aReloaded;
       expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay ?? "reloaded")).toBe("reloaded");
-      await expect(lens(page)).toBeVisible();
+      await expect(home(page)).toBeVisible();
       await expect(banner(page)).toHaveCount(0);
       await expect.poll(() => page.evaluate(async () => navigator.serviceWorker.controller === (await navigator.serviceWorker.getRegistration())?.active)).toBe(true);
       await expect.poll(async () => (await cached(page)).map((c) => c.name).filter((n) => n.startsWith("volozhin-shell-"))).toEqual([`${before}-next`]);
@@ -571,7 +573,7 @@ test.describe("mock build", () => {
     await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
     await expect.poll(async () => (await cached(page)).length).toBe(0);
     expect(await page.evaluate(() => (window as unknown as { stay?: number }).stay)).toBe(1);
-    await expect(lens(page)).toBeVisible(); // the page keeps working, on the network
+    await expect(home(page)).toBeVisible(); // the page keeps working, on the network
 
     // the next visit is the plain site: the app registers again only if the build still ships a shell — this one does,
     // so the kill switch's real use is a build with OFFLINE_SHELL_ENABLED = false (src/offline/config.ts)
@@ -602,7 +604,7 @@ test.describe("mock build", () => {
     await page.clock.fastForward(29_000);
     await expect(offlineBanner(page)).toBeVisible();
     await page.clock.fastForward(2_000);
-    await expect(lens(page)).toBeVisible();
+    await expect(home(page)).toBeVisible();
     await expect(offlineBanner(page)).toHaveCount(0);
   });
 

@@ -15,15 +15,18 @@ export interface DayBalance {
   day: Day;
   /** Closed lessons, by speaker gender; a co-taught lesson splits its 1 between its speakers. */
   closed: GenderTally;
-  /** Drafts with a live pitch, by the gender of their leading candidate. */
+  /** Drafts with a live pitch, by the gender of their leading candidate — shown as «בתהליך», never counted in `need`. */
   pending: GenderTally;
   /** Lesson cells still open: free rows + drafts nobody has been pitched for. */
   open: number;
-  /** The gender the open cells should go to for 50/50; null when the day is even. */
+  /**
+   * The gender the day's CLOSED lessons are short of (the reset, phase 2: a candidate is not a lesson — one man pitched
+   * tints nothing); null when they are even. Said once, at the day (its header), never on a free cell.
+   */
   need: Gender | null;
-  /** How many more of `need` would even the day (closed + pending). */
+  /** How many more of `need` would even the closed lessons. */
   deficit: number;
-  /** The day cannot end even: the deficit is larger than the open cells. */
+  /** The day cannot end even: the deficit is larger than every slot not closed yet (open, and in process). */
   unreachable: boolean;
 }
 
@@ -39,7 +42,7 @@ const PITCH_RANK: Record<string, number> = { approached: 0, candidate: 1 };
 
 /**
  * «הצעה» — until the instructor sets edition.settings.gender_tolerance (v13): a day whose CLOSED lessons
- * differ by more than this many between women and men is «לא מאוזן» (a warning; the drafts only tint the cells).
+ * differ by more than this many between women and men is «לא מאוזן» (a warning).
  */
 export const DEFAULT_GENDER_TOLERANCE = 1;
 
@@ -94,11 +97,14 @@ export function dayBalance(day: Day, input: BalanceInput, freeCellCount: number)
     }
   }
 
-  const diff = closed.m + pending.m - (closed.f + pending.f);
-  // Half a lesson (co-teaching) is not worth tinting the day for.
+  // closed lessons only: a candidate may still say no, and the day is not short of anyone for them
+  const diff = closed.m - closed.f;
+  // Half a lesson (co-teaching) is not worth a word on the day.
   const need: Gender | null = diff >= 0.5 ? "f" : diff <= -0.5 ? "m" : null;
   const deficit = Math.abs(diff);
-  return { day, closed, pending, open, need, deficit, unreachable: need !== null && deficit - open >= 1 };
+  // what could still even it: every slot not closed — the open ones and those in process, whoever is pitched there
+  const notClosed = open + pending.m + pending.f + pending.unknown;
+  return { day, closed, pending, open, need, deficit, unreachable: need !== null && deficit - notClosed >= 1 };
 }
 
 /** Closed lessons per category on a day (lessons without a category are not counted). */

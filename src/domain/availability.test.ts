@@ -42,8 +42,13 @@ describe("availability per slot (v14)", () => {
 
   it("a day at a glance, and a tap's cycle", () => {
     const mine = slotsBySpeaker([slot(1, 510, "can"), slot(1, 600, "cannot")]).get(7);
-    expect(dayKind(mine, 1, activeLessonRows(w.rows, w.edition, 1))).toBe("cannot");
+    // «יכול/ה» on one row and «לא» on another: part of the day («רק בשעות…»), never read as «לא»
+    expect(dayKind(mine, 1, activeLessonRows(w.rows, w.edition, 1))).toBe("some");
     expect(dayKind(mine, 2, activeLessonRows(w.rows, w.edition, 2))).toBeNull();
+    const only = slotsBySpeaker([slot(1, 510, "can")]).get(7);
+    expect(dayKind(only, 1, activeLessonRows(w.rows, w.edition, 1))).toBe("can");
+    const never = slotsBySpeaker([slot(1, 600, "cannot")]).get(7);
+    expect(dayKind(never, 1, activeLessonRows(w.rows, w.edition, 1))).toBe("cannot");
     expect([nextKind(null), nextKind("can"), nextKind("cannot")]).toEqual(["can", "cannot", null]);
     expect(slotKey(2, 14)).toBe("2:14");
   });
@@ -169,6 +174,6 @@ describe("availability typed as time ranges (v18): rangesToSlots", () => {
     const mine = slotsBySpeaker(slots).get(7);
     expect(slotFit(mine, 3, coveredRows(w.rows, w.edition, 3, 1470, 1650))).toBe("can");
     expect(slotFit(mine, 3, coveredRows(w.rows, w.edition, 3, 1470, 1740))).toBe("cannot");
-    expect(dayKind(mine, 3, activeLessonRows(w.rows, w.edition, 3))).toBe("cannot");
+    expect(dayKind(mine, 3, activeLessonRows(w.rows, w.edition, 3))).toBe("some");
   });
 });

@@ -4,7 +4,8 @@
 // lists (- or * or •), numbered lists (1.) and **bold**. Nothing else is
 // markup: an HTML tag, a link or an image is plain text. This parses into
 // blocks of text pieces; src/screens/Markdown.tsx draws them as React text
-// nodes, so no string ever becomes HTML.
+// nodes, so no string ever becomes HTML — a time range in its own <bdi dir="ltr">
+// (`timeRuns`), so «17:00–19:00» reads left to right inside Hebrew.
 
 /** A run of text, bold or not. */
 export interface Piece {
@@ -81,6 +82,24 @@ export function parseMarkdown(src: string | null | undefined): Block[] {
   }
   flush();
   return blocks;
+}
+
+/**
+ * A time range in Hebrew text («17:00–19:00»), cut out so it is drawn left to right in its own `<bdi dir="ltr">` —
+ * without it the bidi algorithm puts the end before the start. One run per range, the text between as it is.
+ */
+const TIME_RANGE = /\d{1,2}:\d{2}\s?[–-]\s?\d{1,2}:\d{2}/g;
+
+export function timeRuns(text: string): { text: string; range: boolean }[] {
+  const out: { text: string; range: boolean }[] = [];
+  let at = 0;
+  for (const m of text.matchAll(TIME_RANGE)) {
+    if (m.index! > at) out.push({ text: text.slice(at, m.index), range: false });
+    out.push({ text: m[0], range: true });
+    at = m.index! + m[0].length;
+  }
+  if (at < text.length || out.length === 0) out.push({ text: text.slice(at), range: false });
+  return out;
 }
 
 /** The text alone (for a search, or a screen reader's summary). */

@@ -4,6 +4,7 @@
 // «נקודות לשיחה» (v14) — previewed, saved, back to the instructor's text — go
 // out as set_call_template.
 import { expect, type Page, test } from "@playwright/test";
+import { demoWeek } from "../../src/data/demoWeek";
 import { DEFAULT_CALL_TEMPLATE } from "../../src/domain/callPoints";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
@@ -306,6 +307,10 @@ test.describe("mock build", () => {
       { id: 5, display_name: "חבר/ת צוות לדוגמה", gender: null, role: "content" },
     ]);
     sb.answers.set("set_my_profile", null);
+    // «ימים» reads the week (its owners and team): answered, so the tab is tested as it is drawn — five more «שמירה»s
+    const week = demoWeek();
+    week.edition.id = 7;
+    sb.answers.set("load_week", week);
     await sb.attach(page);
     await signIn(page, "edition.admin@example.org");
     await page.goto(`${mockUrl()}/settings/categories`); // global admins only → back to the team
@@ -323,10 +328,16 @@ test.describe("mock build", () => {
     await expect(everywhere.getByText("מדריך/ה לכל המחזורים")).toBeVisible();
     await expect(everywhere.getByRole("button")).toHaveCount(0);
 
+    // «ימים» is drawn (not its error), each day's «שמירה» saying its day
+    const days = page.getByRole("list", { name: "האחראים לכל יום" });
+    await expect(days.locator("[data-day-owners]")).toHaveCount(5);
+    await expect(days.getByRole("button", { name: "שמירה של יום ראשון" })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
     // no name yet: the header shows the address, and the form asks for one
     await expect(page.getByRole("banner").getByText("edition.admin@example.org")).toBeVisible();
     await page.getByLabel("השם שיוצג לצוות").fill("מדריך/ה של המחזור לדוגמה");
-    await page.getByRole("button", { name: "שמירה" }).click();
+    await page.locator("form").filter({ has: page.getByLabel("השם שיוצג לצוות") }).getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "הפרטים שלך נשמרו")).toBeVisible();
     expect(sb.rpc.get("set_my_profile")).toEqual([{ p_display_name: "מדריך/ה של המחזור לדוגמה", p_gender: null }]);
     await expect.poll(() => sb.count("/rest/v1/rpc/whoami")).toBeGreaterThanOrEqual(2); // the header is re-read

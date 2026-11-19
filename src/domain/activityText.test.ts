@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityEntry } from "../data/speakers";
-import { timeline } from "./activityText";
+import { curate, timeline } from "./activityText";
 import { LRM } from "./time";
 
 let seq = 0;
@@ -107,5 +107,57 @@ describe("a speaker's timeline", () => {
     const [a, b] = timeline([row("speakers", "insert", {}, 99), row("speakers", "insert", {}, null)], ctx("m"));
     expect(a.who).toBe("חבר/ת צוות");
     expect(b.who).toBeNull();
+  });
+});
+
+describe("«מה קרה» curated (curate)", () => {
+  const at = (iso: string, e: ActivityEntry): ActivityEntry => ({ ...e, at: iso });
+
+  it("keeps the approach, the call, the pitches and the vetting; leaves out edits of the record and of the contacts", () => {
+    const log = [
+      row("speakers", "vet", { vetted: "approved" }, 1),
+      row("speakers", "contacts", { fields: ["phone"] }),
+      row("speakers", "update", { fields: ["bio_short"] }),
+      row("pitches", "update", { state: "accepted", lesson: 5 }),
+      row("approaches", "update", { status: "positive", owner: 2, speaker: 4 }),
+      row("approaches", "insert", { status: "claimed", owner: 2, speaker: 4 }),
+      row("speakers", "insert", { vetted: "pending" }),
+      row("other", "whatever", {}),
+    ];
+    expect(curate(log).map((e) => `${e.entity}:${e.kind}`)).toEqual(["speakers:vet", "pitches:update", "approaches:update", "approaches:insert", "speakers:insert"]);
+  });
+
+  it("one member's availability taps on one Israel day are one line: how many slots, which days — where the newest stood", () => {
+    const tap = (iso: string, actor: number, day: number, start: number, kind: string | null) => at(iso, row("approaches", "availability", { speaker: 4, day, start, end: start + 90, kind }, actor));
+    const log = [
+      tap("2026-11-18T21:30:00Z", 2, 1, 510, "can"), // 23:30 in Israel: still the 18th
+      tap("2026-11-18T20:00:00Z", 2, 1, 510, "cannot"), // the same slot again
+      at("2026-11-18T19:00:00Z", row("pitches", "insert", { state: "candidate", lesson: 5 })),
+      tap("2026-11-18T18:00:00Z", 2, 3, 960, "can"),
+      tap("2026-11-18T17:00:00Z", 3, 2, 600, "can"), // another member: a line of their own
+      tap("2026-11-17T23:00:00Z", 2, 0, 600, "can"), // 01:00 on the 18th in Israel
+      tap("2026-11-17T08:00:00Z", 2, 4, 600, "cannot"), // the 17th: a line of its own
+      at("2026-11-16T08:00:00Z", row("approaches", "availability", { speaker: 4, days: [1, 3], ranges: 2, marked: 7, rest: null })),
+    ];
+    const out = curate(log);
+    expect(out.map((e) => e.id)).toEqual([log[0].id, log[2].id, log[4].id, log[6].id, log[7].id]);
+    expect(out[0].detail).toEqual({ speaker: 4, marked: 3, days: [0, 1, 3] });
+    expect(out[0].at).toBe(log[0].at);
+    expect(out[2]).toBe(log[4]); // a single tap keeps its own line: it says which slot
+    expect(out[4]).toBe(log[7]); // a set of ranges is one line already
+    const lines = timeline(out, ctx("f"));
+    expect(lines[0].text).toBe("עודכנה הזמינות — 3 משבצות");
+    expect(lines[2].text).toBe(`זמינות: שלישי ${LRM}10:00–11:30 — יכולה`);
+  });
+
+  it("the approach's lines still compare with the approach's row before them", () => {
+    const log = [
+      row("approaches", "update", { status: "approached", owner: 3, speaker: 4 }, 3),
+      row("approaches", "availability", { speaker: 4, day: 0, start: 510, end: 600, kind: "can" }),
+      row("approaches", "availability", { speaker: 4, day: 0, start: 600, end: 690, kind: "can" }),
+      row("speakers", "update", { fields: ["topics"] }),
+      row("approaches", "update", { status: "approached", owner: 2, speaker: 4 }),
+    ];
+    expect(timeline(curate(log), ctx("m"))[0].text).toBe("הטיפול עבר לחניך/ה ב׳");
   });
 });

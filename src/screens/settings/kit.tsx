@@ -432,6 +432,32 @@ export function useFocusBack() {
   );
 }
 
+/** The focus fell to the page: the control that held it was taken away (or nothing ever held it). */
+export function focusLost(): boolean {
+  const a = document.activeElement;
+  return !a || a === document.body || !a.isConnected;
+}
+
+/**
+ * After an act that takes the focused control away — a call's result swaps the buttons, a form closes, a row leaves its
+ * list: call `rescue(target)` once the outcome is set (in the same handler, or after the command's await), and after
+ * that render, if the focus fell to the page, `target()` takes it — the section it was in, the control that stands in
+ * for the pressed one. Nothing moves when the focus is still somewhere (a refusal keeps the busy button focused).
+ */
+export function useFocusRescue() {
+  const target = useRef<(() => HTMLElement | null | undefined) | null>(null);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const t = target.current;
+    target.current = null;
+    if (t && focusLost()) t()?.focus();
+  }, [n]);
+  return useCallback((t: () => HTMLElement | null | undefined) => {
+    target.current = t;
+    setN((x) => x + 1);
+  }, []);
+}
+
 export function Confirm({
   text,
   confirm,

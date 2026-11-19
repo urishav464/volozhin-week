@@ -51,3 +51,16 @@ export const CONTACT_PREF_LABEL: Record<ContactPref, string> = {
   email: "מייל",
   secretary: "דרך המזכירות",
 };
+
+/**
+ * A speaker's `contact_pref` in the team's words (the reset, phase 2 — the owner's): the field is «דרך תקשורת», and a
+ * phone is «שיחה». One wording wherever the speaker's own field is shown — the new speaker, «עריכה», the contacts.
+ * (The import's channels keep CONTACT_PREF_LABEL: they are how a message was sent.)
+ */
+export const CONTACT_WAY = "דרך תקשורת";
+export const CONTACT_WAY_LABEL: Record<ContactPref, string> = {
+  phone: "שיחה",
+  whatsapp: "WhatsApp",
+  email: "מייל",
+  secretary: "דרך המזכירות",
+};

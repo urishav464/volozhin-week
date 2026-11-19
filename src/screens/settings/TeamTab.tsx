@@ -3,20 +3,25 @@
 // admin) belong to a global admin — the database refuses anything else
 // (members_admin_write), so the screen never offers it. Nobody who has done
 // anything is deleted: they are deactivated, and their history stays.
+// «ימים» (the reset, phase 2, DayOwnersPanel.tsx): each day's pair of owners, under the team.
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
+import type { DataPort } from "../../data/port";
 import type { MemberRow } from "../../data/settings";
 import type { Role } from "../../data/types";
 import { byGender } from "../../domain/names";
 import type { Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { ROLE_LABEL } from "../../lib/labels";
+import { DayOwnersPanel } from "./DayOwnersPanel";
 import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, EditionPicker, Field, Fold, GENDER_LABEL, GenderField, INPUT, LoadError, Loading, Panel, Row, Rows, useAction, useFocusBack, useSettings } from "./kit";
 
 interface Props {
   editions: Edition[];
   editionId: number | null;
   setEditionId: (id: number) => void;
+  /** The grid's commands (the reset, phase 2: «ימים» — set_day_owners) and the week they read. */
+  data: DataPort;
 }
 
 /** Someone who works on every edition. An edition's admin sees their name only (public.team), never the address. */
@@ -24,7 +29,7 @@ type Everywhere = Pick<MemberRow, "id" | "display_name" | "gender" | "role"> & {
 
 const FORM_REFUSALS = ["bad_email", "name_required", "member_exists", "bad_value"];
 
-export function TeamTab({ editions, editionId, setEditionId }: Props) {
+export function TeamTab({ editions, editionId, setEditionId, data }: Props) {
   const { port, me } = useSettings();
   const [rows, setRows] = useState<MemberRow[] | null>(null);
   const [everywhere, setEverywhere] = useState<Everywhere[] | null>(null);
@@ -103,6 +108,10 @@ export function TeamTab({ editions, editionId, setEditionId }: Props) {
                 {/* adding is occasional: under the list, folded — open while the edition has nobody */}
                 {editionId != null && <AddMember key={editionId} editionId={editionId} empty={rows.length === 0} onAdded={load} />}
               </Panel>
+              {/* the days' owners (the reset, phase 2): read again whenever the team above changes */}
+              {editionId != null && (
+                <DayOwnersPanel key={editionId} data={data} editionId={editionId} teamKey={[...rows, ...everywhere].map((m) => `${m.id}:${m.role}:${m.active ? 1 : 0}`).join(",")} />
+              )}
               <Panel title="בכל המחזורים" aside={me.global_admin ? undefined : "לצפייה בלבד"}>
                 {everywhere.length === 0 ? (
                   <p className="text-ink-soft">אין.</p>

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mailtoHref, whatsappTextHref } from "./contactLinks";
 import {
-  amountText, composeConfirmation, confirmSubject, durationWords, hebrewDateLong, type MessageInput, messageDate, parseTemplate, teachMinutes, weekdayOf,
+  amountText, composeConfirmation, confirmSubject, durationWords, hebrewDateLong, type MessageInput, messageDate, parseTemplate, PROPOSED_TEMPLATE, teachMinutes, weekdayOf,
 } from "./message";
 
 const FULL =
@@ -13,7 +13,7 @@ const FULL =
 function input(over: Partial<MessageInput> = {}, lesson: Partial<MessageInput["lesson"]> = {}): MessageInput {
   return {
     template: FULL,
-    lesson: { state: "closed", day: 0, start_min: 1200, end_min: 1290, title: "שיעור לדוגמה", teach_min: null, pay_amount: 1500, approval: "approved", ...lesson },
+    lesson: { state: "closed", day: 0, start_min: 1200, end_min: 1290, title: "שיעור לדוגמה", teach_min: null, pay_amount: 1500, approval: "approved", transport: "none", sources_kind: "sheet", ...lesson },
     speaker: { title: "ד״ר", name: "מרצה לדוגמה", gender: "f" },
     sender: { gender: "m" },
     room: "בית מדרש",
@@ -213,5 +213,61 @@ describe("sending", () => {
   it("mail: a subject and the body with CRLF lines; no address when there is none to see", () => {
     expect(mailtoHref("speaker01@example.org", "נושא", "א\nב")).toBe(`mailto:speaker01@example.org?subject=${encodeURIComponent("נושא")}&body=${encodeURIComponent("א\r\nב")}`);
     expect(mailtoHref(null, "נושא", "א")).toBe(`mailto:?subject=${encodeURIComponent("נושא")}&body=${encodeURIComponent("א")}`);
+  });
+});
+
+describe("the transport and sources switches (the reset, phase 2)", () => {
+  it("[[הסעה:…|…]] by whether a transport was asked; [[מקורות:…|…]] while the sources are missing", () => {
+    const template = "א[[הסעה:הסעה|בלי]]ב[[מקורות:חסר|יש]]ג";
+    expect(composeConfirmation(input({ template })).text).toBe("אבליבישג");
+    expect(composeConfirmation(input({ template }, { transport: "one_way" })).text).toBe("אהסעהבישג");
+    expect(composeConfirmation(input({ template }, { transport: "round_trip", sources_kind: "pending" })).text).toBe("אהסעהבחסרג");
+    expect(composeConfirmation(input({ template }, { sources_kind: "none" })).text).toBe("אבליבישג"); // «בלי מקורות» is an answer, not a request
+    expect(composeConfirmation(input({ template }, { transport: "one_way" })).ok).toBe(true);
+  });
+
+  it("forgive spaces, nest, and are never a gender pair", () => {
+    expect(composeConfirmation(input({ template: "[[ הסעה : [[נדאג לו|נדאג לה]]|]]" }, { transport: "one_way" })).text).toBe("נדאג לה");
+    expect(composeConfirmation(input({ template: "[[ מקורות :נשמח לקבל|]]", speaker: { title: null, name: "x", gender: null } }, { sources_kind: "pending" })).text).toBe("נשמח לקבל");
+    expect(parseTemplate("[[הסעה:א|ב]][[מקורות:ג|ד]]").errors).toEqual([]);
+  });
+
+  it("a wrong number of branches says which switch, and an unknown variable in a branch not taken still blocks", () => {
+    expect(parseTemplate("[[הסעה:רק אחת]]").errors).toEqual(["«[[הסעה:…]]»: צריך בדיוק שתי חלופות, כשיש הסעה|בלי הסעה"]);
+    expect(parseTemplate("[[מקורות:א|ב|ג]]").errors).toEqual(["«[[מקורות:…]]»: צריך בדיוק שתי חלופות, כשהמקורות חסרים|כשהתקבלו"]);
+    expect(parseTemplate("[[תשלום:רק אחת]]").errors).toEqual(["«[[תשלום:…]]»: צריך בדיוק שתי חלופות, כשיש תשלום|בהתנדבות"]);
+    expect(composeConfirmation(input({ template: "[[הסעה:{{נהג}}|]]" })).problems.map((p) => p.code)).toEqual(["unknown_variable"]);
+    expect(composeConfirmation(input({ template: "[[מקורות:|{{קובץ}}]]" }, { sources_kind: "pending" })).problems.map((p) => p.code)).toEqual(["unknown_variable"]);
+  });
+});
+
+describe("«הנוסח המוצע» (PROPOSED_TEMPLATE)", () => {
+  it("parses clean and names only known variables", () => {
+    expect(parseTemplate(PROPOSED_TEMPLATE).errors).toEqual([]);
+    expect(composeConfirmation(input({ template: PROPOSED_TEMPLATE })).problems).toEqual([]);
+  });
+
+  it("the date and time; payment, transport and the sources' request only when there are any", () => {
+    const bare = composeConfirmation(input({ template: PROPOSED_TEMPLATE }, { pay_amount: null, approval: "none" }));
+    expect(bare.ok).toBe(true);
+    const lines = bare.text.split("\n");
+    expect(lines[0]).toBe("שלום ד״ר מרצה לדוגמה,");
+    expect(lines[1]).toMatch(/^השיעור יתקיים ב14\.2\.2027 \(.+\) בשעה \u200F\u200E20:00–21:15\.$/);
+    expect(lines.slice(2)).toEqual(["תודה רבה!"]);
+
+    const all = composeConfirmation(input({ template: PROPOSED_TEMPLATE }, { pay_amount: 1500, transport: "round_trip", sources_kind: "pending" }));
+    expect(all.text.split("\n").slice(2)).toEqual([
+      "סוכם על תשלום של 1,500 ש״ח.",
+      "נדאג להסעה, ופרטי הנהג/ת יישלחו לפני השיעור.",
+      "נשמח לקבל מראש את דף המקורות או המצגת.",
+      "תודה רבה!",
+    ]);
+    const transportOnly = composeConfirmation(input({ template: PROPOSED_TEMPLATE }, { pay_amount: null, approval: "approved", transport: "one_way" }));
+    expect(transportOnly.text.split("\n").slice(2)).toEqual(["נדאג להסעה, ופרטי הנהג/ת יישלחו לפני השיעור.", "תודה רבה!"]);
+  });
+
+  it("is the wording only: it takes no gender, so it never blocks on one", () => {
+    const c = composeConfirmation(input({ template: PROPOSED_TEMPLATE, speaker: { title: null, name: "מרצה לדוגמה", gender: null }, sender: { gender: null } }));
+    expect(c.ok).toBe(true);
   });
 });

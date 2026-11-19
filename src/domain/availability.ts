@@ -86,11 +86,19 @@ export function slotFit(mine: SpeakerSlots | undefined, day: Day, covered: reado
   return kinds.every((k) => k === "can") ? "can" : null;
 }
 
-/** A day at a glance (the pool's strip): «לא» if any of its active rows is «לא», «יכול/ה» if any is «יכול/ה». */
-export function dayKind(mine: SpeakerSlots | undefined, day: Day, active: readonly GridRow[]): SlotKind | null {
+/** A day at a glance: «can» / «cannot» when its marked rows all say so, «some» when it holds both — «יכול/ה רק בשעות…». */
+export type DayKind = SlotKind | "some";
+
+/**
+ * A day at a glance (the pool's strip, «מתאים/ה ליום»): what its active rows say — «some» for «יכול/ה» on part of the day
+ * and «לא» on the rest (the ranges editor's «רק בשעות…» always writes it so), null when nothing is said.
+ */
+export function dayKind(mine: SpeakerSlots | undefined, day: Day, active: readonly GridRow[]): DayKind | null {
   if (!mine) return null;
   const kinds = active.map((r) => mine.get(slotKey(day, r.id))?.kind);
-  return kinds.includes("cannot") ? "cannot" : kinds.includes("can") ? "can" : null;
+  const can = kinds.includes("can");
+  const cannot = kinds.includes("cannot");
+  return can && cannot ? "some" : cannot ? "cannot" : can ? "can" : null;
 }
 
 /** A tap on a slot: nothing said → «יכול/ה» → «לא» → nothing said. */

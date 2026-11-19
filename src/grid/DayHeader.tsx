@@ -1,6 +1,8 @@
 // The head of a day column: date, the gender meter, the day's topics axis, its warnings.
 // v13: a button — it opens the day's panel (DayPanel) — and «לא מאוזן» when the
 // day's closed women and men are further apart than the tolerance.
+// The reset, phase 2: its one line («חסרה מרצה») is the only place the day says what its CLOSED lessons are short
+// of — no free cell is tinted for it; `mine`: the viewer owns the day («היום שלי», a navy ring).
 import { DAY_NAMES, type Day, dateOf, hebrewDate, shortDate } from "../domain/time";
 import type { Gender } from "../domain/types";
 import { DEFAULT_GENDER_TOLERANCE, unbalanced } from "../rules/balance";
@@ -16,7 +18,7 @@ export function needText(need: Gender | null, deficit: number): string {
   return need === "f" ? (k === 1 ? "חסרה מרצה" : `חסרות ${k} מרצות`) : k === 1 ? "חסר מרצה" : `חסרים ${k} מרצים`;
 }
 
-export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model: GridModel; dm: DayModel; glow?: boolean; compact?: boolean; onOpen?: () => void }) {
+export function DayHeader({ model, dm, glow, compact = false, mine = false, onOpen }: { model: GridModel; dm: DayModel; glow?: boolean; compact?: boolean; mine?: boolean; onOpen?: () => void }) {
   const date = dateOf(model.week.edition.start_date, dm.day as Day);
   const b = dm.balance;
   // «לא מאוזן» has a line of its own: the warnings' count is the rest
@@ -27,12 +29,14 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
 
   return (
     <Tag
-      {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)} — פרטי היום` } : {})}
-      className={`block w-full rounded-xl border bg-card px-2.5 py-1.5 text-start shadow-sm ${onOpen ? "cursor-pointer transition-shadow hover:shadow-md" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : off ? "border-bad/60" : `border-line ${onOpen ? "hover:border-navy/30" : ""}`}`}
+      {...(onOpen ? { type: "button" as const, onClick: onOpen, "aria-label": `יום ${DAY_NAMES[dm.day as Day]}${mine ? " (היום שלי)" : ""}: ${off ? "לא מאוזן, " : ""}${needText(b.need, b.deficit)} — פרטי היום` } : {})}
+      className={`block w-full rounded-xl border bg-card px-2.5 py-1.5 text-start shadow-sm ${onOpen ? "cursor-pointer transition-shadow hover:shadow-md" : ""} ${glow ? "border-ok ring-2 ring-ok/40" : mine ? "border-navy ring-2 ring-navy/40" : off ? "border-bad/60" : `border-line ${onOpen ? "hover:border-navy/30" : ""}`}`}
       data-day-header={dm.day}
+      data-mine-day={mine ? dm.day : undefined}
     >
       <span className="flex items-baseline gap-1.5">
         <span className="font-display text-[15px] font-extrabold text-navy">{DAY_NAMES[dm.day as Day]}</span>
+        {mine && <span className="shrink-0 rounded-full bg-navy px-1.5 text-[10px] font-semibold leading-4 text-white">היום שלי</span>}
         <span className="min-w-0 truncate text-[11px] text-ink-faint">{date ? `${shortDate(date)} · ${hebrewDate(date)}` : "תאריך TBD"}</span>
         {onOpen && (
           <span aria-hidden className="ms-auto shrink-0 text-[13px] leading-none text-navy/60">
@@ -56,7 +60,7 @@ export function DayHeader({ model, dm, glow, compact = false, onOpen }: { model:
           <TopicAxis model={model} day={dm.day as Day} size="thin" />
         </span>
         {!compact && warnCount > 0 && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 ps-0.5 pe-1.5 text-[10px] leading-4 text-amber-900">
+          <span data-warning-count={warnCount} className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 ps-0.5 pe-1.5 text-[10px] leading-4 text-amber-900">
             <SeverityMark severity="warn" size="sm" />
             {warnCount}
           </span>

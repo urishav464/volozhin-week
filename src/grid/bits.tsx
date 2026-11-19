@@ -48,14 +48,19 @@ export function Chip({ children, tone = "plain", title }: { children: ReactNode;
  * wears that category's colour — the dot and the wash of the lesson panel's topic pill, the grid's stripe — so
  * a speaker reads in the colour of the lessons they could fill; a free tag stays a plain grey chip.
  */
-export function TopicChip({ name, category }: { name: string; category?: Pick<Category, "color"> | null }) {
-  if (!category) return <Chip>{name}</Chip>;
+export function TopicChip({ name, category, size = "md" }: { name: string; category?: Pick<Category, "color"> | null; size?: "md" | "lg" }) {
+  // «lg»: the speaker page's header — a topic read from across the table, not a tag beside a name
+  const lg = size === "lg";
+  if (!category) {
+    if (!lg) return <Chip>{name}</Chip>;
+    return <span className="inline-flex items-center rounded-full border border-line bg-sand-soft px-3 py-1 text-sm font-medium text-ink">{name}</span>;
+  }
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4 font-medium whitespace-nowrap text-ink"
+      className={`inline-flex items-center rounded-full border font-medium text-ink ${lg ? "gap-1.5 px-3 py-1 text-sm" : "gap-1 px-2 py-0.5 text-[11px] leading-4 whitespace-nowrap"}`}
       style={{ backgroundColor: `color-mix(in srgb, ${category.color} 10%, transparent)`, borderColor: `color-mix(in srgb, ${category.color} 35%, transparent)` }}
     >
-      <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+      <span aria-hidden className={`shrink-0 rounded-full ${lg ? "size-2.5" : "size-2"}`} style={{ backgroundColor: category.color }} />
       {name}
     </span>
   );

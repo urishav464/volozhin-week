@@ -150,7 +150,7 @@ export function LessonStages({ port, week, lessonId, actor, focus, notify, clear
  * 5786): read one lesson at a time, under the transport details' rule — for an archive, a global admin's only. Its
  * transport words are personal data: never in the Week, Realtime or the offline copy; the purge deletes them.
  */
-function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: number }) {
+export function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: number }) {
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -174,8 +174,8 @@ function ImportNote({ cmds, lessonId }: { cmds: StageCtx["cmds"]; lessonId: numb
 
 // ------------------------------------------------------------------ the message
 
-/** The composer, with the lead speaker's contacts (only when the caller may see them) for WhatsApp and mail. */
-function MessageStage({ port, speakerId, notify, ...ctx }: StageCtx & { port: DataPort; speakerId: number | null; notify: Notify }) {
+/** The composer, with the lead speaker's contacts (only when the caller may see them) for WhatsApp and mail (also the lesson page's step). */
+export function MessageStage({ port, speakerId, notify, ...ctx }: StageCtx & { port: DataPort; speakerId: number | null; notify: Notify }) {
   const { week, lesson: l, actor, cmds, busy, act, handler, mine } = ctx;
   const [contacts, setContacts] = useState<SpeakerContacts | null | undefined>(undefined);
   useEffect(() => {
@@ -222,7 +222,7 @@ function gapText(gap: number): string {
  * will read. Once something is saved it is read first; «עריכה» opens the form, and a save (a new version, a new key)
  * closes it again.
  */
-function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }: StageCtx & { speakerGender: Gender | null }) {
+export function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }: StageCtx & { speakerGender: Gender | null }) {
   const id = useId();
   const load = useMemo(() => escortLoad(week), [week]);
   const roster = useMemo(() => [...week.roster].sort((a, b) => a.full_name.localeCompare(b.full_name, "he") || a.id - b.id), [week.roster]);
@@ -379,7 +379,7 @@ function EscortStage({ week, lesson: l, actor, cmds, busy, act, speakerGender }:
  * What arrived for the lesson and when it is printed (the files themselves: SourceFiles, above it). Read first once
  * anything arrived; «עריכה» opens the form, a save (a new version, a new key) closes it.
  */
-function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
+export function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   const id = useId();
   const pending = l.sources_kind === "pending";
   const [editing, setEditing] = useState(pending);
@@ -496,8 +496,11 @@ function SourcesStage({ lesson: l, actor, cmds, busy, act }: StageCtx) {
   );
 }
 
-/** The reader's place: what the manifest says of this lesson (src/reader/model.ts), and the way to the reader. */
-function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSources: () => void }) {
+/**
+ * The reader's place: what the manifest says of this lesson (src/reader/model.ts), and the way to the reader — and to
+ * the sources, when `onSources` is given (the lesson page has them right above, in the same step).
+ */
+export function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSources?: () => void }) {
   const row = useMemo(() => readerManifest(week).rows.find((r) => r.lesson.id === l.id), [week, l.id]);
   const status = row?.status ?? "missing";
   const said: Record<typeof status, string> = {
@@ -518,7 +521,7 @@ function ReaderStage({ week, lesson: l, actor, onSources }: StageCtx & { onSourc
   ].filter(Boolean);
   // «למקורות ולקבצים» only while something there is still to do
   const settled = (status === "included" && besides.length === 0) || status === "presentation_only" || status === "no_sources";
-  const toSources = actor.canEdit && !settled;
+  const toSources = !!onSources && actor.canEdit && !settled;
   const toReader = actor.role !== "logistics";
   return (
     <div className="space-y-2 text-sm">

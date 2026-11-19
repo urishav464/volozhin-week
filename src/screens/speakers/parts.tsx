@@ -9,7 +9,7 @@ import { activeLessonRows, nextKind, type SlotKind, slotKey } from "../../domain
 import { byGender } from "../../domain/names";
 import { DAYS, DAY_NAMES, type Day, dayRange, fmtRange } from "../../domain/time";
 import type { Category, ContactPref, Edition, Gender, GridRow, SlotAvailability, Speaker } from "../../domain/types";
-import { CONTACT_PREF_LABEL } from "../../lib/labels";
+import { CONTACT_WAY, CONTACT_WAY_LABEL } from "../../lib/labels";
 import { Button, Field, Fold, GenderField, INPUT } from "../settings/kit";
 import { useWeekStore } from "../weekStore";
 
@@ -75,6 +75,96 @@ export function patchOf(s: Speaker, f: ProfileForm): SpeakerPatch {
   return out;
 }
 
+// The fields one by one — the profile's form below and «מרצה חדש/ה» as a page (src/screens/speakerPages/) draw the same.
+
+/** «תואר»: the edition's titles; a title saved before the list changed stays choosable. */
+export function TitleField({ id, value, titles, onChange }: { id: string; value: string; titles: readonly string[]; onChange: (title: string) => void }) {
+  return (
+    <Field id={id} label="תואר">
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
+        <option value="">ללא תואר</option>
+        {[...titles, ...(value && !titles.includes(value) ? [value] : [])].map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/**
+ * «פרט מבחין»: `required` when a speaker of this very name is in the pool (another person needs one). `describedBy`:
+ * the refusal about it, which marks the field and describes it.
+ */
+export function DisambiguatorField({ id, value, onChange, required, describedBy }: { id: string; value: string; onChange: (v: string) => void; required?: boolean; describedBy?: string | null }) {
+  return (
+    <Field id={id} label={required ? "פרט מבחין (חובה: יש במאגר מרצה בשם הזה)" : "פרט מבחין (לא חובה)"} hint={required ? "מוסד או עיר" : undefined}>
+      <input
+        id={id}
+        value={value}
+        maxLength={LIMITS.disambiguator}
+        onChange={(e) => onChange(e.target.value)}
+        className={INPUT}
+        aria-invalid={describedBy ? true : undefined}
+        aria-describedby={describedBy ?? undefined}
+      />
+    </Field>
+  );
+}
+
+export function AffiliationField({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <Field id={id} label="מוסד">
+      <input id={id} value={value} maxLength={LIMITS.affiliation} onChange={(e) => onChange(e.target.value)} className={INPUT} />
+    </Field>
+  );
+}
+
+export function BioField({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <Field id={id} label="תיאור קצר" hint="גלוי לכל הצוות">
+      <textarea id={id} value={value} maxLength={LIMITS.bio_short} rows={3} onChange={(e) => onChange(e.target.value)} className={`${INPUT} py-2`} />
+    </Field>
+  );
+}
+
+/**
+ * How the speaker prefers to be reached — «דרך תקשורת», the channel only (the number and the address are the
+ * contacts'). The words are one everywhere (CONTACT_WAY_LABEL); `hint` is the caller's — none on the new speaker's
+ * page, where the phone and the e-mail are typed right beside it.
+ */
+export function ContactPrefField({
+  id,
+  value,
+  onChange,
+  label = CONTACT_WAY,
+  hint = "המספר עצמו — בפרטי הקשר",
+  options = CONTACT_WAY_LABEL,
+  none = "לא צוין",
+}: {
+  id: string;
+  value: ContactPref | "";
+  onChange: (v: ContactPref | "") => void;
+  label?: string;
+  hint?: string | null;
+  options?: Record<ContactPref, string>;
+  none?: string;
+}) {
+  return (
+    <Field id={id} label={label} hint={hint ?? undefined}>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value as ContactPref | "")} className={INPUT}>
+        <option value="">{none}</option>
+        {CONTACT_PREFS.map((p) => (
+          <option key={p} value={p}>
+            {options[p]}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
 /**
  * Title, (name,) disambiguator, gender, affiliation, a short bio, topics and the
  * preferred channel. Gender is chosen, never guessed from the name. `invalid`
@@ -82,6 +172,8 @@ export function patchOf(s: Speaker, f: ProfileForm): SpeakerPatch {
  * `fold` (creating a speaker, a quick act): what is not needed now — the
  * disambiguator unless it is, the bio, the channel and the create flow's own
  * `extra` — waits closed in «עוד פרטים»; the sheet holds every field later.
+ * `showDisambiguator` false («עריכה» of a speaker who has none, and no namesake):
+ * the field only appears once the pool asks for it — a namesake, or a refusal.
  */
 export function ProfileFields({
   id,
@@ -93,6 +185,7 @@ export function ProfileFields({
   invalid,
   problem,
   needDisambiguator,
+  showDisambiguator = true,
   fold,
   extra,
 }: {
@@ -107,69 +200,43 @@ export function ProfileFields({
   problem?: string | null;
   /** A speaker of this very name is in the pool: another person needs a disambiguator. */
   needDisambiguator?: boolean;
+  showDisambiguator?: boolean;
   fold?: boolean;
   extra?: ReactNode;
 }) {
   const err = (f: "name" | "disambiguator") => (invalid === f ? { "aria-invalid": true as const, "aria-describedby": `${id}-problem` } : {});
   const dis = (
-    <Field
+    <DisambiguatorField
       id={`${id}-dis`}
-      label={needDisambiguator ? "פרט מבחין (חובה: יש במאגר מרצה בשם הזה)" : "פרט מבחין (לא חובה)"}
-      hint={needDisambiguator ? "מוסד או עיר" : undefined}
-    >
-      <input id={`${id}-dis`} value={form.disambiguator} maxLength={LIMITS.disambiguator} onChange={(e) => set({ disambiguator: e.target.value })} className={INPUT} {...err("disambiguator")} />
-    </Field>
+      value={form.disambiguator}
+      onChange={(disambiguator) => set({ disambiguator })}
+      required={needDisambiguator}
+      describedBy={invalid === "disambiguator" ? `${id}-problem` : null}
+    />
   );
   // a refusal about it, or a namesake in the pool, keeps it in sight (and focusable)
   const disFolded = fold && !needDisambiguator && invalid !== "disambiguator";
-  const bio = (
-    <Field id={`${id}-bio`} label="תיאור קצר" hint="גלוי לכל הצוות">
-      <textarea id={`${id}-bio`} value={form.bio_short} maxLength={LIMITS.bio_short} rows={3} onChange={(e) => set({ bio_short: e.target.value })} className={`${INPUT} py-2`} />
-    </Field>
-  );
+  const bio = <BioField id={`${id}-bio`} value={form.bio_short} onChange={(bio_short) => set({ bio_short })} />;
   const topics = <TagInput id={`${id}-topics`} tags={form.topics} draft={form.topicDraft} categories={categories} onChange={set} />;
-  const pref = (
-    <Field id={`${id}-pref`} label="ערוץ קשר מועדף" hint="המספר עצמו — בפרטי הקשר">
-      <select id={`${id}-pref`} value={form.contact_pref} onChange={(e) => set({ contact_pref: e.target.value as ContactPref | "" })} className={INPUT}>
-        <option value="">לא צוין</option>
-        {CONTACT_PREFS.map((p) => (
-          <option key={p} value={p}>
-            {CONTACT_PREF_LABEL[p]}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
+  const pref = <ContactPrefField id={`${id}-pref`} value={form.contact_pref} onChange={(contact_pref) => set({ contact_pref })} />;
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
-        <Field id={`${id}-title`} label="תואר">
-          <select id={`${id}-title`} value={form.title} onChange={(e) => set({ title: e.target.value })} className={INPUT}>
-            <option value="">ללא תואר</option>
-            {/* a title saved before the list changed stays choosable */}
-            {[...titles, ...(form.title && !titles.includes(form.title) ? [form.title] : [])].map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <TitleField id={`${id}-title`} value={form.title} titles={titles} onChange={(title) => set({ title })} />
         {withName && (
           <Field id={`${id}-name`} label="שם (בלי תואר)">
             <input id={`${id}-name`} value={form.name} maxLength={LIMITS.name} onChange={(e) => set({ name: e.target.value })} className={INPUT} autoComplete="off" {...err("name")} />
           </Field>
         )}
       </div>
-      {!disFolded && dis}
+      {!disFolded && (showDisambiguator || needDisambiguator || invalid === "disambiguator") && dis}
       {problem && (
         <p id={`${id}-problem`} role="alert" className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
           {problem}
         </p>
       )}
       <GenderField name={`${id}-gender`} value={form.gender} onChange={(gender) => set({ gender })} legend="מגדר" unknown="לא ידוע" />
-      <Field id={`${id}-aff`} label="מוסד">
-        <input id={`${id}-aff`} value={form.affiliation} maxLength={LIMITS.affiliation} onChange={(e) => set({ affiliation: e.target.value })} className={INPUT} />
-      </Field>
+      <AffiliationField id={`${id}-aff`} value={form.affiliation} onChange={(affiliation) => set({ affiliation })} />
       {fold ? (
         <>
           {topics}
@@ -276,7 +343,7 @@ export function TagInput({
                 type="button"
                 onClick={() => onChange({ topics: withTopic(tags, c.name), topicDraft: draft })}
                 aria-label={`הוספת הנושא ${c.name}`}
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed border-line bg-card px-2.5 text-xs text-ink-soft transition-colors hover:border-navy/50 hover:bg-accent-soft hover:text-navy sm:min-h-8"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed border-line bg-card px-2.5 text-xs text-ink-soft transition-colors hover:border-navy/50 hover:bg-accent-soft hover:text-navy pointer-fine:sm:min-h-8"
               >
                 <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: c.color }} />
                 {c.name}

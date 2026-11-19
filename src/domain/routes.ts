@@ -1,0 +1,143 @@
+// The trainee's pages' addresses (the reset, phase 2): one place that writes them and reads them back, so «היום שלי»,
+// the speakers' pages and the lesson page link to each other the same way. Pure; a bad value in an address is dropped,
+// never guessed.
+import type { PoolSection } from "../grid/model";
+import type { LessonStep, StageKey } from "./stages";
+import { DAY_END, DAYS, type Day } from "./time";
+import type { Gender } from "./types";
+
+/** The lesson page's steps, in order (src/screens/lesson/). */
+export type PageStep = "place" | "close" | "pay" | "msg" | "sources" | "escort";
+export const PAGE_STEPS: readonly PageStep[] = ["place", "close", "pay", "msg", "sources", "escort"];
+
+/** The speaker page's sections an address may open at (its `#…`). */
+export type SpeakerSection = "call" | "availability" | "placement" | "lessons";
+export const SPEAKER_SECTIONS: readonly SpeakerSection[] = ["call", "availability", "placement", "lessons"];
+
+/** One slot of a day: what «לבחור מרצה» filters the speakers by. */
+export interface SlotRef {
+  day: Day;
+  start: number;
+  end: number;
+  /**
+   * The draft it is (lessons.id), when it is one: two parallel drafts share the day and the time, so a proposal from the
+   * list goes into THIS one. Absent: a free cell of the grid.
+   */
+  lesson?: number;
+}
+
+/** The speakers' list's filters, as its address holds them. */
+export interface SpeakersQuery {
+  q?: string;
+  cat?: number;
+  g?: Gender;
+  s?: PoolSection;
+  day?: Day;
+  slot?: SlotRef;
+  sort?: "name" | "status";
+}
+
+const POOL_SECTIONS: readonly PoolSection[] = ["mine", "free", "others", "closed", "declined"];
+
+/** `/lesson/7`, `/lesson/7?step=pay`. */
+export function lessonPath(id: number, step?: PageStep | null): string {
+  return `/lesson/${id}${step ? `?step=${step}` : ""}`;
+}
+
+/** `/speakers/7`, `/speakers/7#call`. */
+export function speakerPath(id: number, section?: SpeakerSection | null): string {
+  return `/speakers/${id}${section ? `#${section}` : ""}`;
+}
+
+/** `/speakers/new`, `/speakers/new?name=…` (the name typed in the search, to check first). */
+export function newSpeakerPath(name?: string | null): string {
+  const n = name?.trim();
+  return n ? `/speakers/new?name=${encodeURIComponent(n)}` : "/speakers/new";
+}
+
+/** «0:960-1050» — a slot as the address writes it. */
+const slotText = (s: SlotRef) => `${s.day}:${s.start}-${s.end}`;
+
+/** `/speakers?slot=0:960-1050&lesson=34&day=0&q=…&cat=3&g=f&s=mine&sort=name` — only what is set, in that order. */
+export function speakersPath(q: SpeakersQuery = {}): string {
+  const parts: string[] = [];
+  if (q.slot) parts.push(`slot=${slotText(q.slot)}`);
+  if (q.slot?.lesson != null) parts.push(`lesson=${q.slot.lesson}`);
+  if (q.day != null) parts.push(`day=${q.day}`);
+  const text = q.q?.trim();
+  if (text) parts.push(`q=${encodeURIComponent(text)}`);
+  if (q.cat != null) parts.push(`cat=${q.cat}`);
+  if (q.g) parts.push(`g=${q.g}`);
+  if (q.s) parts.push(`s=${q.s}`);
+  if (q.sort) parts.push(`sort=${q.sort}`);
+  return parts.length ? `/speakers?${parts.join("&")}` : "/speakers";
+}
+
+const isDay = (n: number): n is Day => (DAYS as readonly number[]).includes(n);
+const wholeNumber = (v: string | null): number | null => (v != null && /^\d{1,6}$/.test(v) ? Number(v) : null);
+
+/** A slot from the address: a day, then a start before its end inside the day's clock (06:30 … 06:30); else null. */
+export function parseSlot(v: string | null): SlotRef | null {
+  const m = v ? /^(\d):(\d{1,4})-(\d{1,4})$/.exec(v) : null;
+  if (!m) return null;
+  const day = Number(m[1]);
+  const start = Number(m[2]);
+  const end = Number(m[3]);
+  if (!isDay(day) || start >= end || end > DAY_END) return null;
+  return { day, start, end };
+}
+
+/** The list's filters from `location.search` (with or without its «?»); a value that is not one of them is dropped. */
+export function parseSpeakersQuery(search: string): SpeakersQuery {
+  const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const out: SpeakersQuery = {};
+  const q = p.get("q")?.trim();
+  if (q) out.q = q;
+  const cat = wholeNumber(p.get("cat"));
+  if (cat != null && cat > 0) out.cat = cat;
+  const g = p.get("g");
+  if (g === "m" || g === "f") out.g = g;
+  const s = p.get("s");
+  if (s && (POOL_SECTIONS as readonly string[]).includes(s)) out.s = s as PoolSection;
+  const day = wholeNumber(p.get("day"));
+  if (day != null && isDay(day)) out.day = day;
+  const slot = parseSlot(p.get("slot"));
+  if (slot) {
+    // the draft, only with its slot
+    const lesson = wholeNumber(p.get("lesson"));
+    out.slot = lesson != null && lesson > 0 ? { ...slot, lesson } : slot;
+  }
+  const sort = p.get("sort");
+  if (sort === "name" || sort === "status") out.sort = sort;
+  return out;
+}
+
+/** The lesson page's step from its address (`?step=pay`); null when there is none, or it is not a step. */
+export function parsePageStep(search: string): PageStep | null {
+  const v = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).get("step");
+  return v && (PAGE_STEPS as readonly string[]).includes(v) ? (v as PageStep) : null;
+}
+
+/** The speaker page's section from its address (`#call`); null when there is none, or it is not a section. */
+export function parseSpeakerSection(hash: string): SpeakerSection | null {
+  const v = hash.startsWith("#") ? hash.slice(1) : hash;
+  return (SPEAKER_SECTIONS as readonly string[]).includes(v) ? (v as SpeakerSection) : null;
+}
+
+/** A closed lesson's next step («המרצים שלי»), or a stage of the card, as the lesson page's step. */
+export function pageStepOf(k: LessonStep | StageKey): PageStep {
+  switch (k) {
+    case "payment":
+    case "pay":
+      return "pay";
+    case "reconfirm":
+    case "send":
+    case "msg":
+      return "msg";
+    case "reader":
+    case "sources":
+      return "sources";
+    case "escort":
+      return "escort";
+  }
+}

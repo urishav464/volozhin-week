@@ -20,7 +20,7 @@
 import { TEMPLATE_2026 } from "../domain/template2026";
 import type { Day } from "../domain/time";
 import {
-  type Approach, type Category, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SlotAvailability, type SourceFile,
+  type Approach, type Category, type DayOwner, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SlotAvailability, type SourceFile,
   type Speaker, type SpeakerContacts, type TransportDetails, type Week,
 } from "../domain/types";
 import type { Sample } from "./demoFiles";
@@ -223,6 +223,34 @@ export function demoWeek(): Week {
     fallen: DEMO_FALLEN.slice(0, 3).map(({ id, name, gender }) => ({ id, name, gender })),
     dayOwners: [], // v18: the demo starts with no day owners
   };
+}
+
+/**
+ * `?as=trainee`'s day owners (v18; the default demo has none): «חניך/ה א׳» (member 2, the trainee) owns Sunday with
+ * «חניך/ה ב׳» and Wednesday with «חניך/ה ג׳»; Monday is the other two's — nobody has looked yet (`seen_at` null).
+ */
+export function demoDayOwners(): DayOwner[] {
+  const pairs: [Day, number[]][] = [
+    [0, [2, 3]],
+    [1, [3, 4]],
+    [3, [2, 4]],
+  ];
+  return pairs.flatMap(([day, members]) => members.map((member_id) => ({ day, member_id, seen_at: null })));
+}
+
+/**
+ * `?as=trainee`'s availability besides the demo's own (v14 rows of TEMPLATE_2026; seeded: nobody wrote them), so the
+ * trainee's «מרצים שיכולים ביום שלכם» has someone in it: speaker 33 (nobody's) «יכול/ה» Sunday 20:00 and 22:30,
+ * speaker 41 (nobody's) Wednesday 17:30, and the trainee's own speaker 09 Wednesday 16:00.
+ */
+export function demoTraineeAvailability(firstId: number): SlotAvailability[] {
+  const rows: [number, Day, number][] = [
+    [33, 0, 14],
+    [33, 0, 16],
+    [41, 3, 12],
+    [9, 3, 11],
+  ];
+  return rows.map(([speaker_id, day, row_id], i) => ({ id: firstId + i, speaker_id, day, row_id, kind: "can", note: null, updated_by: null }));
 }
 
 /** The demo's fallen: nine synthetic names — the real ones are entered by the instructor, in the app only. */

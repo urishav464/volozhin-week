@@ -21,7 +21,8 @@ test("a member's week loads from load_week; «שבץ» sends propose with the co
   sb.answers.set("propose", { lesson_id: 999, pitch_id: 998 });
   await sb.attach(page);
   await signIn(page);
-  await page.goto(mockUrl());
+  // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+  await page.goto(`${mockUrl()}/grid`);
 
   await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();
   expect(sb.rpc.get("load_week")).toEqual([{ p_edition: 7 }]);

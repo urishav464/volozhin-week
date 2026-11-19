@@ -250,7 +250,8 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "content@example.org");
     sb.token = session.access_token;
-    await page.goto(mockUrl());
+    // a content member's home is «היום שלי» (the reset, phase 2): «איך עבר» stays in the grid's panel, at /grid
+    await page.goto(`${mockUrl()}/grid`);
     // member 2 handles «מרצה 01» (Sunday 08:30)
     const panel = await openLesson(page, info, "ראשון", "מרצה 01");
     const review = await section(panel, "איך עבר");

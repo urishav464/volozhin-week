@@ -7,13 +7,14 @@
 // of the tracking sheet; the escorts file). Each is previewed as it is typed;
 // the template is checked too — the variables, the gender forms, the brackets —
 // on a synthetic lesson (src/domain/message.ts), so what blocks a message shows
-// here first.
+// here first. The reset, phase 2: «הנוסח המוצע» («הצעה» — the owner's own wording, PROPOSED_TEMPLATE) fills the
+// editor on request; nothing is saved until «שמירת הנוסח».
 import { type FormEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { DUTY_WHENS, STAGE_LIMITS } from "../../data/stageRules";
 import { composeCallPoints, DEFAULT_CALL_TEMPLATE } from "../../domain/callPoints";
 import { DUTY_WHEN_LABEL } from "../../domain/escorts";
-import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable } from "../../domain/message";
+import { composeConfirmation, MESSAGE_VARIABLES, type MessageVariable, PROPOSED_TEMPLATE } from "../../domain/message";
 import type { DutyPhrase, DutyWhen, Edition, Gender } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Choice } from "../stages/parts";
@@ -213,6 +214,8 @@ const FORMS: { insert: string; caret: number; label: string; help: string }[] = 
   { insert: "[[|]]", caret: 2, label: "[[זכר|נקבה]]", help: "לפי מגדר המרצה. למשל: [[מוזמן|מוזמנת]]" },
   { insert: "{{אני:|}}", caret: 6, label: "{{אני:זכר|נקבה}}", help: "לפי המגדר שלך, מי ששולח/ת. למשל: {{אני:שמח|שמחה}}" },
   { insert: "[[תשלום:|]]", caret: 8, label: "[[תשלום:…|…]]", help: "החלק הראשון כשהתבקש סכום, השני כשלא (התנדבות). רק כך נכנס נוסח להתנדבות" },
+  { insert: "[[הסעה:|]]", caret: 7, label: "[[הסעה:…|…]]", help: "החלק הראשון כשהתבקשה הסעה (הלוך, או הלוך ושוב), השני כשלא" },
+  { insert: "[[מקורות:|]]", caret: 9, label: "[[מקורות:…|…]]", help: "החלק הראשון כל עוד המקורות לא התקבלו, השני כשכבר יש (או שאין צורך)" },
 ];
 
 /** A preview amount for the synthetic lesson — shown as such, never stored. */
@@ -235,6 +238,10 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
   const [speakerGender, setSpeakerGender] = useState<Gender>("f");
   const [senderGender, setSenderGender] = useState<Gender>("f");
   const [paid, setPaid] = useState<"paid" | "free">("paid");
+  const [transport, setTransport] = useState<"yes" | "no">("yes");
+  const [sources, setSources] = useState<"missing" | "received">("missing");
+  // «הנוסח המוצע» over text already in the editor asks first
+  const [proposing, setProposing] = useState(false);
   const dirty = text !== saved;
   // My own gender on the team list (undefined until read): a template with {{אני:…}} blocks every message I send without it.
   const [myGender, setMyGender] = useState<Gender | null | undefined>(undefined);
@@ -255,14 +262,17 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
     () =>
       composeConfirmation({
         template: text,
-        lesson: { state: "closed", day: 1, start_min: 1200, end_min: 1290, title: "כותרת לדוגמה", teach_min: null, pay_amount: paid === "paid" ? SAMPLE_AMOUNT : null, approval: paid === "paid" ? "approved" : "none" },
+        lesson: {
+          state: "closed", day: 1, start_min: 1200, end_min: 1290, title: "כותרת לדוגמה", teach_min: null, pay_amount: paid === "paid" ? SAMPLE_AMOUNT : null,
+          transport: transport === "yes" ? "round_trip" : "none", approval: paid === "paid" || transport === "yes" ? "approved" : "none", sources_kind: sources === "missing" ? "pending" : "sheet",
+        },
         speaker: { title: "ד״ר", name: speakerGender === "f" ? "פלונית לדוגמה" : "פלוני לדוגמה", gender: speakerGender },
         sender: { gender: senderGender },
         room: "חדר לדוגמה",
         startDate: edition.start_date,
         lessonMinutes: edition.settings.lesson_minutes,
       }),
-    [text, paid, speakerGender, senderGender, edition.start_date, edition.settings.lesson_minutes],
+    [text, paid, transport, sources, speakerGender, senderGender, edition.start_date, edition.settings.lesson_minutes],
   );
 
   // Where the cursor goes once an inserted variable is on screen. Placed in the
@@ -308,7 +318,42 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
       <form onSubmit={(e) => void save(e)} aria-label="נוסח הודעת הסיכום" className="space-y-3" noValidate>
         {/* the badge above says it is empty, and blocking: this says only what to do */}
         {!saved && (
-          <p className="rounded-lg bg-accent-soft p-3 text-sm text-ink">מדביקים את הנוסח של אשתקד (מתחתית גיליון המעקב), בלי טלפונים, ומחליפים בו את פרטי השיעור במשתנים.</p>
+          <p className="rounded-lg bg-accent-soft p-3 text-sm text-ink">
+            מדביקים את הנוסח של אשתקד (מתחתית גיליון המעקב), בלי טלפונים, ומחליפים בו את פרטי השיעור במשתנים — או מתחילים מהנוסח המוצע.
+          </p>
+        )}
+        {/* the owner's own wording, offered: it fills the editor, and only «שמירת הנוסח» saves it */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {!proposing && (
+            <Button
+              ref={focusBack.ref("proposal")}
+              disabled={text === PROPOSED_TEMPLATE}
+              onClick={() => {
+                if (text.trim() === "") setText(PROPOSED_TEMPLATE);
+                else setProposing(true);
+              }}
+            >
+              הנוסח המוצע
+            </Button>
+          )}
+          <Badge tone="accent">הצעה</Badge>
+          <span className="min-w-0 flex-1 basis-48 text-xs text-ink-soft">התאריך והשעה; תשלום והסעה רק כשיש; בקשה למקורות רק כשעוד לא התקבלו. נשמר רק בלחיצה על «שמירת הנוסח».</span>
+        </div>
+        {proposing && (
+          <Confirm
+            text="להחליף את מה שבעורך בנוסח המוצע?"
+            confirm="החלפה"
+            danger={false}
+            onConfirm={() => {
+              setProposing(false);
+              setText(PROPOSED_TEMPLATE);
+              ref.current?.focus();
+            }}
+            onCancel={() => {
+              setProposing(false);
+              focusBack.back("proposal");
+            }}
+          />
         )}
         <Field id={`${id}-text`} label="הנוסח" hint={`עד ${STAGE_LIMITS.template.toLocaleString("he-IL")} תווים. שורות ריקות נשמרות כמו שהן.`}>
           <textarea
@@ -387,6 +432,8 @@ function TemplatePanel({ edition, onSaved }: { edition: Edition; onSaved: () => 
             <Choice name={`${id}-sg`} legend="המרצה" value={speakerGender} options={[["f", "נקבה"], ["m", "זכר"]]} onChange={setSpeakerGender} />
             <Choice name={`${id}-me`} legend="השולח/ת" value={senderGender} options={[["f", "נקבה"], ["m", "זכר"]]} onChange={setSenderGender} />
             <Choice name={`${id}-pay`} legend="תשלום" value={paid} options={[["paid", "עם סכום"], ["free", "בהתנדבות"]]} onChange={setPaid} />
+            <Choice name={`${id}-tr`} legend="הסעה" value={transport} options={[["yes", "עם הסעה"], ["no", "בלי הסעה"]]} onChange={setTransport} />
+            <Choice name={`${id}-src`} legend="מקורות" value={sources} options={[["missing", "עוד לא התקבלו"], ["received", "התקבלו"]]} onChange={setSources} />
           </div>
           {myGender === null && SENDER_FORM.test(text) && (
             <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">

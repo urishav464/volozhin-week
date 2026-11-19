@@ -9,17 +9,14 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import type { DataPort } from "../../data/port";
 import { titlesOf } from "../../data/speakerRules";
-import type { SpeakerMatch } from "../../data/speakers";
 import type { Me } from "../../data/types";
-import { nameKey } from "../../domain/nameKey";
-import { byGender, displayName } from "../../domain/names";
+import { byGender } from "../../domain/names";
 import type { Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Chip } from "../../grid/bits";
 import { Sheet } from "../../grid/Panels";
-import { vettingLabel } from "../../lib/labels";
 import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import { actorIn } from "../weekStore";
+import { FIELD_OF, MatchList, useNameCheck } from "./nameCheck";
 import { EMPTY_FORM, fieldsOf, type Notify, type ProfileForm, ProfileFields } from "./parts";
 
 interface Props {
@@ -39,22 +36,15 @@ interface Props {
   reload: () => Promise<void>;
 }
 
-const FIELD_OF: Record<string, "name" | "disambiguator"> = { name_required: "name", disambiguator_required: "disambiguator", speaker_exists: "disambiguator" };
-
-/** How many matches show before «עוד N שמות דומים»: «זה מישהו אחר — להמשיך» stays on the first screen. */
-const MATCHES_SHOWN = 5;
-
 export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose, onOpen, onCreated, notify, clear, reload }: Props) {
   const id = useId();
   const actor = actorIn(me, week.edition);
   const { busy, run } = useRunner(notify, clear);
   const [form, setForm] = useState<ProfileForm>({ ...EMPTY_FORM, name: initialName });
-  const [found, setFound] = useState<{ name: string; matches: SpeakerMatch[] } | null>(null);
   const [details, setDetails] = useState(false);
   // The matches the user saw before «להמשיך» fold into one line; a new name shows its own in full.
   const [seenFor, setSeenFor] = useState<string | null>(null);
   const [showSeen, setShowSeen] = useState(false);
-  const [allFor, setAllFor] = useState<string | null>(null);
   const [claim, setClaim] = useState(true);
   const [approve, setApprove] = useState(false);
   const [notes, setNotes] = useState("");
@@ -63,30 +53,8 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
   const set = (patch: Partial<ProfileForm>) => setForm((f) => ({ ...f, ...patch }));
 
   // Search as the name is typed (a short pause first); a late answer for an older name is dropped.
-  const key = nameKey(form.name);
-  const [again, setAgain] = useState(0);
-  useEffect(() => {
-    if (!key) {
-      setFound({ name: form.name, matches: [] });
-      return;
-    }
-    let live = true;
-    const t = setTimeout(() => {
-      port.speakers
-        .matches(form.name)
-        .then((matches) => live && setFound({ name: form.name, matches }))
-        .catch(() => live && setFound({ name: form.name, matches: [] }));
-    }, 250);
-    return () => {
-      live = false;
-      clearTimeout(t);
-    };
-  }, [port, key, form.name, again]);
-
-  const current = found && found.name === form.name ? found.matches : null; // null: still searching
-  const sameName = !!current?.some((m) => m.match === "same");
+  const { key, current, sameName, again } = useNameCheck(port, form.name);
   const folded = details && seenFor === form.name && !showSeen;
-  const shown = current && allFor !== form.name ? current.slice(0, MATCHES_SHOWN) : current;
 
   // «להמשיך»: the fields open below the matches — take the eye and the focus there.
   const opened = useRef(false);
@@ -123,7 +91,7 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
       },
       null,
       (code) => {
-        if (code === "speaker_similar") setAgain((n) => n + 1); // someone added a similar name meanwhile: show it
+        if (code === "speaker_similar") again(); // someone added a similar name meanwhile: show it
         if (!code || !["name_required", "disambiguator_required", "speaker_exists", "speaker_similar", "bad_value"].includes(code)) return false;
         setProblem({ text: errorMessage(code), field: FIELD_OF[code] ?? null });
         if (code === "name_required") nameRef.current?.focus();
@@ -169,61 +137,15 @@ export function CreateSpeaker({ port, me, week, initialName = "", wide, onClose,
           />
         </Field>
 
-        <section aria-label="ייתכן שזה…" className="space-y-1.5">
-          {/* one short line for a screen reader, not the whole list after every pause in typing — and the list's heading */}
-          <p role="status" className={current?.length && !folded ? "font-semibold" : folded ? "sr-only" : "text-sm text-ink-soft"}>
-            {!key ? "" : current == null ? "מחפשים במאגר…" : current.length === 0 ? "אין במאגר שם דומה." : sameName ? "אותו שם כבר במאגר." : current.length === 1 ? "נמצא במאגר שם דומה אחד." : `נמצאו במאגר ${current.length} שמות דומים.`}
-          </p>
-          {current && current.length > 0 && folded && (
-            <Button kind="quiet" aria-expanded={false} onClick={() => setShowSeen(true)}>
-              {current.length === 1 ? "שם דומה אחד במאגר" : `${current.length} שמות דומים במאגר`} — הצגה
-            </Button>
-          )}
-          {current && shown && current.length > 0 && !folded && (
-            <>
-              <ul className="space-y-1.5">
-                {shown.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-card px-3 py-2 shadow-sm">
-                    <span className="min-w-0 flex-1 basis-40">
-                      <span className="block font-bold text-navy break-words">
-                        {displayName(m)}
-                        {m.disambiguator && <span className="font-normal text-ink-soft"> ({m.disambiguator})</span>}
-                      </span>
-                      <span className="flex flex-wrap items-center gap-1 text-xs text-ink-soft">
-                        {m.affiliation && <span className="break-words">{m.affiliation}</span>}
-                        {/* a similar name needs no chip: the list is the similar names */}
-                        {m.match === "same" && <Chip tone="warn">אותו שם</Chip>}
-                        {m.vetted !== "approved" && <Chip>{vettingLabel(m.vetted, m.gender)}</Chip>}
-                        {m.retired && <Chip>{byGender(m.gender, "לא פעיל", "לא פעילה")}</Chip>}
-                      </span>
-                    </span>
-                    <Button onClick={() => onOpen(m.id, form.name)} aria-label={`פתיחת ${displayName(m)}`}>
-                      פתיחה
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              {current.length > MATCHES_SHOWN && (
-                <Button kind="quiet" aria-expanded={allFor === form.name} onClick={() => setAllFor(allFor === form.name ? null : form.name)}>
-                  {allFor === form.name ? (
-                    <>
-                      פחות <span aria-hidden>▴</span>
-                    </>
-                  ) : (
-                    <>
-                      {current.length - MATCHES_SHOWN === 1 ? "עוד שם דומה אחד" : `עוד ${current.length - MATCHES_SHOWN} שמות דומים`} <span aria-hidden>▾</span>
-                    </>
-                  )}
-                </Button>
-              )}
-              {details && seenFor === form.name && (
-                <Button kind="quiet" aria-expanded onClick={() => setShowSeen(false)}>
-                  הסתרת השמות הדומים
-                </Button>
-              )}
-            </>
-          )}
-        </section>
+        <MatchList
+          name={form.name}
+          nameKey={key}
+          current={current}
+          folded={folded}
+          onUnfold={() => setShowSeen(true)}
+          onFold={details && seenFor === form.name ? () => setShowSeen(false) : undefined}
+          onOpen={(m) => onOpen(m.id, form.name)}
+        />
 
         {!details ? (
           <Button

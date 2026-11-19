@@ -1,5 +1,5 @@
-import { demoRequested, supabaseConfig } from "../lib/config";
-import { DemoPort } from "./demoPort";
+import { demoAs, demoRequested, supabaseConfig } from "../lib/config";
+import { DEMO_TRAINEE, DemoPort } from "./demoPort";
 import type { DataPort } from "./port";
 import type { PublicPort } from "./publicPort";
 import { SupabasePublic } from "./supabaseLinks";
@@ -9,8 +9,9 @@ const live = () => !!supabaseConfig && !demoRequested;
 
 // One demo per tab: the team's screens and a public page opened in the same tab
 // read the same synthetic data (a link issued in «קישורים» opens right away).
+// `?as=trainee`: the demo user is a trainee who owns days (src/lib/config.ts demoAs); else the global admin.
 let demo: DemoPort | null = null;
-const theDemo = () => (demo ??= new DemoPort());
+const theDemo = () => (demo ??= demoAs === "trainee" ? new DemoPort(DEMO_TRAINEE, { trainee: true }) : new DemoPort());
 
 export function makePort(): DataPort {
   if (live()) return new SupabasePort(supabaseConfig!.url, supabaseConfig!.key);

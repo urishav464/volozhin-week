@@ -55,6 +55,7 @@ export function TaughtHere({
   categories,
   history,
   failed,
+  titled = false,
 }: {
   port: DataPort;
   s: Speaker;
@@ -64,6 +65,8 @@ export function TaughtHere({
   categories: readonly Category[];
   history: HistoryLesson[] | null;
   failed: boolean;
+  /** A card of its own (the speaker page): the heading even when there is nothing — the sheet says it in one line. */
+  titled?: boolean;
 }) {
   const reviews = useSpeakerReviews(port, s.id, mayReadReviews(actor, edition));
   const title = byGender(s.gender, "לימד אצלנו", "לימדה אצלנו", "לימד/ה אצלנו");
@@ -87,10 +90,19 @@ export function TaughtHere({
     reviews === null ? <p className="text-sm text-ink-soft">«איך עבר» נטען…</p> : reviews === "failed" ? <p className="text-sm text-ink-soft">«איך עבר» לא נטען.</p> : null;
 
   if (lessons.length + alone.length === 0) {
-    return (
-      <section aria-label="שיעורים במחזורים" className="space-y-1">
+    const none = (
+      <>
         <p className="text-sm text-ink-soft">אין שיעורים סגורים במחזורים הקודמים במערכת.</p>
         {reviews === "failed" && status}
+      </>
+    );
+    return titled ? (
+      <Section title={title} label="שיעורים במחזורים">
+        {none}
+      </Section>
+    ) : (
+      <section aria-label="שיעורים במחזורים" className="space-y-1">
+        {none}
       </section>
     );
   }

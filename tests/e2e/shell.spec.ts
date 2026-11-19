@@ -62,6 +62,8 @@ test.describe("mock build", () => {
     await expect(page.getByRole("banner").getByText(/נועה בדיקה/)).toBeVisible();
     await expect(page.getByRole("banner").getByText(/צוות תוכן/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "עוד לא נפתח מחזור" })).toBeVisible();
+    // a content member is a trainee (the reset, phase 2): their own four sections, «היום שלי» the home
+    await expect(page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link")).toHaveText(["היום שלי", "מרצים", "השבוע", "עזרה"]);
     expect(sb.calls.find((c) => c.path === "/rest/v1/rpc/whoami")?.auth).toBe(`Bearer ${session.access_token}`);
     await noSidewaysScroll(page);
   });

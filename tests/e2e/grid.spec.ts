@@ -55,12 +55,15 @@ test.describe("desktop", () => {
     await expect(page.locator('[data-day="4"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toBeVisible();
   });
 
-  test("a day short of women turns even once a woman is proposed; she agrees on the call, and the lesson closes (v14)", async ({ page }) => {
-    const wednesdayLate = cell(page, 3, 1350, 1440);
-    await expect(wednesdayLate).toHaveAttribute("data-need", "f");
+  test("the day's need counts its CLOSED lessons, said once in its header: a woman proposed changes nothing; she agrees on the call, the lesson closes, and it does (v14; the reset, phase 2)", async ({ page }) => {
+    // the reset, phase 2: no free cell is tinted or carries the need — the day's header says it, once
+    const need = page.locator('[data-day-header="3"] [data-need]');
+    await expect(need).toHaveAttribute("data-need", "even"); // Wednesday: one woman and one man closed
+    await expect(page.locator("[data-drop][data-need], [data-free-cell][data-need]")).toHaveCount(0);
     await speaker(page, 42).getByRole("button", { name: "שבץ" }).click();
     await cell(page, 3, 1200, 1290).click();
-    await expect(wednesdayLate).toHaveAttribute("data-need", "even");
+    await expect(page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "מרצה 42" })).toBeVisible();
+    await expect(need).toHaveAttribute("data-need", "even"); // a candidate is not a lesson
     await page.locator('[data-day="3"] [data-lesson-id]').filter({ hasText: "מרצה 42" }).click();
     const card = page.getByRole("dialog", { name: "משבצת בתהליך" }).locator("[data-pitch-id]").filter({ hasText: "מרצה 42" });
     await expect(card).toContainText("לפני שיחה"); // placed is not called
@@ -69,6 +72,7 @@ test.describe("desktop", () => {
     await card.getByRole("button", { name: "המרצה אישרה את השעה — סגירה" }).click();
     await expect(toast(page, "השיעור נסגר")).toBeVisible();
     await expect(page.getByRole("button", { name: /ד״ר מרצה 42 — /, exact: false })).toBeVisible();
+    await expect(need).toHaveAttribute("data-need", "m"); // two women closed, one man
   });
 
   test("a dragged speaker colours the grid by what they said, and so does their sheet beside it (v14)", async ({ page }) => {

@@ -1,12 +1,38 @@
 // Draws markdown-lite (src/domain/markdown.ts) as React elements — text nodes
-// only, never HTML from a string: a note that holds «<script>» shows it.
+// only, never HTML from a string: a note that holds «<script>» shows it. A time
+// range is a <bdi dir="ltr"> of its own, so it reads left to right.
 import { Fragment } from "react";
-import { type Line, parseMarkdown } from "../domain/markdown";
+import { type Line, parseMarkdown, timeRuns } from "../domain/markdown";
+
+/** A piece's text, a time range in it left to right (CLAUDE.md: a range inside Hebrew takes its own `<bdi dir="ltr">`). */
+function Runs({ text }: { text: string }) {
+  return (
+    <>
+      {timeRuns(text).map((r, i) =>
+        r.range ? (
+          <bdi key={i} dir="ltr">
+            {r.text}
+          </bdi>
+        ) : (
+          <Fragment key={i}>{r.text}</Fragment>
+        ),
+      )}
+    </>
+  );
+}
 
 function Text({ line }: { line: Line }) {
   return (
     <>
-      {line.map((p, i) => (p.bold ? <strong key={i}>{p.text}</strong> : <Fragment key={i}>{p.text}</Fragment>))}
+      {line.map((p, i) =>
+        p.bold ? (
+          <strong key={i}>
+            <Runs text={p.text} />
+          </strong>
+        ) : (
+          <Runs key={i} text={p.text} />
+        ),
+      )}
     </>
   );
 }

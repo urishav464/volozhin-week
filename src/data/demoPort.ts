@@ -7,7 +7,7 @@ import { DemoSettings, type DemoStore } from "./demoSettings";
 import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoRota, seedDemoRota } from "./demoRota";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
-import { DEMO_FALLEN, demoContacts, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
+import { DEMO_FALLEN, demoContacts, demoDayOwners, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoSources } from "./demoWeek";
 import { DemoReviews } from "./demoReviews";
 import type { SpeakerReview } from "./reviews";
 import { DemoMemorial } from "./demoMemorial";
@@ -25,12 +25,25 @@ import type { WhoAmI } from "./types";
 
 const DEMO_EMAIL = "demo@example.org";
 
+/** `?as=trainee` (src/lib/config.ts demoAs): the demo user is «חניך/ה א׳», member 2 — content, of the demo's edition. */
+export const DEMO_TRAINEE: Actor = { memberId: 2, role: "content", global: false };
+
+export interface DemoOptions {
+  /**
+   * The demo user is the trainee DEMO_TRAINEE names (demo@example.org is member 2; member 1, the instructor, gets
+   * team.a@example.org); the week has day owners (demoDayOwners — the trainee owns two days, each with a partner) and a
+   * few more speakers' availability on them (demoTraineeAvailability); and the edition is `real`, so the trainee meets
+   * production's rules (contacts, transport details).
+   */
+  trainee?: boolean;
+}
+
 // Synthetic data only — never a real name, phone or address. The grid's
 // commands run on the same engine the parity tests hold against the SQL, so
 // the demo behaves like production; nothing leaves the browser tab. Each
 // edition has its own engine (a new one opens from «הגדרות»); the pool (its
 // speakers, contacts and log), the categories and the team are shared, as in
-// the database. The demo user is the global admin (member 1).
+// the database. The demo user is the global admin (member 1) — or, with `trainee` (`?as=trainee`), «חניך/ה א׳» (member 2).
 export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeStore, DemoLinkStore, DemoSourceStore, DemoImportStore {
   readonly mode = "demo" as const;
   readonly myEmail = DEMO_EMAIL;
@@ -71,8 +84,18 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   snapshots: (ExportSnapshot & { edition_id: number })[] = [];
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly actor: Actor = { memberId: 1, role: "admin", global: true }) {
+  constructor(
+    private readonly actor: Actor = { memberId: 1, role: "admin", global: true },
+    opts: DemoOptions = {},
+  ) {
     const week = demoWeek();
+    if (opts.trainee) {
+      week.edition.kind = "real";
+      week.dayOwners = demoDayOwners();
+      week.slotAvailability.push(...demoTraineeAvailability(Math.max(0, ...week.slotAvailability.map((v) => v.id)) + 1));
+    }
+    // whose address the demo signs in with: the instructor's (member 1), or the trainee's (DEMO_TRAINEE)
+    const me = opts.trainee ? DEMO_TRAINEE.memberId : 1;
     const seeded = seedDemoSources(week);
     for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
     this.shared = {
@@ -83,10 +106,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
     this.categories = structuredClone(week.categories);
-    // The demo team, with placeholder addresses (example.org never delivers).
+    // The demo team, with placeholder addresses (example.org never delivers); the trainee's demo swaps the first two.
     this.members = week.team.map((t, i) => ({
       ...t,
-      email: i === 0 ? DEMO_EMAIL : `team.${String.fromCharCode(96 + i)}@example.org`,
+      // the trainee's demo: the instructor (member 1) takes the address the trainee had (team.a)
+      email: t.id === me ? DEMO_EMAIL : `team.${String.fromCharCode(96 + (t.id === 1 ? me - 1 : i))}@example.org`,
       edition_id: t.role === "admin" ? null : week.edition.id,
       active: true,
     }));
