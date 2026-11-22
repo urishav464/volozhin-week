@@ -18,7 +18,6 @@
 // src/reader/pages.ts — «צריך קובץ אחר»), and a previous speaker's files
 // (reopen_lesson keeps them, for removal). Never a presentation (v19: source_files.kind) — shown in the room, not
 // printed: no row, no leftover, never waiting, never the cover.
-import { displayName } from "../domain/names";
 import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
 import type { Lesson, MemorialPlan, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
@@ -335,11 +334,4 @@ export function readerEstimate(m: Manifest, schedule: ScheduleLine[]): number {
 /** A day's rows in the reader, every day of the week (a «סיכום יום» page closes each one, even an empty day). */
 export function byDay<T extends { day: Day }>(rows: T[]): { day: Day; rows: T[] }[] {
   return DAYS.map((day) => ({ day, rows: rows.filter((r) => r.day === day) }));
-}
-
-/** The lead speaker's display name, for a lesson (used where a screen needs one name). */
-export function leadName(week: Week, lessonId: number): string | null {
-  const x = week.lessonSpeakers.find((s) => s.lesson_id === lessonId && s.role === "lead");
-  const s = x && week.speakers.find((p) => p.id === x.speaker_id);
-  return s ? displayName(s) : null;
 }

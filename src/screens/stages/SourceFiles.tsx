@@ -3,7 +3,7 @@
 // the name it had, its size, its pages (read in the browser as the reader
 // reads it, src/reader/pages.ts: a PDF or a picture it cannot read is kept,
 // «לא נקרא … צריך קובץ אחר»; a Word file «צריך PDF»), who uploaded it,
-// «פתיחה» (a signed URL, minutes long) and «הסרה» (the uploader or an
+// «פתיחה» (a signed URL, minutes long; a Word file «הורדה», under its own name) and «הסרה» (the uploader or an
 // admin); «או לגרור לכאן» only where a mouse can drag. A previous speaker's
 // files are listed apart, «מהמרצה הקודם», for removal. The whole team sees the
 // list (logistics print from it); the edition's content members and admins
@@ -21,6 +21,7 @@ import type { Lesson, SourceFile, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { memorialFiles, memorialLeftovers, planOn } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
+import { fileAction, openOrDownload } from "../presentations/open";
 import { Button, Confirm, useFocusBack } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
@@ -61,6 +62,11 @@ export interface SourceFilesProps {
   notify: Notify;
   clear: () => void;
   reload: () => Promise<void>;
+  /**
+   * The reset, phase 5 — the lesson page passes it: its presentations are their own part (LessonPresentations), so the
+   * lists here leave them out and the input takes sources only. A memorial time's lists omit it (a slot takes none).
+   */
+  skipPresentations?: boolean;
 }
 
 /**
@@ -74,12 +80,12 @@ export function FileRow({
   // «ביטול» takes the confirm (and its focus) away: «הסרה» takes it back
   const focusBack = useFocusBack();
   const [busy, setBusy] = useState<"open" | "remove" | null>(null);
+  // a PDF or a picture opens in a new tab; a Word or PowerPoint file downloads under its own name (the reset, phase 5)
+  const action = fileAction(f);
   const open = async () => {
     setBusy("open");
     try {
-      const url = (await port.sources.urls(week.edition.id, [f.storage_path])).get(f.storage_path);
-      if (!url) throw new CommandError("read_failed");
-      window.open(url, "_blank", "noopener,noreferrer");
+      await openOrDownload(port, week.edition.id, f);
     } catch (e) {
       notify("error", errorMessage(e instanceof CommandError ? e.code : "read_failed"));
     } finally {
@@ -115,8 +121,8 @@ export function FileRow({
             <bdi>{f.display_name}</bdi>
           </span>
         )}
-        <Button busy={busy === "open"} busyLabel="פותח…" onClick={() => void open()}>
-          פתיחה
+        <Button busy={busy === "open"} busyLabel={action === "open" ? "פותח…" : "מוריד…"} onClick={() => void open()}>
+          {action === "open" ? "פתיחה" : "הורדה"}
         </Button>
         {mayRemove(actor, week, f) && !asking && (
           <Button ref={focusBack.ref()} kind="danger" onClick={() => setAsking(true)}>
@@ -151,14 +157,15 @@ export function FileRow({
 }
 
 /** The lesson's files and, when the actor may, the upload. */
-export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reload }: SourceFilesProps) {
+export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reload, skipPresentations = false }: SourceFilesProps) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [over, setOver] = useState(false);
   const memorial = l.kind === "memorial";
   const lead = l.state === "closed" ? (week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id ?? null) : null;
-  const all = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id).sort((a, b) => a.id - b.id);
+  // the lesson page lists its presentations apart (LessonPresentations): here, the sources only
+  const all = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id && !(skipPresentations && isPresentation(f))).sort((a, b) => a.id - b.id);
   const current = memorial ? memorialFiles(week, l) : all.filter((f) => !fromPreviousSpeaker(f, lead));
   const previous = memorial ? memorialLeftovers(week, l) : all.filter((f) => fromPreviousSpeaker(f, lead));
   const mayUpload = actor.canEdit && (memorial ? planOn(week, l.id) != null : l.state === "closed");

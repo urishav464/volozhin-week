@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  afterPath, dayPath, lessonPath, newSpeakerPath, pageStepOf, parseAfterQuery, parseDay, parsePageStep, parseSlot, parseSpeakerSection, parseSpeakersQuery,
-  speakerPath, speakersPath, type SpeakersQuery,
+  afterPath, dayPath, guestsPath, type GuestsQuery, lessonPath, newSpeakerPath, pageStepOf, parseAfterQuery, parseDay, parseGuestsQuery, parseLessonSection, parsePageStep,
+  parsePresentationsQuery, parseSlot, parseSpeakerSection, parseSpeakersQuery, presentationsPath, type PresentationsQuery, speakerPath, speakersPath, type SpeakersQuery,
 } from "./routes";
 
 describe("the trainee's pages' addresses", () => {
@@ -77,6 +77,18 @@ describe("the trainee's pages' addresses", () => {
     expect(parseSpeakerSection("")).toBeNull();
   });
 
+  it("the guests' part of both pages (the reset, phase 5): `#guest`, and the lesson page's «מצגות»", () => {
+    expect(speakerPath(7, "guest")).toBe("/speakers/7#guest");
+    expect(parseSpeakerSection("#guest")).toBe("guest");
+    expect(lessonPath(7, null, "guest")).toBe("/lesson/7#guest");
+    expect(lessonPath(7, "sources", "presentations")).toBe("/lesson/7?step=sources#presentations");
+    expect(lessonPath(7, "pay", null)).toBe("/lesson/7?step=pay");
+    expect(parseLessonSection("#guest")).toBe("guest");
+    expect(parseLessonSection("presentations")).toBe("presentations");
+    expect(parseLessonSection("#call")).toBeNull();
+    expect(parseLessonSection("")).toBeNull();
+  });
+
   it("a next step or a card's stage is a step of the lesson page", () => {
     expect(pageStepOf("payment")).toBe("pay");
     expect(pageStepOf("pay")).toBe("pay");
@@ -114,5 +126,27 @@ describe("the staff's pages' addresses (the reset, phase 3)", () => {
     expect(parseAfterQuery("")).toEqual({ all: false, lesson: null });
     expect(parseAfterQuery("?all=yes&lesson=0")).toEqual({ all: false, lesson: null });
     expect(parseAfterQuery("all=1&lesson=7x")).toEqual({ all: true, lesson: null });
+  });
+});
+
+describe("the pages of the reset, phase 5", () => {
+  it("«אתר האורחים»: a day, a handler, «רק מה שחסר» — only what is set, and back", () => {
+    expect(guestsPath()).toBe("/export/guests");
+    expect(guestsPath({ missing: false })).toBe("/export/guests");
+    expect(guestsPath({ missing: true, h: 3, day: 2 })).toBe("/export/guests?day=2&h=3&missing=1");
+    const cases: GuestsQuery[] = [{}, { day: 0 }, { h: 4 }, { missing: true }, { day: 4, h: 2, missing: true }];
+    for (const q of cases) expect(parseGuestsQuery(guestsPath(q).replace(/^\/export\/guests/, ""))).toEqual(q);
+    expect(parseGuestsQuery("?day=5&h=0&missing=yes")).toEqual({});
+    expect(parseGuestsQuery("day=1.0&h=x")).toEqual({});
+  });
+
+  it("«מצגות»: the day's tab and the room's chip — only what is set, and back", () => {
+    expect(presentationsPath()).toBe("/presentations");
+    expect(presentationsPath({ day: 2 })).toBe("/presentations?day=2");
+    expect(presentationsPath({ room: 3, day: 0 })).toBe("/presentations?day=0&room=3");
+    const cases: PresentationsQuery[] = [{}, { day: 4 }, { room: 1 }, { day: 1, room: 2 }];
+    for (const q of cases) expect(parsePresentationsQuery(presentationsPath(q).replace(/^\/presentations/, ""))).toEqual(q);
+    expect(parsePresentationsQuery("?day=7&room=0")).toEqual({});
+    expect(parsePresentationsQuery("room=all&day=")).toEqual({});
   });
 });

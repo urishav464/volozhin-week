@@ -1,7 +1,7 @@
 // Hands a file made in the browser to the person: a Blob and a link with
 // `download` — nothing goes to a server. The link's address is revoked once the
 // browser has taken the file.
-export function download(name: string, bytes: Uint8Array | string, type: string): void {
+export function download(name: string, bytes: Uint8Array | string | Blob, type: string): void {
   const blob = new Blob([bytes as BlobPart], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -22,6 +22,12 @@ export const CSV_MIME = "text/csv;charset=utf-8";
 /** The archive's personal-data file (src/exports/archive.ts) — here, so the settings panel names it without loading the zip writer. */
 export const PERSONAL_FILE = "PERSONAL-DATA_contacts_and_transport.json";
 export const ZIP_MIME = "application/zip";
+
+/** A file's name as a zip entry may carry it: no folder separators or characters a file system refuses; at most 80 characters. */
+export function safeEntryName(name: string): string {
+  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[._\s]+|[.\s]+$/g, "").trim();
+  return [...(clean || "file")].slice(-80).join("");
+}
 
 /** «2026-11-10» in Israel — for a file's name. */
 export function israelDay(now: Date = new Date()): string {

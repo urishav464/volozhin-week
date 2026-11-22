@@ -2,7 +2,8 @@
 // day's pair named (or «אין עדיין זוג ליום», with the way to «הגדרות ← צוות ← ימים» for an admin), the closed lessons'
 // balance, the slots in time order each with its next step — staff may act on every lesson (myDay's staff mode; the
 // RPCs decide) — the lessons handled by someone outside the pair highlighted («חריגים»; none on a day with no pair),
-// and the speakers who can come. «ראיתי» only for an owner of the day. A trainee is sent to their own home (`/?day=d`
+// and the speakers who can come. «ראיתי» only for an owner of the day; for an admin, the way to that day in «אתר האורחים»
+// (the reset, phase 5). A trainee is sent to their own home (`/?day=d`
 // on a day of theirs), logistics to theirs (`/logistics`, nav.ts dayRedirect).
 import { type KeyboardEvent, useMemo, useRef } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
@@ -10,7 +11,7 @@ import { personaOf } from "../../data/gate";
 import type { DataPort } from "../../data/port";
 import type { Me } from "../../data/types";
 import { hasFresh, myDay, ownedDays, staffDay } from "../../domain/myDay";
-import { dayPath, parseDay } from "../../domain/routes";
+import { dayPath, guestsPath, parseDay } from "../../domain/routes";
 import { DAYS, DAY_NAMES, type Day } from "../../domain/time";
 import { buildModel } from "../../grid/model";
 import { pairText } from "../../grid/owners";
@@ -142,6 +143,11 @@ export function DayScreen({ port, me }: { port: DataPort; me: Me }) {
               <SlotRow key={c.key} model={model} card={c} viewer={viewer} nameOf={nameOf} showHandler exception={c.lessonId != null && exceptions.has(c.lessonId)} />
             ))}
           </ol>
+          {actor.isAdmin && (
+            <Link to={guestsPath({ day })} className="inline-flex min-h-11 items-center font-bold text-navy underline underline-offset-4 hover:text-navy-800" data-day-guests>
+              אתר האורחים ליום הזה ‹
+            </Link>
+          )}
         </section>
 
         {d.others.length > 0 && (

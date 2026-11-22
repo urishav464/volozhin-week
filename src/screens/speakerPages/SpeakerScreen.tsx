@@ -3,7 +3,8 @@
 // approval as a chip, the bio only when there is one); «הפנייה» (#call) — who handles them and where the call
 // stands, its points, its result, a hand-over, the contacts for whoever may see them; «זמינות» (#availability) —
 // the day-by-day ranges editor, the slot grid folded under it; «איפה אפשר לשבץ» (#placement); «שיעורים»
-// (#lessons) — the pitches and closed lessons, each to its lesson page; «לימד/ה אצלנו»; and «מה קרה», curated.
+// (#lessons) — the pitches and closed lessons, each to its lesson page; «לאתר האורחים» (#guest, the reset, phase 5 —
+// GuestSpeaker.tsx: the approval to appear, the photo, the description for guests); «לימד/ה אצלנו»; and «מה קרה», curated.
 // Every change is a port command (docs/CONTRACT.md «The speaker pool»): the page hides only what cannot be done.
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
@@ -43,6 +44,7 @@ import {
 import { TaughtHere } from "../speakers/SpeakerReviews";
 import { LINK_BUTTON } from "../stages/parts";
 import { actorIn, useWeekStore } from "../weekStore";
+import { GuestSpeaker } from "./GuestSpeaker";
 import { BACK_LINK, PageSection, useHandedNotice, weekProblem } from "./page";
 import { PlacementSection } from "./PlacementSection";
 import { RangesEditor } from "./RangesEditor";
@@ -315,6 +317,8 @@ function Body({ port, me, week, s, reload, notify, clear }: { port: DataPort; me
           </ul>
         )}
       </PageSection>
+
+      <GuestSpeaker port={port} week={week} speaker={s} approach={a} actor={actor} mayEdit={mayEdit} busy={busy} act={act} notify={notify} clear={clear} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-line bg-card p-4 shadow-sm sm:p-5">

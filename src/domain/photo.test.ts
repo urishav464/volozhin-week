@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { DEMO_PHOTO_SIZE, demoPhotoBytes } from "../data/demoPhoto";
 import { nonCanonical, PHOTO_FIXTURES, photoBase64, photoBytes, photoName } from "../testing/photos";
-import { PHOTO_DATA_PREFIX, PHOTO_LIMITS, photoDataUrl, photoFromBase64, photoOk, photoToBase64 } from "./photo";
+import { guestPhotoSrc, PHOTO_DATA_PREFIX, PHOTO_LIMITS, photoDataUrl, photoFromBase64, photoOk, photoToBase64 } from "./photo";
 
 /** The demo's file with one segment's bytes changed: `at` the segment's marker (FF m), the change made by `edit`. */
 function withSegment(marker: number, edit: (b: Uint8Array, at: number) => void): Uint8Array {
@@ -164,5 +164,35 @@ describe("the photo as base64 (set_speaker_photo / get_speaker_photo)", () => {
     expect(photoName(new Uint8Array(7))).toBe("bytes:7");
     expect(photoDataUrl("QUJD")).toBe(`${PHOTO_DATA_PREFIX}QUJD`);
     expect(PHOTO_DATA_PREFIX).toBe("data:image/jpeg;base64,");
+  });
+});
+
+describe("guestPhotoSrc (the guests' card, the reset, phase 5)", () => {
+  it("draws schedule_view's data URL of a photo the database would store — the same string back", () => {
+    const url = photoDataUrl(photoBase64("clean"));
+    expect(guestPhotoSrc(url)).toBe(url);
+    expect(guestPhotoSrc(photoDataUrl(nonCanonical(photoBase64("clean"))))).toBe(photoDataUrl(nonCanonical(photoBase64("clean"))));
+  });
+
+  it("refuses any other photo: one photoOk refuses, a payload that is no base64, another type, an address of its own", () => {
+    for (const n of ["exif", "progressive", "trailer", "big", "garbage"] as const) expect(guestPhotoSrc(photoDataUrl(photoBase64(n))), n).toBeNull();
+    const clean = photoBase64("clean");
+    for (const v of [
+      "data:image/jpeg;base64,/9j/AAAA", // a JPEG's first bytes, no photo
+      `data:image/png;base64,${clean}`,
+      `data:image/jpeg,${clean}`,
+      `DATA:image/jpeg;base64,${clean}`,
+      ` ${photoDataUrl(clean)}`,
+      `${photoDataUrl(clean)}#x`,
+      photoDataUrl(`${clean}\n`),
+      "https://example.org/x.jpg",
+      "//example.org/x.jpg",
+      "/x.jpg",
+      clean, // the bare base64 (get_speaker_photo's shape) is not an <img> source
+      PHOTO_DATA_PREFIX,
+      "",
+    ])
+      expect(guestPhotoSrc(v), v.slice(0, 40)).toBeNull();
+    for (const v of [null, undefined, 42, {}, [photoDataUrl(clean)]]) expect(guestPhotoSrc(v)).toBeNull();
   });
 });

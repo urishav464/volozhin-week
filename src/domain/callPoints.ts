@@ -9,8 +9,6 @@
 import { parseTemplate, type TemplateNode } from "./message";
 import type { Gender } from "./types";
 
-export const CALL_VARIABLES = ["שמי"] as const;
-
 /**
  * The instructor's text, with its «X» as {{שמי}} and the three words that address the speaker in both genders.
  * «שעה ורבע», «בדכ», «וולוזין» and the asterisks stay exactly as written — src/domain/callPoints.test.ts holds the

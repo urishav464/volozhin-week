@@ -84,9 +84,13 @@ export const ERRORS: Record<string, string> = {
   not_uploader: "רק מי שהעלה/תה את הקובץ, או המדריך/ה, יכולים להסיר אותו.",
   file_present: "הקובץ עוד שמור בשרת. מנסים להסיר שוב.",
   upload_failed: "ההעלאה לא הושלמה. בודקים את החיבור ומנסים שוב.",
-  upload_refused: "אין הרשאה להעלות לכאן: מעלים לשיעור סגור של המחזור (צוות התוכן והמדריך/ה), ואת השער — המדריך/ה.",
+  upload_refused: "אין הרשאה להעלות לכאן: מעלים לשיעור סגור של המחזור (צוות התוכן והמדריך/ה), ואת השער ואת המצגת של השבוע — המדריך/ה.",
   remove_failed: "ההסרה לא הושלמה. בודקים את החיבור ומנסים שוב.",
   read_failed: "לא הצלחנו לקרוא את הקבצים מהשרת. בודקים את החיבור ומנסים שוב.",
+  // presentations (the reset, phase 5 — the browser's own, before anything is sent: src/data/sourceRules.ts checkPicked)
+  pptx_source: "קובץ PowerPoint הוא מצגת: מעלים אותו ב«העלאת מצגת», לא כמקור.",
+  presentation_bad_file: "מצגת אפשר להעלות כ-PowerPoint ‏(pptx), ‏PDF, תמונה (PNG/JPG) או Word ‏(docx). קובץ ppt ישן או Keynote שומרים קודם כ-pptx או כ-PDF.",
+  week_presentation_bad_file: "למצגת של השבוע אפשר להעלות PowerPoint ‏(pptx), ‏PDF או תמונה (PNG/JPG) — לא Word.",
   // memorial times (milestone 5ב-2)
   no_plan: "עוד לא שובץ/ה חלל/ה בזמן הזיכרון הזה. משבצים במסך «זמני זיכרון».",
   memorial_taken: "בזמן הזיכרון הזה כבר משובץ/ת חלל/ה אחר/ת.",

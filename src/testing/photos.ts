@@ -6,6 +6,8 @@
 //   trailer      two bytes after the end marker — refused
 //   big          its entropy data padded with zeros to 21000 bytes — refused (over 20480; the structure is sound)
 //   garbage      300 bytes that are no JPEG — refused
+// And, for the reset's phase 5 (the photo fitter, the upload through a canvas): `jpegOfSize` (a canvas's output of a
+// given size, as a model) and `jpegWithOrientation` (a picture a browser draws, stored on its side).
 import { demoPhotoBytes } from "../data/demoPhoto";
 import { photoToBase64 } from "../domain/photo";
 
@@ -86,4 +88,39 @@ export function photoName(bytes: Uint8Array): string {
     if (f.length === bytes.length && f.every((x, i) => x === bytes[i])) return name;
   }
   return `bytes:${bytes.length}`;
+}
+
+/**
+ * The reset, phase 5 — what a canvas would write, as the photo fitter's tests need it (src/domain/photoFit.test.ts): the
+ * clean file with its frame saying w×h and its entropy data padded with zeros to `bytes` in all (legal for photoOk, as
+ * `big` is; never decodable as w×h — only its structure is read). `exif` adds the APP1 of `exif` (a strip takes it
+ * away), `progressive` makes the frame SOF2 (refused). A `bytes` below the file's own length gives the file as it is.
+ */
+export function jpegOfSize(w: number, h: number, bytes: number, extra?: "exif" | "progressive"): Uint8Array {
+  const base = photoBytes(extra ?? "clean");
+  const sof = base.findIndex((x, k) => x === 0xff && (base[k + 1] === 0xc0 || base[k + 1] === 0xc2));
+  base[sof + 5] = h >> 8;
+  base[sof + 6] = h & 0xff;
+  base[sof + 7] = w >> 8;
+  base[sof + 8] = w & 0xff;
+  const s = scanStart(base);
+  const out = new Uint8Array(Math.max(bytes, base.length)); // zeros: the padding
+  out.set(base.subarray(0, s), 0);
+  out.set(base.subarray(s), out.length - (base.length - s));
+  return out;
+}
+
+/**
+ * The demo's 32×16 JPEG (a picture a browser draws) with an EXIF orientation — 6: stored on its side, to be turned 90°
+ * clockwise, so a browser that honours it draws 16×32. An APP1 «Exif» after APP0: a big-endian TIFF header and one
+ * IFD entry, 0x0112 SHORT. For the e2e round's upload through the canvas (src/screens/speakerPages/photoCanvas.ts).
+ */
+export function jpegWithOrientation(orientation: number): Uint8Array {
+  const clean = demoPhotoBytes();
+  const at = 2 + 2 + ((clean[4] << 8) | clean[5]);
+  const tiff = [0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08];
+  const ifd = [0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation & 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+  const body = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00, ...tiff, ...ifd];
+  const app1 = [0xff, 0xe1, 0x00, body.length + 2, ...body];
+  return new Uint8Array([...clean.slice(0, at), ...app1, ...clean.slice(at)]);
 }

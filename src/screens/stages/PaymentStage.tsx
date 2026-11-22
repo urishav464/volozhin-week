@@ -1,112 +1,21 @@
-// «תשלום/הסעה» on a closed lesson: what was asked and the decision on it;
-// the handler's (or an admin's) request; the decision right here for whoever
-// decide_payments lets decide (src/domain/approvals.ts mayDecide — the approvals
-// page has the same, in a batch); «שולם» for logistics; and
-// the transport's pickup and driver — personal data, fetched one lesson at a
-// time and only for whom app.may_see_transport names (CONTRACT «Transport details»).
-// Nothing here ever fills in an amount: no amount means no payment was asked.
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
-import { mergeTransport, STAGE_LIMITS, TRANSPORTS } from "../../data/stageRules";
-import { mayDecide } from "../../domain/approvals";
+// «תשלום/הסעה»'s shared parts — the lesson page's pay step (src/screens/lesson/LessonScreen.tsx), the transport board
+// and «אישורים»: the decision for whoever decide_payments lets decide (src/domain/approvals.ts mayDecide), «שולם» for
+// logistics or an admin, the amount as typed, and the transport's pickup and driver to read — personal data, fetched
+// one lesson at a time and only for whom app.may_see_transport names (CONTRACT «Transport details»). Nothing here ever
+// fills in an amount: no amount means no payment was asked. The reset, phase 5: the grid's panel no longer has the
+// stage (`PaymentStage`, its request form and the old whole-details transport form are gone); no screen calls
+// set_transport_details — the driver is set_transport_driver's (StaffTransport, the board's DriverForm).
+import { useId, useState } from "react";
+import { STAGE_LIMITS } from "../../data/stageRules";
 import { telHref } from "../../domain/contactLinks";
-import { APPROVAL_LABEL, IMPORTED_PAY, requestText, shekels, TRANSPORT_LABEL } from "../../domain/stages";
-import type { Lesson, Transport, TransportDetails } from "../../domain/types";
+import type { Lesson, TransportDetails } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { Chip } from "../../grid/bits";
 import { Button, Confirm, Field, INPUT, useFocusBack } from "../settings/kit";
-import { type Act, archivedEdition, Choice, LINK_BUTTON, memberName, Problem, type StageCtx, whenText } from "./parts";
-
-export function PaymentStage(ctx: StageCtx) {
-  const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
-  const asked = requestText(l);
-  // A request already made sits behind «שינוי הבקשה», so the section's one primary action is the decision
-  // (or «בקשה מחדש» after a rejection). Open at the version it was opened on: a save closes it again.
-  const [changingAt, setChangingAt] = useState<number | null>(null);
-  const formOpen = asked == null || l.approval === "rejected" || changingAt === l.version;
-  const formShown = week.edition.kind !== "archive" && mine && formOpen;
-  const decides = mayDecide(actor, week.edition);
-  const deciding = decides && l.approval === "pending";
-  const decider = l.approval === "approved" || l.approval === "rejected" ? memberName(week, l.approved_by) : null;
-  const tone = l.approval === "approved" ? "ok" : l.approval === "rejected" ? "bad" : l.approval === "pending" ? "warn" : "plain";
-  // The summary says only what nothing below says: the open form shows the amount and the transport, the decision
-  // box that the request waits («ממתין» is enough beside «אישור»; the stage's row says for whom).
-  const rows = {
-    asked: !formShown,
-    approval: asked != null && !deciding,
-    note: l.approval_note != null,
-    paid: l.pay_amount != null && l.approval === "approved",
-  };
-  return (
-    <>
-      {Object.values(rows).some(Boolean) && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          {rows.asked && (
-            <>
-              <dt className="text-ink-soft">תשלום</dt>
-              <dd>{l.pay_amount != null ? <bdi className="font-semibold">{shekels(l.pay_amount)}</bdi> : "לא התבקש תשלום"}</dd>
-              <dt className="text-ink-soft">הסעה</dt>
-              <dd>{TRANSPORT_LABEL[l.transport]}</dd>
-            </>
-          )}
-          {rows.approval && (
-            <>
-              <dt className="text-ink-soft">אישור</dt>
-              <dd className="flex flex-wrap items-center gap-1.5">
-                <Chip tone={tone}>{l.approval === "none" ? IMPORTED_PAY : l.approval === "pending" ? "ממתין" : APPROVAL_LABEL[l.approval]}</Chip>
-                {decider && (
-                  <span className="text-ink-soft">
-                    {decider}
-                    {l.approved_at && <> · <bdi>{whenText(l.approved_at)}</bdi></>}
-                  </span>
-                )}
-              </dd>
-            </>
-          )}
-          {rows.note && (
-            <>
-              <dt className="text-ink-soft">הערה</dt>
-              <dd className="break-words">«{l.approval_note}»</dd>
-            </>
-          )}
-          {rows.paid && (
-            <>
-              <dt className="text-ink-soft">בפועל</dt>
-              <dd>{l.paid_at ? <>שולם · <bdi>{whenText(l.paid_at)}</bdi></> : "טרם שולם"}</dd>
-            </>
-          )}
-        </dl>
-      )}
-
-      {deciding && <Decide key={l.version} lesson={l} busy={busy} act={act} decide={cmds.decidePayments} />}
-
-      <PaidButton {...ctx} />
-
-      {week.edition.kind === "archive" ? null : mine ? (
-        formShown ? (
-          <RequestForm
-            key={l.version}
-            lesson={l}
-            busy={busy}
-            act={act}
-            setPayment={cmds.setPayment}
-            decider={decides}
-            onCancel={asked != null && l.approval !== "rejected" ? () => setChangingAt(null) : undefined}
-          />
-        ) : (
-          <Button onClick={() => setChangingAt(l.version)}>שינוי הבקשה</Button>
-        )
-      ) : (
-        actor.canEdit && <p className="text-xs text-ink-soft">את הבקשה מגישים מי שמטפל/ת במרצה, או צוות המחזור.</p>
-      )}
-
-      {l.transport !== "none" && <TransportBlock {...ctx} />}
-    </>
-  );
-}
+import { type Act, archivedEdition, LINK_BUTTON, type StageCtx } from "./parts";
 
 /**
  * «שולם» for logistics or an admin, once an amount was approved (an undo is quiet beside the stage's one main action);
- * nothing for anyone else. The panel's and the lesson page's.
+ * nothing for anyone else. The lesson page's pay step (an archive's lesson too).
  */
 export function PaidButton({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {
   const mayMarkPaid = (actor.role === "logistics" || actor.isAdmin) && (actor.isAdmin || !archivedEdition(week));
@@ -118,10 +27,13 @@ export function PaidButton({ week, lesson: l, actor, cmds, busy, act }: StageCtx
   );
 }
 
-/** Whoever may decide (mayDecide) approves or rejects this one request, with an optional note, at the version on screen. */
 /** «דחייה» asks once: a decision is final for whoever made it (decide_payments takes a pending request only). */
 export const REJECT_CONFIRM = "לא לאשר את הבקשה? אחר כך אפשר רק לבקש שוב.";
 
+/**
+ * Whoever may decide (mayDecide) approves or rejects this one request, with an optional note, at the version on screen
+ * — the lesson page's pay step and the transport board's pending rows.
+ */
 export function Decide({ lesson: l, busy, act, decide }: { lesson: Lesson; busy: string | null; act: Act; decide: StageCtx["cmds"]["decidePayments"] }) {
   const id = useId();
   const [note, setNote] = useState("");
@@ -173,169 +85,11 @@ export function amountValue(kind: "none" | "paid", raw: string): AmountValue {
   return digits === "" ? "empty" : /^\d+$/.test(digits) ? Number(digits) : "bad";
 }
 
-/**
- * The handler's request: no payment (a volunteer) or an amount typed in whole shekels, and the transport.
- * `decider`: one who may decide it (mayDecide) and does so above — so it is saved, not «sent for approval».
- * A paid amount stays what was paid (paid_locked) until «שולם» is undone; the transport may still change.
- */
-function RequestForm({
-  lesson: l,
-  busy,
-  act,
-  setPayment,
-  decider,
-  onCancel,
-}: {
-  lesson: Lesson;
-  busy: string | null;
-  act: Act;
-  setPayment: StageCtx["cmds"]["setPayment"];
-  decider: boolean;
-  onCancel?: () => void;
-}) {
-  const id = useId();
-  const [kind, setKind] = useState<"none" | "paid">(l.pay_amount != null ? "paid" : "none");
-  const [amount, setAmount] = useState(l.pay_amount != null ? String(l.pay_amount) : "");
-  const [transport, setTransport] = useState<Transport>(l.transport);
-  const [problem, setProblem] = useState<string | null>(null);
-  const value = amountValue(kind, amount);
-  const same = value === l.pay_amount && transport === l.transport;
-  const asks = value !== null || transport !== "none";
-  const label = !asks ? "שמירה: בלי תשלום ובלי הסעה" : same && l.approval === "rejected" ? "בקשה מחדש" : decider ? "שמירת הבקשה" : "שליחה לאישור";
-  const sentText = decider ? "נשמר. הבקשה ממתינה לאישור שלך: «אישור הבקשה» למעלה" : "הבקשה נשלחה לאישור";
-  const paid = l.paid_at != null;
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setProblem(null);
-    if (value === "empty") return setProblem("צריך לכתוב את הסכום שסוכם, או לבחור «בלי תשלום (התנדבות)».");
-    if (value === "bad") return setProblem(errorMessage("bad_amount"));
-    await act("pay", () => setPayment(l.id, l.version, value, transport), asks ? sentText : "נשמר: בלי תשלום ובלי הסעה", (code) => {
-      if (code !== "bad_amount" && code !== "bad_value" && code !== "paid_locked") return false;
-      setProblem(errorMessage(code));
-      return true;
-    });
-  };
-
-  return (
-    <form onSubmit={(e) => void submit(e)} aria-label="בקשת תשלום והסעה" className="space-y-3 not-first:border-t not-first:border-line not-first:pt-3" noValidate>
-      <Choice
-        name={`${id}-paid`}
-        legend="תשלום"
-        disabled={paid}
-        value={kind}
-        options={[
-          ["none", "בלי תשלום (התנדבות)"],
-          ["paid", "תשלום"],
-        ]}
-        onChange={setKind}
-      />
-      {kind === "paid" && (
-        <Field id={`${id}-amount`} label="סכום בשקלים" hint="מה שסוכם עם המרצה, במספר שלם.">
-          <div className="flex max-w-xs items-center gap-2">
-            <input
-              id={`${id}-amount`}
-              inputMode="numeric"
-              dir="ltr"
-              autoComplete="off"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              disabled={paid}
-              aria-invalid={problem ? true : undefined}
-              aria-describedby={`${id}-amount-hint`}
-              className={INPUT}
-            />
-            <span aria-hidden className="font-semibold">
-              ₪
-            </span>
-          </div>
-        </Field>
-      )}
-      {paid && <p className="text-xs text-ink-soft">שולם — כדי לשנות את הסכום, קודם מבטלים «שולם».</p>}
-      <Choice name={`${id}-transport`} legend="הסעה" value={transport} options={TRANSPORTS.map((t) => [t, TRANSPORT_LABEL[t]] as const)} onChange={setTransport} />
-      {problem && <Problem>{problem}</Problem>}
-      {l.approval === "approved" && !same && <p className="text-xs text-ink-soft">שינוי בבקשה שאושרה מחזיר אותה לאישור.</p>}
-      {transport === "none" && l.transport !== "none" && <p className="text-xs text-ink-soft">בלי הסעה: פרטי ההסעה של השיעור יימחקו.</p>}
-      <div className="flex flex-wrap gap-2">
-        <Button kind="primary" type="submit" disabled={same && l.approval !== "rejected"} busy={busy === "pay"} busyLabel="שולח…">
-          {label}
-        </Button>
-        {onCancel && <Button onClick={onCancel}>ביטול</Button>}
-      </div>
-    </form>
-  );
-}
-
-const EMPTY: TransportDetails = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
-
-/** Pickup and driver: read through app.may_see_transport (null = not the caller's to see), written by the same people. */
 /** Why the pickup and the driver are not shown (cmds.transport answered null: app.may_see_transport). */
 export function transportHiddenText(actor: Pick<StageCtx["actor"], "role">, l: Pick<Lesson, "approval">): string {
   return actor.role === "logistics" && l.approval !== "approved"
     ? "פרטי ההסעה גלויים לצוות הלוגיסטי של מחזור אמיתי שלא הועבר לארכיון, כל עוד בקשת ההסעה ממתינה לאישור או אושרה; בקשה שנדחתה נסגרת עד שמבקשים אותה שוב."
     : errorMessage("transport_hidden");
-}
-
-/**
- * The old screens' «פרטי ההסעה» (the grid's panel, an archive's lesson): the five fields in one write
- * (set_transport_details). The lesson page's staff block is StaffTransport (src/screens/lesson/) — the driver's half only.
- */
-export function TransportBlock({ lesson: l, actor, cmds, busy, act }: StageCtx) {
-  const id = useId();
-  const [d, setD] = useState<TransportDetails | null | undefined>(undefined);
-  const [failed, setFailed] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      setD(await cmds.transport(l.id));
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [cmds, l.id]);
-  // Again when what decides who sees them changes (the request, the decision on it).
-  useEffect(() => void load(), [load, l.transport, l.approval]);
-
-  const hidden = transportHiddenText(actor, l);
-
-  return (
-    <div role="group" aria-label="פרטי ההסעה" className="space-y-2 not-first:border-t not-first:border-line not-first:pt-3">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="text-sm font-bold">פרטי ההסעה</p>
-        <span className="text-xs text-ink-soft">· מידע אישי</span>
-        {d && !editing && (
-          <span className="ms-auto">
-            <Chip tone={d.arranged ? "ok" : "warn"}>{d.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
-          </span>
-        )}
-      </div>
-      {failed && d === undefined ? (
-        <div role="alert" className="space-y-1">
-          <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
-          <button type="button" className={LINK_BUTTON} onClick={() => void load()}>
-            לנסות שוב
-          </button>
-        </div>
-      ) : d === undefined ? (
-        <p className="text-sm text-ink-soft">טוען…</p>
-      ) : d === null ? (
-        <p className="text-sm text-ink-soft">{hidden}</p>
-      ) : editing ? (
-        <TransportForm id={id} d={d} busy={busy} onCancel={() => setEditing(false)} onSave={(next, onRefused) => act("transport", async () => {
-          // The escort's link may have sent a pickup address since the form opened: only what the form changed is written over.
-          await cmds.setTransport(l.id, mergeTransport({ ...EMPTY, ...d }, next, await cmds.transport(l.id)));
-        }, "פרטי ההסעה נשמרו", onRefused)} onSaved={async () => {
-          setEditing(false);
-          await load();
-        }} />
-      ) : (
-        <>
-          <TransportView d={d} />
-          <Button onClick={() => setEditing(true)}>עריכת פרטי ההסעה</Button>
-        </>
-      )}
-    </div>
-  );
 }
 
 /** Pickup and driver as saved (whether it is arranged: a chip in the block's heading). */
@@ -380,75 +134,5 @@ export function TransportView({ d }: { d: TransportDetails }) {
         </>
       )}
     </dl>
-  );
-}
-
-export function TransportForm({
-  id,
-  d,
-  busy,
-  onSave,
-  onSaved,
-  onCancel,
-}: {
-  id: string;
-  d: TransportDetails;
-  busy: string | null;
-  onSave: (next: TransportDetails, onRefused: (code: string | null) => boolean) => Promise<boolean>;
-  onSaved: () => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [draft, setDraft] = useState<TransportDetails>({ ...EMPTY, ...d });
-  const [problem, setProblem] = useState<string | null>(null);
-  const set = (p: Partial<TransportDetails>) => setDraft((x) => ({ ...x, ...p }));
-  const text = (v: string | null) => (v && v.trim() ? v : null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setProblem(null);
-    const next = { pickup_address: text(draft.pickup_address), pickup_time: text(draft.pickup_time), driver_name: text(draft.driver_name), driver_phone: text(draft.driver_phone), arranged: draft.arranged };
-    const ok = await onSave(next, (code) => {
-      if (!code || !["bad_phone", "bad_value", "no_transport"].includes(code)) return false;
-      setProblem(errorMessage(code));
-      return true;
-    });
-    if (ok) await onSaved();
-  };
-  return (
-    <form onSubmit={(e) => void submit(e)} aria-label="עריכת פרטי ההסעה" className="space-y-3" noValidate>
-      <Field id={`${id}-addr`} label="כתובת איסוף">
-        <input id={`${id}-addr`} value={draft.pickup_address ?? ""} maxLength={STAGE_LIMITS.pickup_address} onChange={(e) => set({ pickup_address: e.target.value })} className={INPUT} autoComplete="off" />
-      </Field>
-      <Field id={`${id}-time`} label="שעת איסוף" hint="כמו שכותבים אותה, למשל «אחרי השיעור».">
-        <input id={`${id}-time`} value={draft.pickup_time ?? ""} maxLength={STAGE_LIMITS.pickup_time} onChange={(e) => set({ pickup_time: e.target.value })} className={INPUT} autoComplete="off" />
-      </Field>
-      <Field id={`${id}-driver`} label="שם הנהג/ת">
-        <input id={`${id}-driver`} value={draft.driver_name ?? ""} maxLength={STAGE_LIMITS.driver_name} onChange={(e) => set({ driver_name: e.target.value })} className={INPUT} autoComplete="off" />
-      </Field>
-      <Field id={`${id}-phone`} label="הטלפון של הנהג/ת">
-        <input
-          id={`${id}-phone`}
-          type="tel"
-          inputMode="tel"
-          dir="ltr"
-          value={draft.driver_phone ?? ""}
-          maxLength={40}
-          onChange={(e) => set({ driver_phone: e.target.value })}
-          aria-invalid={problem ? true : undefined}
-          className={INPUT}
-          autoComplete="off"
-        />
-      </Field>
-      <label className="flex min-h-11 cursor-pointer items-center gap-2">
-        <input type="checkbox" checked={draft.arranged} onChange={(e) => set({ arranged: e.target.checked })} className="size-5 accent-navy" />
-        ההסעה סודרה
-      </label>
-      {problem && <Problem>{problem}</Problem>}
-      <div className="flex flex-wrap gap-2">
-        <Button kind="primary" type="submit" busy={busy === "transport"} busyLabel="שומר…">
-          שמירה
-        </Button>
-        <Button onClick={onCancel}>ביטול</Button>
-      </div>
-    </form>
   );
 }

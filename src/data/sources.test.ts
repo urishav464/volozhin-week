@@ -79,14 +79,16 @@ describe("the path convention", () => {
     expect(mimeMatches(PPTX, "docx")).toBe(false);
     expect(printableMime(PPTX)).toBe(false);
     const deck = { name: "a.pptx", type: PPTX, size: 10 };
-    expect(await code(() => checkPicked(deck, false))).toBe("bad_file");
-    expect(await code(() => checkPicked(deck, false, "source"))).toBe("bad_file");
+    // the reset, phase 5: a pptx picked as a source says where it goes (the server's own word is bad_file)
+    expect(await code(() => checkPicked(deck, false))).toBe("pptx_source");
+    expect(await code(() => checkPicked(deck, false, "source"))).toBe("pptx_source");
+    expect(await code(() => checkPicked(deck, true))).toBe("cover_bad_file"); // the poster's own rule first
     expect(checkPicked(deck, false, "presentation")).toBe(PPTX);
     expect(checkPicked(deck, true, "presentation")).toBe(PPTX); // the week's presentation, on the cover path
     expect(checkPicked({ name: "a.docx", type: DOCX, size: 10 }, false, "presentation")).toBe(DOCX); // a lesson's
     // the cover path refuses Word whatever it is meant to be (app.source_refusal: a path carries no kind) — said
-    // before the bytes go up, with the server's own code, never as «upload_refused»
-    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("bad_file");
+    // before the bytes go up, in the week deck's own words, never as «upload_refused»
+    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("week_presentation_bad_file");
     expect(checkPicked({ name: "a.pdf", type: "application/pdf", size: 10 }, true, "presentation")).toBe("application/pdf");
     expect(checkPicked({ name: "a.png", type: "image/png", size: 10 }, true, "presentation")).toBe("image/png");
     expect(await code(() => checkPicked({ ...deck, size: MAX_SOURCE_BYTES + 1 }, false, "presentation"))).toBe("file_too_big");
@@ -94,6 +96,30 @@ describe("the path convention", () => {
     expect(SOURCE_PATH_RE.test(sourcePath(7, 42, UUID, "deck.pptx", PPTX))).toBe(true);
     expect(parseSourcePath(`7/cover/${UUID}-deck.pptx`)).toEqual({ edition: 7, lesson: null, ext: "pptx" });
     expect(pagesFor(PPTX, 12)).toBeNull(); // never read
+  });
+
+  it("the reset, phase 5 — checkPicked's order: a presentation's type, the week deck's Word, a source's poster, pptx, type — then the size", async () => {
+    const big = MAX_SOURCE_BYTES + 1;
+    const txt = { name: "a.txt", type: "text/plain" };
+    const ppt = { name: "a.ppt", type: "application/vnd.ms-powerpoint" }; // the old format: refused, with the way out
+    const key = { name: "a.key", type: "" }; // a Keynote file
+    for (const cover of [false, true]) {
+      for (const f of [txt, ppt, key]) {
+        expect(await code(() => checkPicked({ ...f, size: 10 }, cover, "presentation")), `${f.name} ${cover}`).toBe("presentation_bad_file");
+        expect(await code(() => checkPicked({ ...f, size: big }, cover, "presentation")), `${f.name} ${cover} big`).toBe("presentation_bad_file"); // the type first
+      }
+    }
+    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: big }, true, "presentation"))).toBe("week_presentation_bad_file"); // Word before the size
+    expect(await code(() => checkPicked({ name: "a.docx", type: "", size: 10 }, true, "presentation"))).toBe("week_presentation_bad_file"); // by its name
+    expect(await code(() => checkPicked({ name: "a.pptx", type: PPTX, size: big }, false))).toBe("pptx_source"); // pptx before the size
+    expect(await code(() => checkPicked({ name: "a.pptx", type: "", size: 10 }, false))).toBe("pptx_source");
+    expect(await code(() => checkPicked({ name: "a.pptx", type: PPTX, size: big }, true))).toBe("cover_bad_file");
+    expect(await code(() => checkPicked({ ...ppt, size: 10 }, false))).toBe("bad_file"); // a source's words stay (reader.spec pins them)
+    for (const mime of BUCKET_MIMES) {
+      const name = { "application/pdf": "a.pdf", "image/png": "a.png", "image/jpeg": "a.jpg", [DOCX]: "a.docx", [PPTX]: "a.pptx" }[mime];
+      expect(await code(() => checkPicked({ name, type: mime, size: big }, false, "presentation")), mime).toBe("file_too_big");
+      expect(checkPicked({ name, type: mime, size: MAX_SOURCE_BYTES }, false, "presentation")).toBe(mime);
+    }
   });
 
   it("counts pages as register_source_file does, and cleans the display name", async () => {
@@ -251,9 +277,9 @@ describe("SupabaseSources on the wire", () => {
       ["/rest/v1/rpc/set_reader_sent", { p_edition: 7, p_sent: true }],
       ["/rest/v1/rpc/set_reader_sent", { p_edition: 7, p_sent: false }],
     ]);
-    // a pptx as a source is refused before anything is sent
+    // a pptx as a source is refused before anything is sent (the reset, phase 5: in its own words — the server's is bad_file)
     const none = wire([]);
-    expect(await code(none.sources.upload(7, 42, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("bad_file");
+    expect(await code(none.sources.upload(7, 42, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("pptx_source");
     expect([none.sent, none.uploads]).toEqual([[], []]);
   });
 
@@ -334,7 +360,7 @@ describe("DemoSources", () => {
     const deck = await port.sources.upload(1, l.id, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null, kind: "presentation" });
     expect(deck).toMatchObject({ kind: "presentation", mime: PPTX, cover: false });
     expect((await port.loadWeek(1)).lessons.find((x) => x.id === l.id)).toMatchObject({ sources_kind: "pending", in_reader: false });
-    expect(await code(port.sources.upload(1, l.id, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("bad_file");
+    expect(await code(port.sources.upload(1, l.id, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("pptx_source");
     const logistics = new DemoPort({ memberId: 5, role: "logistics" });
     await logistics.sources.setReaderSent(1, true);
     expect((await logistics.loadWeek(1)).edition.settings.reader_sent).toMatchObject({ by: 5 });

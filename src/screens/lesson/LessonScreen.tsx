@@ -6,7 +6,9 @@
 // the staff the decision, «שולם» and «פרטי ההסעה»), with the transport request the trainee's way (TransportRequest.tsx).
 // No «איך עבר» here (after the week). Every change is a port command; a lesson someone else handles is read-only
 // where the rules refuse — the commands decide, the page only hides what cannot be done. Opens at `?step=`, else
-// at the first step with something left to do.
+// at the first step with something left to do. The reset, phase 5: below the steps, a closed lesson's «לאתר האורחים»
+// (GuestLesson.tsx, `#guest` — never a step), and inside «מקורות ומצגת» its «מצגות» (LessonPresentations.tsx,
+// `#presentations`); an address's `#…` brings that part into view, the focus on it.
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { personaOf } from "../../data/gate";
@@ -15,11 +17,11 @@ import type { Me } from "../../data/types";
 import { mayDecide } from "../../domain/approvals";
 import { lessonHandler } from "../../domain/handler";
 import { byGender, displayName } from "../../domain/names";
-import { type PageStep, parsePageStep, speakerPath, speakersPath } from "../../domain/routes";
-import { type StageState } from "../../domain/stages";
+import { type PageStep, parseLessonSection, parsePageStep, speakerPath, speakersPath } from "../../domain/routes";
+import { IMPORTED_PAY, type StageState } from "../../domain/stages";
 import { DAY_NAMES, dateOf, fmtRange, hebrewDate, shortDate } from "../../domain/time";
 import { type Lesson, LIVE_PITCH, type Speaker, type Week } from "../../domain/types";
-import { GenderDot, NO_TOPIC_COLOR, STAGE_DOT, STAGE_STATE_LABEL } from "../../grid/bits";
+import { Chip, GenderDot, NO_TOPIC_COLOR, STAGE_DOT, STAGE_STATE_LABEL } from "../../grid/bits";
 import { buildModel, type GridModel } from "../../grid/model";
 import { AddSpeaker, type CardProps, Candidates, Declined, LessonDetails, Meta, type PanelActions, Reopen, rowOf, SpeakerChooser, TopicPill } from "../../grid/Panels";
 import { Button, Confirm, Fold, focusLost, useRunner } from "../settings/kit";
@@ -27,12 +29,14 @@ import { EditionSelect, type Notify, useToast } from "../speakers/parts";
 import { BACK_LINK, namesOf, otherDayText, weekProblem } from "../speakerPages/page";
 import { EscortStage, ImportNote, MessageStage, ReaderStage, SourcesStage } from "../stages/LessonStages";
 import { type Act, LINK_BUTTON, type StageCtx } from "../stages/parts";
-import { Decide, PaidButton, PaymentStage } from "../stages/PaymentStage";
+import { Decide, PaidButton } from "../stages/PaymentStage";
 import { DraftFiles, SourceFiles } from "../stages/SourceFiles";
 import { actorIn, useWeekStore } from "../weekStore";
 import { useLessonActions } from "./actions";
+import { GuestLesson } from "./GuestLesson";
+import { LessonPresentations } from "./LessonPresentations";
 import { AFTER_CLOSING, firstOpenStep, pageSteps, type PageStepView } from "./steps";
-import { StaffTransport } from "./StaffTransport";
+import { StaffTransport, TransportReadOnly } from "./StaffTransport";
 import { RequestSummary, TransportRequest } from "./TransportRequest";
 
 export function LessonScreen({ port, me }: { port: DataPort; me: Me }) {
@@ -86,15 +90,26 @@ function Body({ port, me, week, lesson: l, reload, notify, clear }: { port: Data
   const ctx: StageCtx = { week, lesson: l, actor, cmds, busy, act, handler, mine };
   const steps = pageSteps(model, l);
 
-  // `?step=` opens that step — until the lesson closes or reopens under the page: then the first step left to do
+  // `?step=` opens that step — until the lesson closes or reopens under the page: then the first step left to do.
+  // `#presentations` is inside «מקורות ומצגת»: that step opens for it, whatever `?step=` says or not.
   const location = useLocation();
-  const asked = parsePageStep(location.search);
+  const section = parseLessonSection(location.hash);
+  const asked = section === "presentations" ? "sources" : parsePageStep(location.search);
   const [askedAt] = useState(l.state);
   // closed here, on this page: the next thing to ask is the payment and the transport (with nothing asked yet the step
   // reads «לא נדרש», and the first step left would skip it)
   const initial = asked && askedAt === l.state ? asked : askedAt === "draft" && l.state === "closed" ? "pay" : firstOpenStep(steps);
   // closed or reopened under the page: the steps are drawn again, and the button pressed with them
   const changedHere = askedAt !== l.state;
+  // `#guest`, `#presentations`: that part in view, the focus on it — after the stepper's own (a child's effect runs first)
+  useEffect(() => {
+    if (!section) return;
+    const el = document.getElementById(section);
+    el?.scrollIntoView({ block: "start" });
+    el?.focus({ preventScroll: true });
+  }, [section]);
+  // the guests' site shows closed lessons only; an archive's are last year's
+  const guests = l.kind === "lesson" && l.state === "closed" && week.edition.kind !== "archive";
 
   return (
     <>
@@ -118,6 +133,7 @@ function Body({ port, me, week, lesson: l, reload, notify, clear }: { port: Data
           body={(k, show) => <StepBody step={k} show={show} port={port} model={model} ctx={ctx} actions={actions} notify={notify} clear={clear} reload={reload} />}
         />
       )}
+      {guests && <GuestLesson port={port} model={model} ctx={ctx} notify={notify} clear={clear} />}
     </>
   );
 }
@@ -485,15 +501,35 @@ function CloseClosed({ model, ctx, actions }: StepBodyProps) {
  * «תשלום והסעה»: the handler's (or an admin's) request the trainee's way — sent for approval, then only where it
  * stands; anyone else reads what was asked. The staff add their own parts: the decision (who may decide —
  * decide_payments), «שולם», and «פרטי ההסעה» (StaffTransport: the pickup read-only, the driver through
- * set_transport_driver once approved). An archive's lesson: the panel's stage as it was.
+ * set_transport_driver once approved). An archive's lesson (the reset, phase 5): last year's sheet, what was asked,
+ * «שולם», and the transport's details to read only — no screen writes them whole any more (set_transport_details).
  */
 function PayStep({ ctx }: StepBodyProps) {
   const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
   if (week.edition.kind === "archive") {
+    const asked = l.pay_amount != null || l.transport !== "none";
     return (
       <>
         <ImportNote cmds={cmds} lessonId={l.id} />
-        <PaymentStage {...ctx} />
+        {asked ? (
+          <div className="space-y-2">
+            <RequestSummary lesson={l} />
+            {/* imported: no request was made in the site — the tracking sheet said so */}
+            {l.approval === "none" && (
+              <p>
+                <Chip>{IMPORTED_PAY}</Chip>
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm">לא התבקשו תשלום או הסעה.</p>
+        )}
+        <PaidButton {...ctx} />
+        {l.transport !== "none" && (
+          <div className="border-t border-line pt-3">
+            <TransportReadOnly {...ctx} />
+          </div>
+        )}
       </>
     );
   }
@@ -521,12 +557,16 @@ function PayStep({ ctx }: StepBodyProps) {
   );
 }
 
-/** «מקורות ומצגת»: the files, what arrived and when it is printed, and the reader's word on the lesson. */
+/**
+ * «מקורות ומצגת»: the files (the sources only — the presentations are their own part, below them), what arrived and when
+ * it is printed, and the reader's word on the lesson.
+ */
 function SourcesStep({ port, ctx, notify, clear, reload }: StepBodyProps) {
   const { week, lesson: l, actor } = ctx;
   return (
     <>
-      <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />
+      <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} skipPresentations />
+      <LessonPresentations port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />
       <div className="border-t border-line pt-3">
         <SourcesStage key={l.version} {...ctx} />
       </div>

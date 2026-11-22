@@ -12,7 +12,7 @@ import { indexedDbKeyValue, OfflineCopy } from "./offline/store";
 import { Notice } from "./screens/Notice";
 import { ScreenBoundary } from "./screens/ScreenBoundary";
 import { MyDayScreen } from "./screens/myday/MyDayScreen";
-import { afterRedirect, homeRedirect, mineRedirect, myDayRedirect, navFor } from "./screens/nav";
+import { afterRedirect, gridRedirect, homeRedirect, mineRedirect, myDayRedirect, navFor, PRESENTATIONS } from "./screens/nav";
 import { OfflineWeek } from "./screens/OfflineWeek";
 import { SettingsScreen } from "./screens/settings/SettingsScreen";
 import { Shell, UpdateBanner } from "./screens/Shell";
@@ -43,6 +43,9 @@ const LessonScreen = lazy(() => import("./screens/lesson/LessonScreen").then((m)
 const DayScreen = lazy(() => import("./screens/myday/DayScreen").then((m) => ({ default: m.DayScreen })));
 const ApprovalsScreen = lazy(() => import("./screens/approvals/ApprovalsScreen").then((m) => ({ default: m.ApprovalsScreen })));
 const AfterScreen = lazy(() => import("./screens/after/AfterScreen").then((m) => ({ default: m.AfterScreen })));
+// The reset, phase 5 — «מצגות» (every member by address; staff's and logistics' header) and «תוצרים ← אתר האורחים» (admins)
+const PresentationsScreen = lazy(() => import("./screens/presentations/PresentationsScreen").then((m) => ({ default: m.PresentationsScreen })));
+const GuestsScreen = lazy(() => import("./screens/outputs/GuestsScreen").then((m) => ({ default: m.GuestsScreen })));
 
 /** How long the first check may go unanswered before the device's snapshot is shown meanwhile (src/offline/). */
 const SLOW_FIRST_CHECK_MS = 8000;
@@ -236,9 +239,10 @@ export default function App() {
 
 /**
  * The pages that draw on the whole width: the week (the staff's `/` too), the tracking table, the transport board
- * (`/logistics/transports`, above). The logistics home (`/logistics`, phase 4) is a reading column.
+ * (`/logistics/transports`, above), «מצגות» (phase 5: the day's list beside the week's deck). The logistics home
+ * (`/logistics`, phase 4) is a reading column. `/grid` only redirects since phase 5.
  */
-const FULL_WIDTH = new Set(["/tracking", "/week", "/grid"]);
+const FULL_WIDTH = new Set(["/tracking", "/week", PRESENTATIONS]);
 
 /**
  * `/`: a trainee's home is «היום שלי»; staff keep the writing grid there (their overview); logistics' home is
@@ -254,6 +258,15 @@ function Home({ port, me, persona }: { port: DataPort; me: Me; persona: Persona 
 /** An address another persona's (nav.ts): sent on, else its own page. */
 function redirectOr(to: string | null, page: ReactNode) {
   return to ? <Navigate replace to={to} /> : page;
+}
+
+/**
+ * `/grid` (the reset, phase 5): staff's writing grid is `/`; anyone else reads «השבוע» (`/week`). The persona is the
+ * edition's (personaOf): until the editions are known it could be another edition's role, so the page waits — «טוען…».
+ */
+function GridRedirect({ persona, store }: { persona: Persona | null; store: WeekStore }) {
+  if (store.editionId == null && store.problem == null) return <p className="text-ink-soft text-center mt-10">טוען…</p>;
+  return <Navigate replace to={gridRedirect(persona)} />;
 }
 
 /** `/mine`, `/mine/team` — «המרצים שלי» is gone (the reset, phase 3): to «מרצים», at «שלי» or at «כל הצוות». */
@@ -319,7 +332,9 @@ function GateScreen(props: {
       // (DayScreen sends a trainee or logistics elsewhere by itself), /myday is a trainee's — staff go to /day,
       // logistics home; «אחרי השבוע» (/after) is content's and admins', never logistics'; /mine only redirects.
       // Phase 4: logistics' home is /logistics (no tab; an unknown tab goes there too) — their `/`, /myday, /day/* and
-      // /after all land there, and the catch-all `*` → `/` → /logistics.
+      // /after all land there, and the catch-all `*` → `/` → /logistics. Phase 5: /grid is staff's `/` (anyone else
+      // /week — GridRedirect); «מצגות» (/presentations) is every member's by address (the bucket's rules decide who
+      // uploads); «אתר האורחים» (/export/guests) an admin's, as the designer's export; «עזרה» per persona.
       return (
         <ScreenBoundary>
         <Suspense fallback={<p className="text-ink-soft text-center mt-10">טוען…</p>}>
@@ -329,7 +344,7 @@ function GateScreen(props: {
           <Route path="/day/:d?" element={<DayScreen port={props.port} me={gate.me} />} />
           <Route path="/after" element={redirectOr(afterRedirect(props.persona), <AfterScreen port={props.port} me={gate.me} />)} />
           <Route path="/week" element={<ReadOnlyWeek port={props.port} me={gate.me} />} />
-          <Route path="/grid" element={<WeekScreen port={props.port} me={gate.me} />} />
+          <Route path="/grid" element={<GridRedirect persona={props.persona} store={props.store} />} />
           <Route path="/speakers" element={<SpeakersScreen port={props.port} me={gate.me} />} />
           <Route path="/speakers/new" element={<NewSpeakerScreen port={props.port} me={gate.me} />} />
           <Route path="/speakers/:id" element={<SpeakerScreen port={props.port} me={gate.me} />} />
@@ -340,13 +355,15 @@ function GateScreen(props: {
           <Route path="/print/escorts" element={<EscortsScreen port={props.port} me={gate.me} />} />
           <Route path="/print/rota" element={<RotaScreen port={props.port} me={gate.me} />} />
           <Route path="/export/designer" element={isSettingsAdmin(gate.me) ? <DesignerScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
+          <Route path="/export/guests" element={isSettingsAdmin(gate.me) ? <GuestsScreen port={props.port} me={gate.me} /> : <Navigate to="/tracking" replace />} />
+          <Route path={PRESENTATIONS} element={<PresentationsScreen port={props.port} me={gate.me} />} />
           <Route path="/reader" element={<ReaderScreen port={props.port} me={gate.me} />} />
           <Route path="/kk" element={<KkScreen port={props.port} me={gate.me} />} />
           <Route path="/memorial" element={<MemorialScreen port={props.port} me={gate.me} />} />
           <Route path="/logistics/:tab?/:view?" element={handlesLogistics(gate.me) ? <LogisticsScreen port={props.port} me={gate.me} /> : <Navigate to="/" replace />} />
           <Route path="/knowledge" element={<KnowledgeScreen port={props.port} me={gate.me} />} />
           <Route path="/knowledge/summary" element={<SummaryScreen port={props.port} me={gate.me} />} />
-          <Route path="/help" element={<HelpScreen />} />
+          <Route path="/help" element={<HelpScreen persona={props.persona} />} />
           <Route
             path="/settings/:tab?"
             element={

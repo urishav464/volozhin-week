@@ -1,144 +1,30 @@
-// A closed lesson's stages in the lesson panel (DESIGN «התא לפי שלב»): the five
-// the card's dots stand for — תשלום/הסעה · הודעת סיכום · מלווה · מקורות ·
-// מקראה — each a row of one list that opens, a red banner while the speaker
-// must be told again (until the message is open: its own box says it there),
-// and «איך עבר» apart, «אחרי השבוע». A stage already filled in is read first,
-// its form behind «עריכה». Every change is a WeekCommand (CONTRACT «From
-// placement to arrival»), so the demo refuses exactly what the database refuses.
+// A closed lesson's stages as the lesson page draws them (src/screens/lesson/LessonScreen.tsx, the steps «הודעת
+// סיכום», «מקורות ומצגת» and «מלווה»): the message, the escort, the sources and the reader's word, and last year's sheet
+// for an imported lesson. A stage already filled in is read first, its form behind «עריכה». Every change is a
+// WeekCommand (CONTRACT «From placement to arrival»), so the demo refuses exactly what the database refuses. The reset,
+// phase 5: the grid's panel no longer lists the stages (a summary, its five dots and «לדף השיעור») — `LessonStages`,
+// the panel's list of five with «איך עבר» under it, is gone; every stage is done on the lesson page.
 //
 // Who may do what (the database decides; the screen only offers it):
-//   the handler or an admin — the payment/transport request, «סומן כנשלח»;
-//   any content member or admin — the escort, the sources;
-//   a global admin, or an admin or logistics of the real, live edition — approve or reject a request
-//   (src/domain/approvals.ts mayDecide; one approval is enough);
-//   logistics or an admin — «שולם», and the transport's details once approved.
+//   the handler or an admin — «סומן כנשלח»;
+//   any content member or admin — the escort, the sources.
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRINT_WHENS, readerKind, SOURCES_KINDS, STAGE_LIMITS } from "../../data/stageRules";
 import { dutyNotes, escortLoad, SELF_INTRO_FROM, suggestSelfIntro, ticksOf } from "../../domain/escorts";
-import { lessonHandler } from "../../domain/handler";
-import { PRINT_WHEN_LABEL, readerFilesOf, SOURCES_LABEL, type StageKey, stagesOf } from "../../domain/stages";
+import { PRINT_WHEN_LABEL, SOURCES_LABEL } from "../../domain/stages";
 import { DAY_NAMES, fmt, fmtRange } from "../../domain/time";
 import { byGender } from "../../domain/names";
-import { type Gender, type PrintWhen, type SourcesKind, type SpeakerContacts, TICK_ITEMS, type Week } from "../../domain/types";
+import { type Gender, type PrintWhen, type SourcesKind, type SpeakerContacts, TICK_ITEMS } from "../../domain/types";
 import { errorMessage } from "../../errors";
-import { ReconfirmDot, SeverityMark } from "../../grid/bits";
+import { SeverityMark } from "../../grid/bits";
 import { escortClashes, ESCORT_MIN_GAP } from "../../rules/warnings";
-import { Button, Field, INPUT, useRunner } from "../settings/kit";
+import { Button, Field, INPUT } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
-import type { Actor } from "../weekStore";
 import { MessageComposer } from "./MessageComposer";
-import { type Act, Choice, EscortTicksLine, LINK_BUTTON, Problem, SavedView, type StageCtx, StageList, StageSection } from "./parts";
-import { PaymentStage } from "./PaymentStage";
-import { SourceFiles } from "./SourceFiles";
-import { ReviewSection } from "./ReviewStage";
+import { Choice, EscortTicksLine, LINK_BUTTON, Problem, SavedView, type StageCtx } from "./parts";
 import { MEMORIAL_SAID, readerManifest, STATUS_LABEL, unreadText, wordText } from "../../reader/model";
-
-export interface LessonStagesProps {
-  port: DataPort;
-  week: Week;
-  lessonId: number;
-  actor: Actor;
-  notify: Notify;
-  clear: () => void;
-  /** Re-reads the week after a command. */
-  reload: () => Promise<void>;
-}
-
-export function LessonStages({ port, week, lessonId, actor, notify, clear, reload }: LessonStagesProps) {
-  const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
-  const { busy, run } = useRunner(notify, clear);
-  const [open, setOpen] = useState<Set<StageKey>>(() => new Set());
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const afterId = useId();
-
-  const l = week.lessons.find((x) => x.id === lessonId);
-  if (!l || l.state !== "closed") return null;
-
-  const act: Act = async (key, fn, ok, onRefused) => {
-    const done = await run(key, fn, ok, onRefused);
-    await reload();
-    return done;
-  };
-  const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead");
-  const speaker = lead ? (week.speakers.find((s) => s.id === lead.speaker_id) ?? null) : null;
-  // the one rule (src/domain/handler.ts): the lead's approach's owner
-  const handler = lessonHandler(week, l.id);
-  const mine = actor.canEdit && (actor.isAdmin || (handler != null && handler === actor.memberId));
-  const ctx: StageCtx = { week, lesson: l, actor, cmds, busy, act, handler, mine };
-  const stages = stagesOf(l, readerFilesOf(week, l.id));
-  const toggle = (k: StageKey) =>
-    setOpen((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(k)) next.add(k);
-      return next;
-    });
-  const show = (k: StageKey) => {
-    setOpen((cur) => new Set(cur).add(k));
-    requestAnimationFrame(() => document.getElementById(`stage-${k}`)?.scrollIntoView({ block: "start" }));
-  };
-  const body = (k: StageKey) => {
-    switch (k) {
-      case "pay":
-        return <PaymentStage {...ctx} />;
-      case "msg":
-        return <MessageStage {...ctx} port={port} speakerId={speaker?.id ?? null} notify={notify} />;
-      case "escort":
-        return <EscortStage key={l.version} {...ctx} speakerGender={speaker?.gender ?? null} />;
-      case "sources":
-        return (
-          <>
-            <SourceFiles port={port} week={week} lesson={l} actor={actor} notify={notify} clear={clear} reload={reload} />
-            <div className="border-t border-line pt-3">
-              <SourcesStage key={l.version} {...ctx} />
-            </div>
-          </>
-        );
-      case "reader":
-        return <ReaderStage {...ctx} onSources={() => show("sources")} />;
-    }
-  };
-
-  // Two parts of the panel (the Sheet rules them apart): the five stages, then «איך עבר» — not one of the card's dots.
-  return (
-    <>
-      <section aria-labelledby="stages-title" className="space-y-2">
-        <h3 id="stages-title" className="mb-2.5 flex min-h-8 items-center text-[15px] font-bold text-navy">
-          שלבים
-        </h3>
-        {l.needs_reconfirm && !open.has("msg") && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-bad/40 bg-bad/5 px-3 py-2 text-sm">
-            <ReconfirmDot />
-            <span className="min-w-0 flex-1">
-              <b>לעדכן את המרצה:</b> השיעור השתנה אחרי שהודעת הסיכום נשלחה.
-            </span>
-            <Button onClick={() => show("msg")}>להודעה</Button>
-          </div>
-        )}
-        {week.edition.kind === "archive" && <ImportNote cmds={cmds} lessonId={l.id} />}
-        <StageList>
-          {stages.map((s) => (
-            <StageSection key={s.key} stage={s} open={open.has(s.key)} onToggle={() => toggle(s.key)}>
-              {body(s.key)}
-            </StageSection>
-          ))}
-        </StageList>
-      </section>
-      {/* after the week (milestone 6): opinions about the speaker — the edition's content members and admins only */}
-      {actor.role !== "logistics" && l.kind === "lesson" && (
-        <section aria-labelledby={afterId}>
-          <h3 id={afterId} className="mb-2 flex min-h-8 items-center text-sm font-bold text-navy">
-            אחרי השבוע
-          </h3>
-          <StageList>
-            <ReviewSection port={port} week={week} lesson={l} actor={actor} handler={handler} notify={notify} clear={clear} open={reviewOpen} onToggle={() => setReviewOpen((v) => !v)} />
-          </StageList>
-        </section>
-      )}
-    </>
-  );
-}
 
 // ------------------------------------------------------------------ last year's sheet
 

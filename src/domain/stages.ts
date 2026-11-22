@@ -179,6 +179,3 @@ export function nextLessonStep(l: StageFields, files: ReaderFiles): LessonStep |
   if (l.sources_kind === "pending" || readerFileMissing(l, files)) return "sources";
   return null;
 }
-
-/** The lesson panel's section a step opens. */
-export const STEP_STAGE: Record<LessonStep, StageKey> = { payment: "pay", reconfirm: "msg", send: "msg", escort: "escort", sources: "sources" };

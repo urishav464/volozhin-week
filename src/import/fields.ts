@@ -53,12 +53,6 @@ export const FIELDS: Record<ImportKind, readonly FieldDef[]> = {
   ],
 };
 
-export const KIND_LABEL: Record<ImportKind, string> = {
-  candidates: "המועמדים (רשימת המרצים מהסיעור)",
-  tracking: "גיליון המעקב של אשתקד",
-  escorts: "קובץ המלווים",
-};
-
 /** A header as compared: no spaces, punctuation, quotes or brackets; lower-case. */
 export function headerKey(s: string): string {
   return s.replace(/[\s"'״׳()?:\-–_/.,]/g, "").toLowerCase();

@@ -11,8 +11,9 @@ import type { KkData } from "../data/kk";
 import type { ArchiveExtras } from "../data/outputs";
 import { EMPTY_ROTA, type RotaData } from "../data/rota";
 import type { SourceFile, Week } from "../domain/types";
-import { type ArchiveMore, archiveFiles, archiveZip, PERSONAL_FILE, plannedFallen, safeEntryName, sourcePath, sourcesSize, touchedSpeakers } from "./archive";
+import { type ArchiveMore, archiveFiles, archiveZip, PERSONAL_FILE, plannedFallen, sourcePath, sourcesSize, touchedSpeakers } from "./archive";
 import { fetchSources, gatherArchive } from "./archiveGather";
+import { safeEntryName } from "./download";
 
 const extras: ArchiveExtras = { activity: [], contacts: [], transport: [], notes: [], milestones: [], snapshots: [] };
 const AT = "2026-11-20T10:00:00.000Z";

@@ -82,15 +82,6 @@ export function supabaseCommands(sb: SupabaseClient, editionId: number): WeekCom
       const n = await call("get_import_note", { p_lesson: lessonId });
       return typeof n === "string" ? n : null;
     },
-    setTransport: async (lessonId, d) =>
-      void (await call("set_transport_details", {
-        p_lesson: lessonId,
-        p_pickup_address: d.pickup_address,
-        p_pickup_time: d.pickup_time,
-        p_driver_name: d.driver_name,
-        p_driver_phone: d.driver_phone,
-        p_arranged: d.arranged,
-      })),
     // v18: the two halves — the patch itself is the JSON object (a key left out, or undefined, is not sent: left as it is)
     setTransportRequest: async (lessonId, patch) => void (await call("set_transport_request", { p_lesson: lessonId, p_fields: patch })),
     setTransportDriver: async (lessonId, patch) => void (await call("set_transport_driver", { p_lesson: lessonId, p_fields: patch })),

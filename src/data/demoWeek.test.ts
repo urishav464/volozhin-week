@@ -10,9 +10,7 @@ import { CommandError } from "./commands";
 import { DEMO_LOGISTICS, DemoPort } from "./demoPort";
 import { demoTransport, demoWeek, seedDemoLogistics } from "./demoWeek";
 import { emptyRota } from "./engine";
-import { mergeTransport } from "./stageRules";
 
-const EMPTY_DETAILS = { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false };
 
 const code = async (p: Promise<unknown>) => {
   try {
@@ -209,13 +207,15 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
     ]);
   });
 
-  it("a pickup changed through the old screens' form (set_transport_details keeps pickup_min): the board shows the new time, as the files do", async () => {
+  it("a pickup changed by set_transport_details (it keeps pickup_min — no screen calls it since the reset's phase 5, but rows it wrote remain): the board shows the new time, as the files do", async () => {
     const port = new DemoPort(DEMO_LOGISTICS, { logistics: true });
     const cmds = port.commands(1);
     const week = await port.loadWeek(1);
     const wed = at(week, 3, 600);
-    // the grid's panel saves as TransportBlock does: the whole five over what is there
-    await cmds.setTransport(wed.id, mergeTransport(EMPTY_DETAILS, { ...EMPTY_DETAILS, pickup_address: "כתובת לדוגמה", pickup_time: "07:30" }, await cmds.transport(wed.id)));
+    // the old whole-five write, on the engine (the port has no command for it any more): the pickup's text over what is there
+    const before = await cmds.transport(wed.id);
+    expect(before).not.toBeNull();
+    port.engine(1).setTransport(wed.id, { ...before!, pickup_address: "כתובת לדוגמה", pickup_time: "07:30" });
     const read = await cmds.transports();
     expect(read.find((t) => t.lesson_id === wed.id)).toMatchObject({ pickup_time: "07:30", pickup_min: 525 }); // the minute left behind
     const [lane] = transportLanes(week, read, null, 3).transports;

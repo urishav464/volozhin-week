@@ -44,6 +44,7 @@ const SECTIONS: Record<string, string> = {
   print: "תוצרים",
   export: "תוצרים",
   reader: "תוצרים",
+  presentations: "מצגות",
   logistics: "לוגיסטיקה",
   memorial: "זמני זיכרון",
   kk: "מכריכה לכריכה",

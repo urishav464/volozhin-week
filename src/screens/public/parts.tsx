@@ -16,10 +16,11 @@ import { useOnline } from "../../offline/online";
 import { Button } from "../settings/kit";
 import { Card, Shell } from "../Shell";
 
-export function PublicFrame({ children }: { children: ReactNode }) {
+/** `wide` (the schedule, the reset's phase 5): the reading column gives way from 1280px, where the days stand side by side. */
+export function PublicFrame({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
     <Shell demo={publicDemo}>
-      <div className="mx-auto max-w-2xl space-y-4 pb-16 print:max-w-none print:pb-0">
+      <div className={`mx-auto max-w-2xl space-y-4 pb-16 print:max-w-none print:pb-0 ${wide ? "xl:max-w-none" : ""}`}>
         {/* the seal on the parchment, above the page's title (on paper too, small, at the top corner) */}
         <img src={seal} alt="עין פרת" width={64} height={64} className="size-16 print:size-12" />
         {children}

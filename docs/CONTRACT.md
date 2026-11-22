@@ -516,7 +516,13 @@ speaker, the row never outlives that speaker: `reopen_lesson` deletes it with th
 - `transport(lesson)` — `get_transport_details(p_lesson)`, `SECURITY INVOKER` (read through the
   policy `transport_details_read`, whose predicate is the same function): null when hidden; no row
   yet → four nulls and `arranged: false`.
-- `setTransport(lesson, details)` — any member (`not_member`); the lesson exists (`stale`);
+- `set_transport_details` — **no screen calls it since the reset's phase 5**, and the TypeScript port has no
+  command for it any more (`WeekCommands.setTransport` and the old form, `TransportBlock`/`mergeTransport`, were
+  deleted): the lesson page and the transport board write the row in two parts (v18, below), and an archive's
+  lesson only reads it. It stays in v19 for the schema — the function, its grant and `schema.test`'s pin — and
+  parity pins it on the engine (`Engine.setTransport`, `cleanTransportDetails`); a later schema version may drop it.
+  Rows it wrote keep a stale `pickup_min` (`boardPickupMin`, `src/screens/logistics/lanes.ts`, still guards them).
+  The function: any member (`not_member`); the lesson exists (`stale`);
   `may_see_transport` (`transport_hidden`); `transport <> 'none'` (`no_transport`); values (above).
   All five replaced (`pickup_min` is never touched by it); nothing changed → no-op; logged (`lessons
   transport {fields}`) with the field names only, never a value. Its body is as it was: v18's wider
@@ -524,8 +530,8 @@ speaker, the row never outlives that speaker: `reopen_lesson` deletes it with th
   row is also written in two parts since v18 — `set_transport_request` (the pickup, by the handler,
   before the approval) and `set_transport_driver` (the driver, by logistics, after it): «v18», at
   the end of this file. Since v9 the escort's link writes `pickup_address` too
-  (`escort_pickup`), so the lesson panel saves the fields its form changed over the details read
-  again at the moment of saving (`mergeTransport`, `src/data/stageRules.ts`), never a stale copy.
+  (`escort_pickup`); until phase 5 the lesson panel saved the fields its form changed over the details read
+  again at the moment of saving, never a stale copy (that form is gone — the driver's half never writes the pickup).
 
 ### Templates — `set_confirm_template` / `set_duty_phrases` / `set_call_template`
 
@@ -1038,7 +1044,7 @@ memorial slot, not cancelled, in grid order — with its status:
 
 A row's files split into `printable` (read: what the build merges), `word` and `unread`; an
 `included` row counts `printable`, then names the rest («ועוד קובץ Word אחד שלא נכנס — צריך PDF»,
-«ועוד קובץ אחד שלא נקרא — צריך קובץ אחר»; `wordText`, `unreadText` — the lesson panel's words too).
+«ועוד קובץ אחד שלא נקרא — צריך קובץ אחר»; `wordText`, `unreadText` — the lesson page's words too; the grid panel's until the reset's phase 5).
 `manifestTotals` counts each status (`unreadable` included). The marked poster is the cover only when
 it was read; else the schedule is. The screen's estimate is `readerEstimate(manifest,
 scheduleLines(week))`: the build's own plan, the cover the poster's pages or the schedule's
@@ -1251,8 +1257,8 @@ nulls and `arranged` false) and, since v18, **`approval`** (the lesson's: `pendi
 and **`pickup_min`** (null when not set, or no row) — and **only** the lessons
 `app.may_see_transport` lets the caller see — never more than the one-lesson call. A rejected
 request, and a lesson that asks for no transport, are never in the list. Ordered by lesson
-id. Never in a Week or Realtime. Edited through `setTransport` (`set_transport_details`), as in the
-lesson panel.
+id. Never in a Week or Realtime. Edited in two parts (`set_transport_request`, `set_transport_driver`: v18) — no
+screen calls `set_transport_details` since the reset's phase 5.
 
 **«לוגיסטיקה ← הסעות» still shows the approved transports only.** The filter is the builder's
 (`transportRows`, `src/exports/logistics.ts`): the Week's lessons decide the rows (closed, a
@@ -1438,7 +1444,7 @@ speakers (as above), then:
   none or it is not the caller's); never in `load_week`, Realtime or the device's offline copy (`import_note` is a
   `PERSONAL_KEYS` key). Written by this import only (a replace deletes the old ones with their lessons);
   `purge_edition_private` deletes them (after the week, «The purge»). In the engine: `shared.importNotes`, by
-  `<edition>:<lesson>`, read by `importNoteOf`; the lesson panel shows it («מגיליון המעקב של אשתקד», a global
+  `<edition>:<lesson>`, read by `importNoteOf`; an archive lesson's page shows it in «תשלום והסעה» («מגיליון המעקב של אשתקד», a global
   admin's). The browser also clears phones and e-mails from an «אחר» sources note (`sources_note`), with a warning.
 - The archive's lessons are in `speaker_history` like any edition's; after the week, the archive is a past year for
   `edition_returning` and `speaker_reviews` (its kind is `archive`).
@@ -1938,10 +1944,12 @@ The driver's part. Definer; who as `set_paid`. In this order:
 The changed names are logged in the order `driver_name`, `driver_phone`, `arranged`. A first write with no row yet
 makes one, `arranged` false unless given.
 
-**`set_transport_details` stays as it is** — the old screens call it, all five fields at once. Through it the
-handler and the edition's admins, and since v18 logistics on a pending request, may still write the driver before
-the approval and the pickup after it: the split is the new screens' to keep, the two functions' to enforce for
-them, and not yet a rule of the row.
+**`set_transport_details` stays as it is** in the schema, all five fields at once — but **no screen calls it since
+the reset's phase 5** (the grid panel's form and an archive's lesson were its last callers; the port's
+`setTransport` is gone; it stays in v19 for the schema, parity pins it, and a later schema version may drop it).
+Through it the handler and the edition's admins, and since v18 logistics on a pending request, could still write
+the driver before the approval and the pickup after it: the split is the screens' to keep, the two functions' to
+enforce for them, and not yet a rule of the row.
 
 ## Who sees a lesson's transport details — `app.may_see_transport` (v18)
 

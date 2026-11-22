@@ -1,4 +1,4 @@
-// reviewFormProps: who may write a lesson's «איך עבר» on the panel and on «אחרי השבוע» alike (ReviewStage.tsx) — an
+// reviewFormProps: who may write a lesson's «איך עבר» on «אחרי השבוע» (ReviewStage.tsx) — an
 // edition admin always, the handler once the lesson's day has passed (Israel), nobody else; logistics never.
 import { describe, expect, it } from "vitest";
 import type { LessonReview } from "../../data/reviews";

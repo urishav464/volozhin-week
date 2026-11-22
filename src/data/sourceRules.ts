@@ -28,6 +28,10 @@ export const BUCKET_MIMES: readonly SourceMime[] = [PDF, "image/png", "image/jpe
 /** What the file picker offers (accept=…). */
 export const SOURCE_ACCEPT = ".pdf,.docx,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg," + DOCX;
 export const COVER_ACCEPT = ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg";
+/** The reset, phase 5 — a lesson's presentation: the five types (a PowerPoint first, the usual one). */
+export const PRESENTATION_ACCEPT = ".pptx,.pdf,.png,.jpg,.jpeg,.docx," + PPTX + ",application/pdf,image/png,image/jpeg," + DOCX;
+/** The week's presentation (the cover path): any of them but Word (app.source_refusal refuses a docx there). */
+export const WEEK_PRESENTATION_ACCEPT = ".pptx,.pdf,.png,.jpg,.jpeg," + PPTX + ",application/pdf,image/png,image/jpeg";
 
 const EXT: Record<SourceMime, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", [DOCX]: "docx", [PPTX]: "pptx" };
 
@@ -104,16 +108,24 @@ export function sourcePath(edition: number, lesson: number | null, uuid: string,
 }
 
 /**
- * What a picked file must be before it is sent, each with its own reason: a type we take (bad_file; the poster —
- * a PDF or a picture, never Word: cover_bad_file), then at most 25 MB (file_too_big). v19: a pptx only as a
- * presentation (bad_file as a source); a lesson's presentation may be any of the five types, the week's own (the
- * cover path) any but Word — the bucket refuses a docx there whatever it is meant to be (app.source_refusal ≡
- * Engine.sourceRefusal: a path carries no kind), so it is refused here first, with the server's own code (bad_file).
+ * What a picked file must be before it is sent, each with its own reason, the type before the size. A presentation
+ * (the reset, phase 5 — the words of «העלאת מצגת»): one of the five types (presentation_bad_file — an old ppt or a
+ * Keynote is none), and the week's own (the cover path) never Word (week_presentation_bad_file: the bucket refuses a
+ * docx there whatever it is meant to be — app.source_refusal ≡ Engine.sourceRefusal, a path carries no kind). A source:
+ * the poster a PDF or a picture (cover_bad_file), a pptx never (pptx_source — the server's own word for it is bad_file,
+ * source_files_pptx_kind), else one of the four (bad_file). Then at most 25 MB (file_too_big). Every code is the
+ * browser's, said before the bytes go up; the server refuses the same files with its own.
  */
 export function checkPicked(f: { name: string; type: string; size: number }, cover: boolean, kind: SourceKind = "source"): SourceMime {
   const mime = mimeOfFile(f);
-  if (cover && kind === "source" && (mime == null || !printableMime(mime))) fail("cover_bad_file");
-  if (mime == null || (mime === PPTX && kind !== "presentation") || (cover && mime === DOCX)) fail("bad_file");
+  if (kind === "presentation") {
+    if (mime == null) fail("presentation_bad_file");
+    if (cover && mime === DOCX) fail("week_presentation_bad_file");
+  } else {
+    if (cover && (mime == null || !printableMime(mime))) fail("cover_bad_file");
+    if (mime === PPTX) fail("pptx_source");
+    if (mime == null) fail("bad_file");
+  }
   if (f.size > MAX_SOURCE_BYTES) fail("file_too_big");
   return mime!;
 }
@@ -156,11 +168,6 @@ export function pagesFor(mime: SourceMime, pages: number | null | undefined): nu
 export function arrived(l: Pick<Lesson, "sources_kind" | "in_reader">, first: boolean): Pick<Lesson, "sources_kind" | "in_reader"> {
   const kind = l.sources_kind === "pending" ? "sheet" : l.sources_kind;
   return { sources_kind: kind, in_reader: l.in_reader || (first && readerKind(kind)) };
-}
-
-/** A lesson's files, the poster's (null) or a lesson's, and whether each is the current lead speaker's. */
-export function filesOf(files: SourceFile[], lessonId: number): SourceFile[] {
-  return files.filter((f) => f.lesson_id === lessonId);
 }
 
 /** «מהמרצה הקודם»: a file that arrived for a speaker who is not the lesson's lead now (or the lesson is no longer closed). */

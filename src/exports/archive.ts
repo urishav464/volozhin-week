@@ -43,7 +43,7 @@ import { displayName } from "../domain/names";
 import { canDrive, codeOf, helpsRota } from "../domain/rota";
 import { DAY_NAMES, fmt } from "../domain/time";
 import type { SourceFile, Week } from "../domain/types";
-import { PERSONAL_FILE } from "./download";
+import { PERSONAL_FILE, safeEntryName } from "./download";
 import { speakersOf } from "./logistics";
 import { trackingRows, trackingTable } from "./tracking";
 import { toXlsx } from "./xlsx";
@@ -96,11 +96,6 @@ export function sourcesSize(week: Pick<Week, "sourceFiles">): { count: number; b
   return { count: files.length, bytes: files.reduce((a, f) => a + f.size_bytes, 0) };
 }
 
-/** A file's name as a zip entry may carry it: no folder separators or characters a file system refuses; at most 80 characters. */
-export function safeEntryName(name: string): string {
-  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[._\s]+|[.\s]+$/g, "").trim();
-  return [...(clean || "file")].slice(-80).join("");
-}
 
 /**
  * Where a file goes in the zip: sources/<day>/<time>_<id>_<name>. A memorial file goes where its plan is placed now;

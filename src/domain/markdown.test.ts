@@ -82,8 +82,9 @@ describe("markdown-lite", () => {
     expect(pay).toContain("צוות המחזור או הצוות הלוגיסטי");
     expect(pay).toContain("אישור אחד מספיק");
     expect(pay).not.toContain("המדריך/ה מאשר/ת");
-    // the header as each persona sees it, and the pages that replaced the old sheet and «המרצים שלי»
-    const header = guide.split("\n").find((l) => l.startsWith("- בראש המסך יש את האזורים"));
+    // the header as each persona sees it (since phase 5 in each persona's own intro), and the pages that replaced the
+    // old sheet and «המרצים שלי»
+    const header = intro(guide, "לצוות המחזור").find((l) => l.startsWith("- **בראש המסך:**"));
     expect(header).toContain("השבוע · ימים · מרצים · אישורים · לוגיסטיקה");
     expect(guide).not.toContain("המרצים שלי");
     for (const h of ["## ימים", "## מרצים", "## אישורים", "## עמוד המרצה", "## אחרי השבוע"]) expect(guide).toContain(`\n${h}\n`);
@@ -110,10 +111,9 @@ describe("markdown-lite", () => {
     const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
     const lines = guide.split("\n");
     const line = (start: string) => lines.find((l) => l.startsWith(start)) ?? "";
-    // the header as logistics sees it (nav.ts navFor): «בית» first, the week to read — and the staff's unchanged
-    const header = line("- בראש המסך יש את האזורים");
-    expect(header).toContain("הצוות הלוגיסטי: בית · אישורים · השבוע · תוצרים · זמני זיכרון · מכריכה לכריכה · ידע · עזרה.");
-    expect(header).toContain("השבוע · ימים · מרצים · אישורים · לוגיסטיקה");
+    // the header as logistics sees it (nav.ts navFor): «בית» first, the week to read — in their intro since phase 5
+    const header = intro(guide, "לצוות הלוגיסטי").find((l) => l.startsWith("- **בראש המסך:**"));
+    expect(header).toContain("בית · אישורים · השבוע · תוצרים · מצגות · זמני זיכרון · מכריכה לכריכה · ידע · עזרה.");
     // the strip (LogisticsScreen.tsx LOGISTICS_TABS) and the home's three groups (tasks.ts GROUP_TITLE), always all there
     expect(line("- **«לוגיסטיקה»**")).toContain("בית · הסעות וצוות · תשלומים · ספרים · הדפסות · תורנויות");
     const home = line("- **«בית» — מה נשאר לעשות:**");
@@ -143,5 +143,41 @@ describe("markdown-lite", () => {
       expect(l).toContain("«שמירה»");
     }
   });
+
+  it("«עזרה» after the reset's phase 5: each persona's header in its intro (nav.ts navFor and splitNav), «עוד», the panel's summary, the two new sections", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    const head = (who: string) => intro(guide, who).find((l) => l.startsWith("- **בראש המסך:**")) ?? "";
+    // the whole header from 1024px, and the row below it — «עוד» for the staff and logistics, none for a trainee
+    expect(head("לצוות המחזור")).toContain("השבוע · ימים · מרצים · אישורים · לוגיסטיקה · תוצרים · מצגות · זמני זיכרון · מכריכה לכריכה · ידע · הגדרות · עזרה.");
+    expect(head("לצוות המחזור")).toContain("בשורה רק «השבוע · ימים · מרצים · אישורים», וכל השאר מאחורי «עוד»");
+    expect(head("לצוות הלוגיסטי")).toContain("בשורה רק «בית · אישורים · השבוע · תוצרים», וכל השאר מאחורי «עוד»");
+    expect(head("לחניכים")).toContain("«היום שלי» · «מרצים» · «השבוע» · «עזרה»");
+    expect(head("לחניכים")).not.toContain("«עוד»");
+    // the old one-line list of every persona's header is gone from «כניסה»
+    expect(guide).not.toContain("- בראש המסך יש את האזורים, וכל אחד/ת");
+    // ≤ 8 bullets in each new intro
+    for (const who of ["לצוות המחזור", "לצוות הלוגיסטי"]) expect(intro(guide, who).filter((l) => l.startsWith("- ")).length).toBeLessThanOrEqual(8);
+    // the grid's panel is a summary: its stages are the lesson page's — nowhere a stage or «איך עבר» «בלוח»
+    const grid = intro(guide, "הרשת").join("\n");
+    expect(grid).toContain("**בשיעור סגור הלוח הוא סיכום:**");
+    expect(grid).not.toContain("הסגירה ושלבי השיעור");
+    expect(guide).not.toContain("וגם בלוח השיעור ברשת");
+    expect(guide).not.toContain("אותו טופס גם בלוח של כל שיעור סגור ברשת");
+    expect(guide).not.toContain("כששומרים את פרטי ההסעה בלוח השיעור");
+    // «מצגות»: the morning's zip for the hall, its two text files, «חדש מאז ההורדה»; «אתר האורחים»: who fills what
+    const decks = intro(guide, "מצגות").join("\n");
+    for (const w of ["«הורדת כל המצגות של היום»", "בדיסק-און-קי", "«סדר-היום.txt»", "«links.txt»", "«חדש מאז ההורדה»", "«מצגת צפויה — עוד לא הועלתה»", "כל שתי דקות"]) expect(decks).toContain(w);
+    const guests = intro(guide, "אתר האורחים").join("\n");
+    for (const w of ["«עוד פרטים»", "«מאושר/ת להופיע»", "«תיאור לאורחים»", "«תיאור קצר לשיעור (רשות)»", "«תוצרים ← אתר האורחים»", "בלי תיאורים ובלי תמונות", "ביטול מוריד אותם מהאתר מיד"]) expect(guests).toContain(w);
+  });
 });
+
+/** A `##` section's lines, its heading excluded (empty when the guide has no such heading). */
+function intro(guide: string, heading: string): string[] {
+  const lines = guide.split("\n");
+  const at = lines.indexOf(`## ${heading}`);
+  if (at < 0) return [];
+  const end = lines.findIndex((l, i) => i > at && /^##\s/.test(l));
+  return lines.slice(at + 1, end < 0 ? undefined : end);
+}
 

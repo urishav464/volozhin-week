@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 import seal from "../assets/brand/ein-prat-white.png";
+import { MORE_LABEL, moreLabel, splitNav } from "./nav";
 
 /** One of the site's sections in the header (src/screens/nav.ts): «השבוע», «ימים», «אישורים» (with a badge), «הגדרות»… */
 export interface NavItem {
@@ -12,6 +13,11 @@ export interface NavItem {
   badgeLabel?: string;
   /** The paths this section covers (the outputs: /tracking, /print/…, /export/…); default: `to` and below. */
   match?: string[];
+  /**
+   * Below 1024px the section sits behind «עוד» (the reset, phase 5 — nav.ts navFor sets it, splitNav splits by it); from
+   * 1024px every section is in the row. Never set on a section with a badge.
+   */
+  more?: true;
 }
 
 interface Props {
@@ -36,6 +42,14 @@ export function sectionActive(item: Pick<NavItem, "to" | "match">, path: string)
 
 const HEADER_BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-full border border-white/50 px-3 text-sm font-bold hover:bg-white/10";
 
+/**
+ * A section's pill in the header — the row's, «עוד»'s and the panel's alike. From 1024px to 1280px a little slimmer
+ * (px-2, the row's gap 2px): the staff's twelve (phase 5 added «מצגות») beside the name and «התנתקות» at 1024px.
+ */
+const NAV_PILL = "inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 lg:px-2 xl:px-2.5 text-sm font-bold transition-colors duration-150";
+const PILL_ON = "bg-paper text-navy shadow-sm";
+const PILL_OFF = "text-white hover:bg-white/10";
+
 export function Shell({ demo, user, onSignOut, nav, full = false, notice, children }: Props) {
   const path = useLocation().pathname;
   return (
@@ -48,11 +62,10 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
       {/* Prat Navy, the seal in white beside the name; on it the focus ring is gold (index.css, .on-navy) */}
       <header className="on-navy bg-navy text-white shadow-md print:hidden">
         {/* Signed in, the header keeps one width on every screen, so a section link stays under the pointer.
-            Below 1024px the sections move to a row of their own, under the name and «התנתקות», and wrap
-            onto a second line when they do not fit (an admin's ten on a phone): every entry stays
-            visible and one tap away, nothing hides behind a menu or off the edge of a sideways scroll.
-            From 1024px the sections keep their whole width (shrink-0) and the member's name gives way
-            (truncated, the whole name on hover): an admin's ten links fit from 1024px on. */}
+            Below 1024px the sections move to a row of their own, under the name and «התנתקות» — one row:
+            since the reset's phase 5 the sections a role uses less sit behind «עוד» (HeaderNav, below).
+            From 1024px every section is in the row (shrink-0) and the member's name gives way
+            (truncated, the whole name on hover). */}
         <div className={`mx-auto ${full || user ? "max-w-none" : "max-w-6xl"} px-4 flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:flex-nowrap`}>
           <h1 className="flex h-14 shrink-0 items-center font-display text-xl font-extrabold tracking-tight">
             {nav ? (
@@ -67,31 +80,7 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
               </span>
             )}
           </h1>
-          {nav && nav.length > 0 && (
-            // lg:p-1: the sideways-scroll box clips what overflows it, so a link's focus ring (4px out) needs the room
-            <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:shrink-0 lg:flex-nowrap lg:overflow-x-auto lg:p-1">
-              {nav.map((item) => {
-                const isActive = sectionActive(item, path);
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    aria-current={isActive ? "page" : undefined}
-                    aria-label={item.badge ? `${item.label}, ${item.badge} ${item.badgeLabel ?? ""}`.trim() : undefined}
-                    className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-sm font-bold transition-colors duration-150 ${isActive ? "bg-paper text-navy shadow-sm" : "text-white hover:bg-white/10"}`}
-                  >
-                    {item.label}
-                    {!!item.badge && (
-                      // gold, the brand's rare honour, on either pill: navy-900 on gold is 7.6:1 behind 12px digits
-                      <span aria-hidden className="rounded-full bg-gold px-1.5 text-xs font-bold leading-5 text-navy-900 tabular-nums">
-                        {item.badge}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </nav>
-          )}
+          {nav && nav.length > 0 && <HeaderNav items={nav} path={path} />}
           <div className="ms-auto flex h-14 min-w-0 items-center gap-2 sm:gap-3">
             {user && (
               <span className="truncate text-sm" title={`${user.name} · ${user.roleLabel}`}>
@@ -109,6 +98,127 @@ export function Shell({ demo, user, onSignOut, nav, full = false, notice, childr
       {notice}
       <main className={`flex-1 mx-auto w-full print:max-w-none print:p-0 ${full ? "max-w-none px-3 py-3" : "max-w-6xl px-4 py-6"}`}>{children}</main>
     </div>
+  );
+}
+
+/**
+ * The sections (nav.ts navFor). From 1024px all of them in one row, as before the reset's phase 5. Below it, the row
+ * holds a role's first few (splitNav's `inline`) and «עוד», a disclosure button (never a menu: links in a list, Tab
+ * walks them) that opens the rest under the row, in the header's order — `more` is always the header's tail (nav.test),
+ * so the panel's list is drawn ONCE: from 1024px it is simply the row's end, «עוד» hidden. It closes on Escape (the
+ * focus back on «עוד»), on a tap outside it, and when the page changes (a link in it gives «עוד» the focus, so it never
+ * falls to the page). While the page is under a section behind it, «עוד» wears the active pill: «עוד, כאן: …».
+ * A trainee's four or five need no «עוד» (no `more`: no button).
+ */
+function HeaderNav({ items, path }: { items: NavItem[]; path: string }) {
+  const { inline, more } = splitNav(items);
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLUListElement>(null);
+  const here = more.find((i) => sectionActive(i, path)) ?? null;
+
+  // a new page closes it; the focus, if it was in the panel, goes to «עוד» (the link it was on is hidden now)
+  const shownAt = useRef(path);
+  useEffect(() => {
+    if (shownAt.current === path) return;
+    shownAt.current = path;
+    if (panel.current?.contains(document.activeElement)) button.current?.focus();
+    setOpen(false);
+  }, [path]);
+
+  // open: Escape closes (the focus back on «עוד» when it was in the header or nowhere), a tap outside closes
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const at = document.activeElement;
+      setOpen(false);
+      if (at == null || at === document.body || panel.current?.contains(at) || at === button.current) button.current?.focus();
+    };
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (t && (panel.current?.contains(t) || button.current?.contains(t))) return;
+      setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [open]);
+
+  return (
+    // lg:p-1: the sideways-scroll box clips what overflows it, so a link's focus ring (4px out) needs the room
+    <nav aria-label="אזורי המערכת" className="order-last flex w-full flex-wrap gap-1 pb-2 lg:order-none lg:w-auto lg:shrink-0 lg:flex-nowrap lg:gap-0.5 lg:overflow-x-auto lg:p-1 xl:gap-1">
+      {inline.map((item) => (
+        <NavLink key={item.to} item={item} path={path} />
+      ))}
+      {more.length > 0 && (
+        <>
+          <button
+            ref={button}
+            type="button"
+            aria-expanded={open}
+            aria-controls="nav-more"
+            aria-label={here ? moreLabel(here) : undefined}
+            data-nav-more
+            data-active={here ? "" : undefined}
+            onClick={() => setOpen((v) => !v)}
+            className={`${NAV_PILL} lg:hidden ${here ? PILL_ON : open ? "bg-white/15 text-white" : PILL_OFF}`}
+          >
+            {MORE_LABEL}
+            <span aria-hidden className={`text-xs motion-safe:transition-transform ${open ? "rotate-180" : ""}`}>
+              ▾
+            </span>
+          </button>
+          {/* below 1024px: only while open, a line of its own under the row; from 1024px: the row's end */}
+          <ul
+            ref={panel}
+            id="nav-more"
+            data-nav-more-panel
+            className={`${open ? "flex" : "hidden"} basis-full flex-wrap gap-1 border-t border-white/20 pt-1 lg:flex lg:basis-auto lg:flex-nowrap lg:gap-0.5 lg:border-0 lg:pt-0 xl:gap-1`}
+          >
+            {more.map((item) => (
+              <li key={item.to} className="flex">
+                <NavLink
+                  item={item}
+                  path={path}
+                  onPick={() => {
+                    // the same page again (no route change): close all the same, the focus on «עוד»
+                    if (!open) return;
+                    setOpen(false);
+                    button.current?.focus();
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </nav>
+  );
+}
+
+function NavLink({ item, path, onPick }: { item: NavItem; path: string; onPick?: () => void }) {
+  const isActive = sectionActive(item, path);
+  return (
+    <Link
+      to={item.to}
+      data-nav-item={item.to}
+      aria-current={isActive ? "page" : undefined}
+      aria-label={item.badge ? `${item.label}, ${item.badge} ${item.badgeLabel ?? ""}`.trim() : undefined}
+      onClick={onPick}
+      className={`${NAV_PILL} ${isActive ? PILL_ON : PILL_OFF}`}
+    >
+      {item.label}
+      {!!item.badge && (
+        // gold, the brand's rare honour, on either pill: navy-900 on gold is 7.6:1 behind 12px digits
+        <span aria-hidden className="rounded-full bg-gold px-1.5 text-xs font-bold leading-5 text-navy-900 tabular-nums">
+          {item.badge}
+        </span>
+      )}
+    </Link>
   );
 }
 

@@ -37,7 +37,7 @@ const code = async (p: Promise<unknown>) => {
 
 describe("the stage commands on the wire", () => {
   it("calls every stage function by its parameter names", async () => {
-    const { sb, sent } = client([[204, null], [204, null], [204, null], [204, null], [204, null], [204, null], [200, null], [204, null]]);
+    const { sb, sent } = client([[204, null], [204, null], [204, null], [204, null], [204, null], [204, null], [200, null]]);
     const c = supabaseCommands(sb, 7);
     await c.setPayment(41, 3, 500, "round_trip");
     await c.decidePayments([{ lesson_id: 41, version: 4 }, { lesson_id: 42, version: 1 }], "approved", "באצווה");
@@ -46,7 +46,8 @@ describe("the stage commands on the wire", () => {
     await c.setSources(41, 7, { sources_kind: "presentation", print_when: "none", sources_note: null, presentation_url: "https://slides.example/a", in_reader: false });
     await c.setPaid(41, true);
     expect(await c.transport(41)).toBeNull();
-    await c.setTransport(41, { pickup_address: "כתובת לדוגמה", pickup_time: "07:15", driver_name: null, driver_phone: null, arranged: true });
+    // set_transport_details: no screen calls it since the reset's phase 5 — the port has no command for it (CONTRACT)
+    expect("setTransport" in c).toBe(false);
     expect(sent.map((r) => [r.path.replace("/rest/v1/rpc/", ""), r.body])).toEqual([
       ["set_payment", { p_lesson: 41, p_version: 3, p_pay_amount: 500, p_transport: "round_trip" }],
       ["decide_payments", { p_lessons: [41, 42], p_versions: [4, 1], p_decision: "approved", p_note: "באצווה" }],
@@ -55,7 +56,6 @@ describe("the stage commands on the wire", () => {
       ["set_sources", { p_lesson: 41, p_version: 7, p_kind: "presentation", p_print_when: "none", p_note: null, p_url: "https://slides.example/a", p_in_reader: false }],
       ["set_paid", { p_lesson: 41, p_paid: true }],
       ["get_transport_details", { p_lesson: 41 }],
-      ["set_transport_details", { p_lesson: 41, p_pickup_address: "כתובת לדוגמה", p_pickup_time: "07:15", p_driver_name: null, p_driver_phone: null, p_arranged: true }],
     ]);
     expect(sent.every((r) => r.method === "POST")).toBe(true);
   });
@@ -73,7 +73,7 @@ describe("the stage commands on the wire", () => {
     const { sb } = client([p0001("approval_pending"), p0001("transport_hidden"), p0001("bad_escort"), [403, { code: "42501", message: "permission denied for function set_paid" }], [404, { code: "PGRST202", message: "Could not find the function" }]]);
     const c = supabaseCommands(sb, 7);
     expect(await code(c.markConfirmSent(41, 1))).toBe("approval_pending");
-    expect(await code(c.setTransport(41, { pickup_address: null, pickup_time: null, driver_name: null, driver_phone: null, arranged: false }))).toBe("transport_hidden");
+    expect(await code(c.setTransportDriver(41, { driver_name: null }))).toBe("transport_hidden");
     expect(await code(c.setEscort(41, 1, { roster_id: 9, self_intro: false, escort_note: null }))).toBe("bad_escort");
     expect(await code(c.setPaid(41, true))).toBe("forbidden");
     expect(await code(c.setPayment(41, 1, null, "none"))).toMatch(/^raw:/); // schema.sql not re-run: a PortError, not a refusal

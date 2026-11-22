@@ -71,8 +71,6 @@ export interface WeekCommands {
   setPaid(lessonId: number, paid: boolean): Promise<void>;
   /** Pickup and driver — null when the caller may not see them (app.may_see_transport). Never part of a Week. */
   transport(lessonId: number): Promise<TransportDetails | null>;
-  /** The same people only; all five fields replaced (null clears). */
-  setTransport(lessonId: number, d: TransportDetails): Promise<void>;
   /**
    * v18, the request's half: the lesson's handler or an admin of the edition, on a closed lesson that asked for
    * transport — whatever the instructor's decision (it is filled BEFORE the approval) — and only by who may read it
