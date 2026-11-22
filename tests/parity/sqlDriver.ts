@@ -4,12 +4,13 @@
 import type pg from "pg";
 import { ARCHIVE_ROOM } from "../../src/data/importRules";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "../sql/db";
+import { photoBase64 } from "../../src/testing/photos";
 import {
   answers, APPROACHES, type At, CONTACTS, contactsLine, contactsRead, type Driver, EDITION, editionLines, fallenContactsLine, fallenLine, fileLine, filePath, FOREIGN_ROOM,
   archiveLessonLine, archivePayloadOf, FOREIGN_EDITION, importRead, lookupRead, speakerRows,
   FOREIGN_TRAINEE, kkGroupLine, type KkStepFields, planLine, purgeRead, reviewLine,
-  lessonKey, lessonLine, linkLine, logLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, ownerLine, poolLine, publicRead, ROOMS, ROSTER, SPEAKERS, speakerLabel, splitLabel,
-  prefsRow, slotLine, SLOTS, type Step, transportRead, transportRowLine, transportsLine,
+  lessonKey, lessonLine, linkLine, logKindOf, logLine, matchesRead, MEMBERS, NO_SUCH_TOKEN, type Normal, ownerLine, photoLine, photoTag, poolLine, publicRead, ROOMS, ROSTER,
+  SPEAKERS, speakerLabel, splitLabel, prefsRow, slotLine, SLOTS, type Step, transportRead, transportRowLine, transportsLine,
 } from "./fixture";
 
 export async function sqlDriver(dbName: string): Promise<Driver> {
@@ -237,6 +238,12 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         await db.query("update public.editions set first_day_from = $2 where id = $1", [ed, step.firstDayFrom]);
         return "ok";
       }
+      if ("coSpeaker" in step) {
+        // as the tables' owner: a co-speaker row on the lesson (its edition, span and closed-ness filled by its trigger)
+        const l = await lessonAt(step.at);
+        if (l) await db.query("insert into public.lesson_speakers (lesson_id, speaker_id, role) values ($1, $2, 'co')", [l.id, await speakerId(step.coSpeaker)]);
+        return "ok";
+      }
       if ("expire" in step) {
         await db.query("update public.share_links set expires_at = now() - interval '1 minute' where token_hash = extensions.digest($1, 'sha256')", [tokenOf(step.expire)]);
         return "ok";
@@ -263,7 +270,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           let names: Awaited<ReturnType<typeof nameMaps>> | undefined;
           for (let i = 0; i < (step.times ?? 1); i++) {
             const r = await anon(`select public.${fn}($1)`, [t], step.from);
-            out.push(r.ok ? publicRead(step.anon, r.v, (names ??= await nameMaps())) : r.code);
+            out.push(r.ok ? publicRead(step.anon, r.v, (names ??= await nameMaps()), "part" in step ? step.part : undefined) : r.code);
           }
           return answers(out);
         }
@@ -427,14 +434,36 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       }
       if ("register" in step) {
         const target = step.for ?? files[step.register]?.target ?? "cover";
-        return call(step.as, "select public.register_source_file($1, $2, $3, $4, $5)", [
-          ed, await targetId(target), await pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages,
-        ]);
+        const args = [ed, await targetId(target), await pathOf(step.register, target), step.display ?? `${step.register}.pdf`, step.pages === undefined ? 1 : step.pages];
+        // v19: `kind` absent — the five-argument call, as an old page sends it (p_kind's default)
+        return step.kind === undefined
+          ? call(step.as, "select public.register_source_file($1, $2, $3, $4, $5)", args)
+          : call(step.as, "select public.register_source_file($1, $2, $3, $4, $5, $6)", [...args, step.kind]);
       }
       if ("unstore" in step) return unstore(step.as, await pathOf(step.unstore));
       if ("unregister" in step) return call(step.as, "select public.remove_source_file($1)", [await fileId(step.unregister)]);
       if ("readerHeaders" in step) return call(step.as, "select public.set_reader_headers($1, $2, $3)", [ed, step.readerHeaders[0], step.readerHeaders[1]]);
       if ("readerCover" in step) return call(step.as, "select public.set_reader_cover($1, $2)", [ed, step.readerCover == null ? null : await fileId(step.readerCover)]);
+      // ---- v19
+      if ("readerSent" in step) return call(step.as, "select public.set_reader_sent($1, $2)", [ed, step.readerSent]);
+      if ("photo" in step) {
+        const photo = step.raw !== undefined ? step.raw : step.bytes == null ? null : photoBase64(step.bytes);
+        return call(step.as, "select public.set_speaker_photo($1, $2, $3)", [ed, await speakerId(step.photo), photo]);
+      }
+      if ("readPhoto" in step) {
+        return call(step.as, "select public.get_speaker_photo($1)", [await speakerId(step.readPhoto)], (v) => {
+          const p = v as { photo: string; uploaded_at: string | null } | null;
+          return p == null ? "none" : `${photoTag(p.photo)}|at=${p.uploaded_at ? "y" : "-"}`;
+        });
+      }
+      if ("publicOk" in step) {
+        const a = await approachOf(step.publicOk);
+        return call(step.as, "select public.set_public_ok($1, $2, $3)", [a?.id ?? -1, (a?.version ?? 0) - (step.staleBy ?? 0), step.ok]);
+      }
+      if ("publicNote" in step) {
+        const l = await at(step.publicNote, step.staleBy);
+        return call(step.as, "select public.update_lesson($1, $2, $3)", [l.id, l.version, JSON.stringify({ public_note: step.note })]);
+      }
       // ---- memorial times and logistics
       if ("saveFallen" in step) {
         return call(step.as, "select public.save_fallen($1, $2, $3, $4, $5)", [
@@ -545,8 +574,11 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
         return call(step.as, "select public.set_transport_driver($1, $2::jsonb)", [(await at(step.transportDriver)).id, step.fields === undefined ? null : JSON.stringify(step.fields)]);
       }
       if ("log" in step) {
-        // the activity table as its owner reads it (nobody's session): oldest first, who by key
-        const rows = (await db.query("select actor, entity, entity_id, kind, detail from public.activity where kind = any ($1::text[]) order by id", [step.log])).rows;
+        // the activity table as its owner reads it (nobody's session): oldest first, who by key — the kinds as logKindOf reads them
+        const rows = (await db.query("select actor, entity, entity_id, kind, detail from public.activity order by id")).rows.filter((r) => {
+          const k = logKindOf(r);
+          return k != null && step.log.includes(k);
+        });
         const [spk, keys] = [await speakerNames(), await lessonKeyMap()];
         const names = { speaker: spk, lesson: (id: number) => keys.get(id) ?? `#${id}`, member: memberKey, edition: (id: unknown) => (Number(id) === ed ? "here" : `#${id}`) };
         return rows.map((r) => logLine(r, memberKey(r.actor), names)).join(" ; ") || "none";
@@ -665,6 +697,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
       const reviews = (await db.query("select r.*, s.name, s.disambiguator from public.lesson_reviews r left join public.speakers s on s.id = r.speaker_id where r.edition_id = $1", [ed])).rows;
       const purged = (await one("select purged_at from public.editions where id = $1", [ed])).purged_at != null;
       const owners = (await db.query("select day, member_id, seen_at from public.day_owners where edition_id = $1", [ed])).rows;
+      const photos = (await db.query("select p.image, p.uploaded_by, s.name, s.disambiguator from public.speaker_photos p join public.speakers s on s.id = p.speaker_id")).rows;
       const labelOf = (path: string) => Object.entries(files).find(([, f]) => f.path === path)?.[0] ?? path;
       const coverId = settings.reader_cover == null ? null : Number(settings.reader_cover);
       const cover = coverId == null ? "-" : labelOf(sourceFiles.find((f) => Number(f.id) === coverId)?.storage_path ?? `#${coverId}`);
@@ -673,13 +706,13 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           .map((l) => lessonLine(lessonKey(l), l, l.cat ?? "-", member, l.escort_roster_id == null ? "-" : (l.trainee ?? `#${l.escort_roster_id}`)))
           .sort(),
         pitches: pitches.map((p) => `${byId.get(Number(p.lesson_id))}|${speakerLabel(p)}|${p.state}|by=${member(p.proposed_by)}`).sort(),
-        approaches: approaches.map((a) => `${speakerLabel(a)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|v=${a.version}`).sort(),
+        approaches: approaches.map((a) => `${speakerLabel(a)}|owner=${member(a.owner_member_id)}|${a.status}|offer=${member(a.offered_to)}|pub=${a.public_ok === true}|v=${a.version}`).sort(),
         speakers: speakers.map((x) => `${byId.get(Number(x.lesson_id))}|${speakerLabel(x)}|${x.role}`).sort(),
         pool: pool.map((s) => poolLine(s, member(s.vetted_by))).sort(),
         contacts: contacts.map((c) => contactsLine(speakerLabel(c), c)).sort(),
         availability: availability.map((v) => slotLine(speakerLabel(v), v, member(v.updated_by))).sort(),
         transport: transport.map((t) => transportRowLine(byId.get(Number(t.lesson_id))!, t)).sort(),
-        edition: editionLines(settings, cover, purged),
+        edition: editionLines(settings, cover, purged, member),
         links: links
           .map((l) => linkLine({ scope: l.scope, trainee: l.subject_id == null ? "-" : (l.full_name ?? `#${l.subject_id}`), revoked: l.revoked_at != null, created_at: l.created_at, expires_at: l.expires_at, by: member(l.created_by) }))
           .sort(),
@@ -705,6 +738,7 @@ export async function sqlDriver(dbName: string): Promise<Driver> {
           .map((r) => reviewLine(byId.get(Number(r.lesson_id))!, { ...r, speaker: r.speaker_id == null ? "-" : speakerLabel(r), by: member(r.written_by) }))
           .sort(),
         owners: owners.map((o) => ownerLine(o, member(o.member_id))).sort(),
+        photos: photos.map((p) => photoLine(speakerLabel(p), new Uint8Array(p.image as Buffer), member(p.uploaded_by))).sort(),
       };
     },
 

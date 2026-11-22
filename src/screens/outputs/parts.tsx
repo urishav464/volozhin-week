@@ -69,13 +69,16 @@ export function usePhones(
   return { on, setOn, phones, failed };
 }
 
-/** The outputs, under the screen's title: a link each (the duty roster's pages for every member — v16; the designer's export for the edition's admins only; the reader for content and admins). */
-export function OutputsTabs({ admin, reader = false }: { admin: boolean; reader?: boolean }) {
+/**
+ * The outputs, under the screen's title: a link each (the duty roster's pages for every member — v16; the reader for
+ * everyone since v19 — logistics builds and sends it to print; the designer's export for the edition's admins only).
+ */
+export function OutputsTabs({ admin }: { admin: boolean }) {
   const items = [
     { to: "/tracking", label: "טבלת מעקב" },
     { to: "/print/escorts", label: "רשימת מלווים" },
     { to: "/print/rota", label: "תורנויות" },
-    ...(reader || admin ? [{ to: "/reader", label: "מקראה" }] : []),
+    { to: "/reader", label: "מקראה" },
     ...(admin ? [{ to: "/export/designer", label: "ייצוא למעצבת" }] : []),
   ];
   return (

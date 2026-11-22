@@ -15,7 +15,7 @@ import { toCsv } from "./csv";
 import { scheduleEntries } from "./designer";
 import {
   BAND_FILL, campusTable, cohortTotal, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, headsTable, kitchenDutyId, kitchenSheet, loadsTable,
-  phonesOf, prepTable, regularCell, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, shiftText, stackTables, STAFF_KIND_LABEL, staffTable,
+  phonesOf, prepCounts, prepInOrder, prepTable, regularCell, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, shiftText, shoppingTable, stackTables, STAFF_KIND_LABEL, staffTable,
 } from "./rota";
 import type { Table } from "./table";
 import { toXlsx, xlsxParts } from "./xlsx";
@@ -319,6 +319,26 @@ describe("the kitchen, the food and the campus", () => {
     ]);
     expect(prepTable(data)).toMatchObject({ name: "מוצ״ש", rows: [["1", "משימת הכנה לדוגמה א", "", ""], ["2", "משימת הכנה לדוגמה ב", "א1", "בוצע"]] });
   });
+
+  it("v19: the tasks and the shopping list apart — each numbered by its own place, the shared numbering never shown", () => {
+    const d = rota();
+    d.prep.push(
+      { id: 5, edition_id: 1, text: "פריט לדוגמה ב", group_id: null, done: true, sort: 5, kind: "item", qty: "2 (לדוגמה)" },
+      { id: 3, edition_id: 1, text: "פריט לדוגמה א", group_id: null, done: false, sort: 3, kind: "item", qty: null },
+      { id: 4, edition_id: 1, text: "משימת הכנה לדוגמה ג", group_id: null, done: false, sort: 4, kind: "task", qty: null },
+    );
+    expect(prepInOrder(d, "task").map((t) => t.id)).toEqual([1, 2, 4]); // a row from before v19 (no kind) is a task
+    expect(prepInOrder(d, "item").map((t) => t.id)).toEqual([3, 5]);
+    expect(prepTable(d).rows.map((r) => r.slice(0, 2))).toEqual([["1", "משימת הכנה לדוגמה א"], ["2", "משימת הכנה לדוגמה ב"], ["3", "משימת הכנה לדוגמה ג"]]);
+    expect(shoppingTable(d)).toMatchObject({
+      name: "קניות מוצ״ש",
+      headers: ["#", "פריט", "כמות", "נקנה"],
+      rows: [["1", "פריט לדוגמה א", "", ""], ["2", "פריט לדוגמה ב", "2 (לדוגמה)", "נקנה"]],
+    });
+    expect(prepCounts(d)).toEqual({ tasks: 3, tasksDone: 1, items: 2, itemsBought: 1 });
+    expect(prepCounts({ prep: [] })).toEqual({ tasks: 0, tasksDone: 0, items: 0, itemsBought: 0 });
+    expect(shoppingTable(rota()).rows).toEqual([]);
+  });
 });
 
 describe("the files", () => {
@@ -330,7 +350,7 @@ describe("the files", () => {
     const names = tables.map((t) => t.name);
     expect(names).toEqual([
       "לוח התורנויות", "לו״ז א1", "לו״ז א2", "לו״ז ב1", "לו״ז נ1", "יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "מטבח", "ראשי קבוצות", "משמרות צוות",
-      "מוצ״ש", "אוכל", "מי בקמפוס", "עומס",
+      "מוצ״ש", "קניות מוצ״ש", "אוכל", "מי בקמפוס", "עומס",
     ]);
     expect(names.join("")).not.toContain('"');
     expect(names.find((n) => n.startsWith("מוצ"))).toBe("מוצ״ש");

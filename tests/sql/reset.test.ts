@@ -205,7 +205,7 @@ describe("the reset's data foundation (v18)", () => {
     expect(await sig("set_slot_availability")).toEqual([{ a: "p_edition bigint, p_speaker bigint, p_day integer, p_row bigint, p_kind text, p_note text DEFAULT NULL::text", r: "void" }]);
     expect(await sig("decide_payments")).toEqual([{ a: "p_lessons bigint[], p_versions integer[], p_decision text, p_note text DEFAULT NULL::text", r: "void" }]);
     expect(await sig("get_transports_for")).toEqual([{ a: "p_edition bigint", r: "jsonb" }]);
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(18);
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(19);
   });
 
   // ---------------------------------------------------------------- day owners
@@ -1168,7 +1168,7 @@ describe("the reset's data foundation (v18)", () => {
     await db.query(SCHEMA);
     await db.query(SCHEMA);
     expect(await snapshot()).toEqual(before);
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(18);
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(19);
     // and it all still answers as before
     await inTx(async (run) => {
       expect(((await val(run, B, "select public.load_week($1)", [ed])) as { dayOwners: unknown[] }).dayOwners).toHaveLength(2);

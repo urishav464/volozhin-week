@@ -5,14 +5,19 @@
 // «ניקוי השיבוצים המוצעים (N)» — ONE delete of the rows still «suggested» (an edited one is «hand» and stays) — is an
 // occasional act: behind «פעולות נוספות» and a Confirm, whose «ביטול» gives its button the focus back.
 import { useState } from "react";
-import type { GroupLoad } from "../../../domain/rota";
+import type { RotaCohort, RotaGroup } from "../../../data/rota";
+import { type GroupLoad, helpingGroups, helpsRota } from "../../../domain/rota";
 import type { RotaSuggestion } from "../../../domain/rotaSuggest";
 import { Badge, Button, Confirm, Fold, useFocusBack } from "../../settings/kit";
 import type { RotaCtx } from "./parts";
 
-/** The loads' range over the groups whose cohort is on campus at all: [fewest, most] shifts; null with none. */
-export function loadRange(loads: ReadonlyMap<number, GroupLoad>): [number, number] | null {
-  const xs = [...loads.values()].filter((l) => l.present > 0).map((l) => l.shifts);
+/**
+ * The loads' range over the groups whose cohort is on campus at all — and (v19) helps, when the rota is given: a
+ * cohort that does not help is not weighed — [fewest, most] shifts; null with none.
+ */
+export function loadRange(loads: ReadonlyMap<number, GroupLoad>, data?: { cohorts: readonly Pick<RotaCohort, "id" | "helps_rota">[]; groups: readonly Pick<RotaGroup, "id" | "cohort_id">[] }): [number, number] | null {
+  const weighed = data ? new Set(helpingGroups(data).map((g) => g.id)) : null;
+  const xs = [...loads].filter(([id, l]) => l.present > 0 && (!weighed || weighed.has(id))).map(([, l]) => l.shifts);
   return xs.length ? [Math.min(...xs), Math.max(...xs)] : null;
 }
 
@@ -51,7 +56,7 @@ export function SuggestBar({ ctx, suggestion, onStart, onStop }: { ctx: RotaCtx;
   };
 
   const unfilled = suggestion ? suggestion.unfilled.reduce((s, u) => s + u.missing, 0) : 0;
-  const range = suggestion ? loadRange(suggestion.loads) : null;
+  const range = suggestion ? loadRange(suggestion.loads, data) : null;
 
   return (
     <div data-rota-suggest className="space-y-2 rounded-xl border border-line bg-card p-3 shadow-sm">
@@ -90,7 +95,8 @@ export function SuggestBar({ ctx, suggestion, onStart, onStop }: { ctx: RotaCtx;
             הצעה הוגנת
           </Button>
           <p className="min-w-0 flex-1 basis-56 text-xs text-ink-soft">
-            ממלאת את המקומות הריקים לפי העומס של כל קבוצה ביחס למשמרות שהמכינה שלה בקמפוס, ומשתדלת שלא יהיו משמרות צמודות. קודם רואים אותה, ואז מחליטים. <Badge tone="accent">הצעה</Badge>
+            ממלאת את המקומות הריקים לפי העומס של כל קבוצה ביחס למשמרות שהמכינה שלה בקמפוס, ומשתדלת שלא יהיו משמרות צמודות
+            {data.cohorts.some((c) => !helpsRota(c)) ? ", ולא משבצת קבוצות של מכינה שלא עוזרת בתורנויות" : ""}. קודם רואים אותה, ואז מחליטים. <Badge tone="accent">הצעה</Badge>
           </p>
         </div>
       )}

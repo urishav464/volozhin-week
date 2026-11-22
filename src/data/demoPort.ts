@@ -8,8 +8,8 @@ import { type DemoPool, DemoSpeakers } from "./demoSpeakers";
 import { DemoRota, seedDemoRota } from "./demoRota";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
 import {
-  DEMO_FALLEN, demoContacts, demoDayOwners, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport, demoWeek, seedDemoLogistics,
-  seedDemoSources,
+  DEMO_FALLEN, demoContacts, demoDayOwners, demoLogisticsStart, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport,
+  demoWeek, seedDemoLogistics, seedDemoSources,
 } from "./demoWeek";
 import { DemoReviews } from "./demoReviews";
 import type { SpeakerReview } from "./reviews";
@@ -46,9 +46,12 @@ export interface DemoOptions {
    * The demo user is the logistics member DEMO_LOGISTICS names (demo@example.org is member 5; member 1, the instructor,
    * gets team.d@example.org); the edition is `real`, so deciding a request and setting a driver meet production's rules;
    * and the transport board has something to draw — pickup times and two more staff shifts (seedDemoLogistics). The
-   * other demos keep no pickup_min.
+   * other demos keep no pickup_min. Phase 4 (v19): the week has a date (demoLogisticsStart — three weeks ahead, a
+   * Sunday), two cohort flags, a shopping list and one speaker approved for the guests' schedule, with a photo.
    */
   logistics?: boolean;
+  /** The clock the logistics demo's date is counted from (tests); absent: now. */
+  now?: () => string;
 }
 
 // Synthetic data only — never a real name, phone or address. The grid's
@@ -104,6 +107,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   ) {
     const week = demoWeek();
     if (opts.trainee || opts.logistics) week.edition.kind = "real";
+    if (opts.logistics) week.edition.start_date = demoLogisticsStart((opts.now ?? (() => new Date().toISOString()))());
     if (opts.trainee) {
       week.dayOwners = demoDayOwners();
       week.slotAvailability.push(...demoTraineeAvailability(Math.max(0, ...week.slotAvailability.map((v) => v.id)) + 1));
@@ -115,7 +119,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.shared = {
       contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
       fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
-      importNotes: {}, rota: emptyRota(), rotaContacts: {},
+      importNotes: {}, rota: emptyRota(), rotaContacts: {}, photos: {},
     };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));
@@ -306,6 +310,12 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
   async loadWeek(editionId: number): Promise<Week> {
     this.engine(editionId).syncFallen(); // a name rewritten from another edition's screen
     const week = structuredClone(this.engine(editionId).week);
+    // v19, as load_week sends them: every speaker's public_bio and has_photo (never the photo), every approach's
+    // public_ok, every lesson's public_note, every file's kind
+    week.speakers = week.speakers.map((s) => ({ ...s, public_bio: s.public_bio ?? null, has_photo: !!this.shared.photos[s.id] }));
+    week.approaches = week.approaches.map((a) => ({ ...a, public_ok: a.public_ok === true }));
+    week.lessons = week.lessons.map((l) => ({ ...l, public_note: l.public_note ?? null }));
+    week.sourceFiles = week.sourceFiles.map((f) => ({ ...f, kind: f.kind === "presentation" ? "presentation" : "source" }));
     week.categories = structuredClone(this.categories);
     week.team = this.members
       .filter((m) => m.active && (m.edition_id == null || m.edition_id === week.edition.id))

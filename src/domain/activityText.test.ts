@@ -161,3 +161,43 @@ describe("«מה קרה» curated (curate)", () => {
     expect(timeline(curate(log), ctx("m"))[0].text).toBe("הטיפול עבר לחניך/ה ב׳");
   });
 });
+
+describe("v19: the guests' site in «מה קרה»", () => {
+  it("a photo set or removed, never its bytes; a public_bio change by its name — never «הערה»", () => {
+    const log = [
+      row("speakers", "update", { fields: ["public_bio", "bio_short"] }),
+      row("speakers", "photo", { set: true }),
+      row("speakers", "photo", { set: false }),
+    ].reverse();
+    expect(timeline(log, ctx("f")).reverse().map((l) => l.text)).toEqual([
+      "הפרטים עודכנו: תיאור לאתר האורחים, תיאור קצר",
+      "הועלתה תמונה לאתר האורחים",
+      "התמונה לאתר האורחים הוסרה",
+    ]);
+  });
+
+  it("public_ok given and taken back, in the speaker's gender — the one thing that changed, never «הערה»", () => {
+    const log = [
+      row("approaches", "insert", { status: "claimed", owner: 2, speaker: 4 }),
+      row("approaches", "update", { status: "claimed", owner: 2, speaker: 4, public_ok: true }),
+      row("approaches", "update", { status: "claimed", owner: 2, speaker: 4, public_ok: false }, 1),
+      row("approaches", "update", { status: "approached", owner: 2, speaker: 4 }), // after it, a status change reads as before
+    ].reverse();
+    const say = (g: "m" | "f" | null) => timeline(log, ctx(g)).reverse().map((l) => l.text);
+    expect(say("f")).toEqual(["בטיפול חניך/ה א׳ · לפני שיחה", "אושרה להופיע באתר האורחים", "הוסרה מאתר האורחים", "שוחחנו, מחכים לתשובה"]);
+    expect(say("m").slice(1, 3)).toEqual(["אושר להופיע באתר האורחים", "הוסר מאתר האורחים"]);
+    expect(say(null).slice(1, 3)).toEqual(["אושר/ה להופיע באתר האורחים", "הוסר/ה מאתר האורחים"]);
+    // with nothing older in the list, still the approval alone
+    expect(timeline([row("approaches", "update", { status: "claimed", owner: 2, speaker: 4, public_ok: true })], ctx("f")).map((l) => l.text)).toEqual(["אושרה להופיע באתר האורחים"]);
+  });
+
+  it("curate keeps the photo's lines and the approval's (an approach's line) — what a guest will see", () => {
+    const log = [
+      row("speakers", "photo", { set: true }),
+      row("approaches", "update", { status: "claimed", owner: 2, speaker: 4, public_ok: true }),
+      row("speakers", "update", { fields: ["public_bio"] }), // an edit of the record: left out, as every edit
+    ];
+    expect(curate(log).map((e) => e.kind)).toEqual(["photo", "update"]);
+    expect(curate(log).map((e) => e.entity)).toEqual(["speakers", "approaches"]);
+  });
+});

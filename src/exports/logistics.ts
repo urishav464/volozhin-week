@@ -12,11 +12,13 @@
 //              place and leaders — the copies to order and «הוזמן»;
 //   הדפסות     the lessons whose sources are printed ahead or on the day, by
 //              that and by day: «מרצה – כותרת», the files and their pages.
-// Nothing here fills in a number nobody entered: no copies to print, no
-// amounts, no books.
+// Nothing here fills in a number nobody entered: no amounts, no books, and the
+// copies are what logistics saved — the book order's «הצעה» (signed up +
+// leaders: suggestedCopies, src/domain/kk.ts) fills the screen's field only on
+// «למלא», is saved only on «שמירה», and never reaches a file.
 import type { LessonTransport } from "../data/commands";
 import type { KkData, KkGroup } from "../data/kk";
-import { fromPreviousSpeaker } from "../data/sourceRules";
+import { fromPreviousSpeaker, isPresentation } from "../data/sourceRules";
 import { groupName, LEADER_KIND_LABEL, leaderName, leadersOf } from "../domain/kk";
 import { displayName } from "../domain/names";
 import { PRINT_WHEN_LABEL, TRANSPORT_LABEL } from "../domain/stages";
@@ -184,7 +186,7 @@ export interface BookRow {
   leaders: string;
   leaderCount: number;
   signups: number;
-  /** As logistics entered it; null: no line yet. Never filled in from the sign-ups. */
+  /** As logistics saved it; null: no line yet. The screen's «הצעה» fills the field only when asked — never this row by itself. */
   copies: number | null;
   orderedAt: string | null;
 }
@@ -253,7 +255,8 @@ export function printRows(week: Week): PrintRow[] {
     .sort((a, b) => PRINT_TIMES.indexOf(a.print_when) - PRINT_TIMES.indexOf(b.print_when) || gridOrder(week)(a, b))
     .map((l) => {
       const lead = week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id ?? null;
-      const files = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id && !fromPreviousSpeaker(f, lead)).sort((a, b) => a.id - b.id);
+      // the current speaker's files to print — never a presentation (v19: shown in the room, not printed)
+      const files = (week.sourceFiles ?? []).filter((f) => f.lesson_id === l.id && !fromPreviousSpeaker(f, lead) && !isPresentation(f)).sort((a, b) => a.id - b.id);
       const speaker = speakersOf(week, l.id) || "TBD";
       return {
         lesson: l,

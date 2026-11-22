@@ -20,6 +20,7 @@ const STRANGER = "stranger@example.org";
 
 const PDF = "application/pdf";
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const MB = 1024 * 1024;
 
 /** A Google session with a sub of its own per address — the Storage API writes it as the object's owner_id. */
@@ -178,7 +179,7 @@ describe("the sources' files", () => {
   describe("the bucket", () => {
     it("is private, 25 MB, PDF / Word / PNG / JPEG — and a re-run makes it private again without touching the rest", async () => {
       const b = (await db.query("select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'sources'")).rows[0];
-      expect(b).toEqual({ public: false, file_size_limit: String(25 * MB), allowed_mime_types: [PDF, "image/png", "image/jpeg", DOCX] });
+      expect(b).toEqual({ public: false, file_size_limit: String(25 * MB), allowed_mime_types: [PDF, "image/png", "image/jpeg", DOCX, PPTX] });   // v19: a presentation's
       await db.query("update storage.buckets set public = true, file_size_limit = 10485760 where id = 'sources'");
       await db.query(SCHEMA);
       const again = (await db.query("select public, file_size_limit from storage.buckets where id = 'sources'")).rows[0];
@@ -645,7 +646,8 @@ describe("the sources' files", () => {
         expect(await refusal(q("delete from public.source_files"))).toBe("42501");
         const w = (await q("select public.load_week($1) as w", [ed])).rows[0].w;
         expect(w.sourceFiles).toHaveLength(total);
-        expect(Object.keys(w.sourceFiles[0]).sort()).toEqual(["cover", "display_name", "fallen_id", "id", "lesson_id", "mime", "page_count", "size_bytes", "speaker_id", "storage_path", "uploaded_at", "uploaded_by"]);
+        expect(Object.keys(w.sourceFiles[0]).sort()).toEqual(["cover", "display_name", "fallen_id", "id", "kind", "lesson_id", "mime", "page_count", "size_bytes", "speaker_id", "storage_path", "uploaded_at", "uploaded_by"]);
+        expect(new Set(w.sourceFiles.map((f: { kind: string }) => f.kind))).toEqual(new Set(["source"]));   // v19: none of these is a presentation
       });
       await as(db, "anon", null, async (q) => {
         expect(await refusal(q("select * from public.source_files"))).toBe("42501");
@@ -672,7 +674,8 @@ describe("the sources' files", () => {
     it("exposes the functions with the contract's parameter names (src/data/supabaseSources.ts calls them by name)", async () => {
       const sig = async (fn: string) =>
         (await db.query("select pg_get_function_arguments(p.oid) as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1", [fn])).rows.map((r) => r.a);
-      expect(await sig("register_source_file")).toEqual(["p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer"]);
+      // v19: p_kind — the old five-argument signature dropped, so the name is still one function
+      expect(await sig("register_source_file")).toEqual(["p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer, p_kind text DEFAULT 'source'::text"]);
       expect(await sig("remove_source_file")).toEqual(["p_file bigint"]);
       expect(await sig("set_reader_headers")).toEqual(["p_edition bigint, p_left text, p_right text"]);
       expect(await sig("set_reader_cover")).toEqual(["p_edition bigint, p_file bigint"]);

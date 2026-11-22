@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TransportDetails } from "../domain/types";
 import { CommandError } from "./commands";
-import { cleanTransportDriver, cleanTransportRequest, EMPTY_TRANSPORT, mergeTransport, STAGE_LIMITS } from "./stageRules";
+import { cleanPublicNote, cleanTransportDriver, cleanTransportRequest, EMPTY_TRANSPORT, mergeTransport, STAGE_LIMITS } from "./stageRules";
 
 const code = (fn: () => unknown) => {
   try {
@@ -75,5 +75,18 @@ describe("transport in two parts (v18): what each half takes", () => {
     expect(code(() => cleanTransportDriver({ driver_phone: "12-34", driver_name: "א".repeat(81) }))).toBe("bad_value"); // the name's limit before the phone's digits
     expect(code(() => cleanTransportDriver({ driver_phone: "5".repeat(41) }))).toBe("bad_value");
     expect(code(() => cleanTransportDriver({ driver_name: "א".repeat(80), driver_phone: "555 0100" }))).toBe("ok");
+  });
+});
+
+describe("v19: a lesson's line for the guests (public_note)", () => {
+  it("a block of up to 400, never a phone or an e-mail; blank → null", () => {
+    expect(STAGE_LIMITS.public_note).toBe(400);
+    expect(cleanPublicNote("  שורה לאורחים\r\n")).toBe("שורה לאורחים");
+    expect(cleanPublicNote(" \n ")).toBeNull();
+    expect(cleanPublicNote(undefined)).toBeNull();
+    expect(cleanPublicNote("א".repeat(400))).toBe("א".repeat(400));
+    expect(code(() => cleanPublicNote("א".repeat(401)))).toBe("bad_value");
+    expect(code(() => cleanPublicNote("לשאלות: 000-000-0083"))).toBe("contact_in_text");
+    expect(cleanPublicNote(400)).toBe("400");
   });
 });

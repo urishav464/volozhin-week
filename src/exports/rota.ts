@@ -14,11 +14,12 @@
 //   daySheet        one day: per shift its staff and each duty's groups, the heads (and their phones if given)
 //   kitchenSheet    one duty (the caller's pick; «מטבח» by default, kitchenDutyId) in every shift: who, how many,
 //                   the trainees on campus, their diets, the meals of the shift
-//   headsTable · staffTable · prepTable · foodTable (per cohort, «חניכים בלבד») · campusTable · loadsTable
+//   headsTable · staffTable · prepTable (the tasks) · shoppingTable (v19: the shopping list, its quantities) ·
+//   foodTable (per cohort, «חניכים בלבד») · campusTable · loadsTable
 //   rotaWorkbook    all of them, a sheet each, for «הורדת xlsx (כל הגיליונות)»
 //
 // Nothing here fills in a number nobody entered: a group without a size is TBD, and so is every sum it is part of.
-import type { Diet, RotaAssignment, RotaCohort, RotaContact, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import { type Diet, type PrepKind, prepKindOf, type RotaAssignment, type RotaCohort, type RotaContact, type RotaData, type RotaDuty, type RotaGroup, type RotaPrepTask, type RotaStaffShift, type ShiftIndex } from "../data/rota";
 import { nameKey } from "../domain/nameKey";
 import { groupCode, leadsOf, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, type RotaSlot } from "../domain/rota";
 import { DAY_NAMES, type Day, dateOf, fmtRange, LRM, overlaps, shortDate } from "../domain/time";
@@ -50,6 +51,7 @@ export const SHEET = {
   heads: "ראשי קבוצות",
   staff: "משמרות צוות",
   prep: "מוצ״ש",
+  shopping: "קניות מוצ״ש",
   food: "אוכל",
   campus: "מי בקמפוס",
   loads: "עומס",
@@ -526,14 +528,40 @@ export function headsTable(data: RotaData, phones: HeadPhones): Table {
 
 // ------------------------------------------------------------------ מוצ"ש–ראשון
 
-/** The Saturday-night preparations, numbered by their place in the list. */
+/**
+ * One of the two Saturday-night lists (v19): «משימות» (kind task — every row from before v19) or «רשימת קניות» (kind
+ * item), in its order (sort, id). The two share the edition's numbering in the database; each list is numbered by its
+ * own place on screen and on paper.
+ */
+export function prepInOrder(data: Pick<RotaData, "prep">, kind: PrepKind): RotaPrepTask[] {
+  return data.prep.filter((t) => prepKindOf(t) === kind).sort((a, b) => a.sort - b.sort || a.id - b.id);
+}
+
+/** How far the two lists are: tasks done of tasks, items bought («נקנה» is the row's `done`) of items. */
+export function prepCounts(data: Pick<RotaData, "prep">): { tasks: number; tasksDone: number; items: number; itemsBought: number } {
+  const tasks = prepInOrder(data, "task");
+  const items = prepInOrder(data, "item");
+  return { tasks: tasks.length, tasksDone: tasks.filter((t) => t.done).length, items: items.length, itemsBought: items.filter((t) => t.done).length };
+}
+
+/** The Saturday-night tasks, numbered by their place in the list (the shopping list is shoppingTable). */
 export function prepTable(data: RotaData): Table {
   const code = codes(data);
   return {
     name: SHEET.prep,
     headers: ["#", "משימה", "קבוצה", "בוצע"],
     widths: [5, 60, 10, 10],
-    rows: [...data.prep].sort((a, b) => a.sort - b.sort || a.id - b.id).map((t, i) => [String(i + 1), t.text, t.group_id != null ? (code.get(t.group_id) ?? "") : "", t.done ? "בוצע" : ""]),
+    rows: prepInOrder(data, "task").map((t, i) => [String(i + 1), t.text, t.group_id != null ? (code.get(t.group_id) ?? "") : "", t.done ? "בוצע" : ""]),
+  };
+}
+
+/** v19: the Saturday-night shopping list, numbered by its place — each item, its quantity as typed (blank when none), «נקנה». */
+export function shoppingTable(data: RotaData): Table {
+  return {
+    name: SHEET.shopping,
+    headers: ["#", "פריט", "כמות", "נקנה"],
+    widths: [5, 50, 20, 10],
+    rows: prepInOrder(data, "item").map((t, i) => [String(i + 1), t.text, t.qty ?? "", t.done ? "נקנה" : ""]),
   };
 }
 
@@ -622,7 +650,7 @@ export interface RotaWorkbookInput {
   kitchenDuty?: number | null;
 }
 
-/** Every page as a sheet, for «הורדת xlsx (כל הגיליונות)»: the board, a schedule per group, a sheet per day, the kitchen, the heads, the staff, מוצ״ש, the food, on campus, the loads. */
+/** Every page as a sheet, for «הורדת xlsx (כל הגיליונות)»: the board, a schedule per group, a sheet per day, the kitchen, the heads, the staff, מוצ״ש and its shopping list, the food, on campus, the loads. */
 export function rotaWorkbook({ week, data, phones, kitchenDuty }: RotaWorkbookInput): Table[] {
   const e = week.edition;
   const kitchen = kitchenDuty === undefined ? kitchenDutyId(data) : kitchenDuty;
@@ -634,6 +662,7 @@ export function rotaWorkbook({ week, data, phones, kitchenDuty }: RotaWorkbookIn
     headsTable(data, phones),
     staffTable(data),
     prepTable(data),
+    shoppingTable(data),
     foodTable(data, e),
     campusTable(data, e),
     loadsTable(data, e),

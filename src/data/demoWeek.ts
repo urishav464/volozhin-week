@@ -23,6 +23,8 @@ import {
   type Approach, type Category, type DayOwner, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SlotAvailability, type SourceFile,
   type Speaker, type SpeakerContacts, type TransportDetails, type Week,
 } from "../domain/types";
+import { addDays, israelDate } from "../domain/israelTime";
+import { demoPhotoBytes } from "./demoPhoto";
 import type { Sample } from "./demoFiles";
 import type { PoolShared, StoredObject, StoredTransport } from "./engine";
 import type { Fallen, FallenContacts } from "./memorial";
@@ -283,16 +285,30 @@ export function demoTransport(week: Week): Record<string, TransportDetails> {
 }
 
 /**
+ * `?as=logistics` (the reset, phase 4 — that mode only): the week's first day, so the logistics home's «קרוב לשבוע» says
+ * «בעוד N ימים» — the first Sunday on or after Israel's today + 21 days. The default and trainee demos stay TBD.
+ */
+export function demoLogisticsStart(nowIso: string): string {
+  const d = addDays(israelDate(nowIso), 21);
+  const [y, m, day] = d.split("-").map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, day)).getUTCDay(); // 0 = Sunday
+  return addDays(d, (7 - weekday) % 7);
+}
+
+/**
  * `?as=logistics` (the reset, phase 3 — that mode only; the default and trainee demos keep no pickup_min and the rota's
  * own three staff shifts): what the transport board draws, synthetic — the demo's three transports get pickup times
  * (Sunday's 08:30, approved and arranged: 07:15; Monday's 08:30, the round trip that waits for the decision: 06:10, before
  * the board's 06:30; Wednesday's 10:00, approved, not arranged: a pickup row of its own at 08:45, no driver yet), and two
  * more staff shifts — Monday morning a name as typed, Wednesday the logistics member as the shift's lead. Placeholder
  * words only («כתובת לדוגמה»), never a number or an address that could be someone's.
+ * Phase 4 (v19) adds: cohort «ב»'s staff can drive and «נ» does not help with the duties; two items to buy («פריט
+ * לדוגמה 1/2», «2 (לדוגמה)» each) after the tasks; and the lead of Sunday's closed 08:30 lesson approved for the guests'
+ * schedule (public_ok), with a description «תיאור לדוגמה» and the demo's photo (built in code: src/data/demoPhoto.ts).
  */
 export function seedDemoLogistics(
-  shared: Pick<PoolShared, "transport" | "rota">,
-  week: Pick<Week, "edition" | "lessons">,
+  shared: Pick<PoolShared, "transport" | "rota" | "photos">,
+  week: Pick<Week, "edition" | "lessons" | "speakers" | "approaches" | "lessonSpeakers">,
   logistics: Pick<MemberRow, "id" | "display_name"> | null,
 ): void {
   const key = (day: Day, start: number) => `${week.edition.id}:${week.lessons.find((l) => l.kind === "lesson" && l.day === day && l.start_min === start && l.state === "closed")!.id}`;
@@ -311,6 +327,29 @@ export function seedDemoLogistics(
     t.staff.push({ id: t.staff.reduce((m, s) => Math.max(m, s.id), 0) + 1, edition_id: week.edition.id, day, start_min: start, end_min: end, ...who, cohort_id: null, kind, note: null });
   staff(1, 390, 720, { member_id: null, name: "איש/אשת צוות לדוגמה ב׳" }, "shift");
   if (logistics) staff(3, 510, 870, { member_id: logistics.id, name: logistics.display_name }, "lead");
+  // v19: the cohorts' two flags, and a shopping list beside the tasks
+  const mine = t.cohorts.filter((c) => c.edition_id === week.edition.id);
+  for (const c of mine) {
+    if (c.letter === "ב") c.can_drive = true;
+    if (c.letter === "נ") c.helps_rota = false;
+  }
+  const last = t.prep.filter((p) => p.edition_id === week.edition.id).reduce((m, p) => Math.max(m, p.sort), 0);
+  for (const i of [1, 2]) {
+    t.prep.push({
+      id: t.prep.reduce((m, p) => Math.max(m, p.id), 0) + 1, edition_id: week.edition.id, text: `פריט לדוגמה ${i}`, group_id: null, done: false, sort: last + i,
+      kind: "item", qty: "2 (לדוגמה)",
+    });
+  }
+  // v19: one speaker the guests' schedule shows — Sunday's 08:30 lead, with a description and a photo
+  const sunday = week.lessons.find((l) => l.kind === "lesson" && l.day === 0 && l.start_min === 510 && l.state === "closed");
+  const lead = sunday && week.lessonSpeakers.find((x) => x.lesson_id === sunday.id && x.role === "lead");
+  const approach = lead && week.approaches.find((a) => a.speaker_id === lead.speaker_id);
+  const speaker = lead && week.speakers.find((s) => s.id === lead.speaker_id);
+  if (approach && speaker) {
+    approach.public_ok = true;
+    speaker.public_bio = "תיאור לדוגמה";
+    shared.photos[speaker.id] = { image: demoPhotoBytes(), uploaded_by: approach.owner_member_id, uploaded_at: "2026-11-01T08:00:00.000Z" };
+  }
 }
 
 /** Contacts for the demo's sheet: placeholder words, and addresses at example.org (which never delivers). */

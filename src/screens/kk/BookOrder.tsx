@@ -4,13 +4,15 @@ import type { KkData, KkGroup } from "../../data/kk";
 import { KK_LIMITS } from "../../data/kk";
 import type { DataPort } from "../../data/port";
 import { israelMoment } from "../../domain/israelTime";
+import { fillCopiesLabel, suggestedCopies } from "../../domain/kk";
 import { errorMessage } from "../../errors";
 import { Button, Field, Fold, INPUT } from "../settings/kit";
 import type { Act } from "./parts";
 
 /**
- * Copies to order for the group, and whether they were ordered — logistics' and the admins'. Nothing is filled in for them:
- * beside the field, how many signed up and how many lead. A group with no book yet has nothing to order (`no_book`).
+ * Copies to order for the group, and whether they were ordered — logistics' and the admins'. Beside the field, how many
+ * signed up and how many lead, and (v19) «הצעה: N» — one copy each (suggestedCopies): «למלא» only puts it in the field,
+ * and nothing is saved until «שמירה». A group with no book yet has nothing to order (`no_book`).
  * `folded` (on /kk, where ordering is not the screen's job): the form behind its own read-only line; «לוגיסטיקה ← ספרים»
  * keeps it open.
  */
@@ -41,11 +43,21 @@ export function BookOrder({ g, kk, signed, leaders, editable, folded = false, bu
     });
   };
   const dirty = (order ? String(order.copies) : "") !== copies.trim() || (order?.ordered_at != null) !== ordered;
+  const suggestion = suggestedCopies(signed, leaders);
   const form = (
     <form onSubmit={(e) => void save(e)} aria-label={`ספרים · ${g.title ?? "עוד לא נבחר ספר"}`} className="flex flex-wrap items-end gap-2" noValidate>
       <Field id={`${id}-n`} label="עותקים להזמנה" hint={`נרשמו ${signed} · מעבירים ${leaders}`}>
         <input id={`${id}-n`} type="number" inputMode="numeric" min={0} max={KK_LIMITS.copies} value={copies} onChange={(e) => setCopies(e.target.value)} className={`${INPUT} w-28`} aria-describedby={`${id}-n-hint`} />
       </Field>
+      <div className="inline-flex min-h-11 items-center gap-2">
+        <span data-copies-suggestion={suggestion} className="text-sm text-ink-soft">
+          הצעה: {suggestion}
+        </span>
+        {/* fills the field only: «שמירה» saves it, as anything typed */}
+        <Button kind="quiet" keepFocus data-fill-copies disabled={copies.trim() === String(suggestion)} onClick={() => setCopies(String(suggestion))} aria-label={fillCopiesLabel(suggestion)}>
+          למלא
+        </Button>
+      </div>
       <label className="inline-flex min-h-11 cursor-pointer items-center gap-2">
         <input type="checkbox" checked={ordered} onChange={(e) => setOrdered(e.target.checked)} className="size-5 accent-navy" />
         הוזמן

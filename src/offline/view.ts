@@ -53,8 +53,10 @@ const SECTIONS: Record<string, string> = {
 };
 
 /**
- * The section an address asked for that the offline day view cannot show (it shows only the week): «לוגיסטיקה»,
- * «זמני זיכרון» and the rest read the server, one list at a time. null for the week itself.
+ * The section an address asked for that the offline day view cannot show (it shows only the week): «לוגיסטיקה» (its
+ * home, `/logistics` with no tab, and every tab — the home's tasks read the rota, מכריכה לכריכה and the transports),
+ * «זמני זיכרון» and the rest read the server, one list at a time. null for the week itself — and for `/`, so a
+ * logistics member who starts offline there sees the week's copy (offline, nothing redirects to their home).
  */
 export function sectionNeedingConnection(path: string): string | null {
   const first = path.split("/").filter(Boolean)[0];

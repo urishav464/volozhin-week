@@ -11,6 +11,10 @@
 // after a save) takes the phone, and a save of another field never deletes or rolls it back; «קבוצה חדשה» keeps the
 // focus after an add and a cohort chosen; «הסרה» lands the focus inside the sheet (a closed fold opened, a shift the week
 // no longer has); a staff shift of a member deactivated since is edited; «לוח» is aria-current at /logistics/rota.
+// v19 (the reset, phase 4): the cohorts' two flags («עוזרת בתורנויות», «הצוות שלה יכול להסיע») saved by the columns' names; the
+// suggestion leaving a non-helping cohort's groups out and a hand assignment of one warned; Saturday night as two lists —
+// the tasks and the shopping list, each with its own count, an item with its quantity, «נקנה», its own paste in ONE
+// insert, a phone refused in a quantity — and the shopping list printed on a page of its own and a sheet of its own.
 // Synthetic data only («לדוגמה»).
 import { readFileSync } from "node:fs";
 import { type Download, expect, type Page, test } from "@playwright/test";
@@ -198,6 +202,36 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
   });
 
+  test("`?as=logistics` (v19): a cohort that does not help — the suggestion leaves its groups out; one placed by hand warns, and the home counts it", async ({ page }, info) => {
+    const phone = info.project.name === "phone";
+    // the demo in that mode: «נ» does not help with the duties (on campus Monday and Tuesday — its presence still counts)
+    await page.goto(`${demoUrl()}/logistics/rota?as=logistics`);
+    await page.getByRole("button", { name: "הצעה הוגנת" }).click();
+    await expect(page.locator("[data-suggest-status]")).toHaveText(/^הוצעו \d+ · /);
+    await expect(page.locator('[data-group-chip^="א"]').first()).toBeAttached();
+    await expect(page.locator('[data-group-chip^="נ"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "החלת ההצעה" }).click();
+    await expect(toast(page, /שיבוצים מוצעים נוספו/)).toBeVisible();
+    await expect(page.locator('[data-group-chip^="נ"]')).toHaveCount(0);
+
+    // by hand: נ1 into Monday morning's kitchen, a shift it is on campus for — allowed, and warned
+    if (phone) await page.getByRole("tab", { name: "שני" }).click();
+    await page.getByRole("button", { name: "שיבוץ: מטבח · שני · בוקר" }).click();
+    const sheet = page.getByRole("dialog", { name: "מטבח · שני · בוקר" });
+    await sheet.getByRole("button", { name: "שיבוץ: נ1" }).click();
+    await expect(toast(page, "נ1 שובצה ל«מטבח»")).toBeVisible();
+    await sheet.getByRole("button", { name: "סגירה" }).click();
+    await expect(sheet).toHaveCount(0);
+    await page.getByText("אזהרות", { exact: true }).click();
+    await expect(page.getByRole("list", { name: "אזהרות" }).getByRole("button", { name: "נ1 שובצה ב«מטבח» (יום שני · משמרת בוקר), אבל המכינה שלה לא עוזרת בתורנויות" })).toBeVisible();
+    await noSidewaysScroll(page);
+
+    // the logistics home's «שיבוץ התורנויות» counts it
+    await page.getByRole("navigation", { name: "לוגיסטיקה" }).getByRole("link", { name: "בית" }).click();
+    await expect(page.locator('[data-task="assign"]')).toHaveAttribute("data-state", "open");
+    await expect(page.locator('[data-task="assign"]')).toContainText("שיבוץ אחד לקבוצה שלא עוזרת");
+  });
+
   test("the heads' phones in the setup: none until «כולל טלפונים», then each group's; a phone saved and shown", async ({ page }) => {
     await page.goto(`${demoUrl()}/logistics/rota/setup`);
     const groups = page.getByRole("region", { name: "הקבוצות" });
@@ -240,7 +274,7 @@ test.describe("demo build", () => {
     await expect(page.getByText("000-000-0001")).toHaveCount(0);
   });
 
-  test("staff shifts and the Saturday-night list: a lead added, a pasted list numbered, a task moved and done", async ({ page }) => {
+  test("staff shifts and the Saturday night: a lead added, a pasted list numbered, a task moved and done; the shopping list beside it, printed on its own page", async ({ page }) => {
     await page.goto(`${demoUrl()}/logistics/rota/staff`);
     const monday = page.getByRole("region", { name: "יום שני" });
     await expect(monday.locator("[data-no-lead]")).toContainText("בלי אחראי/ת משמרת: בוקר, אחר צהריים, לילה");
@@ -270,10 +304,10 @@ test.describe("demo build", () => {
     await expect(toast(page, "נוספו 2 משימות")).toBeVisible();
     await expect(page.locator("[data-prep]")).toHaveCount(6);
     await expect(page.locator('[data-prep="5"]')).toContainText("משימה מודבקת לדוגמה א");
-    // a phone in the paste refuses it all
+    // a phone in the paste refuses it all — in the lists' own words (a group head's phone has nothing to do with it)
     await page.getByLabel(/שורה לכל משימה/).fill("להתקשר ל-000-000-0055 לגבי השולחנות");
     await expect(page.getByRole("button", { name: "הוספת הרשימה" })).toHaveAttribute("aria-disabled", "true");
-    await expect(page.getByRole("alert").filter({ hasText: "יש כאן טלפון או מייל" })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "יש כאן טלפון או מייל" })).toHaveText("יש כאן טלפון או מייל. ברשימות של מוצ״ש לא כותבים טלפונים או מיילים.");
     // moved up: it is number 5 now, and keeps the focus
     const up = page.getByRole("button", { name: "הזזה למעלה: משימה 6" });
     await up.click();
@@ -283,6 +317,76 @@ test.describe("demo build", () => {
     await expect(page.locator("[data-prep-done]")).toHaveText("בוצעו 1 מתוך 6");
     await page.getByLabel("קבוצה: משימה 1").selectOption({ label: "א2" });
     await expect(page.getByLabel("קבוצה: משימה 1")).toHaveValue(/\d+/);
+    await noSidewaysScroll(page);
+
+    // v19: the shopping list beside the tasks — its own count, an item with its quantity, «נקנה», its own paste
+    const tasks = page.locator('[data-prep-list="task"]');
+    const items = page.locator('[data-prep-list="item"]');
+    await expect(items).toContainText("עוד אין פריטים ברשימת הקניות.");
+    await expect(items.locator("[data-prep-count]")).toHaveCount(0);
+    const add = items.getByRole("form", { name: "פריט חדש" });
+    await add.getByLabel("פריט חדש").fill("פריט לדוגמה א");
+    await add.getByLabel("כמות").fill("2 (לדוגמה)");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(toast(page, "הפריט נוסף")).toBeVisible();
+    await expect(items.locator('[data-prep-item="1"]')).toContainText("פריט לדוגמה א");
+    await expect(items.locator('[data-prep-item="1"] [data-qty]')).toHaveAttribute("data-qty", "2 (לדוגמה)");
+    await expect(items.locator('[data-prep-item="1"]')).toContainText("· כמות: 2 (לדוגמה)");
+    await expect(items.locator("[data-prep-count]")).toHaveText("נקנו 0 מתוך 1");
+    await expect(page.locator("[data-prep]")).toHaveCount(6); // the tasks' list is its own
+    // a quantity is text, never a phone — said in the lists' own words, not in those about a group head's phone
+    const NO_CONTACT = "יש כאן טלפון או מייל. ברשימות של מוצ״ש לא כותבים טלפונים או מיילים.";
+    await add.getByLabel("פריט חדש").fill("פריט לדוגמה ב");
+    await add.getByLabel("כמות").fill("טל׳ 000-000-0055");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(items.getByRole("alert")).toHaveText(NO_CONTACT);
+    await expect(items.locator("[data-prep-item]")).toHaveCount(1);
+    // the item's own text: the same words
+    await add.getByLabel("פריט חדש").fill("פריט לדוגמה ב, טל׳ 000-000-0055");
+    await add.getByLabel("כמות").fill("");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(items.getByRole("alert")).toHaveText(NO_CONTACT);
+    await expect(items.locator("[data-prep-item]")).toHaveCount(1);
+    await add.getByLabel("פריט חדש").fill("פריט לדוגמה ב");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(items.locator('[data-prep-item="2"]')).toContainText("פריט לדוגמה ב");
+    await expect(items.locator('[data-prep-item="2"] [data-qty]')).toHaveCount(0); // no quantity: none shown
+    await items.getByRole("checkbox", { name: "נקנה: פריט 1" }).check();
+    await expect(items.locator("[data-prep-count]")).toHaveText("נקנו 1 מתוך 2");
+    await expect(tasks.locator("[data-prep-count]")).toHaveText("בוצעו 1 מתוך 6"); // each list counts its own
+    // the paste: a line an item, its quantity after a tab (a spreadsheet's second column), the numbering taken off
+    await items.getByText("הדבקת רשימת קניות", { exact: true }).click();
+    await items.getByLabel(/^שורה לכל פריט/).fill("1. פריט מודבק לדוגמה א\t3 (לדוגמה)\n\nפריט מודבק לדוגמה ב\n");
+    await expect(items.getByText("יתווספו 2 פריטים, אחרי האחרון.")).toBeVisible();
+    await items.getByRole("button", { name: "הוספת הפריטים" }).click();
+    await expect(toast(page, "נוספו 2 פריטים")).toBeVisible();
+    await expect(items.locator("[data-prep-item]")).toHaveCount(4);
+    await expect(items.locator('[data-prep-item="3"]')).toContainText("פריט מודבק לדוגמה א");
+    await expect(items.locator('[data-prep-item="3"] [data-qty]')).toHaveAttribute("data-qty", "3 (לדוגמה)");
+    await expect(items.locator('[data-prep-item="4"] [data-qty]')).toHaveCount(0);
+    // moved up inside its own list
+    await items.getByRole("button", { name: "הזזה למעלה: פריט 3" }).click();
+    await expect(items.locator('[data-prep-item="2"]')).toContainText("פריט מודבק לדוגמה א");
+    await expect(page.locator('[data-prep="5"]')).toContainText("משימה מודבקת לדוגמה ב"); // the tasks untouched
+    await noSidewaysScroll(page);
+
+    // printed: the tasks, then the shopping list on a page of its own («קניות מוצ״ש»), the quantities as typed
+    await page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
+    await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "תורנויות" }).click();
+    await page.locator("#rota-view").selectOption("prep");
+    const shopping = page.locator('[data-rota-table="קניות מוצ״ש"]');
+    await expect(page.locator('[data-rota-table="מוצ״ש"]')).toContainText("משימה מודבקת לדוגמה א");
+    await expect(page.locator('[data-rota-table="מוצ״ש"]')).not.toContainText("פריט לדוגמה");
+    await expect(shopping).toContainText("פריט מודבק לדוגמה א");
+    await expect(shopping).toContainText("3 (לדוגמה)");
+    await expect(shopping).toContainText("נקנה");
+    await expect(shopping).not.toContainText("משימת הכנה לדוגמה");
+    await page.emulateMedia({ media: "print" });
+    await expect(page.getByRole("table", { name: "קניות מוצ״ש" })).toBeVisible();
+    expect(await page.getByRole("table", { name: "קניות מוצ״ש" }).locator("th").allTextContents()).toEqual(["#", "פריט", "כמות", "נקנה"]);
+    const printed = await PDFDocument.load(await page.pdf({ preferCSSPageSize: true }));
+    expect(printed.getPageCount()).toBe(2);
+    await page.emulateMedia({ media: "screen" });
     await noSidewaysScroll(page);
   });
 
@@ -309,6 +413,7 @@ test.describe("demo build", () => {
       "ראשי קבוצות",
       "משמרות צוות",
       "מוצ״ש",
+      "קניות מוצ״ש", // v19: the shopping list, a sheet of its own (always there, empty or not)
       "אוכל",
       "מי בקמפוס",
       "עומס",
@@ -503,6 +608,108 @@ test.describe("mock build", () => {
     for (const w of sb.writes) expect(JSON.stringify(w.body), w.table).not.toContain("000-000-0001");
     await expect.poll(() => sb.rpc.get("get_rota_contacts")?.length).toBe(2); // read again after the save
     expect(sb.calls.some((c) => c.path === "/rest/v1/rota_group_contacts")).toBe(false);
+  });
+
+  test("v19 on the wire: the cohorts' two flags by the contract's names; the suggestion skips a cohort that does not help; the shopping list — an item with its quantity, «נקנה», a paste as ONE insert", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb, session } = await signedIn(page, "logistics");
+    const base = mockRota();
+    const slots = base.presence.map((p) => ({ ...p, cohort_id: 2 }));
+    sb.answers.set("load_rota", {
+      ...base,
+      cohorts: [
+        { ...base.cohorts[0], helps_rota: true, can_drive: false },
+        { id: 2, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, helps_rota: false, can_drive: true },
+      ],
+      presence: [...base.presence, ...slots], // on campus all week, as א: only the flag keeps its groups out
+      groups: [...base.groups, { id: 13, edition_id: 7, cohort_id: 2, number: 1, size: 9, head_name: null }],
+      assignments: [],
+      prep: [
+        { id: 51, edition_id: 7, text: "משימת הכנה לדוגמה", group_id: null, done: false, sort: 1, kind: "task", qty: null },
+        { id: 52, edition_id: 7, text: "פריט לדוגמה", group_id: null, done: false, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
+      ],
+    } satisfies RotaData);
+    sb.tables.set("rota_prep_tasks", [{ sort: 2 }]); // the edition's last number, whatever its kind (addPrepTasks reads it)
+    const writes = (table: string) => sb.writes.filter((w) => w.table === table).map((w) => [w.method, w.query.get("id"), w.body]);
+
+    // the setup: each cohort's two flags as read, a badge for each that is not the default
+    await page.goto(`${mockUrl()}/logistics/rota/setup`);
+    const cohorts = page.getByRole("region", { name: "המכינות" });
+    await expect(cohorts.locator('[data-rota-cohort="א"]')).toHaveAttribute("data-helps-rota", "y");
+    await expect(cohorts.locator('[data-rota-cohort="א"]')).toHaveAttribute("data-can-drive", "-");
+    await expect(cohorts.locator('[data-rota-cohort="ב"]')).toHaveAttribute("data-helps-rota", "-");
+    await expect(cohorts.locator('[data-rota-cohort="ב"]')).toHaveAttribute("data-can-drive", "y");
+    await expect(cohorts.locator('[data-rota-cohort="ב"]')).toContainText("לא עוזרת בתורנויות");
+    await expect(cohorts.locator('[data-rota-cohort="ב"]')).toContainText("הצוות יכול להסיע");
+    await expect(cohorts.locator('[data-rota-cohort="א"]')).not.toContainText("לא עוזרת בתורנויות");
+    // edited: both flags always sent, by the columns' names
+    await cohorts.getByRole("button", { name: "עריכה: מכינה לדוגמה א" }).click();
+    const edit = cohorts.getByRole("form", { name: "עריכת המכינה: מכינה לדוגמה א" });
+    await expect(edit.getByRole("checkbox", { name: "עוזרת בתורנויות" })).toBeChecked();
+    await expect(edit.getByRole("checkbox", { name: "הצוות שלה יכול להסיע" })).not.toBeChecked();
+    await expect(edit).toContainText("מכינה שלא עוזרת: ההצעה לא משבצת את הקבוצות שלה. הנוכחות שלה עדיין נספרת לארוחות.");
+    await edit.getByRole("checkbox", { name: "הצוות שלה יכול להסיע" }).check();
+    await edit.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "המכינה נשמרה")).toBeVisible();
+    expect(writes("rota_cohorts")).toEqual([["PATCH", "eq.1", { letter: "א", name: "מכינה לדוגמה א", diets: [], helps_rota: true, can_drive: true }]]);
+    // a new one: not helping — the defaults are helps, cannot drive
+    await cohorts.getByRole("button", { name: "+ מכינה" }).click();
+    const fresh = cohorts.getByRole("form", { name: "מכינה חדשה" });
+    await expect(fresh.getByRole("checkbox", { name: "עוזרת בתורנויות" })).toBeChecked();
+    await expect(fresh.getByRole("checkbox", { name: "הצוות שלה יכול להסיע" })).not.toBeChecked();
+    await fresh.getByLabel("אות").fill("ד");
+    await fresh.getByLabel("שם המכינה").fill("מכינה לדוגמה ד");
+    await fresh.getByRole("checkbox", { name: "עוזרת בתורנויות" }).uncheck();
+    await fresh.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "המכינה נוספה")).toBeVisible();
+    expect(writes("rota_cohorts").at(-1)).toEqual(["POST", null, { edition_id: 7, letter: "ד", name: "מכינה לדוגמה ד", diets: [], sort: 3, helps_rota: false, can_drive: false }]);
+
+    // «הצעה הוגנת»: never a group of the cohort that does not help, though it is on campus
+    await page.getByRole("navigation", { name: "תורנויות" }).getByRole("link", { name: "לוח" }).click();
+    await page.getByRole("button", { name: "הצעה הוגנת" }).click();
+    await page.getByRole("button", { name: "החלת ההצעה" }).click();
+    await expect(toast(page, "שיבוצים מוצעים נוספו")).toBeVisible();
+    const posts = sb.writes.filter((w) => w.table === "rota_assignments" && w.method === "POST");
+    expect(posts).toHaveLength(1);
+    const rows = posts[0].body as { group_id: number }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((r) => r.group_id))).toEqual(new Set([11, 12]));
+
+    // מוצ״ש: two lists, each its own count
+    await page.getByRole("navigation", { name: "תורנויות" }).getByRole("link", { name: "מוצ״ש" }).click();
+    const items = page.locator('[data-prep-list="item"]');
+    await expect(page.locator('[data-prep-list="task"] [data-prep-count]')).toHaveText("בוצעו 0 מתוך 1");
+    await expect(items.locator("[data-prep-count]")).toHaveText("נקנו 0 מתוך 1");
+    await expect(items.locator('[data-prep-item="1"] [data-qty]')).toHaveAttribute("data-qty", "2 (לדוגמה)");
+    // an item: the text, its kind and its quantity, after the edition's last number
+    const add = items.getByRole("form", { name: "פריט חדש" });
+    await add.getByLabel("פריט חדש").fill(" פריט חדש לדוגמה ");
+    await add.getByLabel("כמות").fill(" 3 (לדוגמה) ");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(toast(page, "הפריט נוסף")).toBeVisible();
+    // «נקנה» is the row's done (a click: the box shows what the database answers, and this fake answers the same rota)
+    await items.getByRole("checkbox", { name: "נקנה: פריט 1" }).click();
+    await expect.poll(() => writes("rota_prep_tasks").length).toBe(2);
+    // the paste: ONE insert of every line, each item with its quantity (none: null)
+    await items.getByText("הדבקת רשימת קניות", { exact: true }).click();
+    await items.getByLabel(/^שורה לכל פריט/).fill("1. פריט מודבק לדוגמה א\t4 (לדוגמה)\n2) פריט מודבק לדוגמה ב\n");
+    await items.getByRole("button", { name: "הוספת הפריטים" }).click();
+    await expect(toast(page, "נוספו 2 פריטים")).toBeVisible();
+    // a quantity with a phone in it: refused here, nothing sent
+    await add.getByLabel("פריט חדש").fill("פריט לדוגמה ג");
+    await add.getByLabel("כמות").fill("000-000-0055");
+    await add.getByRole("button", { name: "הוספה" }).click();
+    await expect(items.getByRole("alert").filter({ hasText: "טלפון" })).toBeVisible();
+    expect(writes("rota_prep_tasks")).toEqual([
+      ["POST", null, [{ edition_id: 7, text: "פריט חדש לדוגמה", kind: "item", qty: "3 (לדוגמה)", group_id: null, done: false, sort: 3 }]],
+      ["PATCH", "eq.52", { done: true }],
+      ["POST", null, [
+        { edition_id: 7, text: "פריט מודבק לדוגמה א", kind: "item", qty: "4 (לדוגמה)", group_id: null, done: false, sort: 3 },
+        { edition_id: 7, text: "פריט מודבק לדוגמה ב", kind: "item", qty: null, group_id: null, done: false, sort: 4 },
+      ]],
+    ]);
+    for (const w of sb.writes) expect(w.auth, w.table).toBe(`Bearer ${session.access_token}`);
+    for (const w of sb.writes) expect(JSON.stringify(w.body), w.table).not.toContain("000-000-0055");
   });
 
   test("the heads' phones answering late: a form opened before the answer takes the phone, and a save of the size alone sends no phone", async ({ page }, info) => {

@@ -35,6 +35,8 @@ describe("sectionNeedingConnection", () => {
     expect(sectionNeedingConnection("")).toBeNull();
     expect(sectionNeedingConnection("/memorial")).toBe("זמני זיכרון");
     expect(sectionNeedingConnection("/logistics/transports")).toBe("לוגיסטיקה");
+    expect(sectionNeedingConnection("/logistics")).toBe("לוגיסטיקה"); // the logistics home (phase 4)
+    expect(sectionNeedingConnection("/logistics/rota/prep")).toBe("לוגיסטיקה");
     expect(sectionNeedingConnection("/logistics/")).toBe("לוגיסטיקה");
     expect(sectionNeedingConnection("/print/escorts")).toBe("תוצרים");
     expect(sectionNeedingConnection("/settings/team")).toBe("הגדרות");

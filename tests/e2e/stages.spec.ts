@@ -429,9 +429,10 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
-    await page.goto(mockUrl());
-    // the staff's order without «ימים» and «מרצים», and no settings; «אישורים» reads the requests (a practice week's: nobody decides them)
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "אישורים", "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    await page.goto(`${mockUrl()}/grid`);
+    // logistics' own header (phase 4), no settings; «אישורים» reads the requests (a practice week's: nobody decides them)
+    await expect(nav(page).getByRole("link")).toHaveText(["בית", "אישורים", "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
     let panel = await openLesson(page, info, "שני", "מרצה 12");

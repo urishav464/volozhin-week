@@ -5,7 +5,7 @@
 // public.register_source_file in supabase/schema.sql «Milestone 5ב-1», so the
 // demo (src/data/engine.ts) refuses exactly what production refuses
 // (tests/parity runs the same uploads through both).
-import type { Lesson, SourceFile, SourceMime } from "../domain/types";
+import type { Lesson, SourceFile, SourceKind, SourceMime } from "../domain/types";
 import { CommandError } from "./commands";
 import { cleanLine } from "./speakerRules";
 import { readerKind } from "./stageRules";
@@ -18,17 +18,22 @@ export const MAX_PAGES = 5000;
 
 export const PDF: SourceMime = "application/pdf";
 export const DOCX: SourceMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+/** v19: a PowerPoint file — only ever a presentation (source_files_pptx_kind), never a source. */
+export const PPTX: SourceMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+/** What a source may be: four types. */
 export const SOURCE_MIMES: readonly SourceMime[] = [PDF, "image/png", "image/jpeg", DOCX];
+/** What the bucket takes (v19): the four and a pptx — the bucket's allowed_mime_types, source_files_mime_check. */
+export const BUCKET_MIMES: readonly SourceMime[] = [PDF, "image/png", "image/jpeg", DOCX, PPTX];
 
 /** What the file picker offers (accept=…). */
 export const SOURCE_ACCEPT = ".pdf,.docx,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg," + DOCX;
 export const COVER_ACCEPT = ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg";
 
-const EXT: Record<SourceMime, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", [DOCX]: "docx" };
+const EXT: Record<SourceMime, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", [DOCX]: "docx", [PPTX]: "pptx" };
 
-/** app.source_path_re: <edition>/<lesson|cover>/<uuid>-<safe name>.<pdf|png|jpg|jpeg|docx>. */
+/** app.source_path_re: <edition>/<lesson|cover>/<uuid>-<safe name>.<pdf|png|jpg|jpeg|docx|pptx>. */
 export const SOURCE_PATH_RE =
-  /^([1-9][0-9]{0,17})\/([1-9][0-9]{0,17}|cover)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9][A-Za-z0-9_-]{0,59}\.(pdf|png|jpg|jpeg|docx)$/;
+  /^([1-9][0-9]{0,17})\/([1-9][0-9]{0,17}|cover)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9][A-Za-z0-9_-]{0,59}\.(pdf|png|jpg|jpeg|docx|pptx)$/;
 
 const fail = (code: string): never => {
   throw new CommandError(code);
@@ -52,14 +57,21 @@ export function mimeMatches(mime: string, ext: string): boolean {
       return ext === "jpg" || ext === "jpeg";
     case DOCX:
       return ext === "docx";
+    case PPTX:
+      return ext === "pptx";
     default:
       return false;
   }
 }
 
-/** A PDF or an image goes into the merged reader; a Word file cannot be merged in the browser («צריך PDF»). */
+/** A PDF or an image goes into the merged reader; a Word or PowerPoint file cannot be merged in the browser («צריך PDF»). */
 export function printableMime(mime: SourceMime): boolean {
-  return mime !== DOCX;
+  return mime !== DOCX && mime !== PPTX;
+}
+
+/** v19: a presentation (source_files.kind) — never in the reader, the manifest, the prints or the cover. Absent kind: a source. */
+export function isPresentation(f: Pick<SourceFile, "kind">): boolean {
+  return f.kind === "presentation";
 }
 
 /**
@@ -67,10 +79,10 @@ export function printableMime(mime: SourceMime): boolean {
  * (some systems give a .docx no type at all). null: not a type we take.
  */
 export function mimeOfFile(f: { name: string; type: string }): SourceMime | null {
-  if ((SOURCE_MIMES as readonly string[]).includes(f.type)) return f.type as SourceMime;
+  if ((BUCKET_MIMES as readonly string[]).includes(f.type)) return f.type as SourceMime;
   const ext = /\.([A-Za-z0-9]+)$/.exec(f.name)?.[1]?.toLowerCase();
   if (f.type && f.type !== "application/octet-stream") return null;
-  return ext === "pdf" ? PDF : ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "docx" ? DOCX : null;
+  return ext === "pdf" ? PDF : ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "docx" ? DOCX : ext === "pptx" ? PPTX : null;
 }
 
 /**
@@ -93,12 +105,15 @@ export function sourcePath(edition: number, lesson: number | null, uuid: string,
 
 /**
  * What a picked file must be before it is sent, each with its own reason: a type we take (bad_file; the poster —
- * a PDF or a picture, never Word: cover_bad_file), then at most 25 MB (file_too_big).
+ * a PDF or a picture, never Word: cover_bad_file), then at most 25 MB (file_too_big). v19: a pptx only as a
+ * presentation (bad_file as a source); a lesson's presentation may be any of the five types, the week's own (the
+ * cover path) any but Word — the bucket refuses a docx there whatever it is meant to be (app.source_refusal ≡
+ * Engine.sourceRefusal: a path carries no kind), so it is refused here first, with the server's own code (bad_file).
  */
-export function checkPicked(f: { name: string; type: string; size: number }, cover: boolean): SourceMime {
+export function checkPicked(f: { name: string; type: string; size: number }, cover: boolean, kind: SourceKind = "source"): SourceMime {
   const mime = mimeOfFile(f);
-  if (cover && (mime == null || !printableMime(mime))) fail("cover_bad_file");
-  if (mime == null) fail("bad_file");
+  if (cover && kind === "source" && (mime == null || !printableMime(mime))) fail("cover_bad_file");
+  if (mime == null || (mime === PPTX && kind !== "presentation") || (cover && mime === DOCX)) fail("bad_file");
   if (f.size > MAX_SOURCE_BYTES) fail("file_too_big");
   return mime!;
 }
@@ -124,11 +139,11 @@ export function cleanDisplayName(v: string | null | undefined): string {
 /**
  * register_source_file's page count: what the browser read of the file as the reader would (src/reader/pages.ts) —
  * a PDF's pages (1–5000, else bad_value), a picture 1 whatever number came; null when it could not be read (the
- * reader leaves it out, «לא נקרא»); Word null, always.
+ * reader leaves it out, «לא נקרא»); Word and PowerPoint null, always.
  */
 export function pagesFor(mime: SourceMime, pages: number | null | undefined): number | null {
   if (pages != null && (!Number.isInteger(pages) || pages < 1 || pages > MAX_PAGES)) fail("bad_value");
-  if (mime === DOCX || pages == null) return null;
+  if (mime === DOCX || mime === PPTX || pages == null) return null;
   return mime === PDF ? pages : 1;
 }
 

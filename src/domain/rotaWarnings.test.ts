@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { RotaData, ShiftIndex } from "../data/rota";
 import { rotaSlots, slotIndex } from "./rota";
-import { cellWarnings, groupWarnings, rotaWarnings, type RotaWarning } from "./rotaWarnings";
+import { cellWarnings, groupWarnings, rotaWarnings, type RotaWarning, unevenLoad } from "./rotaWarnings";
 import type { Day } from "./time";
 
 const WEEK = { first_day_from: 510, last_day_until: 1140, settings: {} };
@@ -234,6 +234,57 @@ describe("each warning fires, and only it", () => {
     d.cohorts[0].diets = [{ label: "צמחוני", count: 40 }];
     d.groups[0].size = null;
     expect(rotaWarnings(d, WEEK)).toEqual([]);
+  });
+});
+
+describe("a cohort that does not help (v19)", () => {
+  /** The quiet rota and «נ» (not helping) on campus all week with one group, נ1 (21). */
+  function withNun(): RotaData {
+    const d = quiet();
+    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2, helps_rota: false });
+    d.groups.push({ id: 21, edition_id: 1, cohort_id: 2, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 5" });
+    for (const s of rotaSlots(WEEK)) d.presence.push({ cohort_id: 2, ...s });
+    return d;
+  }
+
+  it("its idle groups are not «uneven»: the fairness weighs only the groups that help", () => {
+    const d = withNun();
+    expect(rotaWarnings(d, WEEK)).toEqual([]); // the same rota with «נ» helping would be uneven (נ1 does nothing)
+    d.cohorts[1].helps_rota = true;
+    expect(kinds(rotaWarnings(d, WEEK))).toEqual(["uneven"]);
+    d.cohorts[1].helps_rota = false;
+    expect(unevenLoad(d, WEEK)).toBeNull();
+  });
+
+  it("not_helping: a duty given by hand to one of its groups — each such row, in the cell it is in", () => {
+    const d = withNun();
+    at(d, 1, 1).group_id = 21; // א1's Monday afternoon (one of its four) to נ1: the helping groups 3/4/3/3, even
+    const ws = rotaWarnings(d, WEEK);
+    expect(kinds(ws)).toEqual(["not_helping"]);
+    expect(ws[0]).toMatchObject({ kind: "not_helping", severity: "warn", day: 1, shift: 1, dutyId: 1, groupIds: [21] });
+    expect(ws[0].message).toBe("נ1 שובצה ב«מטבח» (יום שני · משמרת אחר צהריים), אבל המכינה שלה לא עוזרת בתורנויות");
+    expect(cellWarnings(ws, 1, 1, 1).map((w) => w.kind)).toEqual(["not_helping"]);
+    expect(groupWarnings(ws, { day: 1, shift: 1, group_id: 21 }).map((w) => w.kind)).toEqual(["not_helping"]);
+    // the assignment fills its duty: no «under»; a second one is a second warning
+    at(d, 2, 0).group_id = 21;
+    expect(rotaWarnings(d, WEEK).filter((w) => w.kind === "not_helping").map((w) => w.day)).toEqual([1, 2]);
+  });
+
+  it("presence_unknown stays (its presence feeds the meal counts), without «ההצעה לא משבצת…»", () => {
+    const d = withNun();
+    d.presence = d.presence.filter((p) => p.cohort_id !== 2);
+    const ws = rotaWarnings(d, WEEK);
+    expect(kinds(ws)).toEqual(["presence_unknown"]);
+    expect(ws[0]).toMatchObject({ severity: "warn", groupIds: [21], message: "לא סומן מתי מכינה לדוגמה נ בקמפוס" });
+    // a cohort that helps keeps the whole sentence
+    d.cohorts[1].helps_rota = true;
+    expect(rotaWarnings(d, WEEK).find((w) => w.kind === "presence_unknown")!.message).toBe("לא סומן מתי מכינה לדוגמה נ בקמפוס — ההצעה לא משבצת את הקבוצות שלה");
+  });
+
+  it("a cohort from before v19 (no flag) helps", () => {
+    const d = withNun();
+    delete d.cohorts[1].helps_rota;
+    expect(kinds(rotaWarnings(d, WEEK))).toEqual(["uneven"]);
   });
 });
 

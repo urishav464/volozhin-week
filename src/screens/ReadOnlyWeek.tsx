@@ -1,11 +1,12 @@
 // «השבוע» for a trainee (the reset, phase 2; `/week`): the week to read — the full grid on a wide screen, the day
 // view on a phone or a tablet (as the week screen chooses) — with nothing to place, shape or drag; a lesson card opens
 // its page (`/lesson/:id`), a memorial slot «זמני זיכרון». The days I own are marked («היום שלי»). The old grid, which
-// writes, stays at `/grid` (and `/` for staff); OfflineWeek.tsx stays the copy without internet. No warnings' counts:
+// writes, stays at `/grid` (and `/` for staff); logistics read the week here too (phase 4: «השבוע» in their header, the
+// link back «לבית»); OfflineWeek.tsx stays the copy without internet. No warnings' counts:
 // they are the staff's to act on, and nothing a trainee can open here explains them (no day panel, no warnings list).
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { personaOf } from "../data/gate";
+import { type Persona, personaOf } from "../data/gate";
 import type { DataPort } from "../data/port";
 import type { Me } from "../data/types";
 import { ownedDays } from "../domain/myDay";
@@ -16,8 +17,16 @@ import { GridDesktop } from "../grid/GridDesktop";
 import { buildModel, type GridModel } from "../grid/model";
 import { useMedia } from "../lib/useMedia";
 import { todayColumn } from "../offline/view";
+import { LOGISTICS_HOME } from "./nav";
 import { EditionSelect } from "./speakers/parts";
 import { actorIn, useWeekStore } from "./weekStore";
+
+/** The link back from «השבוע»: a trainee to «היום שלי», logistics to their home (phase 4), staff to the grid that writes. */
+export function backLink(persona: Persona): { to: string; label: string } {
+  if (persona === "trainee") return { to: "/", label: "להיום שלי" };
+  if (persona === "logistics") return { to: LOGISTICS_HOME, label: "לבית" };
+  return { to: "/", label: "לרשת השבוע" };
+}
 
 /** The model without its warnings: the cards' and the day headers' amber counts are left out (the day's balance stays). */
 export function withoutWarnings(m: GridModel): GridModel {
@@ -46,15 +55,16 @@ export function ReadOnlyWeek({ me }: { port: DataPort; me: Me }) {
     navigate(l?.kind === "memorial" ? "/memorial" : lessonPath(id));
   };
   const nothing = () => undefined;
+  const back = backLink(personaOf(me, store.editionId));
 
   return (
     <div className="flex flex-col gap-2" data-readonly-week>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="font-display text-xl font-extrabold text-navy">השבוע — לצפייה בלבד</h2>
         <EditionSelect />
-        {/* staff preview this page by its address: their «/» is the week that writes */}
-        <Link to="/" className="ms-auto inline-flex min-h-11 items-center text-sm font-bold text-navy underline-offset-4 hover:underline">
-          {personaOf(me, store.editionId) === "trainee" ? "להיום שלי" : "לרשת השבוע"}
+        {/* staff preview this page by its address: their «/» is the week that writes; logistics read it from their header */}
+        <Link to={back.to} className="ms-auto inline-flex min-h-11 min-w-11 items-center justify-center text-sm font-bold text-navy underline-offset-4 hover:underline">
+          {back.label}
         </Link>
       </div>
       {wide ? (

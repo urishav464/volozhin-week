@@ -12,7 +12,8 @@ import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
 import {
-  arrived, checkPicked, cleanDisplayName, DISPLAY_NAME_MAX, displayNameOf, DOCX, MAX_SOURCE_BYTES, mimeMatches, mimeOfFile, pagesFor, parseSourcePath, safeName, SOURCE_PATH_RE, sourcePath,
+  arrived, BUCKET_MIMES, checkPicked, cleanDisplayName, DISPLAY_NAME_MAX, displayNameOf, DOCX, MAX_SOURCE_BYTES, mimeMatches, mimeOfFile, pagesFor, parseSourcePath, PPTX, printableMime,
+  safeName, SOURCE_MIMES, SOURCE_PATH_RE, sourcePath,
 } from "./sourceRules";
 import { SupabaseSources, uploadRefusal, type UploadRequest } from "./supabaseSources";
 import { PortError } from "./types";
@@ -66,6 +67,33 @@ describe("the path convention", () => {
     expect(checkPicked({ name: "a.png", type: "image/png", size: MAX_SOURCE_BYTES }, true)).toBe("image/png");
     expect(mimeMatches("image/jpeg", "jpeg")).toBe(true);
     expect(mimeMatches("image/png", "pdf")).toBe(false);
+  });
+
+  it("v19: a pptx — the bucket's fifth type — only as a presentation; a lesson's presentation may be any of the five, the week's (the cover path) any but Word", async () => {
+    expect(SOURCE_MIMES).toHaveLength(4);
+    expect(BUCKET_MIMES).toEqual(["application/pdf", "image/png", "image/jpeg", DOCX, PPTX]);
+    expect(mimeOfFile({ name: "a.pptx", type: PPTX })).toBe(PPTX);
+    expect(mimeOfFile({ name: "שקפים.PPTX", type: "" })).toBe(PPTX);
+    expect(mimeOfFile({ name: "a.pptx", type: "application/vnd.ms-powerpoint" })).toBeNull(); // the old format is not ours
+    expect(mimeMatches(PPTX, "pptx")).toBe(true);
+    expect(mimeMatches(PPTX, "docx")).toBe(false);
+    expect(printableMime(PPTX)).toBe(false);
+    const deck = { name: "a.pptx", type: PPTX, size: 10 };
+    expect(await code(() => checkPicked(deck, false))).toBe("bad_file");
+    expect(await code(() => checkPicked(deck, false, "source"))).toBe("bad_file");
+    expect(checkPicked(deck, false, "presentation")).toBe(PPTX);
+    expect(checkPicked(deck, true, "presentation")).toBe(PPTX); // the week's presentation, on the cover path
+    expect(checkPicked({ name: "a.docx", type: DOCX, size: 10 }, false, "presentation")).toBe(DOCX); // a lesson's
+    // the cover path refuses Word whatever it is meant to be (app.source_refusal: a path carries no kind) — said
+    // before the bytes go up, with the server's own code, never as «upload_refused»
+    expect(await code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("bad_file");
+    expect(checkPicked({ name: "a.pdf", type: "application/pdf", size: 10 }, true, "presentation")).toBe("application/pdf");
+    expect(checkPicked({ name: "a.png", type: "image/png", size: 10 }, true, "presentation")).toBe("image/png");
+    expect(await code(() => checkPicked({ ...deck, size: MAX_SOURCE_BYTES + 1 }, false, "presentation"))).toBe("file_too_big");
+    expect(safeName("מצגת.pptx", PPTX)).toBe("file.pptx");
+    expect(SOURCE_PATH_RE.test(sourcePath(7, 42, UUID, "deck.pptx", PPTX))).toBe(true);
+    expect(parseSourcePath(`7/cover/${UUID}-deck.pptx`)).toEqual({ edition: 7, lesson: null, ext: "pptx" });
+    expect(pagesFor(PPTX, 12)).toBeNull(); // never read
   });
 
   it("counts pages as register_source_file does, and cleans the display name", async () => {
@@ -143,9 +171,10 @@ describe("SupabaseSources on the wire", () => {
     // «private, no-store»: Storage hands every reader of the file this Cache-Control back — no copy outlives a signed URL
     expect(uploads[0].headers).toEqual({ authorization: "Bearer member-access-token", apikey: "stub-publishable-key", "content-type": "application/pdf", "x-upsert": "false", "cache-control": "private, no-store" });
     expect(sent.map((r) => [r.method, r.path, r.body])).toEqual([
-      ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: `7/42/${UUID}-file.pdf`, p_display_name: "מקורות.pdf", p_pages: 3 }],
+      ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: `7/42/${UUID}-file.pdf`, p_display_name: "מקורות.pdf", p_pages: 3, p_kind: "source" }],
     ]);
-    expect(row).toEqual({ ...ROW, id: 5, lesson_id: 42, speaker_id: 9, fallen_id: null, size_bytes: 1234, uploaded_by: 2 });
+    // a row without `kind` (before v19) reads as a source
+    expect(row).toEqual({ ...ROW, id: 5, lesson_id: 42, kind: "source", speaker_id: 9, fallen_id: null, size_bytes: 1234, uploaded_by: 2 });
   });
 
   it("registers a name too long for the database shortened — never refused after the bytes went up", async () => {
@@ -190,7 +219,7 @@ describe("SupabaseSources on the wire", () => {
     const { sources, sent } = wire([LOST, [200, ROW]]);
     const row = await sources.upload(7, 42, pdf(), { pages: 3 });
     expect(row).toMatchObject({ id: 5, storage_path: ROW.storage_path });
-    const register = ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: ROW.storage_path, p_display_name: "מקורות.pdf", p_pages: 3 }];
+    const register = ["POST", "/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: ROW.storage_path, p_display_name: "מקורות.pdf", p_pages: 3, p_kind: "source" }];
     expect(sent.map((r) => [r.method, r.path, r.body])).toEqual([register, register]); // the same call again; nothing deleted
   });
 
@@ -208,6 +237,24 @@ describe("SupabaseSources on the wire", () => {
     const failed = wire([[503, { code: "PGRST000", message: "Could not connect" }], [200, ROW]]);
     expect((await failed.sources.upload(7, 42, pdf(), { pages: 1 })).id).toBe(5);
     expect(failed.sent).toHaveLength(2);
+  });
+
+  it("v19: a presentation registers with p_kind «presentation» (a pptx too); «נשלח לדפוס» by its parameter names", async () => {
+    const deckRow = { ...ROW, storage_path: `7/42/${UUID}-deck.pptx`, mime: PPTX, page_count: null, kind: "presentation" };
+    const { sources, sent } = wire([[200, deckRow], [200, null], [200, null]]);
+    const row = await sources.upload(7, 42, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null, kind: "presentation" });
+    expect(row).toMatchObject({ kind: "presentation", mime: PPTX });
+    await sources.setReaderSent(7, true);
+    await sources.setReaderSent(7, false);
+    expect(sent.map((r) => [r.path, r.body])).toEqual([
+      ["/rest/v1/rpc/register_source_file", { p_edition: 7, p_lesson: 42, p_path: `7/42/${UUID}-deck.pptx`, p_display_name: "deck.pptx", p_pages: null, p_kind: "presentation" }],
+      ["/rest/v1/rpc/set_reader_sent", { p_edition: 7, p_sent: true }],
+      ["/rest/v1/rpc/set_reader_sent", { p_edition: 7, p_sent: false }],
+    ]);
+    // a pptx as a source is refused before anything is sent
+    const none = wire([]);
+    expect(await code(none.sources.upload(7, 42, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("bad_file");
+    expect([none.sent, none.uploads]).toEqual([[], []]);
   });
 
   it("removes the stored object first, then the row; reads by signed URL; sets the reader's headers and cover", async () => {
@@ -279,6 +326,21 @@ describe("DemoSources", () => {
     expect(e.week.lessons.find((x) => x.id === l.id)).toMatchObject({ sources_kind: "pending", in_reader: false }); // nothing set again
     // a new file for the draft is refused, as before
     expect(await code(port.sources.upload(1, l.id, pdf(), { pages: 1 }))).toBe("upload_refused");
+  });
+
+  it("v19: a presentation into the bucket, the lesson's sources untouched; «נשלח לדפוס» by logistics, never by content", async () => {
+    const port = new DemoPort();
+    const l = closedPending(port);
+    const deck = await port.sources.upload(1, l.id, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null, kind: "presentation" });
+    expect(deck).toMatchObject({ kind: "presentation", mime: PPTX, cover: false });
+    expect((await port.loadWeek(1)).lessons.find((x) => x.id === l.id)).toMatchObject({ sources_kind: "pending", in_reader: false });
+    expect(await code(port.sources.upload(1, l.id, new File([new Uint8Array(10)], "deck.pptx", { type: PPTX }), { pages: null }))).toBe("bad_file");
+    const logistics = new DemoPort({ memberId: 5, role: "logistics" });
+    await logistics.sources.setReaderSent(1, true);
+    expect((await logistics.loadWeek(1)).edition.settings.reader_sent).toMatchObject({ by: 5 });
+    expect(await code(new DemoPort({ memberId: 2, role: "content" }).sources.setReaderSent(1, true))).toBe("forbidden");
+    await logistics.sources.setReaderSent(1, false);
+    expect((await logistics.loadWeek(1)).edition.settings.reader_sent).toBeUndefined();
   });
 
   it("keeps the reader's headers and cover as the admin set them", async () => {

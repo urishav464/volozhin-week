@@ -486,10 +486,11 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
-    await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים", "תורנויות"]);
+    // v19: the reader is every member's (logistics build it, download it and mark «נשלח לדפוס»)
+    await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים", "תורנויות", "מקראה"]);
     await outputsNav(page).getByRole("link", { name: "רשימת מלווים" }).click();
     await expect(page.getByRole("region", { name: "מלווה לדוגמה ב׳" })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);

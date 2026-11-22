@@ -17,9 +17,9 @@ import type { Edition } from "../domain/types";
 import { CommandError } from "./commands";
 import {
   cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter,
-  cleanMinPeople, cleanNeed, cleanNote, cleanPrepText, cleanShift, cleanShifts, cleanStaffKind, cleanStaffName, cleanStaffTimes, cleanStaffWho, type CohortPatch, type Diet,
-  type DutyPatch, type GroupPatch, type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewStaffShift, type PrepPatch, type PresenceScope,
-  type RotaContact, type RotaData, type RotaPort, type RotaShiftsSetting, type ShiftIndex, type StaffPatch,
+  cleanFlag, cleanMinPeople, cleanNeed, cleanNote, cleanPrepKind, cleanPrepRows, cleanPrepText, cleanQty, cleanShift, cleanShifts, cleanStaffKind, cleanStaffName, cleanStaffTimes,
+  cleanStaffWho, type CohortPatch, type Diet, type DutyPatch, type GroupPatch, type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewPrepRow, type NewStaffShift,
+  type PrepKind, type PrepPatch, type PresenceScope, type RotaContact, type RotaData, type RotaPort, type RotaShiftsSetting, type ShiftIndex, type StaffPatch,
 } from "./rota";
 import { callRpc } from "./supabaseCommands";
 import { refusal } from "./supabaseSettings";
@@ -60,6 +60,8 @@ function readRota(d: Record<string, unknown[] | undefined>): RotaData {
     cohorts: rows("cohorts").map((c) => ({
       id: num(c.id), edition_id: num(c.edition_id), letter: String(c.letter), name: String(c.name),
       diets: (Array.isArray(c.diets) ? (c.diets as Diet[]) : []).map((x) => ({ label: String(x.label), count: Number(x.count) })), sort: num(c.sort ?? 0),
+      // v19 — a row from before reads as the columns' defaults
+      helps_rota: c.helps_rota !== false, can_drive: c.can_drive === true,
     })),
     presence: rows("presence").map((p) => ({ cohort_id: num(p.cohort_id), day: num(p.day) as Day, shift: num(p.shift) as ShiftIndex })),
     groups: rows("groups").map((g) => ({ id: num(g.id), edition_id: num(g.edition_id), cohort_id: num(g.cohort_id), number: num(g.number), size: numOrNull(g.size), head_name: strOrNull(g.head_name) })),
@@ -75,7 +77,10 @@ function readRota(d: Record<string, unknown[] | undefined>): RotaData {
       id: num(s.id), edition_id: num(s.edition_id), day: num(s.day) as Day, start_min: num(s.start_min), end_min: num(s.end_min), member_id: numOrNull(s.member_id),
       name: strOrNull(s.name), cohort_id: numOrNull(s.cohort_id), kind: s.kind === "lead" ? "lead" : "shift", note: strOrNull(s.note),
     })),
-    prep: rows("prep").map((t) => ({ id: num(t.id), edition_id: num(t.edition_id), text: String(t.text), group_id: numOrNull(t.group_id), done: t.done === true, sort: num(t.sort ?? 0) })),
+    prep: rows("prep").map((t) => ({
+      id: num(t.id), edition_id: num(t.edition_id), text: String(t.text), group_id: numOrNull(t.group_id), done: t.done === true, sort: num(t.sort ?? 0),
+      kind: t.kind === "item" ? "item" : "task", qty: strOrNull(t.qty),
+    })),
   };
 }
 
@@ -93,7 +98,12 @@ export class SupabaseRota implements RotaPort {
   // ------------------------------------------------------------------ cohorts
 
   async addCohort(editionId: number, c: NewCohort): Promise<void> {
-    const row = { edition_id: editionId, letter: cleanLetter(c.letter), name: cleanCohortName(c.name), diets: cleanDiets(c.diets ?? []), ...(c.sort !== undefined ? { sort: cleanSort(c.sort) } : {}) };
+    const row = {
+      edition_id: editionId, letter: cleanLetter(c.letter), name: cleanCohortName(c.name), diets: cleanDiets(c.diets ?? []), ...(c.sort !== undefined ? { sort: cleanSort(c.sort) } : {}),
+      // v19: the two flags, when given (absent: the columns' defaults, true and false)
+      ...(c.helps_rota !== undefined ? { helps_rota: cleanFlag(c.helps_rota) } : {}),
+      ...(c.can_drive !== undefined ? { can_drive: cleanFlag(c.can_drive) } : {}),
+    };
     await one(this.sb.from("rota_cohorts").insert(row).select("id"), "rota_letter_taken");
   }
 
@@ -103,6 +113,8 @@ export class SupabaseRota implements RotaPort {
     if (patch.name !== undefined) p.name = cleanCohortName(patch.name);
     if (patch.diets !== undefined) p.diets = cleanDiets(patch.diets);
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);
+    if (patch.helps_rota !== undefined) p.helps_rota = cleanFlag(patch.helps_rota);
+    if (patch.can_drive !== undefined) p.can_drive = cleanFlag(patch.can_drive);
     await one(this.sb.from("rota_cohorts").update(p).eq("id", id).select("id"), "rota_letter_taken");
   }
 
@@ -257,13 +269,14 @@ export class SupabaseRota implements RotaPort {
 
   // ------------------------------------------------------------------ preparations
 
-  async addPrepTasks(editionId: number, texts: string[]): Promise<void> {
-    const vs = texts.map(cleanPrepText);
+  async addPrepTasks(editionId: number, items: NewPrepRow[], kind: PrepKind = "task"): Promise<void> {
+    const vs = cleanPrepRows(items, kind);
     if (vs.length === 0) return;
+    // the edition's last, whatever its kind: the two lists share the numbering
     const { data, error } = await this.sb.from("rota_prep_tasks").select("sort").eq("edition_id", editionId).order("sort", { ascending: false }).limit(1);
     if (error) throw refusal(error);
     const last = Number((data as { sort: unknown }[] | null)?.[0]?.sort ?? 0);
-    const rows = vs.map((text, i) => ({ edition_id: editionId, text, group_id: null, done: false, sort: last + 1 + i }));
+    const rows = vs.map((v, i) => ({ edition_id: editionId, ...v, group_id: null, done: false, sort: last + 1 + i }));
     const { error: e2 } = await this.sb.from("rota_prep_tasks").insert(rows).select("id");
     if (e2) throw rotaRefusal(e2, "duplicate", "stale");
   }
@@ -271,6 +284,12 @@ export class SupabaseRota implements RotaPort {
   async updatePrepTask(id: number, patch: PrepPatch): Promise<void> {
     const p: Record<string, unknown> = {};
     if (patch.text !== undefined) p.text = cleanPrepText(patch.text);
+    // v19: the kind, then the quantity — cleaned whatever the kind (a phone refuses), a task's then sent as null
+    if (patch.kind !== undefined) p.kind = cleanPrepKind(patch.kind);
+    if (patch.qty !== undefined) {
+      const qty = cleanQty(patch.qty);
+      p.qty = p.kind === "task" ? null : qty;
+    }
     if (patch.group_id !== undefined) p.group_id = patch.group_id;
     if (patch.done !== undefined) p.done = cleanBool(patch.done);
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);

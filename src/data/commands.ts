@@ -13,7 +13,8 @@ export type ReshapeOp =
   | { op: "merge_next" }
   | { op: "reset" };
 
-export type LessonPatch = Partial<Pick<Lesson, "title" | "category_id" | "audience" | "teach_min">>;
+/** v19 `public_note`: the guests' schedule's line about the lesson (≤ 400, no phone or e-mail); null clears it. */
+export type LessonPatch = Partial<Pick<Lesson, "title" | "category_id" | "audience" | "teach_min" | "public_note">>;
 
 /** The escort of a closed lesson: a trainee of the roster (or none), self-introduction, a note for the escorts' list. */
 export interface EscortPatch {

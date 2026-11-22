@@ -65,6 +65,7 @@ const toFile = (r: Record<string, unknown>): SourceFile => ({
   id: Number(r.id),
   lesson_id: r.lesson_id == null ? null : Number(r.lesson_id),
   cover: r.cover === true,
+  kind: r.kind === "presentation" ? "presentation" : "source",
   speaker_id: r.speaker_id == null ? null : Number(r.speaker_id),
   fallen_id: r.fallen_id == null ? null : Number(r.fallen_id),
   storage_path: String(r.storage_path),
@@ -92,7 +93,8 @@ export class SupabaseSources implements SourcesPort {
   }
 
   async upload(editionId: number, lessonId: number | null, file: File, opts: UploadOptions): Promise<SourceFile> {
-    const mime = checkPicked(file, lessonId == null);
+    const kind = opts.kind ?? "source";
+    const mime = checkPicked(file, lessonId == null, kind);
     const path = sourcePath(editionId, lessonId, this.uuid(), file.name, mime);
     const token = await this.token();
     if (!token) throw new CommandError("not_member");
@@ -108,7 +110,7 @@ export class SupabaseSources implements SourcesPort {
     if (res.status < 200 || res.status >= 300) throw new CommandError(uploadRefusal(res.status, res.body));
     const register = async () =>
       toFile((await callRpc(this.sb, "register_source_file", {
-        p_edition: editionId, p_lesson: lessonId, p_path: path, p_display_name: displayNameOf(file.name), p_pages: opts.pages,
+        p_edition: editionId, p_lesson: lessonId, p_path: path, p_display_name: displayNameOf(file.name), p_pages: opts.pages, p_kind: kind,
       })) as Record<string, unknown>);
     try {
       try {
@@ -148,5 +150,9 @@ export class SupabaseSources implements SourcesPort {
 
   async setCover(editionId: number, fileId: number | null): Promise<void> {
     await callRpc(this.sb, "set_reader_cover", { p_edition: editionId, p_file: fileId });
+  }
+
+  async setReaderSent(editionId: number, sent: boolean): Promise<void> {
+    await callRpc(this.sb, "set_reader_sent", { p_edition: editionId, p_sent: sent });
   }
 }

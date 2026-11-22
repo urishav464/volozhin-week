@@ -14,11 +14,11 @@ import type { Edition } from "../domain/types";
 import { CommandError } from "./commands";
 import type { Actor, Engine, PoolShared, RotaStore } from "./engine";
 import {
-  cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter,
-  cleanMinPeople, cleanNeed, cleanNote, cleanPrepText, cleanShift, cleanShifts, cleanStaffKind, cleanStaffTimes, cleanStaffWho, type CohortPatch, type DutyPatch,
-  type GroupPatch, LAST_YEAR_DUTIES, type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewStaffShift, type PrepPatch, type PresenceScope,
-  type RotaCohort, type RotaContact, type RotaData, type RotaDuty, type RotaGroup, type RotaPort, type RotaPrepTask, type RotaShiftsSetting,
-  type RotaStaffShift, type StaffPatch,
+  cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanFlag, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter,
+  cleanMinPeople, cleanNeed, cleanNote, cleanPrepKind, cleanPrepRows, cleanPrepText, cleanQty, cleanShift, cleanShifts, cleanStaffKind, cleanStaffTimes, cleanStaffWho,
+  type CohortPatch, type DutyPatch, type GroupPatch, LAST_YEAR_DUTIES, type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewPrepRow, type NewStaffShift,
+  type PrepKind, type PrepPatch, type PresenceScope, type RotaCohort, type RotaContact, type RotaData, type RotaDuty, type RotaGroup, type RotaPort, type RotaPrepTask,
+  type RotaShiftsSetting, type RotaStaffShift, type StaffPatch,
 } from "./rota";
 import type { MemberRow } from "./settings";
 
@@ -48,7 +48,10 @@ function ordered(t: RotaStore, editionId: number): RotaData {
   const mine = <T extends { edition_id: number }>(rows: T[]) => rows.filter((r) => r.edition_id === editionId);
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   return structuredClone({
-    cohorts: mine(t.cohorts).sort((a, b) => a.sort - b.sort || cmp(a.letter, b.letter) || a.id - b.id),
+    // v19: the flags, kind and quantity always sent (a row the demo made before them reads as the columns' defaults)
+    cohorts: mine(t.cohorts)
+      .sort((a, b) => a.sort - b.sort || cmp(a.letter, b.letter) || a.id - b.id)
+      .map((c) => ({ ...c, helps_rota: c.helps_rota !== false, can_drive: c.can_drive === true })),
     presence: mine(t.presence)
       .sort((a, b) => a.cohort_id - b.cohort_id || a.day - b.day || a.shift - b.shift)
       .map(({ cohort_id, day, shift }) => ({ cohort_id, day, shift })),
@@ -56,7 +59,9 @@ function ordered(t: RotaStore, editionId: number): RotaData {
     duties: mine(t.duties).sort((a, b) => a.sort - b.sort || a.id - b.id),
     assignments: mine(t.assignments).sort((a, b) => a.day - b.day || a.shift - b.shift || a.duty_id - b.duty_id || a.group_id - b.group_id || a.id - b.id),
     staff: mine(t.staff).sort((a, b) => a.day - b.day || a.start_min - b.start_min || a.id - b.id),
-    prep: mine(t.prep).sort((a, b) => a.sort - b.sort || a.id - b.id),
+    prep: mine(t.prep)
+      .sort((a, b) => a.sort - b.sort || a.id - b.id)
+      .map((p) => ({ ...p, kind: p.kind === "item" ? ("item" as const) : ("task" as const), qty: p.kind === "item" ? (p.qty ?? null) : null })),
   });
 }
 
@@ -123,7 +128,12 @@ export class DemoRota implements RotaPort {
   // ------------------------------------------------------------------ cohorts
 
   async addCohort(editionId: number, c: NewCohort): Promise<void> {
-    const v = { letter: cleanLetter(c.letter), name: cleanCohortName(c.name), diets: cleanDiets(c.diets ?? []), sort: c.sort === undefined ? 0 : cleanSort(c.sort) };
+    const v = {
+      letter: cleanLetter(c.letter), name: cleanCohortName(c.name), diets: cleanDiets(c.diets ?? []), sort: c.sort === undefined ? 0 : cleanSort(c.sort),
+      // v19: after the sort, as the guard checks them; absent → the columns' defaults
+      helps_rota: c.helps_rota === undefined ? true : cleanFlag(c.helps_rota),
+      can_drive: c.can_drive === undefined ? false : cleanFlag(c.can_drive),
+    };
     this.writable(editionId);
     if (this.t.cohorts.some((x) => x.edition_id === editionId && x.letter === v.letter)) fail("rota_letter_taken");
     this.t.cohorts.push({ id: nextId(this.t.cohorts), edition_id: editionId, ...v });
@@ -136,6 +146,8 @@ export class DemoRota implements RotaPort {
     if (patch.name !== undefined) p.name = cleanCohortName(patch.name);
     if (patch.diets !== undefined) p.diets = cleanDiets(patch.diets);
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);
+    if (patch.helps_rota !== undefined) p.helps_rota = cleanFlag(patch.helps_rota);
+    if (patch.can_drive !== undefined) p.can_drive = cleanFlag(patch.can_drive);
     const c = this.row(this.t.cohorts, id);
     if (p.letter !== undefined && this.t.cohorts.some((x) => x.id !== id && x.edition_id === c.edition_id && x.letter === p.letter)) fail("rota_letter_taken");
     Object.assign(c, p);
@@ -363,25 +375,30 @@ export class DemoRota implements RotaPort {
 
   // ------------------------------------------------------------------ preparations
 
-  async addPrepTasks(editionId: number, texts: string[]): Promise<void> {
-    const vs = texts.map(cleanPrepText);
+  async addPrepTasks(editionId: number, items: NewPrepRow[], kind: PrepKind = "task"): Promise<void> {
+    const vs = cleanPrepRows(items, kind);
     if (vs.length === 0) return;
     this.writable(editionId);
+    // the edition's last, whatever its kind: the two lists share the numbering
     const last = this.t.prep.filter((x) => x.edition_id === editionId).reduce((m, x) => Math.max(m, x.sort), 0);
     let id = nextId(this.t.prep);
-    vs.forEach((text, i) => this.t.prep.push({ id: id++, edition_id: editionId, text, group_id: null, done: false, sort: last + 1 + i }));
+    vs.forEach((v, i) => this.t.prep.push({ id: id++, edition_id: editionId, text: v.text, group_id: null, done: false, sort: last + 1 + i, kind: v.kind, qty: v.qty }));
     this.done();
   }
 
   async updatePrepTask(id: number, patch: PrepPatch): Promise<void> {
     const p: Partial<RotaPrepTask> = {};
     if (patch.text !== undefined) p.text = cleanPrepText(patch.text);
+    // v19: the kind, then the quantity — cleaned whatever the kind; the guard then writes a task's as null
+    if (patch.kind !== undefined) p.kind = cleanPrepKind(patch.kind);
+    if (patch.qty !== undefined) p.qty = cleanQty(patch.qty);
     if (patch.done !== undefined) p.done = cleanBool(patch.done);
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);
     if (patch.group_id !== undefined) p.group_id = patch.group_id;
     const r = this.row(this.t.prep, id);
     if (p.group_id != null) this.parent(this.t.groups, p.group_id, r.edition_id);
     Object.assign(r, p);
+    if ((r.kind ?? "task") === "task") r.qty = null;
     this.done();
   }
 
@@ -446,7 +463,10 @@ export function seedDemoRota(shared: PoolShared, edition: Edition, staffMember: 
   let n = 0;
   const slots = rotaSlots(edition);
   cohorts.forEach(([letter, groups], i) => {
-    const cohort = { id: nextId(t.cohorts), edition_id: edition.id, letter, name: `מכינה לדוגמה ${letter}`, diets: letter === "א" ? [{ label: "צמחוני (לדוגמה)", count: 3 }] : [], sort: i + 1 };
+    const cohort = {
+      id: nextId(t.cohorts), edition_id: edition.id, letter, name: `מכינה לדוגמה ${letter}`, diets: letter === "א" ? [{ label: "צמחוני (לדוגמה)", count: 3 }] : [], sort: i + 1,
+      helps_rota: true, can_drive: false,
+    };
     t.cohorts.push(cohort);
     const here = letter === "נ" ? slots.filter((s) => s.day === 1 || s.day === 2) : slots;
     for (const s of here) t.presence.push({ edition_id: edition.id, cohort_id: cohort.id, day: s.day, shift: s.shift });
@@ -470,5 +490,7 @@ export function seedDemoRota(shared: PoolShared, edition: Edition, staffMember: 
   if (staffMember) staff(0, 510, 870, { member_id: staffMember.id, name: staffMember.display_name, cohort_id: null }, "lead", null);
   staff(0, 870, 1350, { member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null }, "shift", "הקפצת מרצה (לדוגמה)");
   staff(1, 1350, 1830, { member_id: null, name: null, cohort_id: nun.id }, "shift", null);
-  for (let i = 1; i <= 4; i++) t.prep.push({ id: nextId(t.prep), edition_id: edition.id, text: `משימת הכנה לדוגמה ${i}`, group_id: null, done: false, sort: i });
+  for (let i = 1; i <= 4; i++) {
+    t.prep.push({ id: nextId(t.prep), edition_id: edition.id, text: `משימת הכנה לדוגמה ${i}`, group_id: null, done: false, sort: i, kind: "task", qty: null });
+  }
 }

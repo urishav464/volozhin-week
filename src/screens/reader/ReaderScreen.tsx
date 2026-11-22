@@ -1,11 +1,15 @@
-// «מקראה» (/reader — the edition's content members and admins; desktop first):
-// the manifest «התקבל / חסר», always on screen, lesson by lesson in schedule
-// order; the cover (a poster an admin uploads and marks, else a schedule page
-// made from the week); the two running headers, the admin's own words; and
+// «מקראה» (/reader — every member of the edition; desktop first): the manifest
+// «התקבל / חסר», always on screen, lesson by lesson in schedule order;
 // «בניית המקראה (PDF)» — the PDF assembled in a worker from the files,
 // downloaded and never uploaded; on a computer (a mouse, or a wide screen) —
-// and the Word skeleton beside it. Nothing here is a text of ours: a missing
-// title stays TBD, an empty header stays empty.
+// and the Word skeleton beside it; «נשלח לדפוס» (v19, set_reader_sent: the
+// edition's logistics and admins mark it, everyone reads it, with the files
+// uploaded since); and for the content team and the admins the cover (a poster
+// an admin uploads and marks, else a schedule page made from the week), the
+// two running headers (the admin's own words) and the files waiting or left
+// over. Logistics builds, downloads and sends it to print — no cover, headers,
+// upload or removal. Nothing here is a text of ours: a missing title stays TBD,
+// an empty header stays empty.
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { CommandError } from "../../data/commands";
@@ -22,14 +26,15 @@ import { download, fileName, israelDay } from "../../exports/download";
 import { useMedia } from "../../lib/useMedia";
 import { type BuildProgress, type BuildResult, buildReader, type ReaderBuild, scheduleLines } from "../../reader/build";
 import {
-  byDay, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readableFile, readerEstimate, readerManifest, STATUS_LABEL, unreadForReader, unreadText, wordText,
+  byDay, filesAfterSent, IN_READER, type Manifest, manifestTotals, type ManifestRow, type ManifestStatus, readableFile, readerEstimate, readerManifest, STATUS_LABEL, unreadForReader, unreadText, wordText,
 } from "../../reader/model";
 import { readerPages } from "../../reader/pages";
 import { OutputsTabs } from "../outputs/parts";
-import { Badge, Button, Field, Fold, INPUT, Panel } from "../settings/kit";
+import { Badge, Button, Field, Fold, INPUT, Panel, useFocusRescue } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { FileRow } from "../stages/SourceFiles";
 import { actorIn, type Actor, useWeekStore } from "../weekStore";
+import { afterSentLine, maySendReader, sentLine } from "./sent";
 
 const TONE: Record<ManifestStatus, "ok" | "accent" | "bad" | "muted" | "neutral"> = {
   included: "ok",
@@ -66,17 +71,11 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <h2 className="font-display text-2xl font-extrabold text-navy">מקראה</h2>
       <EditionSelect />
-      <OutputsTabs admin={actor.isAdmin} reader={actor.role !== "logistics"} />
+      <OutputsTabs admin={actor.isAdmin} />
     </div>
   );
-  if (actor.role === "logistics") {
-    return (
-      <div className="mx-auto max-w-5xl space-y-4">
-        {header}
-        <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">את המקראה בונים צוות התוכן והמדריך/ה. הקבצים של כל שיעור פתוחים להדפסה בלוח השיעור, בשלב «מקורות».</p>
-      </div>
-    );
-  }
+  // logistics builds, downloads and sends it to print: no cover, headers, upload or removal (the content team's and the admins')
+  const logistics = actor.role === "logistics";
   const reload = store.reload;
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-20">
@@ -88,10 +87,11 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
         </p>
       </Fold>
       <BuildPanel port={port} week={week} manifest={manifest} notify={notify} clear={clear} />
+      <SentPanel port={port} week={week} actor={actor} notify={notify} clear={clear} reload={reload} />
       <ManifestPanel manifest={manifest} />
-      <CoverPanel port={port} week={week} manifest={manifest} actor={actor} notify={notify} clear={clear} reload={reload} />
-      <HeadersPanel port={port} week={week} actor={actor} notify={notify} clear={clear} reload={reload} />
-      {manifest.waiting.length > 0 && (
+      {!logistics && <CoverPanel port={port} week={week} manifest={manifest} actor={actor} notify={notify} clear={clear} reload={reload} />}
+      {!logistics && <HeadersPanel port={port} week={week} actor={actor} notify={notify} clear={clear} reload={reload} />}
+      {!logistics && manifest.waiting.length > 0 && (
         <Panel title="ממתין לשיבוץ" aside="חומרים של תוכניות זיכרון שבמגש — נכנסים למקראה אחרי השיבוץ">
           <p className="mb-2 text-sm text-ink-soft">התוכניות האלה עוד לא שובצו בזמן זיכרון (במסך «זמני זיכרון»). החומרים שלהן שמורים, ועוברים עם כל תוכנית למשבצת שבה היא תשובץ.</p>
           <ul aria-label="חומרים שממתינים לשיבוץ" className="divide-y divide-sage/60">
@@ -114,7 +114,7 @@ export function ReaderScreen({ port, me }: { port: DataPort; me: Me }) {
           </ul>
         </Panel>
       )}
-      {manifest.leftovers.length > 0 && (
+      {!logistics && manifest.leftovers.length > 0 && (
         <Panel title="קבצים בלי שיעור" aside="של משבצות שנפתחו מחדש או נמחקו — לא נכנסים למקראה">
           <ul className="divide-y divide-sage/60">
             {manifest.leftovers.map((f) => (
@@ -238,6 +238,65 @@ function BuildPanel({ port, week, manifest, notify, clear }: { port: DataPort; w
         </div>
       )}
       <p className="mt-2 text-xs text-ink-soft">הקובץ נבנה במחשב הזה ולא נשמר בשום מקום. שלד ה-Word: הכותרות ותוכן העניינים, להדבקת מקורות שהגיעו ב-Word.</p>
+    </Panel>
+  );
+}
+
+// ------------------------------------------------------------------ «נשלח לדפוס»
+
+/**
+ * v19: the mark that the reader went to the printer — when, by whom, and the files uploaded since («אולי צריך לשלוח
+ * שוב»). Logistics and the edition's admins mark, send again (a new stamp) or take it back (an archived edition: its
+ * admins); everyone else reads it.
+ */
+function SentPanel({ port, week, actor, notify, clear, reload }: { port: DataPort; week: Week; actor: Actor; notify: Notify; clear: () => void; reload: () => Promise<void> }) {
+  const [busy, setBusy] = useState<"send" | "undo" | null>(null);
+  const sent = week.edition.settings?.reader_sent != null;
+  const after = filesAfterSent(week);
+  const afterLine = afterSentLine(after);
+  const may = maySendReader(actor, week.edition);
+  const send = useRef<HTMLButtonElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // «ביטול הסימון» leaves once the mark is gone: the focus goes to the button that stays (or the panel)
+  const rescue = useFocusRescue();
+  const set = async (value: boolean) => {
+    clear();
+    setBusy(value ? "send" : "undo");
+    try {
+      await port.sources.setReaderSent(week.edition.id, value);
+      notify("ok", value ? "סומן שהמקראה נשלחה לדפוס" : "הסימון בוטל");
+      await reload();
+    } catch (e) {
+      notify("error", errorMessage(e instanceof CommandError ? e.code : null));
+    } finally {
+      setBusy(null);
+      rescue(() => send.current ?? root.current);
+    }
+  };
+  return (
+    <Panel title="נשלח לדפוס">
+      <div ref={root} tabIndex={-1} data-reader-sent data-sent={sent ? "y" : "-"} data-after-sent={after} className="space-y-2 outline-none">
+        <p className="text-sm">{sentLine(week)}</p>
+        {afterLine && (
+          <p role="status" className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900">
+            {afterLine}
+          </p>
+        )}
+        {may && (
+          <div className="flex flex-wrap gap-2">
+            {/* busy = aria-disabled (kit.tsx): the pressed button keeps the focus while the call runs; the other one is
+                inert the same way (keepFocus), never natively disabled */}
+            <Button ref={send} kind={sent ? "secondary" : "primary"} keepFocus disabled={busy != null} busy={busy === "send"} busyLabel="שומר…" onClick={() => void set(true)}>
+              {sent ? "שליחה מחדש" : "סימון שנשלחה לדפוס"}
+            </Button>
+            {sent && (
+              <Button kind="quiet" keepFocus disabled={busy != null} busy={busy === "undo"} busyLabel="שומר…" onClick={() => void set(false)}>
+                ביטול הסימון
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </Panel>
   );
 }

@@ -49,26 +49,38 @@ describe("SupabaseRota: reading", () => {
       [
         200,
         {
-          cohorts: [{ id: "3", edition_id: "7", letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: "2" }], sort: 1 }],
+          cohorts: [
+            { id: "3", edition_id: "7", letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: "2" }], sort: 1, helps_rota: false, can_drive: true },
+            { id: "4", edition_id: "7", letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2 }, // a row from before v19: the columns' defaults
+          ],
           presence: [{ edition_id: 7, cohort_id: "3", day: 1, shift: 0 }],
           groups: [{ id: "11", edition_id: "7", cohort_id: "3", number: 1, size: null, head_name: "ראש/ת קבוצה לדוגמה", head_phone: "000-000-0001" }],
           duties: [{ id: "5", edition_id: "7", name: "מטבח", description: null, need_morning: 1, need_afternoon: null, need_night: 1, min_people: null, sort: 1, name_key: "מטבח" }],
           assignments: [{ id: "9", edition_id: "7", day: 1, shift: 0, duty_id: "5", group_id: "11", source: "suggested" }],
           staff: [{ id: "2", edition_id: "7", day: 0, start_min: 510, end_min: 870, member_id: "4", name: "חבר/ת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }],
-          prep: [{ id: "8", edition_id: "7", text: "משימה לדוגמה", group_id: null, done: false, sort: 1 }],
+          prep: [
+            { id: "8", edition_id: "7", text: "משימה לדוגמה", group_id: null, done: false, sort: 1 }, // before v19: a task
+            { id: "9", edition_id: "7", text: "פריט לדוגמה", group_id: null, done: true, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
+          ],
         },
       ],
       [200, null],
     ]);
     const d = await r.load(7);
     expect(d).toEqual({
-      cohorts: [{ id: 3, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }], sort: 1 }],
+      cohorts: [
+        { id: 3, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }], sort: 1, helps_rota: false, can_drive: true },
+        { id: 4, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, helps_rota: true, can_drive: false },
+      ],
       presence: [{ cohort_id: 3, day: 1, shift: 0 }],
       groups: [{ id: 11, edition_id: 7, cohort_id: 3, number: 1, size: null, head_name: "ראש/ת קבוצה לדוגמה" }],
       duties: [{ id: 5, edition_id: 7, name: "מטבח", description: null, need_morning: 1, need_afternoon: null, need_night: 1, min_people: null, sort: 1 }],
       assignments: [{ id: 9, edition_id: 7, day: 1, shift: 0, duty_id: 5, group_id: 11, source: "suggested" }],
       staff: [{ id: 2, edition_id: 7, day: 0, start_min: 510, end_min: 870, member_id: 4, name: "חבר/ת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }],
-      prep: [{ id: 8, edition_id: 7, text: "משימה לדוגמה", group_id: null, done: false, sort: 1 }],
+      prep: [
+        { id: 8, edition_id: 7, text: "משימה לדוגמה", group_id: null, done: false, sort: 1, kind: "task", qty: null },
+        { id: 9, edition_id: 7, text: "פריט לדוגמה", group_id: null, done: true, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
+      ],
     });
     expect(JSON.stringify(d)).not.toContain("head_phone");
     // an edition the caller cannot see answers null
@@ -261,10 +273,45 @@ describe("SupabaseRota: direct writes under RLS", () => {
     ]);
     expect(q(sent[0])).toEqual({ select: "sort", edition_id: "eq.7", order: "sort.desc", limit: "1" });
     expect(sent[1].body).toEqual([
-      { edition_id: 7, text: "משימה לדוגמה 1", group_id: null, done: false, sort: 8 },
-      { edition_id: 7, text: "משימה לדוגמה 2", group_id: null, done: false, sort: 9 },
+      { edition_id: 7, text: "משימה לדוגמה 1", kind: "task", qty: null, group_id: null, done: false, sort: 8 },
+      { edition_id: 7, text: "משימה לדוגמה 2", kind: "task", qty: null, group_id: null, done: false, sort: 9 },
     ]);
-    expect(sent[3].body).toEqual([{ edition_id: 8, text: "משימה לדוגמה", group_id: null, done: false, sort: 1 }]);
+    expect(sent[3].body).toEqual([{ edition_id: 8, text: "משימה לדוגמה", kind: "task", qty: null, group_id: null, done: false, sort: 1 }]);
     expect(sent[4].body).toEqual({ group_id: 11, done: true });
+  });
+
+  it("v19: a shopping list — ONE insert of items with their quantities after the last of both lists; a task's quantity never sent (but cleaned)", async () => {
+    const { r, sent } = port([[200, [{ sort: 4 }]], [201, [{ id: 5 }, { id: 6 }]], [200, [{ id: 5 }]], [200, [{ id: 5 }]], [200, [{ id: 5 }]]]);
+    await r.addPrepTasks(7, [{ text: " פריט לדוגמה 1 ", qty: " 2 (לדוגמה) " }, "פריט לדוגמה 2"], "item");
+    await r.updatePrepTask(5, { qty: "3" });
+    await r.updatePrepTask(5, { kind: "task", qty: "3" });
+    await r.updatePrepTask(5, { kind: "item" });
+    expect(await code(r.addPrepTasks(7, [{ text: "פריט", qty: "טל' 1234567" }], "item"))).toBe("rota_contact_in_text");
+    expect(await code(r.addPrepTasks(7, [{ text: "פריט", qty: "א".repeat(41) }], "item"))).toBe("bad_value");
+    expect(await code(r.addPrepTasks(7, ["פריט"], "thing" as never))).toBe("bad_value");
+    expect(await code(r.updatePrepTask(5, { kind: null as never }))).toBe("bad_value");
+    expect(await code(r.updatePrepTask(5, { kind: "task", qty: "טל' 1234567" }))).toBe("rota_contact_in_text"); // ≡ the guard
+    expect(sent.map((s) => [s.method, s.path])).toEqual([["GET", "rota_prep_tasks"], ["POST", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"], ["PATCH", "rota_prep_tasks"]]);
+    expect(sent[1].body).toEqual([
+      { edition_id: 7, text: "פריט לדוגמה 1", kind: "item", qty: "2 (לדוגמה)", group_id: null, done: false, sort: 5 },
+      { edition_id: 7, text: "פריט לדוגמה 2", kind: "item", qty: null, group_id: null, done: false, sort: 6 },
+    ]);
+    expect(sent[2].body).toEqual({ qty: "3" }); // the guard nulls it on a task
+    expect(sent[3].body).toEqual({ kind: "task", qty: null });
+    expect(sent[4].body).toEqual({ kind: "item" });
+  });
+
+  it("v19: a cohort's two flags — sent only when given, as booleans; null or anything else refused before the wire", async () => {
+    const { r, sent } = port([[201, [{ id: 3 }]], [201, [{ id: 4 }]], [200, [{ id: 3 }]]]);
+    await r.addCohort(7, { letter: "א", name: "מכינה לדוגמה א" });
+    await r.addCohort(7, { letter: "ב", name: "מכינה לדוגמה ב", helps_rota: false, can_drive: true });
+    await r.updateCohort(3, { can_drive: true });
+    expect(await code(r.addCohort(7, { letter: "ג", name: "מכינה", helps_rota: null as never }))).toBe("bad_value");
+    expect(await code(r.updateCohort(3, { can_drive: "yes" as never }))).toBe("bad_value");
+    expect(sent.map((s) => s.body)).toEqual([
+      { edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [] },
+      { edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], helps_rota: false, can_drive: true },
+      { can_drive: true },
+    ]);
   });
 });
