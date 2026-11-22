@@ -266,6 +266,30 @@ test.describe("demo build — the writing grid stays the staff's overview", () =
     await expect(panel).toHaveCount(0);
     await expect(opening).toBeFocused();
     await noSidewaysScroll(page);
+
+    // the panel switched to another card without closing (the week beside it, from 1280px): closed, the focus goes back to
+    // the card it shows now — never the first (the final review)
+    if (info.project.name !== "desktop") return;
+    const other = page.locator(`[data-lesson-id="${lessonAt(0, 600)}"]`);
+    const sheet = page.getByRole("dialog");
+    await opening.click();
+    await expect(sheet).toBeVisible();
+    await other.click();
+    await expect(other).toBeFocused();
+    await expect(sheet).toHaveCount(1);
+    await sheet.getByRole("button", { name: "סגירה", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(other).toBeFocused();
+    // by the keyboard: Enter on the first, Enter on the other, back into the panel, Escape
+    await opening.focus();
+    await page.keyboard.press("Enter");
+    await expect(sheet).toBeFocused();
+    await other.focus();
+    await page.keyboard.press("Enter");
+    await sheet.focus();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    await expect(other).toBeFocused();
   });
 
   test("no pool; a closed lesson's panel is a summary that leads to its page; a speaker's name to theirs; «+ מרצה חדש/ה» to /speakers/new", async ({ page }, info) => {

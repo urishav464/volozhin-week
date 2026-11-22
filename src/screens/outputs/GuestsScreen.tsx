@@ -167,7 +167,7 @@ export function GuestsScreen({ port, me }: { port: DataPort; me: Me }) {
                           </bdi>
                         </td>
                         <td rowSpan={span} className="max-w-64 px-3 py-1 align-top">
-                          <Link to={lessonPath(r.lessonId, null, "guest")} className="inline-flex min-h-11 items-center font-bold text-navy underline-offset-4 hover:underline">
+                          <Link to={lessonPath(r.lessonId, null, "guest")} className="inline-flex min-h-11 min-w-11 items-center font-bold text-navy underline-offset-4 hover:underline">
                             {r.title ?? "כותרת: TBD"}
                           </Link>
                         </td>
@@ -215,7 +215,7 @@ export function GuestsScreen({ port, me }: { port: DataPort; me: Me }) {
                       <bdi dir="ltr" className="font-bold tabular-nums text-navy">
                         {fmtRange(r.start_min, r.end_min)}
                       </bdi>
-                      <Link to={lessonPath(r.lessonId, null, "guest")} className="inline-flex min-h-11 min-w-0 items-center font-bold text-navy underline-offset-4 hover:underline">
+                      <Link to={lessonPath(r.lessonId, null, "guest")} className="inline-flex min-h-11 min-w-11 items-center font-bold text-navy underline-offset-4 hover:underline">
                         {r.title ?? "כותרת: TBD"}
                       </Link>
                     </div>
@@ -253,7 +253,14 @@ export function GuestsScreen({ port, me }: { port: DataPort; me: Me }) {
       <p className="max-w-prose text-ink-soft">
         מה שהאורחים רואים בקישור הלו"ז: תיאור קצר לכל שיעור, ולכל מרצה שמאושר/ת להופיע — תיאור ותמונה. כל «חסר» מוביל למקום שבו ממלאים אותו.
       </p>
-      {practiceWeek(actor, week.edition) && <p className="rounded-xl border border-line bg-sand-soft p-3 text-sm text-ink">במחזור תרגול לא מפרסמים מרצים לאורחים.</p>}
+      {/* a practice week: only a global admin marks; a mark already there is on the link until it is taken back (the final review) */}
+      {practiceWeek(actor, week.edition) && (
+        <p data-guests-practice className="rounded-xl border border-line bg-sand-soft p-3 text-sm text-ink">
+          {sum.ok === 0
+            ? "במחזור תרגול לא מפרסמים מרצים לאורחים."
+            : "במחזור תרגול רק מי שמנהל/ת את כל המחזורים מסמן/ת מרצים לאורחים. מרצה שכבר מסומן/ת מופיע/ה בקישור עד שמבטלים את הסימון («ביטול»)."}
+        </p>
+      )}
       {/* a phone: one count per line (a «·» would end a line); from 640px one line, the counts apart by «·» */}
       <p className="flex flex-col gap-1 rounded-xl border border-line bg-card px-4 py-3 text-ink shadow-sm sm:flex-row sm:flex-wrap sm:gap-x-2">
         <span data-guests-count="note">
@@ -332,7 +339,7 @@ function PersonName({ model, p }: { model: GridModel; p: GuestPerson }) {
   if (!s) return <span className="text-ink-faint">—</span>;
   return (
     <span className="inline-flex min-h-11 min-w-0 flex-wrap items-center gap-x-1.5">
-      <Link to={speakerPath(s.id, "guest")} className="inline-flex min-h-11 items-center font-semibold text-navy underline-offset-4 hover:underline">
+      <Link to={speakerPath(s.id, "guest")} className="inline-flex min-h-11 min-w-11 items-center font-semibold text-navy underline-offset-4 hover:underline">
         {displayName(s)}
       </Link>
       {p.role === "co" && <span className="text-xs text-ink-soft">{byGender(s.gender, "מרצה נוסף", "מרצה נוספת")}</span>}

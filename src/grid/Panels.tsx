@@ -89,13 +89,20 @@ export function Sheet({
   }, [wide]);
   useEffect(() => {
     // what opened the sheet (a card, a cell's button): closed by × or Escape, the focus goes back to it — only when it fell
-    // to the page (another sheet opening in its place keeps its own; a link that left the week finds no opener)
-    const a = document.activeElement;
-    const opener = a instanceof HTMLElement && a !== document.body && !ref.current?.contains(a) ? a : null;
+    // to the page (another sheet opening in its place keeps its own; a link that left the week finds no opener). The
+    // same sheet stays up when the next card switches it (the week is worked in beside it): the last element outside the
+    // sheet that took the focus is the one it gives back to, never the first card (the final review)
+    const outside = (t: EventTarget | null) => (t instanceof HTMLElement && t !== document.body && !ref.current?.contains(t) ? t : null);
+    let opener = outside(document.activeElement);
+    const track = (e: FocusEvent) => {
+      opener = outside(e.target) ?? opener;
+    };
+    document.addEventListener("focusin", track);
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus(); // a field with autoFocus keeps it
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", esc);
     return () => {
+      document.removeEventListener("focusin", track);
       window.removeEventListener("keydown", esc);
       queueMicrotask(() => {
         if (opener?.isConnected && focusLost()) opener.focus();

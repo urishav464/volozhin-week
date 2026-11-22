@@ -467,7 +467,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   headers, uploads or removal; `set_reader_sent(p_edition, p_sent)` (definer, `require_logistics`; archived → admins) writes or
   removes `editions.settings.reader_sent = {at, by}`, never carried by `start_edition`; `filesAfterSent` («נוספו N קבצים אחרי
   השליחה»); «מקראה» is in every member's `OutputsTabs`. **Books:** `suggestedCopies(signed, leaders)` beside the field,
-  «למלא» fills it only, saved on «שמירה». **What phase 5 needs, already in v19** (no screen writes it yet): presentations
+  «למלא» fills it only, saved on «שמירה». **What phase 5 needs, already in v19** (phase 5's screens write it): presentations
   (`source_files.kind` `source` | `presentation`; pptx only as a presentation — mime check, bucket, `SOURCE_PATH_RE` ≡
   `app.source_path_re`; `register_source_file(…, p_kind)`, the 5-argument overload dropped with its grant; never in the reader,
   the manifest or `printRows` — `isPresentation`; an edition-level one is admins', `lesson_id` null, never the cover);
@@ -486,8 +486,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   inside the day window; the browser twin is `publicSchedule` (`src/exports/publicSchedule.ts`, `GuestSchedule`), and
   `SchedulePage.tsx` shows it since phase 5. `public/privacy.html` says what a guest sees. Advisor 83 (three more
   definer functions: `set_reader_sent`, `set_speaker_photo`, `set_public_ok`). **The demo's `?as=logistics`** adds a cohort
-  that can drive, one that does not help, two shopping items, a week date three weeks ahead (`demoLogisticsStart`, that mode
-  only) and one `public_ok` speaker with a synthetic photo. Parity: six v19 scenarios, every step pinned with `is`; tests
+  that can drive, one that does not help, two shopping items and a week date three weeks ahead (`demoLogisticsStart`, that
+  mode only); its guests' sample is every demo's since phase 5 (`seedDemoGuests`). Parity: six v19 scenarios, every step pinned with `is`; tests
   `tests/sql/v19.test.ts`, e2e `logistics-home.spec.ts`. DECISIONS «הריסט, שלב 4 — הבית של הלוגיסטיקה, וגרסה 19».
 - **The reset, phase 5 — the guest site, filling it in, presentations, cleanup (no schema change):** every screen writes
   through v19's existing commands. **The guest site** (`/s`, `src/screens/public/`): `guestView` (an answer from before v19
@@ -532,7 +532,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   reshape); no screen calls `set_transport_details` (`WeekCommands.setTransport`, `TransportBlock`, `TransportForm` gone; an
   archive's lesson reads `TransportReadOnly`; CONTRACT says so); the grid panel of a closed lesson is a summary (details, the
   five dots read-only, «לדף השיעור», «פעולות נוספות»); below 1024px the header shows its first four sections and «עוד», a
-  disclosure (`NavItem.more`, `splitNav`, `moreLabel` — `Shell.tsx`; Escape and a page change close it, focus back), the
+  disclosure (`NavItem.more` and the disclosure in `Shell.tsx`; `splitNav`, `moreLabel` in `src/screens/nav.ts`; Escape and a
+  page change close it, focus back), the
   trainee has none; «עזרה» per role (`src/domain/guide.ts`: `GUIDE_SECTIONS` maps every `##` of `docs/GUIDE.he.md` to the
   personas — a unit test fails on an unmapped heading — `guideFor`, «כל המדריך» at `/help?all=1`). The demo seeds guest data
   and three synthetic presentation PDFs in every persona (`seedDemoGuests`, `seedDemoPresentations`, `demoWeek.ts`). e2e:

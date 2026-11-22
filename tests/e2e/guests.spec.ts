@@ -464,6 +464,20 @@ test.describe("demo build — the staff's overview", () => {
     expect(small).toEqual([]);
     // the table (from 1024px) has the «חסר» links and the speakers' names the review measured
     expect(await page.locator("[data-guests-page] a[href]").count()).toBeGreaterThan(20);
+    // a short name («דן לוי») or title is a 44px target too, not only the demo's long ones (the final review): every link's
+    // text cut to two letters, measured again
+    const short = await page.locator("[data-guests-page]").evaluate((root) =>
+      [...root.querySelectorAll<HTMLElement>("a[href]")]
+        .filter((el) => el.getClientRects().length > 0 && el.closest("p") == null)
+        .map((el) => {
+          el.textContent = "דן";
+          const r = el.getBoundingClientRect();
+          return { w: r.width, h: r.height, href: el.getAttribute("href") };
+        })
+        .filter((b) => b.w < 44 - 0.5 || b.h < 44 - 0.5)
+        .map((b) => `${b.href} ${Math.round(b.w)}x${Math.round(b.h)}`),
+    );
+    expect(short).toEqual([]);
   });
 });
 
@@ -747,6 +761,23 @@ test.describe("mock build — a practice week", () => {
     await expect(page.getByText("במחזור תרגול לא מפרסמים מרצים לאורחים.")).toBeVisible();
     await expect(page.locator("[data-guests-row]").first()).toBeVisible();
     await expect(page.locator("[data-guests-unmark]")).toHaveCount(0); // nobody is marked
+    await noSidewaysScroll(page);
+  });
+
+  test("an edition's admin, a mark already there (a global admin's): the overview says it is on the link until taken back (the final review)", async ({ page }) => {
+    const sb = new FakeSupabase({ status: 200, body: whoami("admin", 1) });
+    const week = mockWeek(sb);
+    week.edition.kind = "practice";
+    week.approaches.find((a) => a.speaker_id === 1)!.public_ok = true;
+    sb.answers.set("editions", [week.edition]);
+    await sb.attach(page);
+    sb.token = (await signIn(page, whoami("admin", 1).email)).access_token;
+    await page.goto(`${mockUrl()}/export/guests`);
+    await expect(page.locator("[data-guests-practice]")).toHaveText(
+      "במחזור תרגול רק מי שמנהל/ת את כל המחזורים מסמן/ת מרצים לאורחים. מרצה שכבר מסומן/ת מופיע/ה בקישור עד שמבטלים את הסימון («ביטול»).",
+    );
+    await expect(page.getByText("במחזור תרגול לא מפרסמים מרצים לאורחים.")).toHaveCount(0);
+    await expect(page.locator("[data-guests-unmark]").first()).toBeVisible();
     await noSidewaysScroll(page);
   });
 });
