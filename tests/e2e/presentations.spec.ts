@@ -137,9 +137,23 @@ test.describe("demo build — the staff", () => {
     await expect(page.getByRole("heading", { name: "המצגות של יום ראשון" })).toBeVisible();
     await noSidewaysScroll(page);
 
-    // a PDF opens in a new tab, from the file itself
+    // a PDF opens in a new tab, from the file itself. What the tab then shows is the browser's: CI's headless shell has
+    // no PDF viewer (it downloads, the tab's address stays empty), so the test reads what was asked of window.open and
+    // the file at that address.
+    await page.evaluate(() => {
+      const w = window as unknown as { __opened: string[][] };
+      w.__opened = [];
+      const real = window.open.bind(window);
+      window.open = ((...args: Parameters<typeof window.open>) => {
+        w.__opened.push(args.map(String));
+        return real(...args);
+      }) as typeof window.open;
+    });
     const [tab] = await Promise.all([page.context().waitForEvent("page"), open.click()]);
-    await tab.waitForURL(/^blob:/);
+    const opened = await page.evaluate(() => (window as unknown as { __opened: string[][] }).__opened);
+    expect(opened).toEqual([[expect.stringMatching(/^blob:/), "_blank", "noopener,noreferrer"]]);
+    const head = await page.evaluate(async (u) => new TextDecoder().decode((await (await fetch(u)).arrayBuffer()).slice(0, 5)), opened[0][0]);
+    expect(head).toBe("%PDF-");
     await tab.close();
 
     // the wrong type for a lesson; Word for the week's deck — each refused in the browser, in its own words
