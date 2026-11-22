@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { jpegOrientation } from "../reader/jpeg";
 import { jpegOfSize, jpegWithOrientation, photoBytes } from "../testing/photos";
 import { PHOTO_LIMITS, photoFromBase64, photoOk } from "./photo";
-import { FIT, type FittedPhoto, fitPhoto, jpegSize, pictureSize, pngSize, type RawEncode, scaledSize } from "./photoFit";
+import { FIT, type FittedPhoto, fitPhoto, heifSize, jpegSize, pictureSize, pngSize, type RawEncode, scaledSize, webpSize } from "./photoFit";
 
 /** mulberry32: a small seeded generator — the same cases on every run. */
 function rng(seed: number) {
@@ -156,6 +156,37 @@ describe("the photo fitter (the reset, phase 5)", () => {
     expect(pictureSize(png)).toEqual({ width: 2400, height: 1600 });
     expect(pictureSize(photoBytes("clean"))).toEqual({ width: 32, height: 16 });
     expect(pictureSize(new Uint8Array(40))).toBeNull();
+  });
+
+  it("a WebP's canvas from its first chunk (VP8, VP8L, VP8X), an AVIF/HEIF's from its «ispe» — a decoder bomb is read before it is decoded", () => {
+    const tag = (s: string) => [...s].map((c) => c.charCodeAt(0));
+    const riff = (chunk: string, data: number[]) => new Uint8Array([...tag("RIFF"), 0, 0, 0, 0, ...tag("WEBP"), ...tag(chunk), 0, 0, 0, 0, ...data, ...new Array(16).fill(0)]);
+    const le16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
+    const le24 = (n: number) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff];
+    // lossy: a frame tag (3 bytes), the start code, then 14-bit sides
+    const vp8 = riff("VP8 ", [0, 0, 0, 0x9d, 0x01, 0x2a, ...le16(640), ...le16(480)]);
+    expect(webpSize(vp8)).toEqual({ width: 640, height: 480 });
+    // lossless: 0x2f, then width−1 and height−1 in 14 bits each — one colour at 16383×16383 is a few KB
+    const bits = (16383 - 1) | ((16383 - 1) << 14);
+    const vp8l = riff("VP8L", [0x2f, bits & 0xff, (bits >>> 8) & 0xff, (bits >>> 16) & 0xff, (bits >>> 24) & 0xff]);
+    expect(webpSize(vp8l)).toEqual({ width: 16383, height: 16383 });
+    expect(pictureSize(vp8l)!.width * pictureSize(vp8l)!.height).toBeGreaterThan(40_000_000);
+    // extended: flags and three reserved bytes, then width−1 and height−1 in 24 bits each
+    const vp8x = riff("VP8X", [0x10, 0, 0, 0, ...le24(8000 - 1), ...le24(8000 - 1)]);
+    expect(webpSize(vp8x)).toEqual({ width: 8000, height: 8000 });
+    expect(pictureSize(vp8x)).toEqual({ width: 8000, height: 8000 });
+    expect(webpSize(riff("VP8 ", [0, 0, 0, 0, 0, 0, ...le16(640), ...le16(480)]))).toBeNull(); // no start code
+    expect(webpSize(riff("ALPH", []))).toBeNull();
+    expect(webpSize(photoBytes("clean"))).toBeNull();
+    // AVIF/HEIF: «ftyp», then somewhere in the meta box an «ispe» (size, type, version+flags, width, height) — the largest wins
+    const be32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+    const ispe = (w: number, h: number) => [...be32(20), ...tag("ispe"), 0, 0, 0, 0, ...be32(w), ...be32(h)];
+    const avif = new Uint8Array([...be32(28), ...tag("ftyp"), ...tag("avif"), 0, 0, 0, 0, ...tag("avifmif1"), ...be32(200), ...tag("meta"), 0, 0, 0, 0, ...ispe(512, 512), ...ispe(8000, 8000)]);
+    expect(heifSize(avif)).toEqual({ width: 8000, height: 8000 });
+    expect(pictureSize(avif)).toEqual({ width: 8000, height: 8000 });
+    expect(heifSize(new Uint8Array([...be32(28), ...tag("ftyp"), ...tag("heic"), 0, 0, 0, 0]))).toBeNull(); // its boxes after the bytes read
+    expect(heifSize(photoBytes("clean"))).toBeNull();
+    expect(heifSize(vp8x)).toBeNull();
   });
 
   it("the e2e's sideways picture: EXIF orientation 6 on the demo's 32×16", () => {

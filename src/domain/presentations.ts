@@ -7,7 +7,7 @@
 // kind `presentation` (v19): never in the reader, the manifest or the prints. Nothing here reads anything but the Week.
 import { fromPreviousSpeaker, isPresentation, parseSourcePath } from "../data/sourceRules";
 import { scheduleEntries } from "../exports/designer";
-import { safeEntryName } from "../exports/download";
+import { safeEntryName, storedFileName } from "../exports/download";
 import { addDays, daysToWeek, israelDate, israelLocal } from "./israelTime";
 import { type Day, DAY_NAMES, fmt, fmtRange } from "./time";
 import type { Lesson, SourceFile, Week } from "./types";
@@ -190,14 +190,16 @@ const text = (lines: string[]) => BOM + lines.join("\r\n") + "\r\n";
  */
 export function dayZipPlan(week: Week, day: Day, roomId: number | null, failed: ReadonlySet<number> = new Set()): DayZipPlan {
   const used = new Set<string>();
-  const decks = weekPresentations(week).map((file) => ({ name: uniqueName(`0000_השבוע_${safeEntryName(file.display_name)}`, file.id, used), file }));
+  // each name ends in the STORED file's extension (its path's, tied to its type), never the one its display name types
+  const fileName = (file: SourceFile) => storedFileName(file.display_name, parseSourcePath(file.storage_path)?.ext);
+  const decks = weekPresentations(week).map((file) => ({ name: uniqueName(`0000_השבוע_${fileName(file)}`, file.id, used), file }));
   const rows = dayRows(presentationRows(week), day, roomId);
   const byRow = new Map<number, ZipEntry[]>();
   for (const r of rows) {
     if (r.state !== "file") continue;
     byRow.set(
       r.lessonId,
-      r.files.map((file) => ({ name: uniqueName(`${hhmm(r.start_min)}_${safeEntryName(r.room || "חדר")}_${safeEntryName(file.display_name)}`, file.id, used), file })),
+      r.files.map((file) => ({ name: uniqueName(`${hhmm(r.start_min)}_${safeEntryName(r.room || "חדר")}_${fileName(file)}`, file.id, used), file })),
     );
   }
   const entries = [...decks, ...rows.flatMap((r) => byRow.get(r.lessonId) ?? [])];

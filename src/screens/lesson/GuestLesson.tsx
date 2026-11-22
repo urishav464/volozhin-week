@@ -9,7 +9,7 @@ import { Link } from "react-router";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
 import { cleanPublicNote, STAGE_LIMITS } from "../../data/stageRules";
-import { guestLine, guestPhotoIds, guestPreview, guestRows } from "../../domain/guestSite";
+import { guestLine, guestPhotoIds, guestPreview, guestRows, mayChangePublicOk } from "../../domain/guestSite";
 import { byGender, displayName } from "../../domain/names";
 import { speakerPath } from "../../domain/routes";
 import { errorMessage } from "../../errors";
@@ -19,7 +19,7 @@ import { CardBody } from "../public/GuestCard";
 import { Button, INPUT, useFocusRescue } from "../settings/kit";
 import { PageSection } from "../speakerPages/page";
 import type { Notify } from "../speakers/parts";
-import { practiceWeek, PublicOkSwitch, publicOkDone, publicOkHint, useGuestPhotos } from "../speakers/PublicOk";
+import { PublicOkSwitch, publicOkDone, publicOkHint, useGuestPhotos } from "../speakers/PublicOk";
 import { LINK_BUTTON, type StageCtx } from "../stages/parts";
 
 export interface GuestLessonProps {
@@ -42,8 +42,11 @@ export function GuestLesson({ port, model, ctx }: GuestLessonProps) {
   const { week, lesson: l, actor } = ctx;
   const row = useMemo(() => guestRows(week).find((r) => r.lessonId === l.id) ?? null, [week, l.id]);
   if (!row) return null;
-  // the hint once, under the list — where a box can be offered at all
-  const marking = row.people.some((p) => p.approachId != null) && !practiceWeek(actor, week.edition);
+  // the hint once, under the list — only to a viewer who may change at least one of the boxes (as PublicOkSwitch's own)
+  const marking = row.people.some((p) => {
+    const a = p.approachId == null ? undefined : model.approachById.get(p.approachId);
+    return a != null && mayChangePublicOk(actor, week.edition, a);
+  });
   return (
     <div data-lesson-guest>
       <PageSection id="guest" title="לאתר האורחים" aside={<span data-guest-line>{guestLine(row)}</span>}>
@@ -213,7 +216,8 @@ function Preview({ port, ctx, ids }: { port: DataPort; ctx: StageCtx; ids: numbe
         {failed > 0 && <p className="text-sm text-ink-soft">חלק מהתמונות לא נטענו.</p>}
         {preview && (
           <div className="rounded-xl border border-line bg-card p-4 shadow-sm">
-            <CardBody row={preview.row} people={preview.people} startDate={preview.startDate} titleId={titleId} />
+            {/* inside the page's «לאתר האורחים» (an h3): the card's title an h4, its people h5 */}
+            <CardBody row={preview.row} people={preview.people} startDate={preview.startDate} titleId={titleId} level={4} />
           </div>
         )}
       </div>

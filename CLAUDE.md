@@ -495,14 +495,16 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   fixed rows only included), a sticky day bar of BUTTONS (never `href="#…"`, never pushState — the hash is the token), the days
   side by side from 1280px; a lesson with more (`rowHasMore`: a note, or a marked speaker with a bio or a valid photo) opens
   `GuestCard.tsx` — a native modal `<dialog>` (a bottom sheet on a phone; Escape, the backdrop, «סגירה»; focus back to the
-  row), no request, history entry or storage on opening; `CardBody` draws text nodes only and a photo only through
+  row), no request, history entry or storage on opening; `CardBody` (its `level`: 2 in the dialog, 4 inside a team page's
+  section) draws text nodes only and a photo only through
   `guestPhotoSrc` (`src/domain/photo.ts`: a `data:image/jpeg` that `photoFromBase64` accepts — never a URL). Print: lessons
   and fixed rows, no notes, bios or photos. **Filling it in** (`src/domain/guestSite.ts`: `guestRows`, `guestSummary`,
   `guestLine`, `filterGuests`, `guestPreview`; `mayEditSpeaker` lives here; `mayMarkPublic` ≡ `set_public_ok`'s mark rule with
   `app.may_edit_speaker`, `mayUnmarkPublic`, `publicOkOffered` — the box shows once the approach is `positive` or already
-  marked; a test holds `guestRows`' marked people ≡ `publicSchedule(…).people`): the speaker page's `#guest`
+  marked; a practice week's existing mark keeps its box, to be taken back; `mayChangePublicOk` — the consent hint only to a
+  viewer who may change a box; a test holds `guestRows`' marked people ≡ `publicSchedule(…).people`): the speaker page's `#guest`
   (`src/screens/speakerPages/GuestSpeaker.tsx`; `PublicOkSwitch` in `src/screens/speakers/PublicOk.tsx`, shared with the lesson
-  page; the photo redrawn in the browser — `photoCanvas.ts` `preparePhoto` (≤ 25MB, ≤ 40MP before decoding) and the pure
+  page; the photo redrawn in the browser — `photoCanvas.ts` `preparePhoto` (≤ 25MB, ≤ 40MP before decoding — a WebP's size by `webpSize`, an AVIF/HEIF's by `heifSize`) and the pure
   `fitPhoto` (`src/domain/photoFit.ts`: ≤ 512px, ≤ 20KB, never enlarged, ≤ 12 encodes, every candidate stripped and passing
   `photoOk`) — the preview is the bytes sent, held in React state only; the guest bio ≤ 600), the lesson page's `#guest`
   (`src/screens/lesson/GuestLesson.tsx`, closed lessons, a section under the stepper — the five dots and six steps
@@ -515,8 +517,11 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `missing` / `none` / `memorial`; the CURRENT lead's files, `lessonPresentations`), `weekPresentations` (the cover path,
   admins upload, never Word), `orphanPresentations`, `dayZipPlan` (week decks `0000_השבוע_…` first, then `HHMM_<room>_<name>`
   in the day's order — a night hour is 24–29 — plus `סדר-היום.txt` and, with a link-only row, `links.txt`, UTF-8 BOM, CRLF;
-  names through `safeEntryName`, `src/exports/download.ts`); `src/exports/presentationsZip.ts` (fflate, stored, ≤ 250MB,
-  cancel). The device remembers the day's last download (`readZipMarker`/`writeZipMarker`, localStorage in try/catch, server
+  names through `safeEntryName` — control and bidi characters out — and `storedFileName`, the extension from the STORED path,
+  never the display name, also for «הורדה» and the archive, `src/exports/download.ts`); a night row reads «ליל ראשון–שני»
+  (`nightLabel`, `src/domain/time.ts`, shared with the reader and /s); `src/exports/presentationsZip.ts` (fflate, stored,
+  ≤ 250MB, cancel; the rest of a batch signed again after `RESIGN_AFTER_MS`, an address refused as expired asked for once
+  more; with a room chosen the card and its button name the room; not one file came = an error, no zip, no marker). The device remembers the day's last download (`readZipMarker`/`writeZipMarker`, localStorage in try/catch, server
   upload times compared — `newSinceDownload`) and marks «חדש מאז ההורדה»; the week store reloads every
   `PRESENTATIONS_POLL_MS` while the tab is visible (`source_files` is not in Realtime). Uploads: `checkPicked(file, cover,
   "presentation")` then `port.sources.upload(…, { kind: "presentation" })` — the browser's own words `pptx_source`,

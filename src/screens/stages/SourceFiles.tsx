@@ -241,11 +241,15 @@ export function SourceFiles({ port, week, lesson: l, actor, notify, clear, reloa
             multiple
             accept={SOURCE_ACCEPT}
             className="peer sr-only"
-            disabled={busy}
+            // never `disabled` while busy: the input holds the focus once the picker closes (PresentationUpload's rule)
+            aria-disabled={busy || undefined}
+            onClick={(e) => {
+              if (busy) e.preventDefault();
+            }}
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
               e.target.value = "";
-              if (files.length) void send(files);
+              if (files.length && !busy) void send(files);
             }}
           />
           {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}

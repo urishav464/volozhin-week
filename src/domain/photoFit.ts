@@ -103,8 +103,65 @@ export function pngSize(b: Uint8Array): { width: number; height: number } | null
   return width > 0 && height > 0 ? { width, height } : null;
 }
 
-/** A picture's size from a file's first bytes, when it says it there (a JPEG, a PNG); else null — the decoder will tell. */
-export const pictureSize = (head: Uint8Array) => jpegSize(head) ?? pngSize(head);
+/**
+ * A WebP's canvas from its first chunk: «VP8 » (lossy — the frame's 14-bit sides after the start code 9d 01 2a), «VP8L»
+ * (lossless — 14 bits each, minus one, after the signature 0x2f) or «VP8X» (extended — 24 bits each, minus one). A
+ * lossless WebP of one colour at 16383×16383 is a few KB: read here, it is refused before the browser decodes ~1GB.
+ */
+export function webpSize(b: Uint8Array): { width: number; height: number } | null {
+  const tag = (o: number) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+  if (b.length < 30 || tag(0) !== "RIFF" || tag(8) !== "WEBP") return null;
+  const u16 = (o: number) => b[o] | (b[o + 1] << 8);
+  const u24 = (o: number) => b[o] | (b[o + 1] << 8) | (b[o + 2] << 16);
+  let width = 0;
+  let height = 0;
+  switch (tag(12)) {
+    case "VP8 ":
+      if (b[23] !== 0x9d || b[24] !== 0x01 || b[25] !== 0x2a) return null;
+      width = u16(26) & 0x3fff;
+      height = u16(28) & 0x3fff;
+      break;
+    case "VP8L": {
+      if (b[20] !== 0x2f) return null;
+      const bits = (b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24)) >>> 0;
+      width = (bits & 0x3fff) + 1;
+      height = ((bits >>> 14) & 0x3fff) + 1;
+      break;
+    }
+    case "VP8X":
+      width = u24(24) + 1;
+      height = u24(27) + 1;
+      break;
+    default:
+      return null;
+  }
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+/**
+ * An AVIF's or a HEIF's (HEIC) size: an ISO-BMFF file («ftyp» at 4) states each image's in an «ispe» box (version and
+ * flags, then width and height, 32 bits each) — the largest found in the first bytes is the one checked (a grid's whole
+ * picture is larger than its tiles). One whose boxes come after the bytes read is decoded first (DECISIONS).
+ */
+export function heifSize(b: Uint8Array): { width: number; height: number } | null {
+  if (b.length < 12 || b[4] !== 0x66 || b[5] !== 0x74 || b[6] !== 0x79 || b[7] !== 0x70) return null; // «ftyp»
+  const u32 = (o: number) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+  let best: { width: number; height: number } | null = null;
+  for (let i = 8; i + 16 <= b.length; i++) {
+    if (b[i] !== 0x69 || b[i + 1] !== 0x73 || b[i + 2] !== 0x70 || b[i + 3] !== 0x65) continue; // «ispe»
+    if (u32(i - 4) < 20) continue; // not a box of its own
+    const width = u32(i + 8);
+    const height = u32(i + 12);
+    if (width > 0 && height > 0 && (!best || width * height > best.width * best.height)) best = { width, height };
+  }
+  return best;
+}
+
+/**
+ * A picture's size from a file's first bytes, when it says it there (a JPEG, a PNG, a WebP, an AVIF/HEIF); else null —
+ * the decoder will tell (a GIF or a BMP: the browser refuses or the 25MB cap bounds it — DECISIONS «ביקורת»).
+ */
+export const pictureSize = (head: Uint8Array) => jpegSize(head) ?? pngSize(head) ?? webpSize(head) ?? heifSize(head);
 
 type Verdict = { kind: "fits"; bytes: Uint8Array } | { kind: "big"; length: number } | { kind: "no_jpeg" } | { kind: "refused" };
 

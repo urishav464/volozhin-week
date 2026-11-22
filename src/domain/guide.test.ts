@@ -88,4 +88,20 @@ describe("the guide's sections and whom each is for", () => {
     for (const p of PERSONAS) expect(guideFor(extra, p, false)).not.toContain("פרק חדש");
     expect(guideFor(extra, "staff", true)).toContain("## פרק חדש");
   });
+
+  it("a pointer «(בפרק «X»)» names a section the same reader has — a filtered guide never sends anyone to a chapter it left out", () => {
+    for (const p of PERSONAS) {
+      const mine = new Set(headings(p));
+      for (const s of guidePartsFor(guide, p, false).sections) {
+        for (const m of s.text.matchAll(/בפרק «([^»]+)»/g)) expect(mine.has(m[1]), `${p}: «${s.heading}» → «${m[1]}»`).toBe(true);
+      }
+    }
+  });
+
+  it("«מצגות בלי שיעור» is the instructor's fold: «מצגות» (read by every role) says so, and where the others' own are", () => {
+    const decks = guidePartsFor(guide, "trainee", false).sections.find((s) => s.heading === "מצגות")!.text;
+    const line = decks.split("\n").find((l) => l.includes("«מצגות בלי שיעור»"))!;
+    expect(line).toContain("המדריך/ה רואה ומסיר/ה");
+    expect(line).toContain("בעמוד השיעור");
+  });
 });

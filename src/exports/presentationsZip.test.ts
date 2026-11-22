@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { demoWeek, seedDemoPresentations, seedDemoSources } from "../data/demoWeek";
 import { dayZipPlan, ORDER_FILE, PRESENTATION_ZIP_MAX, type ZipEntry } from "../domain/presentations";
 import type { SourceFile } from "../domain/types";
-import { presentationsZip, URL_BATCH } from "./presentationsZip";
+import { presentationsZip, RESIGN_AFTER_MS, URL_BATCH } from "./presentationsZip";
 
 const bytesOf = (path: string) => new TextEncoder().encode(`bytes of ${path}`);
 
@@ -134,5 +134,55 @@ describe("the day's zip", () => {
     const big = p.entries.map((e, i) => ({ ...e, file: { ...e.file, size_bytes: i === 0 ? PRESENTATION_ZIP_MAX : 1 } }));
     await expect(presentationsZip(s.sources, w.edition.id, big, { signal: new AbortController().signal, fetcher: s.fetcher, texts: () => [] })).rejects.toBeInstanceOf(RangeError);
     expect(s.calls).toEqual([]);
+  });
+
+  it("a slow link: the batch is signed again before its ten-minute addresses expire, so a big day's later files still come", async () => {
+    // fifteen decks of 15 MB at 2 Mbit/s: a minute each — Storage refuses an address used more than 600 s after it was signed
+    const { w } = plan();
+    const files: SourceFile[] = Array.from({ length: 15 }, (_, i) => ({
+      id: 200 + i, lesson_id: null, cover: false, kind: "presentation", speaker_id: null, fallen_id: null, storage_path: `1/cover/slow-${i}.pdf`, display_name: `מצגת ${i}.pdf`,
+      mime: "application/pdf", size_bytes: 15 * 1024 * 1024, page_count: null, uploaded_by: 1, uploaded_at: "2026-11-20T10:00:00Z",
+    }));
+    const entries: ZipEntry[] = files.map((file) => ({ name: `0000_השבוע_${file.display_name}`, file }));
+    let clock = 0;
+    const signs: number[] = [];
+    const sources = {
+      async urls(_edition: number, paths: string[]) {
+        signs.push(paths.length);
+        return new Map(paths.map((p) => [p, `https://storage.example/${p}?signed=${clock}`]));
+      },
+    };
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const expired = clock - Number(url.searchParams.get("signed")) > 600_000;
+      clock += 60_000; // the file takes a minute to come
+      return new Response(expired ? null : bytesOf(url.pathname), { status: expired ? 400 : 200 });
+    }) as typeof fetch;
+    const r = await presentationsZip(sources, w.edition.id, entries, { signal: new AbortController().signal, fetcher, now: () => clock, texts: () => [] });
+    expect(r.failed).toEqual([]);
+    expect(r.got).toBe(15);
+    // the batch once, then its rest again after eight minutes (and once more after sixteen)
+    expect(signs).toEqual([15, 6]); // the tenth file starts at 9 minutes: the six left are signed again
+    expect(RESIGN_AFTER_MS).toBe(8 * 60_000);
+  });
+
+  it("an address refused as expired (400, 401, 403) is asked for once more; a missing file (404) is not", async () => {
+    const { w, plan: p } = plan();
+    const first = p.entries[0].file.storage_path;
+    const s = stub();
+    let refusals = 1;
+    const once = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      // the first answer for the first file is «expired»; its fresh address works
+      if (String(input).endsWith(first) && refusals-- > 0) return new Response(null, { status: 403 });
+      return s.fetcher(input, init);
+    }) as typeof fetch;
+    const r = await presentationsZip(s.sources, w.edition.id, p.entries, { signal: new AbortController().signal, fetcher: once, texts: () => [] });
+    expect(r.failed).toEqual([]);
+    expect(strFromU8((await unzip(r.blob))[p.entries[0].name])).toBe(`bytes of ${first}`);
+    expect(s.calls.map((c) => c.length)).toEqual([2, 1]); // the batch, then that one path again
+    const gone = stub({ status: { [p.entries[0].file.storage_path]: 404 } });
+    const r404 = await presentationsZip(gone.sources, w.edition.id, p.entries, { signal: new AbortController().signal, fetcher: gone.fetcher, texts: () => [] });
+    expect(r404.failed.map((f) => f.id)).toEqual([p.entries[0].file.id]);
+    expect(gone.calls.map((c) => c.length)).toEqual([2]);
   });
 });

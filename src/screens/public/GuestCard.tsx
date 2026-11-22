@@ -24,6 +24,8 @@ export interface CardBodyProps {
   startDate: string | null;
   /** The heading's id, for the dialog's aria-labelledby. */
   titleId?: string;
+  /** The title's heading level: 2 in the guests' dialog; 4 inside a team page's section (its h3), each person one below. */
+  level?: 2 | 4;
 }
 
 /** Guest text: its own lines kept, a long word broken rather than the page widened, its direction its own. */
@@ -32,7 +34,9 @@ const GUEST_TEXT = "whitespace-pre-line [overflow-wrap:anywhere] [unicode-bidi:p
 const filled = (v: string | null | undefined): v is string => !!v && v.trim() !== "";
 
 /** The card's content: the title, when and where, the names, the lesson's description, then each person shown. */
-export function CardBody({ row, people, startDate, titleId }: CardBodyProps) {
+export function CardBody({ row, people, startDate, titleId, level = 2 }: CardBodyProps) {
+  const Title = level === 4 ? "h4" : "h2";
+  const Person = level === 4 ? "h5" : "h3";
   const r = designerRow(row, 0);
   // the calendar's date (a night lesson's is the next morning's); omitted while the week's date is TBD
   const date = messageDate(startDate, row.day, row.start_min);
@@ -43,9 +47,9 @@ export function CardBody({ row, people, startDate, titleId }: CardBodyProps) {
     .filter((x) => !!x.p && (filled(x.p.bio) || x.src != null));
   return (
     <div className="space-y-3">
-      <h2 id={titleId} className={`font-display text-xl font-extrabold text-navy ${GUEST_TEXT}`}>
+      <Title id={titleId} className={`font-display text-xl font-extrabold text-navy ${GUEST_TEXT}`}>
         {r.title}
-      </h2>
+      </Title>
       <p className="text-ink-soft">
         {night ? dayLabel(row.day, row.start_min) : `יום ${DAY_NAMES[row.day]}`} · <bdi dir="ltr">{fmtRange(row.start_min, row.end_min)}</bdi>
         {date && ` · ${date}`}
@@ -73,7 +77,7 @@ export function CardBody({ row, people, startDate, titleId }: CardBodyProps) {
                 />
               )}
               <div className="min-w-0 flex-1">
-                <h3 className={`font-bold text-navy ${GUEST_TEXT}`}>{p!.label}</h3>
+                <Person className={`font-bold text-navy ${GUEST_TEXT}`}>{p!.label}</Person>
                 {filled(p!.bio) && <p className={`text-sm ${GUEST_TEXT}`}>{p!.bio}</p>}
               </div>
             </li>

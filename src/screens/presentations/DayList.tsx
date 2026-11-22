@@ -8,7 +8,7 @@ import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
 import { PRESENTATION_STATE_LABEL, type PresentationRow } from "../../domain/presentations";
 import { lessonPath } from "../../domain/routes";
-import { fmtRange } from "../../domain/time";
+import { fmtRange, nightLabel } from "../../domain/time";
 import type { Week } from "../../domain/types";
 import { Badge, useFocusRescue } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
@@ -41,6 +41,8 @@ export function DayList({ port, week, rows, actor, notify, clear, reload, newSin
             <bdi dir="ltr" className="font-bold tabular-nums text-ink">
               {fmtRange(r.start_min, r.end_min)}
             </bdi>
+            {/* 00:30 under «יום ראשון» is the night after it, as the guests' schedule and the tables say */}
+            {nightLabel(r.day, r.start_min) && <span data-night className="text-xs text-ink-soft">{nightLabel(r.day, r.start_min)}</span>}
             <span className="text-sm text-ink-soft">
               <bdi>{r.room}</bdi>
             </span>

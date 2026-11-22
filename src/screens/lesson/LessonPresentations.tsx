@@ -51,7 +51,14 @@ export function LessonPresentations({ port, week, lesson: l, actor, notify, clea
         )}
       </div>
       {closed && p.files.length === 0 && !p.link && (
-        <p className="text-sm text-ink-soft">{p.state === "missing" ? "סומן שיש מצגת, ועוד לא הועלתה. מעלים אותה כאן, או ממלאים «קישור למצגת» למטה." : "לא הועלתה מצגת לשיעור הזה."}</p>
+        <p className="text-sm text-ink-soft">
+          {p.state === "missing"
+            ? // «מעלים אותה כאן» only to whoever is given the upload (logistics and an archive's team read only)
+              mayUpload
+              ? "סומן שיש מצגת, ועוד לא הועלתה. מעלים אותה כאן, או ממלאים «קישור למצגת» למטה."
+              : "סומן שיש מצגת, ועוד לא הועלתה."
+            : "לא הועלתה מצגת לשיעור הזה."}
+        </p>
       )}
       {p.files.length > 0 && (
         <ul aria-label="המצגות של השיעור" className="divide-y divide-line">

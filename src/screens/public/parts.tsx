@@ -10,7 +10,7 @@ import { CommandError } from "../../data/commands";
 import type { LinkScope } from "../../data/links";
 import { publicDemo } from "../../data/publicEntry";
 import { messageDate } from "../../domain/message";
-import { type Day, DAY_NAMES, fmtRange } from "../../domain/time";
+import { type Day, DAY_NAMES, fmtRange, nightLabel } from "../../domain/time";
 import { errorMessage } from "../../errors";
 import { useOnline } from "../../offline/online";
 import { Button } from "../settings/kit";
@@ -156,7 +156,7 @@ export function Loading() {
 
 /** «ראשון», or a night's «ליל ראשון–שני» — as the team's tables write it (src/exports/tracking.ts). */
 export function dayLabel(day: Day, startMin: number): string {
-  return startMin >= 1440 && day < 4 ? `ליל ${DAY_NAMES[day]}–${DAY_NAMES[(day + 1) as Day]}` : DAY_NAMES[day];
+  return nightLabel(day, startMin) ?? DAY_NAMES[day];
 }
 
 /** The day, the time and the date (the calendar's: a night lesson's is the next morning's), or «התאריך TBD». */

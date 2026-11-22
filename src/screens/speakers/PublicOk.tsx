@@ -1,10 +1,11 @@
 // The guests' site on the team's pages (the reset, phase 5) — what the speaker page's and the lesson page's «לאתר
 // האורחים» and «תוצרים ← אתר האורחים» share: the box «מאושר/ת להופיע באתר האורחים» (set_public_ok — the owner's decision,
 // 22.11: the speaker's handler or the staff, as the database allows; offered once the speaker agreed, or to take a mark
-// back; never in a practice or demo week but to a global admin), its words, and the photos a preview reads.
+// back; in a practice or demo week only a global admin marks — a mark already there is taken back as anywhere), its
+// words, and the photos a preview reads.
 import { useEffect, useId, useRef, useState } from "react";
 import type { DataPort } from "../../data/port";
-import { type GuestActor, mayMarkPublic, mayUnmarkPublic, publicOkOffered, readPhotos } from "../../domain/guestSite";
+import { type GuestActor, mayChangePublicOk, publicOkOffered, readPhotos } from "../../domain/guestSite";
 import { byGender, displayName } from "../../domain/names";
 import type { Approach, Edition, Gender, Speaker } from "../../domain/types";
 import { useFocusRescue } from "../settings/kit";
@@ -20,7 +21,11 @@ export const publicOkDone = (s: Pick<Speaker, "title" | "name" | "gender">, ok: 
 /** «מאושר/ת להופיע» as a state, in the speaker's gender. */
 export const approvedWord = (g: Gender | null | undefined) => byGender(g, "מאושר", "מאושרת");
 
-/** A practice or demo week: only a global admin's mark counts there (app.may_edit_speaker) — nobody else is offered the box. */
+/**
+ * A practice or demo week: only a global admin's mark counts there (app.may_edit_speaker) — nobody else is offered the box
+ * to MARK. A mark already there (a global admin's) is taken back as anywhere: set_public_ok asks may_edit_speaker for
+ * `true` only, so its box stays for the owner and the admins.
+ */
 export const practiceWeek = (actor: Pick<GuestActor, "global">, edition: Pick<Edition, "kind">) => !actor.global && (edition.kind === "practice" || edition.kind === "demo");
 
 /**
@@ -49,7 +54,7 @@ export function PublicOkSwitch({
   const [want, setWant] = useState<boolean | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const rescue = useFocusRescue();
-  if (practiceWeek(actor, edition)) {
+  if (practiceWeek(actor, edition) && a.public_ok !== true) {
     return (
       <p className="text-sm text-ink-soft" data-public-ok-practice>
         במחזור תרגול לא מפרסמים מרצים לאורחים
@@ -59,7 +64,7 @@ export function PublicOkSwitch({
   if (!publicOkOffered(a)) {
     return <p className="text-sm text-ink-soft">אפשר לסמן אחרי שהמרצה {byGender(s.gender, "מסכים", "מסכימה")} ללמד</p>;
   }
-  const may = a.public_ok ? mayUnmarkPublic(actor, a) : mayMarkPublic(actor, edition, a);
+  const may = mayChangePublicOk(actor, edition, a);
   const checked = want ?? a.public_ok === true;
   const change = async (v: boolean) => {
     if (busy || !may) return;
@@ -88,7 +93,7 @@ export function PublicOkSwitch({
         />
         {approvedWord(s.gender)} להופיע באתר האורחים
       </label>
-      {!may && <p className="text-xs text-ink-soft">מסמנים מי שמטפל/ת במרצה או הצוות.</p>}
+      {!may && <p className="text-xs text-ink-soft">מסמנים: מי שמטפל/ת במרצה, או הצוות.</p>}
       {hint && may && (
         <p id={`${id}-hint`} className="max-w-prose text-xs text-ink-soft">
           {publicOkHint(s.gender)}

@@ -171,6 +171,15 @@ export function publicOkOffered(a: Pick<Approach, "status" | "public_ok">): bool
 }
 
 /**
+ * May this viewer change the box as it stands — offered, and theirs to mark (not yet marked: mayMarkPublic, which already
+ * refuses a practice week's non-global member) or to take back (marked: mayUnmarkPublic, in any edition, as set_public_ok
+ * allows `false`). The switch is enabled exactly then; the lesson page says its hint only to such a viewer.
+ */
+export function mayChangePublicOk(actor: GuestActor, edition: Pick<Edition, "kind" | "status">, a: Pick<Approach, "status" | "public_ok" | "owner_member_id">): boolean {
+  return publicOkOffered(a) && (a.public_ok === true ? mayUnmarkPublic(actor, a) : mayMarkPublic(actor, edition, a));
+}
+
+/**
  * One lesson as the guests' card would show it — publicSchedule's own row and its people (the photos from `photoOf`, as
  * base64), so a preview on the team's pages is the link's answer, not a copy of it. null: not a lesson the guests see.
  */

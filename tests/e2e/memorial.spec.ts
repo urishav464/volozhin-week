@@ -20,7 +20,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { LRM } from "../../src/domain/time";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -44,7 +44,7 @@ async function weekCard(page: Page, info: TestInfo, day: string, text: string) {
 test.describe("demo build", () => {
   test("memorial times: a plan made, placed with the picker, and the week's yellow card — the family's contact only behind its button", async ({ page }, info) => {
     await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     await expect(page).toHaveURL(/\/memorial$/);
     await expect(page.getByRole("heading", { name: "זמני זיכרון", level: 2 })).toBeVisible();
     await expect(page.getByText("ממתין להחלטת ישיבת הצוות")).toBeVisible(); // on the folded policy itself
@@ -106,7 +106,7 @@ test.describe("demo build", () => {
 
   test("two slots in one memorial row: told apart by their own time and room in the day view; the fallen's name whole on the desktop grid", async ({ page }, info) => {
     await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     // a second slot in Sunday's row א: 13:05–13:10, in «כיתה ג׳», beside the placed one (13:00–13:15, בית מדרש)
     await page.getByRole("button", { name: `הוספת זמן זיכרון: ראשון ${LRM}13:00–13:15` }).click();
     const form = page.getByRole("form", { name: `זמן זיכרון חדש: ראשון ${LRM}13:00–13:15` });
@@ -153,6 +153,10 @@ test.describe("demo build", () => {
     await expect(panel.locator("[data-memorial-reader]")).toHaveAttribute("data-memorial-reader", "memorial_missing");
     await panel.locator("input[type=file]").setInputFiles({ name: "דף זיכרון.docx", mimeType: DOCX_MIME, buffer: Buffer.from("PK synthetic, never opened") });
     await expect(panel.getByRole("group", { name: "קבצי המקורות" })).toContainText("Word · צריך PDF");
+    // the reset, phase 5: a Word file downloads under its own name — «הורדה», never «פתיחה»
+    const word = panel.getByRole("group", { name: "קבצי המקורות" }).locator("[data-source-file]").filter({ hasText: "דף זיכרון.docx" });
+    await expect(word.getByRole("button", { name: "הורדה" })).toBeVisible();
+    await expect(word.getByRole("button", { name: "פתיחה" })).toHaveCount(0);
     // the slot's verdict: a lesson's words — never «not uploaded» when something was
     const verdict = panel.locator("[data-memorial-reader]");
     await expect(verdict).toHaveAttribute("data-memorial-reader", "memorial_needs_pdf");
@@ -162,7 +166,7 @@ test.describe("demo build", () => {
     await expect(forReader).not.toContainText("עוד לא הועלו");
     await page.keyboard.press("Escape");
 
-    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await page.getByRole("link", { name: "מקראה", exact: true }).first().click();
     const row = page.locator("[data-manifest-row][data-status^=memorial]").filter({ hasText: "חלל/ה לדוגמה 1" });
     await expect(row).toHaveAttribute("data-status", "memorial_needs_pdf");
@@ -172,7 +176,7 @@ test.describe("demo build", () => {
     await expect(page.locator("[data-manifest-totals]")).toContainText("2 צריך PDF"); // the demo's Word-only lesson, and this slot
 
     // the plan back in the tray: its page goes with it — on its card, «ממתין לשיבוץ» — never left at the old slot for removal
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     const plan = page.locator("[data-memorial-plan]").filter({ hasText: "חלל/ה לדוגמה 1" });
     await plan.getByLabel("שיבוץ", { exact: true }).selectOption({ label: "במגש (לא משובץ/ת)" });
     await plan.getByRole("button", { name: "למגש: חלל/ה לדוגמה 1" }).click();
@@ -192,7 +196,7 @@ test.describe("demo build", () => {
     await expect(slot.getByRole("button", { name: "הסרה" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await page.getByRole("link", { name: "מקראה", exact: true }).first().click();
     await expect(page.locator("[data-manifest-row]").filter({ hasText: "להסרה" })).toHaveCount(0);
     const waiting = page.getByRole("list", { name: "חומרים שממתינים לשיבוץ" });
@@ -285,13 +289,13 @@ test.describe("demo build", () => {
     // what Cloudflare Pages answers for a chunk name the new deploy no longer has: index.html, 200, text/html
     const index = await (await page.request.get(demoUrl())).text();
     await page.route(/\/assets\/MemorialScreen-[^/]+\.js$/, (route) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: index }));
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     await expect(page.getByRole("heading", { name: "המסך הזה לא נטען" })).toBeVisible();
     await expect(page.getByText("כנראה שהאתר התעדכן מאז שהדף נפתח")).toBeVisible();
     await expect(nav(page)).toBeVisible(); // the header stays: the rest of the site is a click away
     await nav(page).getByRole("link", { name: "השבוע" }).click();
     await expect(page.getByRole("heading", { name: "המסך הזה לא נטען" })).toHaveCount(0);
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     await page.unroute(/\/assets\/MemorialScreen-[^/]+\.js$/);
     await page.getByRole("button", { name: "רענון" }).click(); // the new version's files
     await expect(page.getByRole("heading", { name: "זמני זיכרון", level: 2 })).toBeVisible();
@@ -324,7 +328,7 @@ test.describe("demo build", () => {
 
   test("«לוגיסטיקה»: transports (addresses and phones only when asked), payments, books, prints — each printed and downloaded", async ({ page }) => {
     await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: "לוגיסטיקה" }).click();
+    await goSection(page, "לוגיסטיקה");
     // since phase 4 «לוגיסטיקה» opens the logistics home; the transport board is its tab «הסעות וצוות»
     await expect(page).toHaveURL(/\/logistics$/);
     await expect(page.locator("[data-logistics-home]")).toBeVisible();
@@ -409,7 +413,9 @@ test.describe("demo build", () => {
     await page.goto(`${demoUrl()}/settings/edition`);
     await expect(page.getByText("פרטי הקשר של המשפחות לא יוצאים מהמערכת בשום ייצוא אחר")).toBeVisible();
     await page.getByRole("checkbox", { name: "כולל קבצי המקורות" }).check();
-    await expect(page.getByText(/^\d+ קבצים, כ-[\d.]+(KB|MB), בתיקייה לכל יום/)).toBeVisible();
+    const count = page.getByText(/^\d+ קבצים, כ-[\d.]+(KB|MB), בתיקייה לכל יום/);
+    await expect(count).toBeVisible();
+    const said = Number(/^(\d+) קבצים/.exec((await count.textContent())!)![1]);
     await expect(page.getByText(/בערך פי 3 מהגודל הזה: עדיף במחשב, לא בטלפון\.$/)).toBeVisible(); // the zip is built in memory
     await noSidewaysScroll(page);
     const zip = await downloaded(page, () => page.getByRole("button", { name: "הורדת הארכיון של הדגמה" }).click());
@@ -428,8 +434,10 @@ test.describe("demo build", () => {
     expect(memorial.fallen).toHaveLength(9);
     expect(strFromU8(files["memorial.json"])).not.toContain("טלפון לדוגמה");
     expect(JSON.parse(strFromU8(files["PERSONAL-DATA_contacts_and_transport.json"])).family_contacts).toEqual([expect.objectContaining({ fallen: "חלל/ה לדוגמה 1" })]);
-    const sources = Object.keys(files).filter((k) => k.startsWith("sources/"));
+    const sources = Object.keys(files).filter((k) => k.startsWith("sources/") && !k.endsWith("/"));
     expect(sources.length).toBeGreaterThan(0);
+    // the files the panel counted, every one in the zip — since the reset's phase 5 the demo's presentations among them
+    expect(sources.length).toBe(said);
     expect(sources.some((k) => k.startsWith("sources/1-ראשון/") && k.endsWith("דף מקורות לדוגמה.pdf"))).toBe(true);
     expect(strFromU8(files[sources.find((k) => k.endsWith(".pdf"))!].subarray(0, 4))).toBe("%PDF");
     await expect(toast(page, "הארכיון ירד")).toBeVisible();
@@ -473,7 +481,7 @@ test.describe("mock build", () => {
     await expect(other.getByRole("button", { name: /^עריכת הנהג\/ת/ })).toHaveCount(0);
     expect(sb.rpc.get("get_transport_details")).toBeUndefined(); // never one lesson at a time here
 
-    await nav(page).getByRole("link", { name: "זמני זיכרון" }).click();
+    await goSection(page, "זמני זיכרון");
     await expect(page.locator("[data-memorial-plan]").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "+ תוכנית" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "פרטי הקשר של המשפחה" })).toHaveCount(0);

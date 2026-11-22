@@ -1,16 +1,19 @@
-// From placement to arrival (milestone 3) in a real browser — the stages in the writing grid's lesson panel, which
-// stays the staff's (the reset, phase 3). Demo build, every width: a payment request approved (and another refused)
-// from «אישורים», the summary message (blocked without a template and while the date is TBD, then sent; a change after
-// it raises «לעדכן את המרצה», sending again clears it), an escort with the gap warning, sources and their dot, a
-// trainee's delete listing the lessons they escort; on «ימים» a closed lesson's next step — in the words «המרצים שלי»
-// had — opens its lesson page at that step. Mock build: every stage RPC goes out by the contract's parameter names
-// (tests/sql/stages.test.ts pins them in the database) with the member's own token; a logistics member is offered
-// «שולם» and the transport only, and decides nothing in a practice week. Synthetic people and wording only («נוסח
-// לדוגמה»): the real template is the instructor's. «אישורים» and the transport board themselves: approvals.spec.ts.
+// From placement to arrival (milestone 3) in a real browser — the stages on the lesson page (since the reset's phase 5
+// the writing grid's panel shows a closed lesson's summary: its five dots, «לדף השיעור», «פעולות נוספות»). Demo build,
+// every width: a payment request saved on the lesson page and approved (and another refused) from «אישורים», the badge
+// counting requests; the summary message (blocked without a template and while the date is TBD, then sent; a change
+// after it raises «לעדכן את המרצה», sending again clears it), an escort with the gap warning (the panel lists it once
+// saved), sources and their dot, a trainee's delete listing the lessons they escort; on «ימים» a closed lesson's next
+// step — in the words «המרצים שלי» had — opens its lesson page at that step. Mock build: every stage RPC goes out by the
+// contract's parameter names (tests/sql/stages.test.ts pins them in the database) with the member's own token — the
+// transport as the request's pickup (set_transport_request) and the driver's half (set_transport_driver), never the old
+// whole-details write; staff's `/grid` is their week at `/`; an archive's lesson reads its sheet and transport only; a
+// logistics member (`/grid` → «השבוע») is offered «שולם» and the transport only, and decides nothing in a practice week. Synthetic people and wording only («נוסח לדוגמה»):
+// the real template is the instructor's. «אישורים» and the transport board themselves: approvals.spec.ts.
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, goSection, INLINE_SECTIONS, LOGISTICS_SECTIONS, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -20,7 +23,7 @@ const toast = (page: Page, text: string | RegExp) => page.getByRole("status").fi
 const nav = (page: Page) => page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" });
 const card = (page: Page, speaker: string) => page.locator("[data-lesson-id]").filter({ hasText: speaker });
 
-/** A closed lesson's panel: on a phone or a tablet, its day first. */
+/** A closed lesson's panel (a summary since the reset's phase 5): on a phone or a tablet, its day first. */
 async function openLesson(page: Page, info: TestInfo, day: string, speaker: string): Promise<Locator> {
   if (info.project.name !== "desktop") await page.getByRole("tab", { name: day }).click();
   await card(page, speaker).first().click();
@@ -29,12 +32,22 @@ async function openLesson(page: Page, info: TestInfo, day: string, speaker: stri
   return panel;
 }
 
-/** One stage of the panel, opened. */
-async function stage(panel: Locator, name: string): Promise<Locator> {
-  const s = panel.getByRole("region", { name, exact: true });
-  const toggle = s.getByRole("button", { name: new RegExp(`^${name.replace("/", "\\/")}`) });
+/** A step of the lesson page (src/screens/lesson/LessonScreen.tsx), opened. */
+const step = (page: Page, key: string) => page.locator(`[data-page-step="${key}"]`);
+async function openStep(page: Page, key: string): Promise<Locator> {
+  const toggle = step(page, key).locator("h3 button");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-  return s;
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  return step(page, key);
+}
+
+/** A closed lesson's page from the grid — its card opens the panel, «לדף השיעור» the page — at the step `key`, opened. */
+async function lessonPage(page: Page, info: TestInfo, day: string, speaker: string, key: string): Promise<Locator> {
+  const panel = await openLesson(page, info, day, speaker);
+  await panel.getByRole("link", { name: "לדף השיעור" }).click();
+  await expect(page).toHaveURL(/\/lesson\/\d+$/);
+  await expect(page.locator("[data-lesson-header]")).toContainText(speaker);
+  return openStep(page, key);
 }
 
 test.describe("demo build", () => {
@@ -56,32 +69,35 @@ test.describe("demo build", () => {
     await expect(body).toBeFocused();
   });
 
-  test("payment: the handler asks, the instructor approves (and rejects) from the queue; the badge counts requests", async ({ page }, info) => {
+  test("payment: the handler asks on the lesson page, the instructor approves (and rejects) from the queue; the badge counts requests", async ({ page }, info) => {
     await page.goto(demoUrl());
     const badge = nav(page).getByRole("link", { name: /אישורים/ });
     await expect(badge).toHaveAccessibleName("אישורים, 2 ממתינים"); // the demo's waiting request, and a speaker who agreed and waits (v14)
 
-    const panel = await openLesson(page, info, "ראשון", "מרצה 07");
-    const pay = await stage(panel, "תשלום/הסעה");
+    // the grid's panel is a summary: the stages are worked on the lesson page
+    const pay = await lessonPage(page, info, "ראשון", "מרצה 07", "pay");
     await expect(pay).toHaveAttribute("data-state", "na");
     const form = pay.getByRole("form", { name: "בקשת תשלום והסעה" });
     await form.getByRole("radio", { name: "תשלום", exact: true }).check();
-    // the demo's user is the instructor: the request is saved, not «sent to the instructor» — she decides it above
-    await form.getByRole("button", { name: "שמירת הבקשה" }).click();
+    await form.getByRole("button", { name: "שליחה לאישור" }).click();
     await expect(form.getByRole("alert")).toContainText("צריך לכתוב את הסכום"); // never a default amount
     await form.getByLabel("סכום בשקלים").fill("150");
     await form.getByRole("radio", { name: "הלוך ושוב" }).check();
-    await form.getByRole("button", { name: "שמירת הבקשה" }).click();
-    await expect(toast(page, "הבקשה ממתינה לאישור שלך")).toBeVisible();
+    // a transport asks for its pickup (the demo's user is a global admin: the pickup is theirs to read)
+    await form.getByLabel("כתובת איסוף").fill("כתובת לדוגמה 7");
+    await form.getByLabel("שעת איסוף").fill("13:30");
+    await form.getByRole("button", { name: "שליחה לאישור" }).click();
+    await expect(toast(page, "הבקשה נשלחה לאישור")).toBeVisible();
     await expect(pay).toHaveAttribute("data-state", "waiting");
     await expect(pay).toContainText("150 ₪");
-    // one primary action: the decision; the saved request waits behind «שינוי הבקשה»
+    // one primary action: the decision (the demo's user is the instructor); the saved request waits behind «שינוי הבקשה»
     await expect(pay.getByRole("group", { name: "החלטה על הבקשה" })).toBeVisible();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
     await pay.getByRole("button", { name: "שינוי הבקשה" }).click();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByLabel("סכום בשקלים")).toHaveValue("150");
     await pay.getByRole("form", { name: "בקשת תשלום והסעה" }).getByRole("button", { name: "ביטול" }).click();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
+    await expect(pay.getByRole("button", { name: "שינוי הבקשה" })).toBeFocused();
     await expect(badge).toHaveAccessibleName("אישורים, 3 ממתינים");
     await noSidewaysScroll(page);
 
@@ -111,8 +127,7 @@ test.describe("demo build", () => {
   test("the summary message: blocked without a template, then by the TBD date; sent; a change after it → «לעדכן את המרצה», sent again", async ({ page }, info) => {
     const wide = info.project.name === "desktop";
     await page.goto(demoUrl());
-    let panel = await openLesson(page, info, "שני", "מרצה 12");
-    let msg = await stage(panel, "הודעת סיכום");
+    let msg = await lessonPage(page, info, "שני", "מרצה 12", "msg");
     await expect(msg.getByRole("list", { name: "מה חסר כדי לשלוח" })).toContainText("אין עדיין נוסח להודעת הסיכום");
     await expect(msg.getByRole("button", { name: "סומן כנשלח" })).toHaveCount(0);
     await noSidewaysScroll(page);
@@ -141,13 +156,12 @@ test.describe("demo build", () => {
 
     // back on the week: the week's date is still TBD — still blocked, the preview says where
     await nav(page).getByRole("link", { name: "השבוע" }).click();
-    panel = await openLesson(page, info, "שני", "מרצה 12");
-    msg = await stage(panel, "הודעת סיכום");
+    msg = await lessonPage(page, info, "שני", "מרצה 12", "msg");
     await expect(msg.getByRole("list", { name: "מה חסר כדי לשלוח" })).toHaveText("תאריך השבוע עוד לא נקבע (TBD).");
     await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toContainText("«TBD: תאריך»");
 
     // the date, in «הגדרות ← מחזור»
-    await nav(page).getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await page.getByRole("tab", { name: "מחזור" }).click();
     const editions = page.getByRole(wide ? "table" : "list", { name: "המחזורים" });
     await editions.getByRole("button", { name: "עריכת התאריכים של הדגמה" }).click();
@@ -157,8 +171,7 @@ test.describe("demo build", () => {
 
     // now it can go: the speaker's gender, the calendar's date, the teaching time in words, the amount
     await nav(page).getByRole("link", { name: "השבוע" }).click();
-    panel = await openLesson(page, info, "שני", "מרצה 12");
-    msg = await stage(panel, "הודעת סיכום");
+    msg = await lessonPage(page, info, "שני", "מרצה 12", "msg");
     const text = msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" });
     await expect(text).toContainText("נוסח לדוגמה לפרופ׳ מרצה 12: מוזמנת ללמד ביום שני, 15.2.2027");
     await expect(text).toContainText("20:00–21:15 (שעה ורבע), בבית מדרש. הנושא: שיעור לדוגמה 11. התשלום 200 ש״ח.");
@@ -172,13 +185,16 @@ test.describe("demo build", () => {
     await expect(msg).toContainText("נשלחה ·");
     await noSidewaysScroll(page);
 
-    // a change after it went out: moved (a drag on a desktop), or retitled (phone and tablet)
+    // a change after it went out: moved (a drag on the grid, on a desktop), or retitled (phone and tablet, on the page)
     if (wide) {
-      await panel.getByRole("button", { name: "סגירה" }).click();
+      await nav(page).getByRole("link", { name: "השבוע" }).click();
+      // both ends in view (the grid opens at its top; a click on the card used to scroll it there), measured after
       const from = card(page, "מרצה 12");
       const to = page.locator('[data-drop="cell:1:1350:1440"]');
-      const a = (await from.boundingBox())!;
+      await from.scrollIntoViewIfNeeded();
       await to.scrollIntoViewIfNeeded();
+      await expect(from).toBeInViewport();
+      const a = (await from.boundingBox())!;
       const b = (await to.boundingBox())!;
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
@@ -188,60 +204,70 @@ test.describe("demo build", () => {
       await expect(toast(page, "השיעור הוזז")).toBeVisible();
       await expect(card(page, "מרצה 12").locator("[data-reconfirm]")).toBeVisible();
       await expect(card(page, "מרצה 12")).toHaveAttribute("aria-label", /22:30–00:00, תלמוד, הלכה ומדרש, לעדכן את המרצה$/); // the topic, then the flag
-      panel = await openLesson(page, info, "שני", "מרצה 12");
-      await panel.getByRole("button", { name: "להודעה" }).click();
+      msg = await lessonPage(page, info, "שני", "מרצה 12", "msg");
     } else {
-      const details = panel.getByRole("region", { name: "פרטי השיעור" });
+      const details = (await openStep(page, "close")).getByRole("region", { name: "פרטי השיעור" });
       await details.getByRole("button", { name: "עריכה" }).click();
       await details.getByLabel("כותרת").fill("שיעור לדוגמה, כותרת חדשה");
       await details.getByRole("button", { name: "שמירה" }).click();
-      await expect(toast(page, /^נשמר$/)).toBeVisible(); // not the demo banner («…שום דבר לא נשמר»)
-      await expect(card(page, "מרצה 12").locator("[data-reconfirm]")).toBeVisible();
+      await expect(toast(page, /^נשמר×?$/)).toBeVisible(); // not the demo banner («…שום דבר לא נשמר»); the page's toast has its «×»
+      msg = await openStep(page, "msg");
     }
-    msg = panel.getByRole("region", { name: "הודעת סיכום", exact: true });
     await expect(msg).toHaveAttribute("data-state", "problem");
     await expect(msg).toContainText("לעדכן את המרצה");
     await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toContainText(wide ? "22:30–23:45" : "שיעור לדוגמה, כותרת חדשה");
     await msg.getByRole("button", { name: "סומן כנשלח" }).click();
     await expect(toast(page, "סומן שההודעה נשלחה")).toBeVisible();
-    await expect(card(page, "מרצה 12").locator("[data-reconfirm]")).toHaveCount(0);
     await expect(msg).toHaveAttribute("data-state", "done");
     await noSidewaysScroll(page);
+    // the grid's card: the flag is gone
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    if (!wide) await page.getByRole("tab", { name: "שני" }).click();
+    await expect(card(page, "מרצה 12")).toBeVisible();
+    await expect(card(page, "מרצה 12").locator("[data-reconfirm]")).toHaveCount(0);
   });
 
   test("escorts and sources: each trainee's load, the gap warning before and after saving, the dots; deleting a trainee lists their lessons", async ({ page }, info) => {
     await page.goto(demoUrl());
-    const panel = await openLesson(page, info, "רביעי", "מרצה 19");
-    const escort = await stage(panel, "מלווה");
+    const escort = await lessonPage(page, info, "רביעי", "מרצה 19", "escort");
     const who = escort.getByLabel("מלווה מרשימת החניכים");
     await expect(who.locator("option").filter({ hasText: "מלווה לדוגמה ב׳" })).toHaveText("מלווה לדוגמה ב׳ · 2 שיעורים");
     await who.selectOption({ label: "מלווה לדוגמה ד׳ · 2 שיעורים" }); // a lesson, and Sunday's memorial time as the family's liaison (5ב-2)
     await expect(escort.getByRole("list", { name: "שיעורים קרובים של המלווה" })).toContainText("צמוד, בלי הפסקה (הצעה: לפחות 30 דקות)");
     await expect(escort.getByRole("list", { name: "משהו שחשוב לדעת" })).toHaveCount(0); // no phrases pasted yet
     await expect(escort).toContainText("עוד אין ניסוחים");
-    await escort.getByRole("button", { name: "שמירה" }).click();
+    await escort.getByRole("button", { name: "שמירה", exact: true }).click();
     await expect(toast(page, "המלווה נשמר/ה")).toBeVisible();
-    await expect(panel.getByText(/«מלווה לדוגמה ד׳» מלווה שני שיעורים צמודים/)).toBeVisible(); // the soft warning (src/rules)
     await expect(escort).toHaveAttribute("data-state", "done");
     await noSidewaysScroll(page);
 
-    const sources = await stage(panel, "מקורות");
+    const sources = (await openStep(page, "sources")).getByRole("form", { name: "מקורות", exact: true });
     await sources.getByRole("radio", { name: "מצגת", exact: true }).check();
     await expect(sources.getByRole("checkbox", { name: "להכניס למקראה" })).toBeDisabled(); // nothing to print
     await sources.getByLabel("קישור למצגת").fill("slides.example/presentation");
-    await sources.getByRole("button", { name: "שמירה" }).click();
+    await sources.getByRole("button", { name: "שמירה", exact: true }).click();
     await expect(sources.getByRole("alert")).toContainText("הקישור צריך להתחיל ב-http://");
     await sources.getByRole("radio", { name: "דף מקורות", exact: true }).check();
     await sources.getByLabel("קישור למצגת").fill("");
     await sources.getByRole("radio", { name: "להדפיס מראש" }).check();
     await sources.getByRole("checkbox", { name: "להכניס למקראה" }).check();
-    await sources.getByRole("button", { name: "שמירה" }).click();
+    await sources.getByRole("button", { name: "שמירה", exact: true }).click();
     await expect(toast(page, "המקורות נשמרו")).toBeVisible();
+    await noSidewaysScroll(page);
+
+    // the grid's card: the dots; marked for the reader, but no file yet: the «מקראה» dot is not green — it says what
+    // the manifest says (5ב-1 review)
+    await nav(page).getByRole("link", { name: "השבוע" }).click();
+    if (info.project.name !== "desktop") await page.getByRole("tab", { name: "רביעי" }).click();
     for (const k of ["escort", "sources"]) await expect(card(page, "מרצה 19").locator(`[data-stage="${k}"]`)).toHaveAttribute("data-state", "done");
-    // marked for the reader, but no file yet: the «מקראה» dot is not green — it says what the manifest says (5ב-1 review)
     const readerDot = card(page, "מרצה 19").locator('[data-stage="reader"]');
     await expect(readerDot).toHaveAttribute("data-state", "open");
     await expect(readerDot).toHaveAttribute("title", "מקראה: חסר קובץ");
+    // the panel's summary: the soft warning (src/rules) once saved, the five stages to read
+    const panel = await openLesson(page, info, "רביעי", "מרצה 19");
+    await expect(panel.getByText(/«מלווה לדוגמה ד׳» מלווה שני שיעורים צמודים/)).toBeVisible();
+    await expect(panel.locator("[data-panel-stages] li[data-stage]")).toHaveCount(5);
+    await expect(panel.locator('[data-panel-stages] li[data-stage="escort"]')).toHaveAttribute("data-state", "done");
     await noSidewaysScroll(page);
 
     // «פתיחה מחדש» (under «פעולות נוספות») says first what goes with the speaker: the stages start over
@@ -254,7 +280,7 @@ test.describe("demo build", () => {
     await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)" })).toBeFocused(); // the confirm cancelled: the focus back at the button
 
     // «הגדרות ← חניכים»: deleting that escort lists the lessons they would leave
-    await nav(page).getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await page.getByRole("tab", { name: "חניכים" }).click();
     if (info.project.name !== "desktop") await page.getByRole("button", { name: "עריכת מלווה לדוגמה ד׳" }).click();
     await page.getByRole("button", { name: "מחיקת מלווה לדוגמה ד׳" }).click();
@@ -318,68 +344,77 @@ test.describe("mock build", () => {
     sb.answers.set("editions", [week.edition]);
     sb.answers.set("load_week", week);
     sb.answers.set("get_speaker_contacts", { phone: null, email: null, secretary_note: null, notes: null });
-    sb.answers.set("get_transport_details", { pickup_address: "כתובת לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
-    for (const fn of ["set_payment", "decide_payments", "mark_confirm_sent", "set_escort", "set_sources", "set_paid", "set_transport_details", "set_confirm_template", "set_duty_phrases"]) {
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת לדוגמה", pickup_time: null, pickup_min: null, driver_name: null, driver_phone: null, arranged: false });
+    for (const fn of ["set_payment", "set_transport_request", "set_transport_driver", "decide_payments", "mark_confirm_sent", "set_escort", "set_sources", "set_paid", "set_confirm_template", "set_duty_phrases"]) {
       sb.answers.set(fn, null);
     }
     await sb.attach(page);
     const session = await signIn(page, "admin@example.org");
     sb.token = session.access_token;
-    await page.goto(mockUrl());
+    // the writing grid has one address (the reset, phase 5): staff's `/grid` is their week at `/`
+    await page.goto(`${mockUrl()}/grid`);
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/$`));
     await expect(page.getByRole("grid", { name: "רשת השבוע" })).toBeVisible();
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
-    // a lesson with nothing yet: the request, the escort, the sources
-    let panel = await openLesson(page, info, "ראשון", "מרצה 07");
-    const pay = await stage(panel, "תשלום/הסעה");
+    // a lesson with nothing yet, on its page: the request (and its pickup), the escort, the sources
+    const seven = lessonOf(0, 870);
+    await page.goto(`${mockUrl()}/lesson/${seven}?step=pay`);
+    const pay = step(page, "pay");
     await pay.getByRole("radio", { name: "תשלום", exact: true }).check();
     await pay.getByLabel("סכום בשקלים").fill("1,500");
     await pay.getByRole("radio", { name: "הלוך", exact: true }).check();
-    await pay.getByRole("button", { name: "שמירת הבקשה" }).click();
-    await expect.poll(() => sb.rpc.get("set_payment")).toEqual([{ p_lesson: lessonOf(0, 870), p_version: 1, p_pay_amount: 1500, p_transport: "one_way" }]);
+    await expect(pay.getByLabel("כתובת איסוף")).toHaveValue("כתובת לדוגמה"); // as read
+    await pay.getByLabel("שעת איסוף").fill("13:45");
+    await pay.getByRole("button", { name: "שליחה לאישור" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_request")).toEqual([
+      // 13:45 on the lesson's day: minute 825, before the 14:30 start
+      { p_lesson: seven, p_fields: { pickup_address: "כתובת לדוגמה", pickup_time: "13:45", pickup_min: 825 } },
+    ]);
+    expect(sb.rpc.get("set_payment")).toEqual([{ p_lesson: seven, p_version: 1, p_pay_amount: 1500, p_transport: "one_way" }]);
 
-    const escort = await stage(panel, "מלווה");
+    const escort = await openStep(page, "escort");
     await escort.getByLabel("מלווה מרשימת החניכים").selectOption({ label: "מלווה לדוגמה א׳ · שיעור אחד" });
     await escort.getByLabel("הערה למלווה (לא חובה)").fill("נתון לדוגמה");
-    await escort.getByRole("button", { name: "שמירה" }).click();
-    await expect.poll(() => sb.rpc.get("set_escort")).toEqual([{ p_lesson: lessonOf(0, 870), p_version: 1, p_roster: 1, p_self_intro: false, p_note: "נתון לדוגמה" }]);
+    await escort.getByRole("button", { name: "שמירה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("set_escort")).toEqual([{ p_lesson: seven, p_version: 1, p_roster: 1, p_self_intro: false, p_note: "נתון לדוגמה" }]);
 
-    const sources = await stage(panel, "מקורות");
+    const sources = (await openStep(page, "sources")).getByRole("form", { name: "מקורות", exact: true });
     await sources.getByRole("radio", { name: "דף מקורות ומצגת" }).check();
     await sources.getByLabel("קישור למצגת").fill("https://slides.example/demo");
     await sources.getByRole("radio", { name: "להדפיס באותו יום" }).check();
-    await sources.getByRole("button", { name: "שמירה" }).click();
+    await sources.getByRole("button", { name: "שמירה", exact: true }).click();
     await expect.poll(() => sb.rpc.get("set_sources")).toEqual([
-      { p_lesson: lessonOf(0, 870), p_version: 1, p_kind: "sheet_presentation", p_print_when: "same_day", p_note: null, p_url: "https://slides.example/demo", p_in_reader: false },
+      { p_lesson: seven, p_version: 1, p_kind: "sheet_presentation", p_print_when: "same_day", p_note: null, p_url: "https://slides.example/demo", p_in_reader: false },
     ]);
-    await panel.getByRole("button", { name: "סגירה" }).click();
 
-    // transport details: read one lesson at a time, then written
-    panel = await openLesson(page, info, "ראשון", "מרצה 01");
-    const details = (await stage(panel, "תשלום/הסעה")).getByRole("group", { name: "פרטי ההסעה" });
+    // an approved transport: the details read one lesson at a time; the staff set the driver's half only
+    const one = lessonOf(0, 510);
+    await page.goto(`${mockUrl()}/lesson/${one}?step=pay`);
+    const details = step(page, "pay").getByRole("group", { name: "פרטי ההסעה" });
     await expect(details).toContainText("כתובת לדוגמה");
-    expect(sb.rpc.get("get_transport_details")).toContainEqual({ p_lesson: lessonOf(0, 510) });
-    await details.getByRole("button", { name: "עריכת פרטי ההסעה" }).click();
-    await details.getByLabel("הטלפון של הנהג/ת").fill("123 456 789");
-    await details.getByRole("checkbox", { name: "ההסעה סודרה" }).check();
-    // meanwhile the escort sends a pickup address through their link: the save keeps it, writing only what the form changed
-    sb.answers.set("get_transport_details", { pickup_address: "כתובת מהמלווה לדוגמה", pickup_time: null, driver_name: null, driver_phone: null, arranged: false });
-    await details.getByRole("button", { name: "שמירה" }).click();
-    await expect.poll(() => sb.rpc.get("set_transport_details")).toEqual([
-      { p_lesson: lessonOf(0, 510), p_pickup_address: "כתובת מהמלווה לדוגמה", p_pickup_time: null, p_driver_name: null, p_driver_phone: "123 456 789", p_arranged: true },
-    ]);
-    await panel.getByRole("button", { name: "סגירה" }).click();
+    expect(sb.rpc.get("get_transport_details")).toContainEqual({ p_lesson: one });
+    await expect(details.getByRole("button", { name: "עריכת פרטי ההסעה" })).toHaveCount(0); // the old whole-details form is gone
+    await details.getByRole("button", { name: "עריכת הנהג/ת" }).click();
+    const driver = details.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    await driver.getByLabel("טלפון הנהג/ת").fill("123 456 789");
+    await driver.getByRole("checkbox", { name: "סודר" }).check();
+    // meanwhile the escort sends a pickup address through their link: the driver's half never writes the pickup
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת מהמלווה לדוגמה", pickup_time: null, pickup_min: null, driver_name: null, driver_phone: null, arranged: false });
+    await driver.getByRole("button", { name: "שמירה", exact: true }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")).toEqual([{ p_lesson: one, p_fields: { driver_phone: "123 456 789", arranged: true } }]);
+    await expect(toast(page, "פרטי הנהג/ת נשמרו")).toBeVisible();
 
     // an approved payment: «שולם»; the message: «סומן כנשלח»
-    panel = await openLesson(page, info, "שני", "מרצה 12");
-    await (await stage(panel, "תשלום/הסעה")).getByRole("button", { name: "סימון ששולם" }).click();
-    await expect.poll(() => sb.rpc.get("set_paid")).toEqual([{ p_lesson: lessonOf(1, 1200), p_paid: true }]);
-    const msg = await stage(panel, "הודעת סיכום");
+    const twelve = lessonOf(1, 1200);
+    await page.goto(`${mockUrl()}/lesson/${twelve}?step=pay`);
+    await step(page, "pay").getByRole("button", { name: "סימון ששולם" }).click();
+    await expect.poll(() => sb.rpc.get("set_paid")).toEqual([{ p_lesson: twelve, p_paid: true }]);
+    const msg = await openStep(page, "msg");
     await expect(msg.getByRole("region", { name: "תצוגה מקדימה של ההודעה" })).toHaveText(/נוסח לדוגמה לפרופ׳ מרצה 12, \u200F\u200E20:00–21:15\./); // v14: the range left to right (RLM, LRM)
     expect(sb.rpc.get("get_speaker_contacts")).toContainEqual({ p_speaker: 12 });
     await msg.getByRole("button", { name: "סומן כנשלח" }).click();
-    await expect.poll(() => sb.rpc.get("mark_confirm_sent")).toEqual([{ p_lesson: lessonOf(1, 1200), p_version: 1 }]);
-    await panel.getByRole("button", { name: "סגירה" }).click();
+    await expect.poll(() => sb.rpc.get("mark_confirm_sent")).toEqual([{ p_lesson: twelve, p_version: 1 }]);
 
     // the approvals queue: the waiting request, at the version on screen
     await nav(page).getByRole("link", { name: /אישורים/ }).click();
@@ -387,7 +422,7 @@ test.describe("mock build", () => {
     await expect.poll(() => sb.rpc.get("decide_payments")).toEqual([{ p_lessons: [lessonOf(1, 510)], p_versions: [1], p_decision: "approved", p_note: null }]);
 
     // «הגדרות ← תבניות»: the template and the phrases
-    await nav(page).getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await page.getByRole("tab", { name: "תבניות" }).click();
     await page.getByLabel("הנוסח", { exact: true }).fill("נוסח לדוגמה, מעודכן: {{פנייה}}");
     await page.getByRole("button", { name: "שמירת הנוסח" }).click();
@@ -405,13 +440,54 @@ test.describe("mock build", () => {
       },
     ]);
 
-    // every one of them carried the member's own token
-    const rpcs = ["set_payment", "set_escort", "set_sources", "get_transport_details", "set_transport_details", "set_paid", "get_speaker_contacts", "mark_confirm_sent", "decide_payments", "set_confirm_template", "set_duty_phrases"];
+    // every one of them carried the member's own token; the old whole-details write never went (the reset, phase 5)
+    const rpcs = ["set_payment", "set_transport_request", "set_escort", "set_sources", "get_transport_details", "set_transport_driver", "set_paid", "get_speaker_contacts", "mark_confirm_sent", "decide_payments", "set_confirm_template", "set_duty_phrases"];
     for (const fn of rpcs) {
       const calls = sb.calls.filter((c) => c.path === `/rest/v1/rpc/${fn}`);
       expect(calls.length, fn).toBeGreaterThan(0);
       for (const c of calls) expect(c.auth, fn).toBe(`Bearer ${session.access_token}`);
     }
+    expect(sb.rpc.get("set_transport_details")).toBeUndefined();
+  });
+
+  test("an archive's lesson: the pay step reads last year's sheet and transport — no form, no driver, nothing written", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
+    const week = demoWeek();
+    week.edition = { ...week.edition, id: 9, kind: "archive", label: "ארכיון לדוגמה" };
+    const sb = new FakeSupabase({
+      status: 200,
+      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email: "admin@example.org", display_name: "מדריך/ה לדוגמה", global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] },
+    });
+    sb.answers.set("editions", [week.edition]);
+    sb.answers.set("load_week", week);
+    sb.answers.set("get_import_note", "נתון לדוגמה מגיליון המעקב");
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת לדוגמה", pickup_time: "07:30", pickup_min: 450, driver_name: "נהג/ת לדוגמה", driver_phone: null, arranged: true });
+    await sb.attach(page);
+    const session = await signIn(page, "admin@example.org");
+    sb.token = session.access_token;
+    // Sunday 08:30: an approved transport
+    const lesson = week.lessons.find((l) => l.day === 0 && l.start_min === 510 && l.state === "closed")!;
+    expect(lesson.transport).not.toBe("none");
+    await page.goto(`${mockUrl()}/lesson/${lesson.id}?step=pay`);
+    const pay = step(page, "pay");
+    await expect(pay.getByRole("region", { name: "מגיליון המעקב של אשתקד" })).toContainText("נתון לדוגמה מגיליון המעקב");
+    // the transport to read, as the caller may read it (a global admin: the details) — no edit of any part
+    const read = pay.locator("[data-transport-read]");
+    await expect(read).toHaveAttribute("role", "group");
+    await expect(read).toHaveAccessibleName("פרטי ההסעה");
+    await expect(read).toContainText("כתובת לדוגמה");
+    await expect(read).toContainText("נהג/ת לדוגמה");
+    await expect(read).toContainText("ההסעה סודרה");
+    await expect(pay.locator("[data-staff-transport]")).toHaveCount(0);
+    await expect(pay.getByRole("form")).toHaveCount(0);
+    await expect(pay.getByRole("button", { name: /^עריכת (פרטי ההסעה|הנהג)/ })).toHaveCount(0);
+    await expect(pay.getByRole("button", { name: "שינוי הבקשה" })).toHaveCount(0);
+    expect(sb.rpc.get("get_transport_details")).toEqual([{ p_lesson: lesson.id }]);
+    expect(sb.rpc.get("get_import_note")).toEqual([{ p_lesson: lesson.id }]);
+    for (const fn of ["get_transport_details", "get_import_note"]) {
+      for (const c of sb.calls.filter((x) => x.path === `/rest/v1/rpc/${fn}`)) expect(c.auth, fn).toBe(`Bearer ${session.access_token}`);
+    }
+    for (const fn of ["set_transport_details", "set_transport_driver", "set_transport_request", "set_payment"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
   });
 
   test("logistics: reads the schedule and the amounts, marks «שולם», sees approved transport — and is offered nothing else", async ({ page }, info) => {
@@ -429,35 +505,38 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
-    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    // the writing grid is the staff's (the reset, phase 5): logistics' `/grid` is «השבוע» to read
     await page.goto(`${mockUrl()}/grid`);
-    // logistics' own header (phase 4), no settings; «אישורים» reads the requests (a practice week's: nobody decides them)
-    await expect(nav(page).getByRole("link")).toHaveText(["בית", "אישורים", "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/week$`));
+    // logistics' own header (phase 4; «מצגות» since phase 5), no settings; «אישורים» reads the requests (a practice week's: nobody decides them)
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS);
     const lessonOf = (day: number, start: number) => week.lessons.find((l) => l.day === day && l.start_min === start && l.state === "closed")!.id;
 
-    let panel = await openLesson(page, info, "שני", "מרצה 12");
-    const pay = await stage(panel, "תשלום/הסעה");
+    // a card opens the lesson page
+    await card(page, "מרצה 12").first().click();
+    await expect(page).toHaveURL(new RegExp(`/lesson/${lessonOf(1, 1200)}$`));
+    const pay = await openStep(page, "pay");
     await expect(pay).toContainText("200 ₪");
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
     await pay.getByRole("button", { name: "סימון ששולם" }).click();
     await expect.poll(() => sb.rpc.get("set_paid")).toEqual([{ p_lesson: lessonOf(1, 1200), p_paid: true }]);
-    const msg = await stage(panel, "הודעת סיכום");
+    const msg = await openStep(page, "msg");
     await expect(msg.getByRole("button", { name: "סומן כנשלח" })).toHaveCount(0);
     await expect(msg.getByRole("link", { name: "WhatsApp" })).toHaveCount(0);
-    const escort = await stage(panel, "מלווה");
+    const escort = await openStep(page, "escort");
     await expect(escort.getByRole("form", { name: "שיבוץ מלווה" })).toHaveCount(0);
     await expect(escort).toContainText("אין");
-    const sources = await stage(panel, "מקורות");
-    await expect(sources.getByRole("form", { name: "מקורות" })).toHaveCount(0);
-    await expect(panel.getByText("פעולות נוספות")).toHaveCount(0);
-    await expect(panel.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)", includeHidden: true })).toHaveCount(0);
-    await expect(panel.getByRole("region", { name: "פרטי השיעור" }).getByRole("button", { name: "עריכה" })).toHaveCount(0);
-    await expect(panel.getByLabel("כותרת")).toHaveCount(0);
-    await panel.getByRole("button", { name: "סגירה" }).click();
+    const sources = await openStep(page, "sources");
+    await expect(sources.getByRole("form", { name: "מקורות", exact: true })).toHaveCount(0);
+    const close = await openStep(page, "close");
+    await expect(close.getByText("פעולות נוספות")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "פתיחה מחדש (חזרה לטיוטה)", includeHidden: true })).toHaveCount(0);
+    await expect(close.getByRole("region", { name: "פרטי השיעור" }).getByRole("button", { name: "עריכה" })).toHaveCount(0);
+    await expect(page.getByLabel("כותרת")).toHaveCount(0);
 
     // an approved transport: the pickup and the driver, through the policy
-    panel = await openLesson(page, info, "ראשון", "מרצה 01");
-    const details = (await stage(panel, "תשלום/הסעה")).getByRole("group", { name: "פרטי ההסעה" });
+    await page.goto(`${mockUrl()}/lesson/${lessonOf(0, 510)}?step=pay`);
+    const details = step(page, "pay").getByRole("group", { name: "פרטי ההסעה" });
     await expect(details).toContainText("נהג/ת לדוגמה");
     await expect(details).toContainText("ההסעה סודרה");
     expect(sb.rpc.get("get_transport_details")).toEqual([{ p_lesson: lessonOf(0, 510) }]);
@@ -465,6 +544,6 @@ test.describe("mock build", () => {
       for (const c of sb.calls.filter((x) => x.path === `/rest/v1/rpc/${fn}`)) expect(c.auth, fn).toBe(`Bearer ${session.access_token}`);
     }
     // nothing a logistics member may not write was ever sent
-    for (const fn of ["set_payment", "decide_payments", "mark_confirm_sent", "set_escort", "set_sources", "update_lesson"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
+    for (const fn of ["set_payment", "decide_payments", "mark_confirm_sent", "set_escort", "set_sources", "update_lesson", "set_transport_details"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
   });
 });

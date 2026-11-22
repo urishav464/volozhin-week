@@ -42,6 +42,9 @@ export function DayZip({ port, week, day, roomId, notify, clear, onDownloaded, s
   useEffect(() => setFailed(null), [day, roomId, week.edition.id]);
   const plan = dayZipPlan(week, day, roomId);
   const tooBig = plan.bytes > PRESENTATION_ZIP_MAX;
+  // a room chip chosen (maybe remembered on this device from another day): the card says the zip is that room's
+  const roomName = roomId == null ? null : (week.rooms.find((r) => r.id === roomId)?.name ?? null);
+  const decks = plan.entries.filter((e) => e.file.lesson_id == null).length; // the week's, on the cover path
 
   const run = async () => {
     clear();
@@ -58,6 +61,12 @@ export function DayZip({ port, week, day, roomId, notify, clear, onDownloaded, s
         onProgress: setProgress,
         texts: (bad) => dayZipPlan(week, day, roomId, bad).texts,
       });
+      // not one of the day's files came: no zip of the two texts alone, and never «ירדו 0 מצגות»
+      if (r.got === 0 && plan.entries.length > 0) {
+        setFailed(r.failed.map((f) => f.name));
+        notify("error", "אף מצגת לא ירדה. בודקים את החיבור ומנסים שוב.");
+        return;
+      }
       const what = `presentations-day${day + 1}${roomId != null ? `-room${roomId}` : ""}`;
       download(fileName(what, week.edition, israelDay(), "zip"), r.blob, ZIP_MIME);
       if (r.got > 0 || plan.entries.length === 0) onDownloaded({ at, upTo, room: roomId });
@@ -78,6 +87,12 @@ export function DayZip({ port, week, day, roomId, notify, clear, onDownloaded, s
     <section data-day-zip data-total-bytes={plan.bytes} aria-labelledby="day-zip-title" className="rounded-xl border border-navy/30 bg-card p-4 shadow-sm sm:p-5">
       <h3 id="day-zip-title" className="mb-1 font-display text-lg font-bold text-navy">
         המצגות של יום {DAY_NAMES[day]}
+        {roomName && (
+          <>
+            {" · "}
+            <bdi>{roomName}</bdi>
+          </>
+        )}
       </h3>
       <p className="mb-3 text-sm text-ink-soft">למחשב של האולם: מורידים כאן, ומעתיקים בדיסק-און-קי. בקובץ גם סדר היום (מה פותחים ומתי) והקישורים.</p>
       {tooBig ? (
@@ -88,7 +103,13 @@ export function DayZip({ port, week, day, roomId, notify, clear, onDownloaded, s
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button ref={main} kind="primary" busy={!!progress} busyLabel="מוריד…" onClick={() => void run()}>
-              הורדת כל המצגות של היום
+              {roomName ? (
+                <>
+                  הורדת המצגות של <bdi>{roomName}</bdi>
+                </>
+              ) : (
+                "הורדת כל המצגות של היום"
+              )}
             </Button>
             {progress && (
               <Button kind="danger" onClick={() => job.current?.abort()}>
@@ -97,6 +118,12 @@ export function DayZip({ port, week, day, roomId, notify, clear, onDownloaded, s
             )}
             <span className="text-sm text-ink-soft">{zipLine(plan)}</span>
           </div>
+          {roomName && (
+            <p data-zip-room className="text-sm text-ink-soft">
+              בקובץ רק <bdi>{roomName}</bdi>
+              {decks > 0 ? " והמצגת של השבוע" : ""}. לכל החדרים בוחרים «כל החדרים».
+            </p>
+          )}
           {!computer && <p className="text-sm text-amber-950">עדיף במחשב</p>}
           {progress && (
             <div className="space-y-1" aria-live="polite">

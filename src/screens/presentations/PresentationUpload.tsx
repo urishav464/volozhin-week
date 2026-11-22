@@ -94,12 +94,17 @@ export function PresentationUpload({ port, week, lessonId, notify, clear, reload
         multiple
         accept={forWeek ? WEEK_PRESENTATION_ACCEPT : PRESENTATION_ACCEPT}
         className="peer sr-only"
-        disabled={busy}
+        // never `disabled` while busy: the input holds the focus once the picker closes, and a disabled one drops it to
+        // the page — aria-disabled, and no picker or new files until the upload ends (kit's Button does the same)
+        aria-disabled={busy || undefined}
         aria-describedby={compact ? hintId : `${id}-hint`}
+        onClick={(e) => {
+          if (busy) e.preventDefault();
+        }}
         onChange={(e) => {
           const files = [...(e.target.files ?? [])];
           e.target.value = "";
-          if (files.length) void send(files);
+          if (files.length && !busy) void send(files);
         }}
       />
       {/* the input is 1px and clipped: the focus ring is drawn on the label that looks like the button */}
@@ -157,7 +162,8 @@ export function PresentationUpload({ port, week, lessonId, notify, clear, reload
       )}
       {pendingNote && lesson?.sources_kind === "pending" && (
         <div role="status" className="space-y-1 rounded-lg bg-amber-50 p-2 text-sm text-amber-950">
-          <p>המקורות עדיין מסומנים «טרם התקבלו». אם יש רק מצגת, מסמנים «מצגת» בעמוד השיעור.</p>
+          {/* on the lesson page the choice is right below, in the same step: «מה התקבל מהמרצה» (SourcesStage) */}
+          <p>המקורות עדיין מסומנים «טרם התקבלו». אם יש רק מצגת, מסמנים «מצגת» {onLessonPage ? "למטה, ב«מה התקבל מהמרצה»" : "בעמוד השיעור"}.</p>
           {!onLessonPage && lesson && (
             <Link to={lessonPath(lesson.id, "sources")} className={LINK_BUTTON}>
               לעמוד השיעור ‹

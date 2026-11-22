@@ -23,10 +23,27 @@ export const CSV_MIME = "text/csv;charset=utf-8";
 export const PERSONAL_FILE = "PERSONAL-DATA_contacts_and_transport.json";
 export const ZIP_MIME = "application/zip";
 
-/** A file's name as a zip entry may carry it: no folder separators or characters a file system refuses; at most 80 characters. */
+/**
+ * A file's name as a zip entry may carry it: no folder separators or characters a file system refuses, no control or
+ * format character (C0/C1, DEL, LRM/RLM, the bidi embeddings, overrides and isolates — an RLO would show «…rcs.pdf» for
+ * «…fdp.scr»); at most 80 characters, the end kept.
+ */
 export function safeEntryName(name: string): string {
-  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[._\s]+|[.\s]+$/g, "").trim();
+  const clean = name.replace(/[\\/:*?"<>|\p{Cc}\p{Cf}]/gu, "_").replace(/^[._\s]+|[.\s]+$/g, "").trim();
   return [...(clean || "file")].slice(-80).join("");
+}
+
+/**
+ * An uploaded file's name for the person's computer (a zip entry, a download): the display name's stem, made safe, and
+ * the extension of the STORED file — its path's (`ext`, which app.source_mime_ok ties to the declared type) — never the
+ * one the display name gives itself: «x.pdf.exe» stored as a PDF lands as «x.pdf.pdf», a name with no extension gains
+ * its type's, a PowerPoint registered as «deck.pdf» lands as «deck.pptx». No `ext` (a path the rule does not read):
+ * the safe name as it is.
+ */
+export function storedFileName(display: string, ext: string | null | undefined): string {
+  if (!ext) return safeEntryName(display);
+  const stem = safeEntryName(display.replace(/\.[A-Za-z0-9]{1,5}$/, ""));
+  return [...stem].slice(-(79 - ext.length)).join("") + "." + ext.toLowerCase();
 }
 
 /** «2026-11-10» in Israel — for a file's name. */

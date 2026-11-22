@@ -1,6 +1,7 @@
 // «מצגות» (the reset, phase 5): the rows of a day and their states on the demo week (every state shows there), the week's
 // decks and the presentations left without a lesson, the day's zip plan — its names, their order, the two text files —
 // and this device's memory of the last download (a storage that throws forgets, never breaks the page).
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { demoWeek, seedDemoPresentations, seedDemoSources } from "../data/demoWeek";
 import { scheduleEntries } from "../exports/designer";
@@ -8,6 +9,7 @@ import {
   dayRows, dayZipPlan, hhmm, LINKS_FILE, lessonPresentations, markerTime, megabytes, newestUpload, newSinceDownload, ORDER_FILE, orphanPresentations, presentationRows,
   presentationsDay, presentationsRoomKey, presentationsZipKey, readRoom, readZipMarker, weekPresentations, writeRoom, writeZipMarker, zipLine,
 } from "./presentations";
+import { DOCX, PPTX } from "../data/sourceRules";
 import type { SourceFile, Week } from "./types";
 
 function week(): Week {
@@ -20,13 +22,17 @@ function week(): Week {
 const at = (w: Week, day: number, start: number, room = 1) => w.lessons.find((l) => l.kind === "lesson" && l.day === day && l.start_min === start && l.room_id === room && l.state === "closed")!;
 
 let nextId = 100;
+/** The stored extension of a type, as app.source_mime_ok ties the two (the path's is what the zip names a file by). */
+const EXT: Record<string, string> = { "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg", [PPTX]: "pptx", [DOCX]: "docx" };
+
 function deck(w: Week, lessonId: number | null, display: string, extra: Partial<SourceFile> = {}): SourceFile {
   const id = ++nextId;
   const lead = lessonId == null ? null : (w.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id ?? null);
+  const mime = extra.mime ?? PPTX;
   const f: SourceFile = {
     id, lesson_id: lessonId, cover: false, kind: "presentation", speaker_id: lead, fallen_id: null,
-    storage_path: `${w.edition.id}/${lessonId ?? "cover"}/00000000-0000-4000-9000-${String(id).padStart(12, "0")}-deck.pptx`, display_name: display,
-    mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", size_bytes: 1000, page_count: null, uploaded_by: 2, uploaded_at: "2026-11-20T10:00:00Z", ...extra,
+    storage_path: `${w.edition.id}/${lessonId ?? "cover"}/00000000-0000-4000-9000-${String(id).padStart(12, "0")}-deck.${EXT[mime]}`, display_name: display,
+    mime, size_bytes: 1000, page_count: null, uploaded_by: 2, uploaded_at: "2026-11-20T10:00:00Z", ...extra,
   };
   w.sourceFiles.push(f);
   return f;
@@ -151,10 +157,29 @@ describe("the day's zip", () => {
       "0830_בית מדרש_מצגת לדוגמה.pdf",
       "1130_בית מדרש_א_ב__ג_.pptx",
       "2430_בית מדרש_שקפים.pptx",
-      `2430_בית מדרש_שקפים_${b.id}.PPTX`,
+      `2430_בית מדרש_שקפים_${b.id}.pptx`, // the stored type's extension, whatever case the name typed
     ]);
     expect([...names].sort()).toEqual(names); // sorted by name = the day's order
     expect(plan.entries.map((e) => e.file.id)).toEqual([7, 5, c.id, a.id, b.id]);
+  });
+
+  it("a name ends in the STORED file's extension, never its own, and carries no control or bidi character (the review's disguised file)", () => {
+    const w = week();
+    const l = at(w, 0, 690).id;
+    const rlo = deck(w, l, "שקפים\u202efdp.scr", { mime: "application/pdf" }); // shows as «…rcs.pdf» on Windows
+    const exe = deck(w, l, "slides.pdf.exe", { mime: "application/pdf" });
+    const bare = deck(w, l, "1000012345", { mime: "application/pdf" }); // a phone's picked file: a type, no extension
+    const pptx = deck(w, l, "deck.pdf"); // PowerPoint bytes registered under a PDF's name
+    const marks = deck(w, l, "\u0085a\u007f\u200f\u2066b\u2069.pdf", { mime: "application/pdf" });
+    const names = new Map(dayZipPlan(w, 0, null).entries.map((e) => [e.file.id, e.name]));
+    expect(names.get(rlo.id)).toBe("1130_בית מדרש_שקפים_fdp.pdf");
+    expect(names.get(exe.id)).toBe("1130_בית מדרש_slides.pdf.pdf");
+    expect(names.get(bare.id)).toBe("1130_בית מדרש_1000012345.pdf");
+    expect(names.get(pptx.id)).toBe("1130_בית מדרש_deck.pptx");
+    expect(names.get(marks.id)).toBe("1130_בית מדרש_a___b_.pdf");
+    for (const n of names.values()) expect(n).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    // the order names the same entries
+    expect(lines(dayZipPlan(w, 0, null).texts[0]).some((x) => x.includes("1130_בית מדרש_slides.pdf.pdf"))).toBe(true);
   });
 
   it("סדר-היום.txt: the day's head, the week's deck, every row's time, room, speaker · title and what to open — UTF-8 with a BOM, CRLF", () => {
@@ -206,6 +231,17 @@ describe("the day's zip", () => {
 });
 
 describe("this device's memory", () => {
+  it("the privacy page says what the day's zip holds and where it goes, and what this device keeps of it (the review)", () => {
+    const html = readFileSync(new URL("../../public/privacy.html", import.meta.url), "utf8");
+    const zip = html.split("\n").find((l) => l.includes("«הורדת כל המצגות של היום»"))!;
+    for (const w of ["נבנית בדפדפן", "סדר היום", "הקישורים למצגות", "למחשב של האולם, שלא מחובר לאתר", "באחריות מי שהוריד/ה"]) expect(zip, w).toContain(w);
+    const kept = html.split("\n").find((l) => l.includes("דף «מצגות» זוכר במכשיר הזה"))!;
+    for (const w of ["מתי ירד ה-zip", "איזה חדר נבחר", "בלי מידע אישי", "«התנתקות» לא מוחקת את זה"]) expect(kept, w).toContain(w);
+    // the keys it speaks of
+    expect(presentationsZipKey(1, 0)).toMatch(/^volozhin-presentations-zip:/);
+    expect(presentationsRoomKey(1)).toMatch(/^volozhin-presentations-room:/);
+  });
+
   const store = () => {
     const m = new Map<string, string>();
     return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m };

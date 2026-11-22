@@ -161,7 +161,8 @@ function PresentationsPage({ port, week, actor, reload }: { port: DataPort; week
 
       <section aria-labelledby="day-list-title" className="space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 id="day-list-title" className="font-display text-lg font-bold text-navy">
+          {/* tabIndex -1: where the focus goes when the last presentation without a lesson is removed (its fold goes with it) */}
+          <h3 id="day-list-title" tabIndex={-1} className="font-display text-lg font-bold text-navy outline-none">
             יום {DAY_NAMES[day]}
           </h3>
           {mayUpload && (
@@ -204,7 +205,8 @@ function Orphans({ port, week, actor, notify, clear, reload }: { port: DataPort;
               notify={notify}
               clear={clear}
               reload={reload}
-              onRemoved={() => rescue(() => root.current)}
+              // the last one removed takes the fold away: the day's list heading, which stays, takes the focus
+              onRemoved={() => rescue(() => root.current ?? document.getElementById("day-list-title"))}
               before={
                 <span className="text-sm text-ink-soft">
                   {ORPHAN_LABEL[reason]}

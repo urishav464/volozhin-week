@@ -6,7 +6,7 @@ import { demoPhotoBytes } from "../data/demoPhoto";
 import { publicSchedule } from "../exports/publicSchedule";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
 import {
-  filterGuests, type GuestActor, guestLine, guestPhotoIds, guestPreview, guestRows, guestSummary, mayEditSpeaker, mayMarkPublic, mayUnmarkPublic, publicOkOffered,
+  filterGuests, type GuestActor, guestLine, guestPhotoIds, guestPreview, guestRows, guestSummary, mayChangePublicOk, mayEditSpeaker, mayMarkPublic, mayUnmarkPublic, publicOkOffered,
   readPhotos,
 } from "./guestSite";
 import { displayName } from "./names";
@@ -130,6 +130,25 @@ describe("the guests' site from the team's side (the reset, phase 5)", () => {
     expect(publicOkOffered({ status: "positive" })).toBe(true);
     expect(publicOkOffered({ status: "approached", public_ok: false })).toBe(false);
     expect(publicOkOffered({ status: "declined", public_ok: true })).toBe(true);
+  });
+
+  it("mayChangePublicOk — the box as it stands: offered, and this viewer's to mark or to take back (the lesson page's hint follows it)", () => {
+    const agreed = { status: "positive", public_ok: false, owner_member_id: 2 } as const;
+    const marked = { status: "positive", public_ok: true, owner_member_id: 2 } as const;
+    const asked = { status: "approached", public_ok: false, owner_member_id: 2 } as const;
+    expect(mayChangePublicOk(handler, live, agreed)).toBe(true);
+    expect(mayChangePublicOk(admin, live, agreed)).toBe(true);
+    expect(mayChangePublicOk(other, live, agreed)).toBe(false); // another trainee's speaker
+    expect(mayChangePublicOk(logistics, live, agreed)).toBe(false);
+    expect(mayChangePublicOk(logistics, live, marked)).toBe(false);
+    expect(mayChangePublicOk(handler, live, asked)).toBe(false); // not offered before the speaker agreed
+    // a practice week: nobody but a global admin marks — a mark already there is taken back as anywhere (set_public_ok's `false`)
+    const practice = { kind: "practice", status: "planning" } as const;
+    expect(mayChangePublicOk(handler, practice, agreed)).toBe(false);
+    expect(mayChangePublicOk(global, practice, agreed)).toBe(true);
+    expect(mayChangePublicOk(handler, practice, marked)).toBe(true);
+    expect(mayChangePublicOk(admin, practice, marked)).toBe(true);
+    expect(mayChangePublicOk(other, practice, marked)).toBe(false);
   });
 
   it("mayEditSpeaker moved here, unchanged: a global admin; else a live real edition's admin or the handler", () => {

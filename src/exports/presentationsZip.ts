@@ -1,7 +1,7 @@
 // «הורדת כל המצגות של היום» (the reset, phase 5): the day's presentations in one zip for the hall's computer, which is
 // not signed in — downloaded in the morning and copied over on a USB stick. The plan (names, order, the two text files)
 // is src/domain/presentations.ts `dayZipPlan`; this fetches the files through signed URLs, twenty addresses at a time
-// (the archive's `fetchSources`), one file after another, and writes each straight into a streaming zip with no
+// (the archive's `fetchSources`; signed again before they expire, RESIGN_AFTER_MS), one file after another, and writes each straight into a streaming zip with no
 // compression (fflate `Zip` + `ZipPassThrough`: decks are already compressed, and the chunks go to the Blob as they are —
 // about the files' own size in memory, not the archive's three times). A file that cannot be fetched is named, never
 // silently left out — the order says so beside its name. A cancel stops between files (and inside a fetch). Nothing is
@@ -31,10 +31,20 @@ export interface DayZipOptions {
   texts: (failed: ReadonlySet<number>) => ZipText[];
   /** The fetch to use (a test's); the browser's by default. */
   fetcher?: typeof fetch;
+  /** The clock (a test's); Date.now by default. */
+  now?: () => number;
 }
 
 /** An addresses batch: the archive's size. */
 export const URL_BATCH = 20;
+
+/**
+ * A signed address lives ten minutes (SIGNED_URL_SECONDS) and a batch is fetched one file after another: on a slow link
+ * a big day's later files would start after their address expired. So the batch's rest is signed again once eight
+ * minutes have passed, and a file refused as an expired address would be (400/401/403) is asked once more with a fresh one.
+ */
+export const RESIGN_AFTER_MS = 8 * 60_000;
+const EXPIRED_STATUS = new Set([400, 401, 403]);
 
 const aborted = () => new DOMException("cancelled", "AbortError");
 
@@ -45,6 +55,15 @@ const aborted = () => new DOMException("cancelled", "AbortError");
 export async function presentationsZip(sources: Pick<SourcesPort, "urls">, editionId: number, entries: readonly ZipEntry[], opts: DayZipOptions): Promise<DayZipResult> {
   const { signal, onProgress } = opts;
   const get = opts.fetcher ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  const now = opts.now ?? (() => Date.now());
+  // addresses for these paths, or none (offline, refused): each file without one is named as not fetched
+  const sign = async (paths: string[]): Promise<Map<string, string>> => {
+    try {
+      return await sources.urls(editionId, paths);
+    } catch {
+      return new Map();
+    }
+  };
   if (entries.reduce((n, e) => n + e.file.size_bytes, 0) > PRESENTATION_ZIP_MAX) throw new RangeError("zip_too_big");
   const stop = () => {
     if (signal.aborted) throw aborted();
@@ -70,18 +89,24 @@ export async function presentationsZip(sources: Pick<SourcesPort, "urls">, editi
   for (let i = 0; i < entries.length; i += URL_BATCH) {
     stop();
     const batch = entries.slice(i, i + URL_BATCH);
-    let urls = new Map<string, string>();
-    try {
-      urls = await sources.urls(editionId, batch.map((e) => e.file.storage_path));
-    } catch {
-      // no addresses for this batch: each of its files is named as not fetched
-    }
-    for (const e of batch) {
+    let urls = await sign(batch.map((e) => e.file.storage_path));
+    let signedAt = now();
+    for (const [j, e] of batch.entries()) {
       stop();
-      const url = urls.get(e.file.storage_path);
+      if (now() - signedAt > RESIGN_AFTER_MS) {
+        // the rest of the batch again, before its addresses expire (one that cannot be signed keeps its old address)
+        urls = new Map([...urls, ...(await sign(batch.slice(j).map((x) => x.file.storage_path)))]);
+        signedAt = now();
+      }
+      const path = e.file.storage_path;
+      const url = urls.get(path);
       try {
         if (!url) throw new Error("no url");
-        const res = await get(url, { signal });
+        let res = await get(url, { signal });
+        if (!res.ok && EXPIRED_STATUS.has(res.status)) {
+          const fresh = (await sign([path])).get(path);
+          if (fresh) res = await get(fresh, { signal });
+        }
         if (!res.ok) throw new Error(String(res.status));
         bytes.set(e.file.id, new Uint8Array(await res.arrayBuffer()));
       } catch {

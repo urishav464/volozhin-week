@@ -5,9 +5,9 @@
 // has taken it.
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
-import { printableMime } from "../../data/sourceRules";
+import { parseSourcePath, printableMime } from "../../data/sourceRules";
 import type { SourceFile } from "../../domain/types";
-import { download } from "../../exports/download";
+import { download, storedFileName } from "../../exports/download";
 
 /** What the file's button does: «פתיחה» (a PDF or a picture, in a new tab) or «הורדה» (pptx, docx). */
 export function fileAction(f: Pick<SourceFile, "mime">): "open" | "download" {
@@ -29,6 +29,7 @@ export async function openOrDownload(port: Pick<DataPort, "sources">, editionId:
     throw new CommandError("read_failed");
   }
   if (!res.ok) throw new CommandError("read_failed");
-  download(f.display_name, await res.blob(), f.mime);
+  // its own name, with the extension of what is stored (a display name's own extension, or none, is never trusted)
+  download(storedFileName(f.display_name, parseSourcePath(f.storage_path)?.ext), await res.blob(), f.mime);
   return "download";
 }

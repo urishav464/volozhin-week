@@ -24,7 +24,8 @@ import { approvedWord, practiceWeek, publicOkDone, useGuestPhotos } from "../spe
 import { actorIn, type Actor, useWeekStore } from "../weekStore";
 import { OutputsTabs } from "./parts";
 
-const GAP_LINK = "inline-flex min-h-11 items-center gap-1 rounded-lg px-2 font-bold text-bad underline underline-offset-4 hover:bg-accent-soft";
+// 44×44 at least: «חסר» alone in a table cell is narrower than that
+const GAP_LINK = "inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-lg px-2 font-bold text-bad underline underline-offset-4 hover:bg-accent-soft";
 
 export function GuestsScreen({ port, me }: { port: DataPort; me: Me }) {
   const store = useWeekStore();
@@ -331,7 +332,7 @@ function PersonName({ model, p }: { model: GridModel; p: GuestPerson }) {
   if (!s) return <span className="text-ink-faint">—</span>;
   return (
     <span className="inline-flex min-h-11 min-w-0 flex-wrap items-center gap-x-1.5">
-      <Link to={speakerPath(s.id, "guest")} className="font-semibold text-navy underline-offset-4 hover:underline">
+      <Link to={speakerPath(s.id, "guest")} className="inline-flex min-h-11 items-center font-semibold text-navy underline-offset-4 hover:underline">
         {displayName(s)}
       </Link>
       {p.role === "co" && <span className="text-xs text-ink-soft">{byGender(s.gender, "מרצה נוסף", "מרצה נוספת")}</span>}
