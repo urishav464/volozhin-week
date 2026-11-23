@@ -1,7 +1,7 @@
 // The five stages of a closed lesson and its one next step, rule by rule —
 // the card's dots, the lesson panel and «המרצים שלי» all read these.
 import { describe, expect, it } from "vitest";
-import { NO_FILES, nextLessonStep as nextStepOf, readerFilesOf, type ReaderFiles, reopenLoses, requestText, shekels, STEP_STAGE, stagesOf as stagesWith } from "./stages";
+import { NO_FILES, nextLessonStep as nextStepOf, readerFilesOf, type ReaderFiles, reopenLoses, requestText, shekels, stagesOf as stagesWith } from "./stages";
 import { LESSON_STAGE_DEFAULTS, type Lesson } from "./types";
 
 type Fields = Parameters<typeof stagesWith>[0];
@@ -104,7 +104,6 @@ describe("the next step of a closed lesson («המרצים שלי»)", () => {
     expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "other", in_reader: true }), { printable: 0, word: 1, unread: 0 })).toBe("sources");
     expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "sheet", in_reader: true }), { printable: 0, word: 0, unread: 1 })).toBe("sources");
     expect(nextLessonStep(lesson({ ...sent, escort_roster_id: 1, sources_kind: "sheet", in_reader: true }), PDF_ONE)).toBeNull();
-    expect(STEP_STAGE).toEqual({ payment: "pay", reconfirm: "msg", send: "msg", escort: "escort", sources: "sources" });
   });
 });
 

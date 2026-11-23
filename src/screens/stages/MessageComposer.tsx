@@ -3,8 +3,8 @@
 // while anything is unresolved (no template, a TBD, a gender, a request still
 // waiting) the list of what is missing instead of the buttons. Then: «העתקה»,
 // WhatsApp (to the speaker's number only for whom may see it, else a chat to
-// pick), mail, and «סומן כנשלח». Nothing is sent from the site. Used in the
-// lesson panel and in the speaker sheet.
+// pick), mail, and «סומן כנשלח». Nothing is sent from the site. The lesson
+// page's step «הודעת סיכום» (MessageStage, LessonStages.tsx).
 import { useRef } from "react";
 import { Link } from "react-router";
 import { mailtoHref, waHref, whatsappTextHref } from "../../domain/contactLinks";

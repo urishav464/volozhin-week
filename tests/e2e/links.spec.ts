@@ -9,24 +9,33 @@
 // removed by the staff in «מכריכה לכריכה»; there, where the week stands, the
 // sessions, a group's leaders before its book (not offered until it has one),
 // one place per group, a leader never placed, the books, a group with sign-ups
-// not deleted, the window; the schedule by day, printed; the ticks in the lesson
-// panel and the escorts' list. Mock build: the public pages send the
+// not deleted, the window; the schedule by day, printed — since the reset's
+// phase 5 the guests' site: the fixed rows among the lessons, a day bar of
+// buttons (never a «#day» link: the hash is the token), a lesson with more opens
+// its card (the description, the approved speaker's words and photo), closed by
+// Escape, «סגירה» or the backdrop with the focus back on its row, none of it on
+// paper; the ticks on the lesson page's escort step and the escorts' list. Mock
+// build: the public pages send the
 // publishable key alone — never a session, even with a member signed in in the
 // same browser — call only the six anon functions, the token in the body and
 // never in a URL; a refusal from the server is the one page; «קישורים» and /kk
 // go out by the contract with the member's token. v19 (the reset, phase 4): schedule_view's answer carries a row's
-// note and people, the approved speakers and the grid's fixed rows — the page draws exactly what it drew from an
-// answer without them (the guests' site is phase 5's); /kk's book order says «הצעה: N», and «למלא» fills the field
-// only — set_book_order goes out on «שמירה». Synthetic data only.
+// note and people, the approved speakers and the grid's fixed rows — drawn since phase 5 (a photo only when it is a
+// JPEG inside the answer: an https one is neither drawn nor fetched), while an answer from before v19 is the plain
+// schedule; /kk's book order says «הצעה: N», and «למלא» fills the field only — set_book_order goes out on «שמירה».
+// Synthetic data only.
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
-import { demoWeek } from "../../src/data/demoWeek";
+import { DEMO_GUEST_BIOS, DEMO_GUEST_NOTE, demoWeek } from "../../src/data/demoWeek";
 import type { KkData } from "../../src/data/kk";
 import type { EscortView, KkForm, ScheduleView } from "../../src/data/publicPort";
 import { addDays, israelDate } from "../../src/domain/israelTime";
+import { photoDataUrl } from "../../src/domain/photo";
 import { scheduleEntries } from "../../src/exports/designer";
+import { fixedRows } from "../../src/exports/publicSchedule";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { MOCK_KEY } from "./global-setup";
-import { noSidewaysScroll } from "./helpers";
+import { photoBase64 } from "../../src/testing/photos";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -50,12 +59,20 @@ async function openLesson(page: Page, info: TestInfo, day: string, speaker: stri
   return panel;
 }
 
-async function stage(panel: Locator, name: string): Promise<Locator> {
-  const s = panel.getByRole("region", { name, exact: true });
-  const toggle = s.getByRole("button", { name: new RegExp(`^${name}`) });
+/** A closed lesson's page from the grid (the reset, phase 5: the panel is a summary), at the step `key`, opened. */
+async function lessonStep(page: Page, info: TestInfo, day: string, speaker: string, key: string): Promise<Locator> {
+  const panel = await openLesson(page, info, day, speaker);
+  await panel.getByRole("link", { name: "לדף השיעור" }).click();
+  await expect(page.locator("[data-lesson-header]")).toContainText(speaker);
+  const step = page.locator(`[data-page-step="${key}"]`);
+  const toggle = step.locator("h3 button");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-  return s;
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  return step;
 }
+
+/** The guests' card (src/screens/public/GuestCard.tsx): a native modal <dialog>, named by its heading. */
+const guestCard = (page: Page) => page.locator("dialog[data-guest-card]");
 
 test.describe("demo build", () => {
   test("an escort's page: their own lessons, no phone in a demo week, the four ticks; the token leaves the address bar", async ({ page }) => {
@@ -272,7 +289,7 @@ test.describe("demo build", () => {
 
     // the staff's screen, in this tab (the same demo)
     await page.goBack();
-    await nav(page).getByRole("link", { name: "מכריכה לכריכה" }).click();
+    await goSection(page, "מכריכה לכריכה");
     await expect(page.getByRole("heading", { name: "מכריכה לכריכה" })).toBeVisible();
     await expect(page.locator('[data-kk-status="signups"]')).toHaveText("נרשמו 4 מתוך 4"); // of those who may: the two leaders are not counted
     const groups = page.getByRole("region", { name: "הקבוצות" });
@@ -414,7 +431,7 @@ test.describe("demo build", () => {
     await expect(signupForm.getByRole("group", { name: "הספר שלי" }).getByRole("radio")).toHaveCount(3);
     await expect(signupForm.getByLabel("השם שלי").locator("option")).toHaveText(["בחירה מהרשימה", "מלווה לדוגמה א׳", "מלווה לדוגמה ב׳", "מלווה לדוגמה ג׳"]);
     await page.goBack();
-    await nav(page).getByRole("link", { name: "מכריכה לכריכה" }).click();
+    await goSection(page, "מכריכה לכריכה");
 
     // the book, its place and a capacity: a place another group has is refused, in the form
     await groups.getByRole("button", { name: "עריכה: עוד לא נבחר ספר · מלווה לדוגמה ד׳ ו-מעביר/ה חדש/ה (לדוגמה)" }).click();
@@ -566,23 +583,50 @@ test.describe("demo build", () => {
     await expect(closed.getByRole("button", { name: "הרשמה" })).toHaveCount(0);
   });
 
-  test("the schedule to view: by day, the public facts only, printable on A4", async ({ page }, info) => {
+  test("the schedule to view: by day, the public facts and the fixed rows, a bar of the days, printable on A4", async ({ page }, info) => {
     const entries = scheduleEntries(demoWeek());
     await page.goto(`${demoUrl()}/s#${SEEDED.schedule}`);
     await expect(page.getByRole("heading", { name: 'לו"ז שבוע וולוז\'ין הדגמה' })).toBeVisible();
     expect(hashOf(page)).toBe("");
     await expect(page.locator("[data-schedule-row]")).toHaveCount(entries.length);
+    // the grid's fixed rows (meals, prayers, «מכריכה לכריכה») among the lessons, on each day they are in play
+    await expect(page.locator("[data-fixed-row]")).toHaveCount(fixedRows(demoWeek()).length);
     await expect(page.getByRole("region", { name: "יום ראשון" }).locator("[data-schedule-row]").first()).toContainText("08:30–09:45");
     await expect(page.getByText("במקביל").first()).toBeVisible();
     const text = await page.locator("main").innerText();
     for (const secret of ["טלפון לדוגמה", "example.org", "₪", "כתובת לדוגמה", "להגיע רבע שעה", "לבדוק שוב את הסכום"]) expect(text).not.toContain(secret);
     await noSidewaysScroll(page);
+    if (info.project.name === "desktop") {
+      // from 1280px the days side by side: their columns share a top, and there is no bar of the days
+      const tops = await page.locator("[data-guest-day]").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+      expect(tops.length).toBe(5);
+      expect(new Set(tops).size).toBe(1);
+      await expect(page.getByRole("navigation", { name: "ימי השבוע" })).toBeHidden();
+    } else {
+      // one column under a bar of the days: buttons that scroll — the address's hash (the token) never changes
+      const bar = page.getByRole("navigation", { name: "ימי השבוע" });
+      await expect(bar).toBeVisible();
+      await expect(bar.locator("a")).toHaveCount(0);
+      await bar.locator('[data-day-jump="3"]').click();
+      await expect(page.getByRole("region", { name: "יום רביעי" })).toBeInViewport();
+      expect(hashOf(page)).toBe("");
+    }
 
+    // a card open while it prints: never on paper, nor «עוד פרטים», nor the bar of the days
+    await page.getByRole("region", { name: "יום ראשון" }).locator("[data-guest-lesson]").first().click();
+    await expect(guestCard(page)).toBeVisible();
+    await noSidewaysScroll(page);
     await page.emulateMedia({ media: "print" });
     await expect(page.getByRole("banner")).toBeHidden();
     await expect(page.getByRole("button", { name: "הדפסה" })).toBeHidden();
     await expect(page.getByText("מדיניות פרטיות")).toBeHidden();
     await expect(page.getByText('לו"ז שבוע וולוז\'ין הדגמה').first()).toBeVisible(); // the printed page's title
+    await expect(guestCard(page)).toBeHidden();
+    await expect(page.locator('nav[aria-label="ימי השבוע"]')).toBeHidden();
+    const more = page.getByText("עוד פרטים", { exact: true });
+    expect(await more.count()).toBeGreaterThan(0);
+    for (const m of await more.all()) await expect(m).toBeHidden();
+    await expect(page.locator("[data-fixed-row]").first()).toBeVisible(); // the fixed rows are printed with the lessons
     if (info.project.name === "desktop") {
       const pdf = (await page.pdf({ preferCSSPageSize: true })).toString("latin1");
       const box = /\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/.exec(pdf)!;
@@ -592,19 +636,69 @@ test.describe("demo build", () => {
     await page.emulateMedia({ media: "screen" });
   });
 
-  test("v19's guest words stay off the schedule link in phase 4: a speaker approved for the guests, with a description and a photo, reads as before", async ({ page }) => {
-    // `?as=logistics` is the demo whose Sunday 08:30 speaker is approved (public_ok) with «תיאור לדוגמה» and a photo
-    // (src/data/demoWeek.ts seedDemoLogistics): schedule_view carries them; the page draws the ten keys alone
-    await page.goto(`${demoUrl()}/s?as=logistics#${SEEDED.schedule}`);
+  test("the guests' card: a lesson with more opens it — its description, the approved speaker's words and photo; Escape, «סגירה» and the backdrop close it, the focus back on its row", async ({ page }, info) => {
+    await page.goto(`${demoUrl()}/s#${SEEDED.schedule}`);
     await expect(page.getByRole("heading", { name: 'לו"ז שבוע וולוז\'ין הדגמה' })).toBeVisible();
-    await expect(page.locator("[data-schedule-row]")).toHaveCount(scheduleEntries(demoWeek()).length);
-    const html = await page.locator("main").innerHTML();
-    for (const secret of ["תיאור לדוגמה", "data:image", "base64"]) expect(html).not.toContain(secret);
-    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0); // (the seal is the page's own picture)
+    expect(hashOf(page)).toBe("");
+    await expect(page.getByText("שיעור שמסומן «עוד פרטים» נפתח בלחיצה: תיאור השיעור והמרצים.")).toBeVisible();
+    // Sunday 08:30: «ד״ר מרצה 01», approved to appear, with a description and a photo, and the lesson's own description
+    const row = page.getByRole("region", { name: "יום ראשון" }).locator("[data-guest-lesson]").filter({ hasText: "08:30–09:45" });
+    await expect(row).toHaveCount(1);
+    await expect(row).toHaveAttribute("aria-haspopup", "dialog");
+    await expect(row).toContainText("עוד פרטים");
+    expect(await row.evaluate((e) => e.tagName)).toBe("BUTTON"); // never a link: the hash is the token
+    // nothing of the card on the page until it opens; no photo anywhere else
+    await expect(page.locator("[data-guest-note]")).toHaveCount(0);
+    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0);
+
+    await row.click();
+    const card = guestCard(page);
+    await expect(card).toBeVisible();
+    const title = await card.locator("h2").innerText();
+    await expect(page.getByRole("dialog", { name: title })).toBeVisible();
+    await expect(card.locator("[data-guest-note]")).toHaveText(DEMO_GUEST_NOTE);
+    const person = card.locator("[data-guest-person]");
+    await expect(person).toHaveCount(1);
+    await expect(person).toContainText("ד״ר מרצה 01");
+    await expect(person).toContainText(DEMO_GUEST_BIOS.photo);
+    const photo = card.locator("img[data-guest-photo]");
+    await expect(photo).toHaveAttribute("alt", /^תמונה של /);
+    await expect(photo).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+    await expect.poll(() => photo.evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0))).toBeGreaterThan(0); // it decodes
+    expect(hashOf(page)).toBe("");
     await noSidewaysScroll(page);
+
+    // Escape
+    await page.keyboard.press("Escape");
+    await expect(card).toHaveCount(0);
+    await expect(row).toBeFocused();
+    // «סגירה»: × at the top; on a phone a second one at the bottom
+    await row.click();
+    await expect(card).toBeVisible();
+    const closers = card.getByRole("button", { name: "סגירה", exact: true });
+    if (info.project.name === "phone") {
+      await expect(closers).toHaveCount(2);
+      await closers.last().click();
+    } else {
+      await expect(closers).toHaveCount(1); // the bottom one is a phone's
+      await closers.click();
+    }
+    await expect(card).toHaveCount(0);
+    await expect(row).toBeFocused();
+    // the backdrop, around the box in the middle (a phone's card is a sheet from the bottom)
+    if (info.project.name !== "phone") {
+      await row.click();
+      await expect(card).toBeVisible();
+      await page.mouse.click(8, 8);
+      await expect(card).toHaveCount(0);
+      await expect(row).toBeFocused();
+    }
+    // no history entry, no hash: the address is what it was
+    expect(hashOf(page)).toBe("");
+    expect(new URL(page.url()).pathname).toBe("/s");
   });
 
-  test("the ticks reach the team: the escorts' list and the lesson panel", async ({ page }, info) => {
+  test("the ticks reach the team: the escorts' list and the lesson page's escort step", async ({ page }, info) => {
     await page.goto(`${demoUrl()}/print/escorts`);
     const a = page.getByRole("region", { name: "מלווה לדוגמה א׳" });
     const ticks = a.getByRole("list", { name: "הסימונים של המלווה" });
@@ -622,8 +716,7 @@ test.describe("demo build", () => {
     await expect(escortLessons(page).first().getByText(/^סומן ב-/)).toBeVisible();
     await page.goBack();
     await nav(page).getByRole("link", { name: "השבוע" }).click();
-    const panel = await openLesson(page, info, "ראשון", "מרצה 03");
-    const escort = await stage(panel, "מלווה");
+    const escort = await lessonStep(page, info, "ראשון", "מרצה 03", "escort");
     const line = escort.getByRole("list", { name: "הסימונים של המלווה" });
     await expect(line.locator('[data-tick="gift"]')).toHaveAttribute("data-done", "true");
     await expect(line.locator('[data-tick="reminded"]')).toHaveAttribute("data-done", "false");
@@ -679,15 +772,21 @@ test.describe("mock build", () => {
   /** «30.10.2026», as the page writes a date (before the Hebrew date beside it). */
   const dmy = (iso: string) => iso.split("-").reverse().map(Number).join(".");
   // v19's answer: a row's `note` and `people`, the approved speakers (their public words and photo) and the grid's fixed
-  // rows — the guests' site is phase 5's: until then the page draws exactly what it drew before (GUEST_ONLY: none of it)
-  const GUEST_ONLY = { bio: "תיאור לאורחים לדוגמה", note: "הערה לאורחים לדוגמה", fixed: "ארוחת בוקר (לדוגמה)", photo: "data:image/jpeg;base64,/9j/AAAA" };
+  // rows — the guests' site (the reset, phase 5) draws them; an answer from before v19 has none (GUEST_ONLY: none of it).
+  // A photo is drawn only when it is a JPEG inside the answer (guestPhotoSrc): a synthetic valid one, and an https one
+  // that is neither drawn nor fetched
+  const GUEST_ONLY = { bio: "תיאור לאורחים לדוגמה", note: "הערה לאורחים לדוגמה", fixed: "ארוחת בוקר (לדוגמה)", photo: photoDataUrl(photoBase64("clean")) };
+  const REMOTE_PHOTO = "https://photos.example/speaker.jpg";
   const scheduleView: ScheduleView = {
     edition,
     rows: [
-      { kind: "lesson", day: 0, date: start, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false, note: GUEST_ONLY.note, people: [0] },
+      { kind: "lesson", day: 0, date: start, start_min: 510, end_min: 585, speaker: "ד״ר מרצה לדוגמה ו-מרצה נוסף/ת לדוגמה", title: "כותרת לדוגמה", category: "קטגוריה לדוגמה", room: "חדר לדוגמה", parallel: false, note: GUEST_ONLY.note, people: [0, 1] },
       { kind: "memorial", day: 0, date: start, start_min: 780, end_min: 795, speaker: "", title: null, category: "", room: "חדר לדוגמה", parallel: false, note: null, people: [] },
     ],
-    people: [{ label: "ד״ר מרצה לדוגמה", bio: GUEST_ONLY.bio, photo: GUEST_ONLY.photo }],
+    people: [
+      { label: "ד״ר מרצה לדוגמה", bio: GUEST_ONLY.bio, photo: GUEST_ONLY.photo },
+      { label: "מרצה נוסף/ת לדוגמה", bio: null, photo: REMOTE_PHOTO }, // nothing a guest may see: not listed in the card
+    ],
     fixed: [
       { day: 0, start_min: 420, end_min: 480, label: GUEST_ONLY.fixed },
       { day: 2, start_min: 420, end_min: 480, label: GUEST_ONLY.fixed }, // a day with a fixed row only
@@ -772,21 +871,43 @@ test.describe("mock build", () => {
     await expect(page.getByRole("status", { name: "הבקשה נשלחה" })).toContainText("מה ששלחת: חניך/ה לדוגמה ב׳ — ספר לדוגמה");
     expect(sb.rpc.get("kk_signup")).toEqual([{ p_token: TOKEN, p_roster: 12, p_group: 21 }]);
 
-    // the schedule: v19's answer drawn exactly as the same answer before v19 — no bio, note, photo or fixed row, no day
-    // that only a fixed row has
+    // the schedule (v19's answer): the lessons, the memorial time and the fixed rows — a day a fixed row alone has too;
+    // the lesson's card holds its description, the approved speaker's words and photo, and nothing of the other's
+    const fetched: string[] = [];
+    page.on("request", (r) => void fetched.push(r.url()));
     await page.goto(`${mockUrl()}/s#${TOKEN}`);
     await expect(page.locator("[data-schedule-row]")).toHaveCount(2);
     await expect(page.locator("[data-schedule-row]").nth(1)).toContainText("זמן זיכרון");
+    await expect(page.locator("[data-fixed-row]")).toHaveCount(2);
+    await expect(page.getByRole("region", { name: "יום שלישי" }).locator("[data-fixed-row]")).toHaveCount(1);
+    await expect(page.getByRole("region", { name: "יום שלישי" }).locator("[data-fixed-row]")).toContainText(GUEST_ONLY.fixed);
     expect(sb.rpc.get("schedule_view")).toEqual([{ p_token: TOKEN }]);
-    const drawn = await page.locator("main").innerHTML();
-    for (const v of Object.values(GUEST_ONLY)) expect(drawn).not.toContain(v);
-    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0);
-    await expect(page.getByRole("region", { name: "יום שלישי" })).toHaveCount(0);
+    // closed, the card's words are not on the page
+    const closed = await page.locator("main").innerHTML();
+    for (const v of [GUEST_ONLY.bio, GUEST_ONLY.note, GUEST_ONLY.photo, REMOTE_PHOTO]) expect(closed).not.toContain(v);
+    await page.locator('[data-guest-lesson="0"]').click();
+    const card = guestCard(page);
+    await expect(card.locator("[data-guest-note]")).toHaveText(GUEST_ONLY.note);
+    await expect(card.locator("[data-guest-person]")).toHaveCount(1);
+    await expect(card.locator('[data-guest-person="0"]')).toContainText(GUEST_ONLY.bio);
+    await expect(card.locator("img[data-guest-photo]")).toHaveAttribute("src", GUEST_ONLY.photo);
+    await expect(card.locator("img[data-guest-photo]")).toHaveAttribute("alt", "תמונה של ד״ר מרצה לדוגמה");
+    await expect(page.locator(`img[src="${REMOTE_PHOTO}"]`)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(card).toHaveCount(0);
+    expect(fetched.filter((u) => u.includes("photos.example"))).toEqual([]);
+
+    // the same schedule as answered before v19: the plain schedule — no fixed row, no card, no day a fixed row alone had
     sb.answers.set("schedule_view", scheduleBefore19);
     await page.goto("about:blank"); // a fresh load (the same address but its hash would stay on the page)
     await page.goto(`${mockUrl()}/s#${TOKEN}`);
     await expect(page.locator("[data-schedule-row]")).toHaveCount(2);
-    expect(await page.locator("main").innerHTML()).toBe(drawn);
+    await expect(page.locator("[data-fixed-row]")).toHaveCount(0);
+    await expect(page.locator("[data-guest-lesson]")).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "יום שלישי" })).toHaveCount(0);
+    const before = await page.locator("main").innerHTML();
+    for (const v of Object.values(GUEST_ONLY)) expect(before).not.toContain(v);
+    await expect(page.locator('main img[src^="data:"]')).toHaveCount(0);
     expect(sb.rpc.get("schedule_view")).toEqual([{ p_token: TOKEN }, { p_token: TOKEN }]);
 
     anonOnly(sb); // no whoami, no /auth/v1, no table, no session

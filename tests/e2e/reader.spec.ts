@@ -1,5 +1,6 @@
 // The sources' files and the reader (milestone 5ב-1) in a real browser. Demo
-// build: a synthetic PDF uploaded in the lesson panel, its pages counted and
+// build: a synthetic PDF uploaded on the lesson page's «מקורות ומצגת» (since the
+// reset's phase 5 the grid's panel lists no stages), its pages counted and
 // the lesson's sources turned on, then removed; the manifest «התקבל / חסר» at
 // every width without sideways scroll; «בניית המקראה (PDF)» on a desktop — the PDF the
 // worker made, downloaded and read back with pdf-lib (its page count, the
@@ -13,8 +14,9 @@
 // A file the browser cannot read as the reader would (a .pdf that is no PDF, a
 // PNG cut short) is kept and said so — «לא נקרא», «צריך קובץ אחר» — on its row,
 // the lesson's stage and dot and the manifest alike, and never «התקבל»; a
-// lesson with a PDF and a Word file is counted on the manifest as the panel
-// counts it; a computer builds the reader at any width, a mouse is enough.
+// lesson with a PDF and a Word file is counted on the manifest as the lesson
+// page counts it — the Word file's button «הורדה», the PDF's «פתיחה»; a computer
+// builds the reader at any width, a mouse is enough.
 // v19 (the reset, phase 4): register_source_file carries `p_kind`; logistics build the reader and download it, read
 // «נשלח לדפוס» (when, by whom, «נוסף קובץ אחד אחרי השליחה» — a presentation never counted) and send set_reader_sent
 // {p_edition, p_sent} by the keyboard — the focus kept through a slow call, and given to the button that stays when
@@ -27,7 +29,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream } from
 import { demoWeek, seedDemoSources } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { readerManifest, readerRows } from "../../src/reader/model";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -84,9 +86,9 @@ async function partsRightToLeft(page: Page) {
   expect(dirs.filter((d) => !d.startsWith("rtl rtl |"))).toEqual([]);
 }
 
-/** From the week to «מקראה», within the tab (a reload starts the demo over). */
+/** To «מקראה», within the tab (a reload starts the demo over): «תוצרים» is behind «עוד» below 1024px. */
 async function toReader(page: Page) {
-  await page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
+  await goSection(page, "תוצרים");
   await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" }).click();
   await expect(page.getByRole("heading", { name: "מקראה", exact: true })).toBeVisible();
 }
@@ -135,63 +137,95 @@ async function openLesson(page: Page, info: TestInfo, day: string, speaker: stri
   return panel;
 }
 
-const stage = (panel: Locator, name: string) => panel.locator(`[data-stage-section="${name}"]`);
+/** The lesson page's step (src/screens/lesson/LessonScreen.tsx), opened. */
+const step = (page: Page, key: string) => page.locator(`[data-page-step="${key}"]`);
+async function openStep(page: Page, key: string): Promise<Locator> {
+  const toggle = step(page, key).locator("h3 button");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  return step(page, key);
+}
+
+/**
+ * A closed lesson's «מקורות ומצגת» (the sources and the reader as one step: its state the worse of the two), from the
+ * grid — the card opens the panel's summary, «לדף השיעור» the page.
+ */
+async function sourcesStep(page: Page, info: TestInfo, day: string, speaker: string): Promise<Locator> {
+  const panel = await openLesson(page, info, day, speaker);
+  await panel.getByRole("link", { name: "לדף השיעור" }).click();
+  await expect(page.locator("[data-lesson-header]")).toContainText(speaker);
+  return openStep(page, "sources");
+}
+
+/** The step's sources (SourceFiles: the lists, the upload — the presentations are a part of their own, below). */
+const filesOf = (s: Locator) => s.getByRole("group", { name: "קבצי המקורות" });
+/** The reader's word on the lesson (ReaderStage): its line, starting with the manifest's status. */
+const readerLine = (s: Locator, text: string) => s.locator("p").filter({ hasText: text });
+
+/** Back to the writing grid, within the tab. */
+const toGrid = (page: Page) => page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "השבוע" }).click();
 
 test.describe("demo build", () => {
-  test("a PDF uploaded in the lesson panel: its pages counted, the sources arrived, the lesson in the reader — and removed again", async ({ page }, info) => {
+  test("a PDF uploaded on the lesson page: its pages counted, the sources arrived, the lesson in the reader — and removed again", async ({ page }, info) => {
     await page.goto(demoUrl());
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await expect(stage(panel, "sources")).toHaveAttribute("data-state", "open"); // «טרם התקבלו»
-    await expect(panel.getByText("עוד לא הועלו קבצים לשיעור הזה.")).toBeVisible();
-    await panel.locator("input[type=file]").setInputFiles({ name: "מקורות לשיעור.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400], [300, 400], [300, 400]]) });
+    const s = await sourcesStep(page, info, "ראשון", "מרצה 05");
+    await expect(s).toHaveAttribute("data-state", "open"); // «טרם התקבלו»
+    const files = filesOf(s);
+    await expect(files.getByText("עוד לא הועלו קבצים לשיעור הזה.")).toBeVisible();
+    // two inputs on the step since phase 5: the sources' and the presentations' (LessonPresentations)
+    await expect(s.locator("input[type=file]")).toHaveCount(2);
+    // the input holds the focus once the picker closes — and keeps it through the upload (never disabled: the review)
+    await files.locator("input[type=file]").focus();
+    await files.locator("input[type=file]").setInputFiles({ name: "מקורות לשיעור.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400], [300, 400], [300, 400]]) });
     await expect(toast(page, "הקובץ הועלה")).toBeVisible();
-    const list = panel.getByRole("list", { name: "קבצים שהועלו" });
+    const list = files.getByRole("list", { name: "קבצים שהועלו" });
     await expect(list.getByText("מקורות לשיעור.pdf")).toBeVisible();
+    await expect(files.locator("input[type=file]")).toBeFocused();
     await expect(list.getByText("4 עמודים")).toBeVisible();
-    await expect(stage(panel, "sources")).toHaveAttribute("data-state", "done"); // «דף מקורות»
-    await expect(stage(panel, "reader")).toHaveAttribute("data-state", "done"); // «במקראה»
-    await expect(stage(panel, "reader")).toContainText("במקראה");
+    await expect(list.getByRole("button", { name: "פתיחה" })).toBeVisible(); // a PDF opens; a Word or PowerPoint file downloads
+    await expect(s).toHaveAttribute("data-state", "done"); // «דף מקורות», «במקראה»
+    await expect(readerLine(s, "בתוך המקראה")).toContainText("התקבל. בתוך המקראה: קובץ אחד, 4 עמודים"); // the manifest's word
     await noSidewaysScroll(page);
     // the keyboard's focus on the upload shows — on the label that looks like the button (the input is 1px, clipped)
-    const pick = panel.locator("input[type=file]");
+    const pick = files.locator("input[type=file]");
     await pick.focus();
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Tab");
     await expect(pick).toBeFocused();
-    const label = panel.locator(`label[for="${await pick.getAttribute("id")}"]`);
+    const label = files.locator(`label[for="${await pick.getAttribute("id")}"]`);
     expect(await label.evaluate((el) => `${getComputedStyle(el).outlineStyle} ${getComputedStyle(el).outlineWidth}`)).toBe("solid 2px");
     // dropping files is for a mouse: no hint where there is none
-    if (info.project.name === "desktop") await expect(panel.getByText("או לגרור לכאן")).toBeVisible();
-    else await expect(panel.getByText("או לגרור לכאן")).toBeHidden();
+    if (info.project.name === "desktop") await expect(files.getByText("או לגרור לכאן")).toBeVisible();
+    else await expect(files.getByText("או לגרור לכאן")).toBeHidden();
     // not a type the bucket takes: refused before anything is sent — the lesson's rule, never the poster's
-    await panel.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
-    await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toHaveText("אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG).");
+    await files.locator("input[type=file]").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+    await expect(files.getByRole("list", { name: "העלאות" }).getByRole("alert")).toHaveText("אפשר להעלות רק PDF, ‏Word ‏(docx) או תמונה (PNG/JPG).");
     // removal asks first — and «ביטול» gives the focus back to «הסרה»
     await list.getByRole("button", { name: "הסרה" }).click();
-    await panel.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
+    await files.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ביטול", exact: true }).press("Enter");
     await expect(list.getByRole("button", { name: "הסרה" })).toBeFocused();
     await list.getByRole("button", { name: "הסרה" }).click();
-    await panel.getByRole("button", { name: "כן, להסיר" }).click();
+    await files.getByRole("button", { name: "כן, להסיר" }).click();
     await expect(toast(page, "הקובץ הוסר")).toBeVisible();
-    await expect(panel.getByText("עוד לא הועלו קבצים לשיעור הזה.")).toBeVisible();
+    await expect(files.getByText("עוד לא הועלו קבצים לשיעור הזה.")).toBeVisible();
   });
 
   // the second review's proof: «2 קבצים · 2 עמודים · ועוד קובץ Word אחד» for a PDF and a Word file — read as three,
-  // while the lesson panel said one file in the reader
-  test("a PDF and a Word file: the manifest counts what is in the reader, as the lesson panel does — then names the Word file", async ({ page }, info) => {
+  // while the lesson said one file in the reader
+  test("a PDF and a Word file: the manifest counts what is in the reader, as the lesson page does — then names the Word file", async ({ page }, info) => {
     await page.goto(demoUrl());
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await panel.locator("input[type=file]").setInputFiles([
+    const s = await sourcesStep(page, info, "ראשון", "מרצה 05");
+    await filesOf(s).locator("input[type=file]").setInputFiles([
       { name: "מקורות.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400]]) },
       { name: "מקורות.docx", mimeType: DOCX_MIME, buffer: Buffer.from("PK synthetic, never opened") },
     ]);
     await expect(toast(page, "2 קבצים הועלו")).toBeVisible();
-    await stage(panel, "reader").getByRole("button", { name: /^מקראה/ }).click();
-    await expect(stage(panel, "reader")).toContainText("בתוך המקראה: קובץ אחד, 2 עמודים");
-    await expect(stage(panel, "reader")).toContainText("ועוד קובץ Word אחד שלא נכנס — צריך PDF.");
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
+    await expect(readerLine(s, "בתוך המקראה")).toContainText("בתוך המקראה: קובץ אחד, 2 עמודים");
+    await expect(readerLine(s, "בתוך המקראה")).toContainText("ועוד קובץ Word אחד שלא נכנס — צריך PDF.");
+    // the reset, phase 5: a PDF opens, a Word file downloads under its own name
+    const rows = filesOf(s).getByRole("list", { name: "קבצים שהועלו" }).locator("[data-source-file]");
+    await expect(rows.filter({ hasText: "מקורות.pdf" }).getByRole("button")).toHaveText(["פתיחה", "הסרה"]);
+    await expect(rows.filter({ hasText: "מקורות.docx" }).getByRole("button")).toHaveText(["הורדה", "הסרה"]);
     await toReader(page);
     const row = page.locator("[data-manifest-row]").filter({ hasText: "מרצה 05" });
     await expect(row).toHaveAttribute("data-status", "included");
@@ -201,40 +235,37 @@ test.describe("demo build", () => {
   });
 
   // the second review's proof: a .pdf that is no PDF was «PDF · לא נקרא» on its row, «התקבל» on the manifest and
-  // counted in the panel's «בתוך המקראה»; a cut picture was «תמונה · עמוד אחד» and «התקבל» until the build
-  test("a file the browser cannot read is kept, «לא נקרא — צריך קובץ אחר» — its row, the lesson's stage and dot and the manifest agree, never «התקבל»", async ({ page }, info) => {
+  // counted in the lesson's «בתוך המקראה»; a cut picture was «תמונה · עמוד אחד» and «התקבל» until the build
+  test("a file the browser cannot read is kept, «לא נקרא — צריך קובץ אחר» — its row, the lesson's step and dot and the manifest agree, never «התקבל»", async ({ page }, info) => {
     test.setTimeout(90_000);
     await page.goto(demoUrl());
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await panel.locator("input[type=file]").setInputFiles([
+    let s = await sourcesStep(page, info, "ראשון", "מרצה 05");
+    await filesOf(s).locator("input[type=file]").setInputFiles([
       { name: "קובץ פגום.pdf", mimeType: "application/pdf", buffer: NOT_A_PDF },
       { name: "צילום חתוך.png", mimeType: "image/png", buffer: cutPng() },
     ]);
     await expect(toast(page, "2 קבצים הועלו")).toBeVisible(); // kept: the team sees them, and removes or replaces them
-    const list = panel.getByRole("list", { name: "קבצים שהועלו" });
+    const list = filesOf(s).getByRole("list", { name: "קבצים שהועלו" });
     await expect(list.locator("[data-source-file]").filter({ hasText: "קובץ פגום.pdf" })).toContainText("PDF · לא נקרא — מוגן או פגום; צריך קובץ אחר");
     await expect(list.locator("[data-source-file]").filter({ hasText: "צילום חתוך.png" })).toContainText("תמונה · לא נקרא — פגום או בפורמט אחר; צריך קובץ אחר");
-    await expect(stage(panel, "sources")).toHaveAttribute("data-state", "done"); // they arrived: «דף מקורות»
-    await expect(stage(panel, "reader")).toHaveAttribute("data-state", "open");
-    await expect(stage(panel, "reader")).toContainText("צריך קובץ אחר");
-    await stage(panel, "reader").getByRole("button", { name: /^מקראה/ }).click();
-    await expect(stage(panel, "reader")).toContainText("צריך קובץ אחר. מסומן למקראה, אבל הקבצים שהועלו לא נקראו");
-    await expect(stage(panel, "reader")).not.toContainText("התקבל");
+    // they arrived («דף מקורות»), and the reader's word is the worse: the step says what is left
+    await expect(s).toHaveAttribute("data-state", "open");
+    await expect(s.locator("h3 button")).toContainText("צריך קובץ אחר");
+    const said = readerLine(s, "מסומן למקראה, אבל הקבצים שהועלו לא נקראו");
+    await expect(said).toContainText("צריך קובץ אחר. מסומן למקראה, אבל הקבצים שהועלו לא נקראו");
+    await expect(said).not.toContainText("התקבל");
     // the card's dot says the same
+    await toGrid(page);
+    if (info.project.name !== "desktop") await page.getByRole("tab", { name: "ראשון" }).click();
     const dot = page.locator("[data-lesson-id]").filter({ hasText: "מרצה 05" }).first().locator('[data-stage="reader"]');
     await expect(dot).toHaveAttribute("title", "מקראה: צריך קובץ אחר");
     // a lesson already in the reader keeps its files in, and names the one it cannot read beside them
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
-    const opening = await openLesson(page, info, "ראשון", "מרצה 01");
-    await stage(opening, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await opening.locator("input[type=file]").setInputFiles({ name: "תמונה חתוכה.png", mimeType: "image/png", buffer: cutPng() });
+    s = await sourcesStep(page, info, "ראשון", "מרצה 01");
+    await filesOf(s).locator("input[type=file]").setInputFiles({ name: "תמונה חתוכה.png", mimeType: "image/png", buffer: cutPng() });
     await expect(toast(page, "הקובץ הועלה")).toBeVisible();
-    await expect(stage(opening, "reader")).toHaveAttribute("data-state", "done");
-    await stage(opening, "reader").getByRole("button", { name: /^מקראה/ }).click();
-    await expect(stage(opening, "reader")).toContainText("בתוך המקראה: 2 קבצים, 3 עמודים");
-    await expect(stage(opening, "reader")).toContainText("ועוד קובץ אחד שלא נקרא — צריך קובץ אחר.");
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
+    await expect(s).toHaveAttribute("data-state", "done");
+    await expect(readerLine(s, "בתוך המקראה")).toContainText("בתוך המקראה: 2 קבצים, 3 עמודים");
+    await expect(readerLine(s, "בתוך המקראה")).toContainText("ועוד קובץ אחד שלא נקרא — צריך קובץ אחר.");
 
     await toReader(page);
     const unread = page.locator("[data-manifest-row]").filter({ hasText: "מרצה 05" });
@@ -273,8 +304,7 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
     // within the tab (a reload starts the demo over)
     await draft.getByRole("button", { name: "סגירה", exact: true }).click();
-    await page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
-    await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" }).click();
+    await toReader(page);
     await expect(page.getByRole("heading", { name: "קבצים בלי שיעור" })).toBeVisible();
     await expect(page.locator("[data-manifest-totals]")).toContainText("1 בתוך המקראה");
   });
@@ -325,13 +355,10 @@ test.describe("demo build", () => {
     test.setTimeout(120_000);
     // a file of our own for Sunday 11:30 first: two 300×400 pages
     await page.goto(demoUrl());
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await panel.locator("input[type=file]").setInputFiles({ name: "uploaded.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400]]) });
+    const s = await sourcesStep(page, info, "ראשון", "מרצה 05");
+    await filesOf(s).locator("input[type=file]").setInputFiles({ name: "uploaded.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400]]) });
     await expect(toast(page, "הקובץ הועלה")).toBeVisible();
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
-    await page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
-    await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" }).click();
+    await toReader(page);
     await page.getByLabel("עמוד שמאלי (אי-זוגי)").fill("כותרת שמאל לבדיקה");
     await page.getByLabel("עמוד ימני (זוגי)").fill("כותרת ימין לבדיקה");
     await page.getByRole("button", { name: "שמירת הכותרות" }).click();
@@ -464,24 +491,23 @@ test.describe("mock build", () => {
     sb.token = session.access_token;
     const bearer = `Bearer ${session.access_token}`;
 
-    await page.goto(mockUrl());
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await panel.locator("input[type=file]").setInputFiles({ name: "מקורות.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400]]) });
+    // the lesson page's «מקורות ומצגת» (the reset, phase 5: the grid's panel lists no stages)
+    await page.goto(`${mockUrl()}/lesson/${target.id}?step=sources`);
+    const s = step(page, "sources");
+    await filesOf(s).locator("input[type=file]").setInputFiles({ name: "מקורות.pdf", mimeType: "application/pdf", buffer: await pdf([[300, 400], [300, 400]]) });
     await expect(toast(page, "הקובץ הועלה")).toBeVisible();
     const up = sb.storage.find((c) => c.method === "POST" && c.path.startsWith("/storage/v1/object/sources/"))!;
     expect(up.path).toMatch(new RegExp(`^/storage/v1/object/sources/7/${target.id}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-file\\.pdf$`));
     expect([up.auth, up.contentType, up.apikey]).toEqual([bearer, "application/pdf", "sb_publishable_mock"]);
     expect(up.cacheControl).toBe("private, no-store"); // Storage serves the file back with it: no copy outlives a signed URL or a removal
     const path = up.path.slice("/storage/v1/object/sources/".length);
-    // v19: the kind always sent — a lesson's file from this panel is a source (a presentation is phase 5's page)
+    // v19: the kind always sent — a file from the sources' input is a source (a presentation has its own, below it)
     expect(sb.rpc.get("register_source_file")).toEqual([{ p_edition: 7, p_lesson: target.id, p_path: path, p_display_name: "מקורות.pdf", p_pages: 2, p_kind: "source" }]);
     expect(sb.calls.filter((c) => c.path === "/rest/v1/rpc/register_source_file").every((c) => c.auth === bearer)).toBe(true);
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
 
     // removal: the object first (the Storage API, with the member's token), then the row
-    const opened = await openLesson(page, info, "ראשון", "מרצה 01");
-    await stage(opened, "sources").getByRole("button", { name: /^מקורות/ }).click();
+    await page.goto(`${mockUrl()}/lesson/${opening.id}?step=sources`);
+    const opened = filesOf(step(page, "sources"));
     await opened.getByRole("list", { name: "קבצים שהועלו" }).getByRole("button", { name: "הסרה" }).click();
     await opened.getByRole("button", { name: "כן, להסיר" }).click();
     await expect(toast(page, "הקובץ הוסר")).toBeVisible();
@@ -533,19 +559,22 @@ test.describe("mock build", () => {
     const session = await signIn(page, "l@example.org");
     sb.token = session.access_token;
     const bearer = `Bearer ${session.access_token}`;
-    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    // the writing grid is the staff's (the reset, phase 5): logistics' `/grid` is «השבוע» to read; a card opens the lesson page
     await page.goto(`${mockUrl()}/grid`);
-    const panel = await openLesson(page, info, "ראשון", "מרצה 01");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    const files = panel.getByRole("list", { name: "קבצים שהועלו" });
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/week$`));
+    await page.locator("[data-lesson-id]").filter({ hasText: "מרצה 01" }).first().click();
+    await expect(page).toHaveURL(/\/lesson\/\d+$/);
+    const s = await openStep(page, "sources");
+    const files = filesOf(s).getByRole("list", { name: "קבצים שהועלו" });
     await expect(files.getByText("דף מקורות לדוגמה.pdf")).toBeVisible();
     await expect(files.getByRole("button", { name: "פתיחה" }).first()).toBeVisible();
     await expect(files.getByRole("button", { name: "הסרה" })).toHaveCount(0);
-    await expect(panel.locator("input[type=file]")).toHaveCount(0);
-    await page.getByRole("button", { name: "סגירה", exact: true }).first().click();
+    // neither the sources' input nor the presentations'
+    await expect(s.locator("input[type=file]")).toHaveCount(0);
+    await expect(s.getByRole("button", { name: "הסרה" })).toHaveCount(0);
 
     // the reader: a tab of «תוצרים» for them too
-    await page.getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "מקראה" }).click();
     await expect(page).toHaveURL(/\/reader$/);
     await expect(page.locator("[data-manifest-totals]")).toBeVisible();
@@ -628,12 +657,12 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "a@example.org");
     sb.token = session.access_token;
-    // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
-    await page.goto(`${mockUrl()}/grid`);
-    const panel = await openLesson(page, info, "ראשון", "מרצה 05");
-    await stage(panel, "sources").getByRole("button", { name: /^מקורות/ }).click();
-    await panel.locator("input[type=file]").setInputFiles({ name: "a.pdf", mimeType: "application/pdf", buffer: await pdf([[100, 100]]) });
-    await expect(panel.getByRole("list", { name: "העלאות" }).getByRole("alert")).toContainText("אין הרשאה להעלות לכאן");
+    // a trainee uploads on the lesson page (Sunday 11:30, «הרב מרצה 05», member 2's)
+    const lesson = week.lessons.find((l) => l.day === 0 && l.start_min === 690 && l.state === "closed")!;
+    await page.goto(`${mockUrl()}/lesson/${lesson.id}?step=sources`);
+    const files = filesOf(step(page, "sources"));
+    await files.locator("input[type=file]").setInputFiles({ name: "a.pdf", mimeType: "application/pdf", buffer: await pdf([[100, 100]]) });
+    await expect(files.getByRole("list", { name: "העלאות" }).getByRole("alert")).toContainText("אין הרשאה להעלות לכאן");
     expect(sb.rpc.get("register_source_file")).toBeUndefined();
     // v19: a content member reads whether the reader went to print, and marks nothing
     await page.goto(`${mockUrl()}/reader`);

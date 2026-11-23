@@ -23,7 +23,7 @@ import { PDFDocument } from "pdf-lib";
 import { demoWeek } from "../../src/data/demoWeek";
 import type { RotaData } from "../../src/data/rota";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -371,7 +371,7 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
 
     // printed: the tasks, then the shopping list on a page of its own («קניות מוצ״ש»), the quantities as typed
-    await page.getByRole("banner").getByRole("navigation", { name: "אזורי המערכת" }).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await page.getByRole("navigation", { name: "תוצרים" }).getByRole("link", { name: "תורנויות" }).click();
     await page.locator("#rota-view").selectOption("prep");
     const shopping = page.locator('[data-rota-table="קניות מוצ״ש"]');
@@ -497,13 +497,13 @@ function mockRota(): RotaData {
 }
 
 test.describe("mock build", () => {
-  const signedIn = async (page: Page, role: "content" | "logistics", archived = false) => {
+  const signedIn = async (page: Page, role: "content" | "logistics" | "admin", archived = false) => {
     const week = demoWeek();
     week.edition = { ...week.edition, id: 7, kind: "real", status: archived ? "archived" : "planning" };
     const email = `${role}@example.org`;
     const sb = new FakeSupabase({
       status: 200,
-      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: false, memberships: [{ edition_id: 7, role, member_id: role === "logistics" ? 5 : 2 }] },
+      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: false, memberships: [{ edition_id: 7, role, member_id: role === "logistics" ? 5 : role === "admin" ? 1 : 2 }] },
     });
     sb.answers.set("editions", [week.edition]);
     sb.answers.set("load_week", week);
@@ -834,11 +834,12 @@ test.describe("mock build", () => {
     expect(sb.writes).toEqual([]);
     expect(sb.rpc.get("get_rota_contacts")).toBeUndefined();
   });
-  test("the week's «תורנויות» lens: load_rota only once it is on, never a phone; a content member's shift leads to the printout", async ({ page }, info) => {
+  test("the week's «תורנויות» lens: the staff's grid alone — load_rota only once it is on, never a phone; an edition admin's shift leads to the board", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the wire");
-    const { sb, session } = await signedIn(page, "content");
-    // a content member's home is «היום שלי» (the reset, phase 2); the grid that writes stays theirs at /grid
+    const { sb, session } = await signedIn(page, "admin");
+    // the writing grid is the staff's, at `/` (the reset, phase 5: `/grid` sends them there)
     await page.goto(`${mockUrl()}/grid`);
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/$`));
     await expect(page.locator("[data-lesson-id]").first()).toBeVisible();
     expect(sb.rpc.get("load_rota")).toBeUndefined(); // the other lenses never read it
     await page.getByRole("radio", { name: "תורנויות" }).click();
@@ -848,10 +849,23 @@ test.describe("mock build", () => {
     await expect(page.locator('[data-lens-shift="1:0"]')).toHaveAttribute("aria-label", "שני, בוקר: אין שיבוצים");
     expect(sb.rpc.get("load_rota")).toEqual([{ p_edition: 7 }]);
     authed(sb, "/rest/v1/rpc/load_rota", session.access_token);
-    await expect(page.getByRole("link", { name: "ללוח התורנויות" })).toHaveAttribute("href", "/print/rota");
+    // an edition admin's shift leads to «לוגיסטיקה ← תורנויות» (anyone else's to the printout)
+    await expect(page.getByRole("link", { name: "ללוח התורנויות" })).toHaveAttribute("href", "/logistics/rota");
     await page.locator('a[data-lens-shift="0:0"]').click();
-    await expect(page).toHaveURL(/\/print\/rota$/);
+    await expect(page).toHaveURL(/\/logistics\/rota$/);
+    // the heads' phones only behind their switch: never read on the way
     expect(sb.calls.some((c) => c.path === "/rest/v1/rpc/get_rota_contacts" || c.path === "/rest/v1/rota_group_contacts")).toBe(false);
+    expect(sb.writes).toEqual([]);
+  });
+
+  test("a content member's week has no lens: `/grid` is «השבוע» to read, and load_rota is never asked", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb } = await signedIn(page, "content");
+    await page.goto(`${mockUrl()}/grid`);
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/week$`));
+    await expect(page.locator("[data-lesson-id]").first()).toBeVisible();
+    await expect(page.getByRole("radio", { name: "תורנויות" })).toHaveCount(0);
+    expect(sb.rpc.get("load_rota")).toBeUndefined();
     expect(sb.writes).toEqual([]);
   });
 });

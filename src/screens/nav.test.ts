@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { personaOf } from "../data/gate";
 import type { Me } from "../data/types";
 import { addApproach, addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
-import { afterRedirect, dayRedirect, homeRedirect, LOGISTICS_HOME, mineRedirect, myDayRedirect, navFor } from "./nav";
+import { afterRedirect, dayRedirect, gridRedirect, homeRedirect, LOGISTICS_HOME, mineRedirect, MORE_LABEL, moreLabel, myDayRedirect, navFor, PRESENTATIONS, splitNav } from "./nav";
 import { backLink } from "./ReadOnlyWeek";
 import { sectionActive } from "./Shell";
 
@@ -51,17 +51,17 @@ describe("navFor (the reset, phases 2–3)", () => {
     expect(paths(trainee, 1, w, "2030-01-01T10:00:00Z")).not.toContain("/after");
   });
 
-  it("a global admin: the grid, «ימים», «מרצים», «אישורים», then the sections they had — no «המרצים שלי»", () => {
-    expect(paths(globalAdmin)).toEqual(["/", "/day", "/speakers", "/approvals", "/logistics", "/tracking", "/memorial", "/kk", "/knowledge", "/settings", "/help"]);
+  it("a global admin: the grid, «ימים», «מרצים», «אישורים», then the sections they had («מצגות» after «תוצרים», phase 5) — no «המרצים שלי»", () => {
+    expect(paths(globalAdmin)).toEqual(["/", "/day", "/speakers", "/approvals", "/logistics", "/tracking", "/presentations", "/memorial", "/kk", "/knowledge", "/settings", "/help"]);
     const items = navFor(globalAdmin, "staff", null);
     expect(items[0]).toEqual({ to: "/", label: "השבוע" });
-    expect(items.map((i) => i.label)).toEqual(["השבוע", "ימים", "מרצים", "אישורים", "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
+    expect(items.map((i) => i.label)).toEqual(["השבוע", "ימים", "מרצים", "אישורים", "לוגיסטיקה", "תוצרים", "מצגות", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
     expect(items.map((i) => i.to)).not.toContain("/mine");
   });
 
   it("an edition's admin: the same staff sections; logistics: no «ימים», «מרצים» or «הגדרות», but «אישורים»", () => {
-    expect(paths(editionAdmin)).toEqual(["/", "/day", "/speakers", "/approvals", "/logistics", "/tracking", "/memorial", "/kk", "/knowledge", "/settings", "/help"]);
-    expect(paths(logistics)).toEqual(["/logistics", "/approvals", "/week", "/tracking", "/memorial", "/kk", "/knowledge", "/help"]);
+    expect(paths(editionAdmin)).toEqual(["/", "/day", "/speakers", "/approvals", "/logistics", "/tracking", "/presentations", "/memorial", "/kk", "/knowledge", "/settings", "/help"]);
+    expect(paths(logistics)).toEqual(["/logistics", "/approvals", "/week", "/tracking", "/presentations", "/memorial", "/kk", "/knowledge", "/help"]);
     // «אחרי השבוע» is never logistics'
     expect(paths(logistics, 1, waiting(), "2030-01-01T10:00:00Z")).not.toContain("/after");
   });
@@ -73,6 +73,7 @@ describe("navFor (the reset, phases 2–3)", () => {
       ["/approvals", "אישורים"],
       ["/week", "השבוע"],
       ["/tracking", "תוצרים"],
+      ["/presentations", "מצגות"],
       ["/memorial", "זמני זיכרון"],
       ["/kk", "מכריכה לכריכה"],
       ["/knowledge", "ידע"],
@@ -111,6 +112,69 @@ describe("navFor (the reset, phases 2–3)", () => {
     const two = me({ memberships: [{ edition_id: 1, role: "content", member_id: 2 }, { edition_id: 2, role: "admin", member_id: 6 }] });
     expect(paths(two, 1)).toEqual(["/", "/speakers", "/week", "/help"]);
     expect(paths(two, 2).slice(0, 4)).toEqual(["/", "/day", "/speakers", "/approvals"]);
+  });
+});
+
+describe("the header on a phone (the reset, phase 5): one row, the rest behind «עוד»", () => {
+  const split = (m: Me, editionId: number | null = 1, week = null as ReturnType<typeof emptyWeek> | null) => {
+    const { inline, more } = splitNav(navFor(m, personaOf(m, editionId), week, "2030-01-01T10:00:00Z"));
+    return { inline: inline.map((i) => i.label), more: more.map((i) => i.label) };
+  };
+
+  it("staff: «השבוע · ימים · מרצים · אישורים» in the row; «עוד» holds the rest, in the header's order", () => {
+    for (const m of [globalAdmin, editionAdmin]) {
+      expect(split(m)).toEqual({
+        inline: ["השבוע", "ימים", "מרצים", "אישורים"],
+        more: ["לוגיסטיקה", "תוצרים", "מצגות", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"],
+      });
+    }
+  });
+
+  it("logistics: «בית · אישורים · השבוע · תוצרים» in the row; «מצגות» and the rest behind «עוד»", () => {
+    expect(split(logistics)).toEqual({ inline: ["בית", "אישורים", "השבוע", "תוצרים"], more: ["מצגות", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"] });
+  });
+
+  it("a trainee: everything in the row, nothing behind «עוד» — «אחרי השבוע» included, and never «מצגות»", () => {
+    const w = emptyWeek();
+    expect(split(trainee, 1, w)).toEqual({ inline: ["היום שלי", "מרצים", "השבוע", "אחרי השבוע", "עזרה"], more: [] });
+    expect(paths(trainee, 1, w, "2027-02-16T10:00:00Z")).not.toContain(PRESENTATIONS);
+  });
+
+  it("no section with a badge is ever behind «עוד»; «מצגות» is `/presentations`, «תוצרים» still lights for /export/guests", () => {
+    for (const m of [globalAdmin, editionAdmin, logistics]) {
+      const { more } = splitNav(navFor(m, personaOf(m, 1), waiting()));
+      expect(more.filter((i) => i.badge != null)).toEqual([]);
+    }
+    expect(PRESENTATIONS).toBe("/presentations");
+    const outputs = navFor(globalAdmin, "staff", null).find((i) => i.label === "תוצרים")!;
+    expect(sectionActive(outputs, "/export/guests")).toBe(true);
+    expect(sectionActive(outputs, "/presentations")).toBe(false);
+  });
+
+  it("what «עוד» holds is always the header's tail — Shell draws its list once, the row's end from 1024px, so the order never changes", () => {
+    const w = emptyWeek();
+    for (const m of [globalAdmin, editionAdmin, logistics, trainee]) {
+      for (const week of [null, w, waiting()]) {
+        const items = navFor(m, personaOf(m, 1), week, "2030-01-01T10:00:00Z");
+        const { inline, more } = splitNav(items);
+        expect([...inline, ...more]).toEqual(items);
+        const first = items.findIndex((i) => i.more);
+        if (first >= 0) expect(items.slice(first).every((i) => i.more)).toBe(true);
+      }
+    }
+  });
+
+  it("«עוד»'s name says where the page is when it is under a section behind it: «עוד, כאן: ידע»", () => {
+    expect(MORE_LABEL).toBe("עוד");
+    expect(moreLabel(null)).toBe("עוד");
+    const { more } = splitNav(navFor(globalAdmin, "staff", null));
+    const here = more.find((i) => sectionActive(i, "/knowledge/summary")) ?? null;
+    expect(moreLabel(here)).toBe("עוד, כאן: ידע");
+    // the outputs' many paths are one section, and the logistics tabs are «לוגיסטיקה»'s
+    expect(moreLabel(more.find((i) => sectionActive(i, "/print/escorts")) ?? null)).toBe("עוד, כאן: תוצרים");
+    expect(moreLabel(more.find((i) => sectionActive(i, "/logistics/transports")) ?? null)).toBe("עוד, כאן: לוגיסטיקה");
+    // a page in the row itself: «עוד» is not «here»
+    expect(more.find((i) => sectionActive(i, "/speakers/7"))).toBeUndefined();
   });
 });
 
@@ -153,6 +217,13 @@ describe("the addresses that are another persona's (App.tsx's routes)", () => {
       expect(to).toBe("/logistics");
       expect(ours.some((i) => sectionActive(i, to!))).toBe(true);
     }
+  });
+
+  it("/grid (phase 5): staff's writing grid is `/`; a trainee and logistics read «השבוע»", () => {
+    expect(gridRedirect("staff")).toBe("/");
+    expect(gridRedirect("trainee")).toBe("/week");
+    expect(gridRedirect("logistics")).toBe("/week");
+    expect(gridRedirect(null)).toBe("/week");
   });
 
   it("«המרצים שלי» is gone: /mine to «מרצים» at «שלי», /mine/team at «כל הצוות»", () => {

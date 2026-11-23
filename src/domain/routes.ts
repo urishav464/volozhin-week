@@ -10,9 +10,16 @@ import type { Gender } from "./types";
 export type PageStep = "place" | "close" | "pay" | "msg" | "sources" | "escort";
 export const PAGE_STEPS: readonly PageStep[] = ["place", "close", "pay", "msg", "sources", "escort"];
 
-/** The speaker page's sections an address may open at (its `#…`). */
-export type SpeakerSection = "call" | "availability" | "placement" | "lessons";
-export const SPEAKER_SECTIONS: readonly SpeakerSection[] = ["call", "availability", "placement", "lessons"];
+/** The speaker page's sections an address may open at (its `#…`); «לאתר האורחים» (`#guest`) since the reset, phase 5. */
+export type SpeakerSection = "call" | "availability" | "placement" | "lessons" | "guest";
+export const SPEAKER_SECTIONS: readonly SpeakerSection[] = ["call", "availability", "placement", "lessons", "guest"];
+
+/**
+ * The lesson page's parts an address may open at (its `#…`, the reset, phase 5): «לאתר האורחים» (`#guest`, below the
+ * steps, a closed lesson's) and the «מצגות» part of «מקורות ומצגת» (`#presentations` — the page opens that step for it).
+ */
+export type LessonSection = "guest" | "presentations";
+export const LESSON_SECTIONS: readonly LessonSection[] = ["guest", "presentations"];
 
 /** One slot of a day: what «לבחור מרצה» filters the speakers by. */
 export interface SlotRef {
@@ -41,9 +48,9 @@ export interface SpeakersQuery {
 
 const POOL_SECTIONS: readonly PoolSection[] = ["mine", "free", "others", "closed", "declined"];
 
-/** `/lesson/7`, `/lesson/7?step=pay`. */
-export function lessonPath(id: number, step?: PageStep | null): string {
-  return `/lesson/${id}${step ? `?step=${step}` : ""}`;
+/** `/lesson/7`, `/lesson/7?step=pay`, `/lesson/7#guest`, `/lesson/7?step=sources#presentations`. */
+export function lessonPath(id: number, step?: PageStep | null, section?: LessonSection | null): string {
+  return `/lesson/${id}${step ? `?step=${step}` : ""}${section ? `#${section}` : ""}`;
 }
 
 /** `/speakers/7`, `/speakers/7#call`. */
@@ -148,6 +155,12 @@ export function parsePageStep(search: string): PageStep | null {
   return v && (PAGE_STEPS as readonly string[]).includes(v) ? (v as PageStep) : null;
 }
 
+/** The lesson page's part from its address (`#guest`); null when there is none, or it is not one. */
+export function parseLessonSection(hash: string): LessonSection | null {
+  const v = hash.startsWith("#") ? hash.slice(1) : hash;
+  return (LESSON_SECTIONS as readonly string[]).includes(v) ? (v as LessonSection) : null;
+}
+
 /** The speaker page's section from its address (`#call`); null when there is none, or it is not a section. */
 export function parseSpeakerSection(hash: string): SpeakerSection | null {
   const v = hash.startsWith("#") ? hash.slice(1) : hash;
@@ -170,4 +183,61 @@ export function pageStepOf(k: LessonStep | StageKey): PageStep {
     case "escort":
       return "escort";
   }
+}
+
+/**
+ * «אתר האורחים» (`/export/guests`, the reset, phase 5 — the edition's admins): the overview's filters, only what is set,
+ * in this order — a day, a handler (members.id), «רק מה שחסר».
+ */
+export interface GuestsQuery {
+  day?: Day;
+  h?: number;
+  missing?: boolean;
+}
+
+export function guestsPath(q: GuestsQuery = {}): string {
+  const parts: string[] = [];
+  if (q.day != null) parts.push(`day=${q.day}`);
+  if (q.h != null) parts.push(`h=${q.h}`);
+  if (q.missing) parts.push("missing=1");
+  return parts.length ? `/export/guests?${parts.join("&")}` : "/export/guests";
+}
+
+/** The overview's filters back: a day of the five, a handler as a whole number above 0, «missing» only as «1». */
+export function parseGuestsQuery(search: string): GuestsQuery {
+  const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const out: GuestsQuery = {};
+  const day = parseDay(p.get("day"));
+  if (day != null) out.day = day;
+  const h = wholeNumber(p.get("h"));
+  if (h != null && h > 0) out.h = h;
+  if (p.get("missing") === "1") out.missing = true;
+  return out;
+}
+
+/**
+ * «מצגות» (`/presentations`, the reset, phase 5 — every member of the edition reads it): the day's tab and the room's
+ * chip, only what is set — `?day=2&room=3`. No room: «כל החדרים».
+ */
+export interface PresentationsQuery {
+  day?: Day;
+  room?: number;
+}
+
+export function presentationsPath(q: PresentationsQuery = {}): string {
+  const parts: string[] = [];
+  if (q.day != null) parts.push(`day=${q.day}`);
+  if (q.room != null) parts.push(`room=${q.room}`);
+  return parts.length ? `/presentations?${parts.join("&")}` : "/presentations";
+}
+
+/** The page's day and room back: a day of the five, a room as a whole number above 0; anything else dropped. */
+export function parsePresentationsQuery(search: string): PresentationsQuery {
+  const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const out: PresentationsQuery = {};
+  const day = parseDay(p.get("day"));
+  if (day != null) out.day = day;
+  const room = wholeNumber(p.get("room"));
+  if (room != null && room > 0) out.room = room;
+  return out;
 }

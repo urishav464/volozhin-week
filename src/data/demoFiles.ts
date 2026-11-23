@@ -1,6 +1,6 @@
 // The demo's sample files, made in the browser when first opened — never a real
-// source: a PDF of a few pages and a picture that say «מקור לדוגמה», and a Word
-// file that says the same. The Hebrew is drawn on a canvas (pdf-lib cannot set
+// source: a PDF of a few pages and a picture that say «מקור לדוגמה» (a sample
+// presentation's PDF «מצגת לדוגמה»), and a Word file that says the same. The Hebrew is drawn on a canvas (pdf-lib cannot set
 // Hebrew), as the reader does it.
 import { documentSurface, FONT_STACK } from "../reader/render";
 
@@ -12,9 +12,11 @@ export interface Sample {
   pages: number;
   /** The sample PDF's page size in points — not A4, so the reader's re-framing shows. */
   size?: [number, number];
+  /** The page's big line: «מקור לדוגמה» unless said (the reset, phase 5: a presentation's «מצגת לדוגמה»). */
+  heading?: string;
 }
 
-async function samplePicture(title: string, line: string, w: number, h: number): Promise<Uint8Array> {
+async function samplePicture(title: string, line: string, w: number, h: number, heading = "מקור לדוגמה"): Promise<Uint8Array> {
   const s = documentSurface(w, h);
   const ctx = s.ctx;
   ctx.strokeStyle = "#8a93a8";
@@ -24,7 +26,7 @@ async function samplePicture(title: string, line: string, w: number, h: number):
   ctx.direction = "rtl";
   ctx.textAlign = "center";
   ctx.font = `700 ${Math.round(w / 14)}px ${FONT_STACK}`;
-  ctx.fillText("מקור לדוגמה", w / 2, h * 0.3);
+  ctx.fillText(heading, w / 2, h * 0.3);
   ctx.font = `400 ${Math.round(w / 26)}px ${FONT_STACK}`;
   ctx.fillText(title, w / 2, h * 0.42);
   ctx.fillText(line, w / 2, h * 0.52);
@@ -46,7 +48,7 @@ export async function makeSample(s: Sample): Promise<Blob> {
   const doc = await PDFDocument.create();
   const [w, h] = s.size ?? [420, 595];
   for (let i = 0; i < s.pages; i++) {
-    const png = await doc.embedPng(await samplePicture(s.title, `עמוד ${i + 1} מתוך ${s.pages}`, Math.round(w * 2), Math.round(h * 2)));
+    const png = await doc.embedPng(await samplePicture(s.title, `עמוד ${i + 1} מתוך ${s.pages}`, Math.round(w * 2), Math.round(h * 2), s.heading));
     doc.addPage([w, h]).drawImage(png, { x: 0, y: 0, width: w, height: h });
   }
   return new Blob([(await doc.save()) as BlobPart], { type: "application/pdf" });

@@ -19,6 +19,15 @@ export const DAY_NAMES: Record<Day, string> = {
 /** A day's letter, for a column too narrow for its name (the topics table); its full name stays for a screen reader. */
 export const DAY_LETTERS: Record<Day, string> = { 0: "א׳", 1: "ב׳", 2: "ג׳", 3: "ד׳", 4: "ה׳" };
 
+/**
+ * «ליל ראשון–שני» for an item after midnight (its minute 1440 or later) — the night belongs to the day before it, and a
+ * list that shows the hour alone (00:30) would read as that day's early morning; null for any other. Thursday's night is
+ * the week's end, written as the day itself (the tracking table's rule).
+ */
+export function nightLabel(day: Day, startMin: number): string | null {
+  return startMin >= 1440 && day < 4 ? `ליל ${DAY_NAMES[day]}–${DAY_NAMES[(day + 1) as Day]}` : null;
+}
+
 /** 1470 → "00:30", 510 → "08:30". */
 export function fmt(min: number): string {
   const m = ((min % 1440) + 1440) % 1440;

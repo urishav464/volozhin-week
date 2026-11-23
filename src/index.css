@@ -145,3 +145,15 @@ body {
     break-inside: avoid;
   }
 }
+
+/* The guests' card (src/screens/public/GuestCard.tsx, a native modal <dialog>): while it is open the page behind does
+   not scroll under it; on paper it is never printed (the printed schedule carries no card, description or photo). */
+html:has(dialog[data-guest-card][open]) {
+  overflow: hidden;
+}
+@media print {
+  dialog[data-guest-card],
+  dialog[data-guest-card]::backdrop {
+    display: none !important;
+  }
+}

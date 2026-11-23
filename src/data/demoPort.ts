@@ -9,7 +9,7 @@ import { DemoRota, seedDemoRota } from "./demoRota";
 import { DemoKk, type DemoLinkStore, DemoLinks, DemoPublic, demoToken, seedDemoLinks } from "./demoLinks";
 import {
   DEMO_FALLEN, demoContacts, demoDayOwners, demoLogisticsStart, demoTraineeAvailability, demoFallenContacts, demoHistory, demoLog, demoPastReviews, demoReviews, demoTransport,
-  demoWeek, seedDemoLogistics, seedDemoSources,
+  demoWeek, seedDemoGuests, seedDemoLogistics, seedDemoPresentations, seedDemoSources,
 } from "./demoWeek";
 import { DemoReviews } from "./demoReviews";
 import type { SpeakerReview } from "./reviews";
@@ -47,7 +47,7 @@ export interface DemoOptions {
    * gets team.d@example.org); the edition is `real`, so deciding a request and setting a driver meet production's rules;
    * and the transport board has something to draw — pickup times and two more staff shifts (seedDemoLogistics). The
    * other demos keep no pickup_min. Phase 4 (v19): the week has a date (demoLogisticsStart — three weeks ahead, a
-   * Sunday), two cohort flags, a shopping list and one speaker approved for the guests' schedule, with a photo.
+   * Sunday), two cohort flags and a shopping list. (The guests' sample is every demo's since phase 5: seedDemoGuests.)
    */
   logistics?: boolean;
   /** The clock the logistics demo's date is counted from (tests); absent: now. */
@@ -115,9 +115,11 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     // whose address the demo signs in with: the instructor's (member 1), the trainee's (DEMO_TRAINEE) or logistics' (DEMO_LOGISTICS)
     const me = opts.trainee ? DEMO_TRAINEE.memberId : opts.logistics ? DEMO_LOGISTICS.memberId : 1;
     const seeded = seedDemoSources(week);
-    for (const [path, sample] of Object.entries(seeded.samples)) this.samples.set(path, sample);
+    // the reset, phase 5: two lessons' presentations and the week's deck, after the sources (their ids go on)
+    const decks = seedDemoPresentations(week);
+    for (const [path, sample] of [...Object.entries(seeded.samples), ...Object.entries(decks.samples)]) this.samples.set(path, sample);
     this.shared = {
-      contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: seeded.objects,
+      contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: { ...seeded.objects, ...decks.objects },
       fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
       importNotes: {}, rota: emptyRota(), rotaContacts: {}, photos: {},
     };
@@ -153,6 +155,9 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     // «תורנויות» (v16): cohorts, groups, presence, last year's duties, staff shifts, preparations — no assignments
     const logistics = this.members.find((m) => m.role === "logistics" && m.edition_id === week.edition.id) ?? null;
     seedDemoRota(this.shared, this.engine(week.edition.id).week.edition, logistics);
+    // the guests' site (the reset, phase 5), in every demo: two lessons' descriptions, two speakers approved (one with
+    // the photo), one with a description and not approved
+    seedDemoGuests(this.shared, this.engine(week.edition.id).week);
     // `?as=logistics`: the transport board's pickup times and two more staff shifts, after the rota's own
     if (opts.logistics) seedDemoLogistics(this.shared, this.engine(week.edition.id).week, logistics);
   }
@@ -350,7 +355,6 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
       setPaid: (lessonId, paid) => run(() => e.setPaid(lessonId, paid)),
       transport: async (lessonId) => structuredClone(e.transportOf(lessonId)),
       importNote: async (lessonId) => e.importNoteOf(lessonId),
-      setTransport: (lessonId, d) => run(() => e.setTransport(lessonId, d)),
       setTransportRequest: (lessonId, patch) => run(() => e.setTransportRequest(lessonId, patch)),
       setTransportDriver: (lessonId, patch) => run(() => e.setTransportDriver(lessonId, patch)),
       // milestone 5ב-2

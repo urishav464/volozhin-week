@@ -130,4 +130,3 @@ export function buildReader(port: DataPort, week: Week, manifest: Manifest, onPr
   return { promise, cancel };
 }
 
-export const PDF_MIME = "application/pdf";

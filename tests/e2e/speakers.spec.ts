@@ -150,8 +150,9 @@ test.describe("demo build — the instructor", () => {
   test("the call on the speaker's page (its points, a result), then availability slot by slot — a tap cycles, the arrows move, a note", async ({ page }) => {
     await page.goto(`${demoUrl()}/speakers/32#call`);
     await expect(call(page)).toBeVisible();
-    // the page in the year's order: the call, availability, where to place, the lessons
-    expect(await page.locator("section[id]").evaluateAll((s) => s.map((x) => x.id))).toEqual(["call", "availability", "placement", "lessons"]);
+    // the page in the year's order: the call, availability, where to place, the lessons — and (the reset, phase 5) what
+    // guests will see of the speaker, last
+    expect(await page.locator("section[id]").evaluateAll((s) => s.map((x) => x.id))).toEqual(["call", "availability", "placement", "lessons", "guest"]);
     // at the call: the instructor's points open (X is the caller's name), addressed to her
     await expect(call(page)).toContainText("בטיפולך · לפני שיחה");
     const points = call(page).locator("[data-call-points]");

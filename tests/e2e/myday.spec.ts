@@ -2,12 +2,15 @@
 // `?as=trainee` (src/data/demoPort.ts): «חניך/ה א׳» (member 2, content) owns Sunday with «חניך/ה ב׳» and Wednesday with
 // «חניך/ה ג׳»; Monday is the other two's. Every width: the trainee's four links and nothing else, the day's slots in
 // time order each with one next step, «חדש» on what someone else handles and «ראיתי», the speakers who can come, the
-// week read-only with the trainee's days marked; staff keep the grid at «/», and «/myday» sends them to «ימים». Mock build: «ראיתי» and «הגדרות ← ימים» go
+// week read-only with the trainee's days marked — and `/grid` (the staff's, since the reset's phase 5) lands there, a
+// trainee's and logistics' alike; staff
+// keep the grid at «/» (`/grid` too), and «/myday» sends them to «ימים». «עזרה» per role: each persona's own part
+// first, «כל המדריך» the whole guide. Mock build: «ראיתי» and «הגדרות ← ימים» go
 // out as mark_day_seen and set_day_owners by the contract's parameter names, with the member's token.
 import { expect, type Page, test } from "@playwright/test";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, INLINE_SECTIONS, noSidewaysScroll, STAFF_SECTIONS } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -91,6 +94,15 @@ test.describe("demo build — a trainee", () => {
     await expect(page.locator('#placement [data-place-day="3"]')).toContainText("היום שלך, עם חניך/ה ג׳");
   });
 
+  test("`/grid` is the staff's: a trainee lands on «השבוע» to read", async ({ page }) => {
+    // the reset, phase 5: the writing grid has one address, `/` — staff's home; «טוען…» until the edition is known
+    await page.goto(`${demoUrl()}/grid`);
+    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/week$`));
+    await expect(page.getByRole("heading", { name: "השבוע — לצפייה בלבד" })).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "עדשה" })).toHaveCount(0);
+    await expect(nav(page).getByRole("link", { name: "השבוע" })).toHaveAttribute("aria-current", "page");
+  });
+
   test("«השבוע» is the week to read: my days marked, nothing to place, a lesson opens its page", async ({ page }, info) => {
     await nav(page).getByRole("link", { name: "השבוע" }).click();
     await expect(page.getByRole("heading", { name: "השבוע — לצפייה בלבד" })).toBeVisible();
@@ -150,8 +162,57 @@ test.describe("demo build — «עזרה»", () => {
       return [at(0, 5), at(6, 11)];
     });
     expect(start).toBeLessThan(end);
-    // the rota's shifts too
+    // the rota's shifts too — a section of the staff's and logistics' (the reset, phase 5): in the whole guide
+    await expect(page.locator('[data-help-section="תורנויות"]')).toHaveCount(0);
+    await page.locator('[data-help-all="all"]').click();
+    await expect(page).toHaveURL(/\/help\?all=1$/);
     await expect(page.locator('bdi[dir="ltr"]', { hasText: "06:30–14:30" })).toBeVisible();
+    await noSidewaysScroll(page);
+  });
+
+  test("each member reads their own part first: a trainee's, the staff's, logistics' — «כל המדריך» is the whole file", async ({ page }) => {
+    const article = page.locator("article[data-help-persona]");
+    const sections = page.locator("[data-help-section]");
+    // a trainee: «לחניכים» first, no import and no duties; «כל המדריך» and back
+    await page.goto(`${demoUrl()}/help?as=trainee`);
+    await expect(article).toHaveAttribute("data-help-persona", "trainee");
+    await expect(article).toHaveAttribute("data-help-view", "mine");
+    await expect(sections.first()).toHaveAttribute("data-help-section", "לחניכים");
+    for (const h of ["ייבוא", "תורנויות", "לצוות המחזור", "לצוות הלוגיסטי"]) await expect(page.locator(`[data-help-section="${h}"]`), h).toHaveCount(0);
+    await expect(page.locator('[data-help-section="אתר האורחים"]')).toHaveCount(1);
+    await expect(page.locator('[data-help-section="מצגות"]')).toHaveCount(1);
+    await page.locator('[data-help-all="all"]').click();
+    await expect(page).toHaveURL(/\/help\?all=1$/);
+    await expect(article).toHaveAttribute("data-help-view", "all");
+    await expect(sections.first()).toHaveAttribute("data-help-section", "לחניכים"); // the file's own order
+    await expect(page.locator('[data-help-section="ייבוא"]')).toHaveCount(1);
+    await expect(page.locator('[data-help-all="mine"]')).toHaveText("רק מה שרלוונטי לי");
+    await page.locator('[data-help-all="mine"]').click();
+    await expect(page).toHaveURL(/\/help$/);
+    await expect(page.locator('[data-help-section="ייבוא"]')).toHaveCount(0);
+    await noSidewaysScroll(page);
+
+    // logistics: «לצוות הלוגיסטי» first, nothing of the grid's or the speakers'
+    await page.goto(`${demoUrl()}/help?as=logistics`);
+    await expect(article).toHaveAttribute("data-help-persona", "logistics");
+    await expect(sections.first()).toHaveAttribute("data-help-section", "לצוות הלוגיסטי");
+    for (const h of ["לחניכים", "הרשת", "עמוד המרצה", "אתר האורחים", "ייבוא"]) await expect(page.locator(`[data-help-section="${h}"]`), h).toHaveCount(0);
+    await expect(page.locator('[data-help-section="תורנויות"]')).toHaveCount(1);
+    await expect(page.locator('[data-help-section="מצגות"]')).toHaveCount(1);
+    await expect(page.locator('[data-help-all="all"]')).toHaveText("כל המדריך");
+    await noSidewaysScroll(page);
+  });
+});
+
+test.describe("demo build — logistics", () => {
+  test("`/grid` is the staff's: logistics land on «השבוע» to read, with the way back «לבית»", async ({ page }) => {
+    // the reset, phase 5: one address writes the grid (`/`, the staff's); «טוען…» until the edition is known, then /week
+    await page.goto(`${demoUrl()}/grid?as=logistics`);
+    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/week$`));
+    await expect(page.getByRole("heading", { name: "השבוע — לצפייה בלבד" })).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "עדשה" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "לבית" })).toHaveAttribute("href", "/logistics");
+    await expect(nav(page).getByRole("link", { name: "השבוע" })).toHaveAttribute("aria-current", "page");
     await noSidewaysScroll(page);
   });
 });
@@ -162,7 +223,8 @@ test.describe("demo build — staff", () => {
     await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible(); // the week that writes, with its lenses
     await expect(nav(page).getByRole("link", { name: "היום שלי" })).toHaveCount(0);
     // the reset, phase 3: «ימים» and «מרצים» after «השבוע»; «המרצים שלי» is gone
-    await expect(nav(page).getByRole("link")).toHaveText(["השבוע", "ימים", "מרצים", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
+    // phase 5: «מצגות» after «תוצרים», and below 1024px the row's four and «עוד»
+    await expectSections(page, STAFF_SECTIONS, INLINE_SECTIONS);
     await expect(nav(page).getByRole("link", { name: "השבוע" })).toHaveAttribute("aria-current", "page");
     // «/myday» was a preview of a trainee's day for staff: the staff's own «ימים» (any day, the pair named) replaced it
     await page.goto(`${demoUrl()}/myday`);
@@ -171,6 +233,14 @@ test.describe("demo build — staff", () => {
     await expect(page.getByRole("heading", { name: "היום שלי", level: 2 })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "ראיתי" })).toHaveCount(0); // nobody's notices to clear but an owner's
     await noSidewaysScroll(page);
+  });
+
+  test("the staff's help: «לצוות המחזור» first, then every section of theirs — import too", async ({ page }) => {
+    await page.goto(`${demoUrl()}/help`);
+    await expect(page.locator("article[data-help-persona]")).toHaveAttribute("data-help-persona", "staff");
+    await expect(page.locator("[data-help-section]").first()).toHaveAttribute("data-help-section", "לצוות המחזור");
+    for (const h of ["ייבוא", "הרשת", "תורנויות", "אתר האורחים", "מצגות"]) await expect(page.locator(`[data-help-section="${h}"]`), h).toHaveCount(1);
+    for (const h of ["לחניכים", "לצוות הלוגיסטי"]) await expect(page.locator(`[data-help-section="${h}"]`), h).toHaveCount(0);
   });
 });
 

@@ -1,24 +1,21 @@
-// «איך עבר» — the lesson panel's row «אחרי השבוע», apart from the five stages (milestone 6):
-// what went well, what did not, «להזמין שוב?», an overrun, a rating 1–5 (none of
-// them alone required, one of them said). The handler writes once the lesson's
-// day has passed in Israel (src/domain/reviews.ts: reviewWindow); an admin of the
-// edition at any time; logistics never sees the section (an opinion about a
-// person). Read when the panel opens and after a save — never part of the Week,
-// never in Realtime (CONTRACT «After the week»). The card's five dots stay as
-// they are: this section is the panel's only. The reset, phase 3: the form is
-// `ReviewForm` (with `reviewFormProps`, what the viewer may do), shared with
-// «אחרי השבוע» (`/after`, src/screens/after/AfterScreen.tsx) — one form for both.
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+// «איך עבר» (milestone 6): what went well, what did not, «להזמין שוב?», an overrun, a rating 1–5 (none of them alone
+// required, one of them said). The handler writes once the lesson's day has passed in Israel (src/domain/reviews.ts:
+// reviewWindow); an admin of the edition at any time; logistics never sees it (an opinion about a person). Read when
+// the page opens and after a save — never part of the Week, never in Realtime (CONTRACT «After the week»). The card's
+// five dots stay as they are. The reset, phase 3: the form is `ReviewForm` (with `reviewFormProps`, what the viewer may
+// do), drawn by «אחרי השבוע» (`/after`, src/screens/after/AfterScreen.tsx); phase 5 took the grid panel's row
+// («אחרי השבוע» under the stages, `ReviewSection`) away — «אחרי השבוע» is the one place a review is written.
+import { type FormEvent, useId, useState } from "react";
 import type { DataPort } from "../../data/port";
 import type { LessonReview, ReviewFields } from "../../data/reviews";
 import { byGender } from "../../domain/names";
-import { INVITE_LABEL, type InviteAgain, REVIEW_TEXT_MAX, reviewLine, type ReviewWindow, reviewWindow } from "../../domain/reviews";
+import { INVITE_LABEL, type InviteAgain, REVIEW_TEXT_MAX, type ReviewWindow, reviewWindow } from "../../domain/reviews";
 import type { Lesson, Week } from "../../domain/types";
 import { errorMessage } from "../../errors";
 import { Button, Field, INPUT, useRunner } from "../settings/kit";
 import type { Notify } from "../speakers/parts";
 import type { Actor } from "../weekStore";
-import { Choice, memberName, Problem, StageSection, whenText } from "./parts";
+import { Choice, memberName, Problem, whenText } from "./parts";
 
 /** «15.2.2027» — an Israel date as the site writes dates. */
 export function dateText(iso: string): string {
@@ -29,68 +26,7 @@ export function dateText(iso: string): string {
 const NO_ANSWER = "";
 const NO_RATING = "";
 
-export function ReviewSection({
-  port, week, lesson: l, actor, handler, notify, clear, open, onToggle,
-}: {
-  port: DataPort;
-  week: Week;
-  lesson: Lesson;
-  actor: Actor;
-  handler: number | null;
-  notify: Notify;
-  clear: () => void;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  const [review, setReview] = useState<LessonReview | null | undefined>(undefined);
-  const [failed, setFailed] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      const all = await port.reviews.ofEdition(week.edition.id);
-      setReview(all.find((r) => r.lesson_id === l.id) ?? null);
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [port, week.edition.id, l.id]);
-  useEffect(() => void load(), [load]);
-
-  const props = reviewFormProps(week, l, actor, handler, review ?? null, new Date().toISOString());
-  const { win, imported, overranWord } = props;
-
-  const state = review ? "done" : win.state === "open" ? "open" : "na";
-  const note =
-    review === undefined
-      ? failed
-        ? "לא נטען"
-        : "טוען…"
-      : review
-        ? reviewLine(review, overranWord)
-        : imported
-          ? "מחזור שיובא — המדריך/ה כותב/ת"
-          : win.state === "open"
-            ? "עוד לא נכתב"
-            : win.state === "before"
-              ? `נפתח ב-${dateText(win.opensOn)}`
-              : "נפתח אחרי השבוע";
-
-  return (
-    <StageSection stage={{ key: "review", label: "איך עבר", state, note }} open={open} onToggle={onToggle}>
-      {failed ? (
-        <div className="space-y-2">
-          <Problem>לא הצלחנו לטעון את «איך עבר».</Problem>
-          <Button onClick={() => void load()}>לנסות שוב</Button>
-        </div>
-      ) : review === undefined ? (
-        <p className="text-sm text-ink-soft">טוען…</p>
-      ) : (
-        <ReviewForm key={`${review?.version ?? 0}`} {...props} port={port} week={week} lesson={l} review={review} notify={notify} clear={clear} reload={load} />
-      )}
-    </StageSection>
-  );
-}
-
-/** What the viewer may do with a lesson's «איך עבר», and its words — derived, so the panel and «אחרי השבוע» agree. */
+/** What the viewer may do with a lesson's «איך עבר», and its words — derived, so «אחרי השבוע» and its tests agree. */
 export interface ReviewAccess {
   /** The viewer may write: an edition admin always; the handler once the window is open (never logistics). */
   mayWrite: boolean;

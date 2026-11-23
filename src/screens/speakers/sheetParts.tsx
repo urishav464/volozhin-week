@@ -104,18 +104,8 @@ export function vetText(state: Speaker["vetted"], s: Speaker): string {
 
 // ------------------------------------------------------------------ the record
 
-export type Act = (key: string, fn: () => Promise<unknown>, ok: string | null, onRefused?: (code: string | null) => boolean) => Promise<boolean>;
-
-/**
- * The speaker's own record is one row across the years (CONTRACT «update»): a global admin, or — in a real
- * edition that is not archived — its admin or the speaker's handler there. A practice or demo week
- * (anyone there may claim any pool speaker) and an archived edition give no such right.
- */
-export function mayEditSpeaker(actor: Actor, edition: Week["edition"], handler: boolean): boolean {
-  if (actor.global) return true;
-  const live = edition.kind === "real" && edition.status !== "archived";
-  return actor.canEdit && live && (actor.isAdmin || handler);
-}
+/** Who may edit the speaker's own record (app.may_edit_speaker) — since the reset, phase 5, in src/domain/guestSite.ts. */
+export { mayEditSpeaker } from "../../domain/guestSite";
 
 const PROFILE_FIELD: Record<string, "name" | "disambiguator"> = { name_required: "name", disambiguator_required: "disambiguator", speaker_exists: "disambiguator" };
 

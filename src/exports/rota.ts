@@ -314,11 +314,6 @@ export function groupDetails(g: GroupInfo): string[] {
   return [g.cohort, g.size == null ? "גודל: TBD" : `${g.size} חניכים`, `ראש/ת קבוצה: ${g.head ?? "TBD"}`];
 }
 
-/** «א1 · מכינה לדוגמה א · 8 חניכים · ראש/ת קבוצה: …» — the group's line. */
-export function groupLine(g: GroupInfo): string {
-  return [g.code, ...groupDetails(g)].join(" · ");
-}
-
 /** A group's week as a file writes it: a band row per shift (filled), naming the group's duty or «—», and the shift's items under it. */
 export function groupSchedule(input: GroupScheduleInput): Table {
   const w = groupWeek(input);

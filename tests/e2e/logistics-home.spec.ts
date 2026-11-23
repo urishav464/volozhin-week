@@ -18,7 +18,7 @@ import type { RotaData } from "../../src/data/rota";
 import { daysToWeek } from "../../src/domain/israelTime";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { weekLine } from "../../src/screens/logistics/tasks";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, INLINE_SECTIONS, LOGISTICS_SECTIONS, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -83,7 +83,7 @@ test.describe("demo build — `?as=logistics`", () => {
     await page.goto(`${demoUrl()}/?as=logistics`);
     await expect(page).toHaveURL(new RegExp(`${demoUrl()}/logistics$`));
     await expect(home(page)).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS); // «מצגות» since the reset's phase 5; below 1024px the row's four and «עוד»
     await expect(nav(page).getByRole("link", { name: "בית", exact: true })).toHaveAttribute("aria-current", "page");
     await homeShape(page);
     // the demo's week opens on the first Sunday three weeks or more ahead (that mode only): «בעוד N ימים»

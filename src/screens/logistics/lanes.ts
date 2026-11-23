@@ -197,8 +197,9 @@ export const AXIS_TICKS: readonly number[] = Array.from({ length: 12 }, (_, i) =
 
 /**
  * The pickup's minute on the lesson's grid day, as the board draws and says it. `pickup_time` is what every other reader
- * shows (the lesson page, the files, «אישורים»), and the old screens' set_transport_details rewrites it while leaving
- * pickup_min as it was (CONTRACT: pickup_min is set_transport_request's alone) — so pickup_min counts only while it is
+ * shows (the lesson page, the files, «אישורים»), and set_transport_details rewrote it while leaving pickup_min as it was
+ * (CONTRACT: pickup_min is set_transport_request's alone; no screen calls set_transport_details since the reset's
+ * phase 5, but rows it wrote remain) — so pickup_min counts only while it is
  * the time typed (the same minute of the clock: it keeps the request's day-or-night choice); a time typed since → its
  * own minute (pickupMin, as the request form computes it); words («אחרי השיעור») or no time at all → null (not a time).
  */

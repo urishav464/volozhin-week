@@ -106,7 +106,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   every TBD blocks); `src/domain/escorts.ts` the escorts' load and duty notes.
   `src/domain/stages.ts` derives the five stage dots and a closed lesson's next step — the card,
   the lesson panel, the lesson page and «היום שלי» / «ימים» all read it. Screens: `src/screens/stages/`
-  (the lesson panel's five sections, handed to `LessonPanel` as `stages`; the lesson page reuses them), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
+  (the stage sections the lesson page's steps are built of; since phase 5 of the reset the grid's panel shows a closed lesson's summary only), «תבניות» (`src/screens/settings/TemplatesTab.tsx`: the template with
   a live preview, the duty phrases), and the approvals queue's payment section. The escort
   picker warns through `escortClashes` (`src/rules/warnings.ts`), the same rule as `escort_gap`.
 - **Outputs and knowledge (milestone 4, schema v8):** `src/exports/` — pure, unit-tested builders of
@@ -171,7 +171,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (`.github/workflows/ci.yml`; jobs 30 and 10; the e2e step 10, the browser install 15) — a decoder loop blocks
   vitest's own timeouts.
   Running headers are `settings.reader_headers` — empty unless the instructor writes them, never seeded.
-  Screens: `src/screens/stages/SourceFiles.tsx` (the lesson panel's upload and lists), `src/screens/reader/ReaderScreen.tsx`
+  Screens: `src/screens/stages/SourceFiles.tsx` (the lesson page's sources upload and lists; presentations apart since phase 5 of the reset, `skipPresentations`), `src/screens/reader/ReaderScreen.tsx`
   (`/reader`, every member since v19 — content and admins build it whole, logistics builds, downloads and marks «נשלח לדפוס»; also a tab of «תוצרים»). The «מקראה» stage dot is the manifest's verdict:
   `stagesOf(lesson, readerFilesOf(week, id))` / `nextLessonStep(lesson, files)` — every caller passes the files.
 - **Memorial times and logistics (milestone 5ב-2, schema v11):** `fallen` (one cross-year list; a global admin
@@ -261,8 +261,8 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   export, `load_week`, Realtime or the offline copy. Across years `speaker_reviews` (`app.may_read_reviews`: a global
   admin, or admin/content of a live real edition; past years + the reader's own live one; never who wrote it).
   `port.reviews` (`src/data/reviews.ts`, `supabaseReviews.ts`, `demoReviews.ts`; the engine's `saveReview` /
-  `speakerReviews` / `returning` / `purgePrivate`, parity-tested). Screens: the lesson panel's sixth section
-  (`src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged; «אחרי השבוע» since phase 3 of the reset), the speaker
+  `speakerReviews` / `returning` / `purgePrivate`, parity-tested). Screens: «אחרי השבוע» (`/after`, since phase 3 of the reset;
+  the form is `ReviewForm` in `src/screens/stages/ReviewStage.tsx`; the card's five dots unchanged; the grid panel's section went in phase 5), the speaker
   page's `SpeakerReviews.tsx`, «סיכום המחזור» (`/knowledge/summary`, `src/screens/knowledge/SummaryScreen.tsx`, builders in
   `src/exports/summary.ts` — counts only, no thresholds). `purge_edition_private` (a global admin, from Friday 00:00
   Israel = start_date + 5 or once archived, the label typed): deletes `transport_details` and the links' hits, revokes
@@ -355,7 +355,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `app.require_logistics`, only once approved — `transport_hidden`), both a JSON PATCH that logs field names, and both refuse
   `transport_hidden` to anyone `app.may_see_transport` would not let read the row (who writes can read: never a practice or demo
   week's team, never an archived edition's own admin; a global admin always);
-  `set_transport_details` stays as it is for the old screens. `transport_details.pickup_min` is a `PERSONAL_KEYS` key, read
+  `set_transport_details` stays in SQL, the engine and parity — no screen calls it since phase 5 of the reset. `transport_details.pickup_min` is a `PERSONAL_KEYS` key, read
   under `transport_details`' own policy (the same `app.may_see_transport`) and returned by `get_transports_for`; never in a Week,
   Realtime or the offline copy. `app.may_see_transport`: a global admin; in a real live edition its admins, the handler,
   and logistics while the request is `pending` or `approved` (before: approved only) — `public/privacy.html` says so.
@@ -371,7 +371,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   (`personaOf(me, editionId)` in `src/data/gate.ts`: a global admin is staff, else the role of `actorIn`'s membership);
   the header is `navFor` (`src/screens/nav.ts`) — a trainee's four sections «היום שלי» `/` · «מרצים» `/speakers` · «השבוע»
   `/week` · «עזרה» (and «אחרי השבוע» from phase 3); the staff's header is phase 3's, logistics' home phase 4's. The writing
-  grid stays reachable at `/grid`; guards come in phase 5. Addresses are built and parsed in ONE place,
+  grid's old address `/grid` redirects since phase 5 (`gridRedirect`). Addresses are built and parsed in ONE place,
   `src/domain/routes.ts` (`lessonPath(id, step)`, `speakerPath(id, section)`, `speakersPath(query)` — filters live in the
   query; a slot is `?slot=d:start-end&lesson=<id>`, so a parallel draft's link names its own draft — `slotFor`).
   **«היום שלי»** (`src/screens/myday/`, pure `myDay(model, day, me)` in `src/domain/myDay.ts`): the days `week.dayOwners`
@@ -425,7 +425,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   («דחייה» asks once, everywhere); approved → `DriverForm` (`setTransportDriver` only, changed keys only; «סודר» publishes
   the driver on the escort's page — said on screen). The lesson page's pay step gives staff and logistics `StaffTransport`
   (`src/screens/lesson/`: the pickup read-only, the driver only after approval, `mayArrangeDriver`); the old
-  `set_transport_details` form survives only in the grid's panel and an archive's lesson. **«ימים»** (`/day/:d`,
+  `set_transport_details` form went in phase 5 (an archive's lesson reads its transport, `TransportReadOnly`). **«ימים»** (`/day/:d`,
   `src/screens/myday/DayScreen.tsx`): `myDay(…, { staff: true })` per day — the pair, the balance, every slot's next step,
   «חריגים», who can come; no day in the address = `staffDay`; «ראיתי» only for an owner. **ONE «חריג» rule:** `outsidePair`
   (`src/grid/owners.ts`: a closed lesson's handler, or any live candidate's on a draft, outside the day's pair; none on a
@@ -434,7 +434,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `pageSteps` step, each cell a link to its step; filters day / «רק מה שחסר» / handler; cards on a phone) — last year's
   colours stay only in tracking (`src/domain/progress.ts`); «אחריות» keeps the handler's colour and names the day's pair.
   The pool is gone (no column, drawer or «שבץ»; propose from a cell's chooser or the speaker page); the only drag left
-  moves a lesson; the panel stays (shape, move, grid rules) with «לדף השיעור». **Deleted:** `SpeakerSheet`,
+  moves a lesson; the panel stays (shape, move, grid rules) with «לדף השיעור» — a closed lesson's summary only since phase 5. **Deleted:** `SpeakerSheet`,
   `CreateSpeaker`, `MineScreen`, `TeamBoard.tsx`, the old approvals queue, `src/grid/Pool.tsx`, `mySpeakers`,
   `waitingForApproval`, `handlesSpeakers`, placing mode. «כל הצוות» → `/speakers?view=team` (`TeamView.tsx`); «הוצעו לך»
   (`offeredTo`, `myDay.ts`) → a line atop «מרצים» and «היום שלי». **«אחרי השבוע»** (`/after`, `src/screens/after/`,
@@ -467,7 +467,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   headers, uploads or removal; `set_reader_sent(p_edition, p_sent)` (definer, `require_logistics`; archived → admins) writes or
   removes `editions.settings.reader_sent = {at, by}`, never carried by `start_edition`; `filesAfterSent` («נוספו N קבצים אחרי
   השליחה»); «מקראה» is in every member's `OutputsTabs`. **Books:** `suggestedCopies(signed, leaders)` beside the field,
-  «למלא» fills it only, saved on «שמירה». **What phase 5 needs, already in v19** (no screen writes it yet): presentations
+  «למלא» fills it only, saved on «שמירה». **What phase 5 needs, already in v19** (phase 5's screens write it): presentations
   (`source_files.kind` `source` | `presentation`; pptx only as a presentation — mime check, bucket, `SOURCE_PATH_RE` ≡
   `app.source_path_re`; `register_source_file(…, p_kind)`, the 5-argument overload dropped with its grant; never in the reader,
   the manifest or `printRows` — `isPresentation`; an edition-level one is admins', `lesson_id` null, never the cover);
@@ -484,11 +484,61 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `{edition, rows (+note, +people), people [{label, bio, photo}], fixed}`: a speaker in `people` only with an approach of
   THAT edition marked `public_ok`, once, by first appearance; a memorial slot nameless; `fixed` = the grid's fixed/kk rows
   inside the day window; the browser twin is `publicSchedule` (`src/exports/publicSchedule.ts`, `GuestSchedule`), and
-  `SchedulePage.tsx` shows none of it yet (phase 5). `public/privacy.html` says what a guest sees. Advisor 83 (three more
+  `SchedulePage.tsx` shows it since phase 5. `public/privacy.html` says what a guest sees. Advisor 83 (three more
   definer functions: `set_reader_sent`, `set_speaker_photo`, `set_public_ok`). **The demo's `?as=logistics`** adds a cohort
-  that can drive, one that does not help, two shopping items, a week date three weeks ahead (`demoLogisticsStart`, that mode
-  only) and one `public_ok` speaker with a synthetic photo. Parity: six v19 scenarios, every step pinned with `is`; tests
+  that can drive, one that does not help, two shopping items and a week date three weeks ahead (`demoLogisticsStart`, that
+  mode only); its guests' sample is every demo's since phase 5 (`seedDemoGuests`). Parity: six v19 scenarios, every step pinned with `is`; tests
   `tests/sql/v19.test.ts`, e2e `logistics-home.spec.ts`. DECISIONS «הריסט, שלב 4 — הבית של הלוגיסטיקה, וגרסה 19».
+- **The reset, phase 5 — the guest site, filling it in, presentations, cleanup (no schema change):** every screen writes
+  through v19's existing commands. **The guest site** (`/s`, `src/screens/public/`): `guestView` (an answer from before v19
+  reads as one), `guestDays` (`guestDays.ts`: lessons, memorial times — nameless — and the grid's fixed rows by time, days with
+  fixed rows only included), a sticky day bar of BUTTONS (never `href="#…"`, never pushState — the hash is the token), the days
+  side by side from 1280px; a lesson with more (`rowHasMore`: a note, or a marked speaker with a bio or a valid photo) opens
+  `GuestCard.tsx` — a native modal `<dialog>` (a bottom sheet on a phone; Escape, the backdrop, «סגירה»; focus back to the
+  row), no request, history entry or storage on opening; `CardBody` (its `level`: 2 in the dialog, 4 inside a team page's
+  section) draws text nodes only and a photo only through
+  `guestPhotoSrc` (`src/domain/photo.ts`: a `data:image/jpeg` that `photoFromBase64` accepts — never a URL). Print: lessons
+  and fixed rows, no notes, bios or photos. **Filling it in** (`src/domain/guestSite.ts`: `guestRows`, `guestSummary`,
+  `guestLine`, `filterGuests`, `guestPreview`; `mayEditSpeaker` lives here; `mayMarkPublic` ≡ `set_public_ok`'s mark rule with
+  `app.may_edit_speaker`, `mayUnmarkPublic`, `publicOkOffered` — the box shows once the approach is `positive` or already
+  marked; a practice week's existing mark keeps its box, to be taken back; `mayChangePublicOk` — the consent hint only to a
+  viewer who may change a box; a test holds `guestRows`' marked people ≡ `publicSchedule(…).people`): the speaker page's `#guest`
+  (`src/screens/speakerPages/GuestSpeaker.tsx`; `PublicOkSwitch` in `src/screens/speakers/PublicOk.tsx`, shared with the lesson
+  page; the photo redrawn in the browser — `photoCanvas.ts` `preparePhoto` (≤ 25MB, ≤ 40MP before decoding — a WebP's size by `webpSize`, an AVIF/HEIF's by `heifSize`) and the pure
+  `fitPhoto` (`src/domain/photoFit.ts`: ≤ 512px, ≤ 20KB, never enlarged, ≤ 12 encodes, every candidate stripped and passing
+  `photoOk`) — the preview is the bytes sent, held in React state only; the guest bio ≤ 600), the lesson page's `#guest`
+  (`src/screens/lesson/GuestLesson.tsx`, closed lessons, a section under the stepper — the five dots and six steps
+  unchanged: `public_note` ≤ 400 through `updateLesson`, each speaker's mark, bio and photo, «כך זה ייראה לאורחים»), and
+  «תוצרים ← אתר האורחים» (`/export/guests`, `src/screens/outputs/GuestsScreen.tsx`, edition admins: counts, filters in the
+  address — `guestsPath`, what is missing, a take-back, «תצוגה מקדימה לאורחים» = `publicSchedule` with photos read ≤ 4 at a
+  time, only while open). **Presentations** (`/presentations?day=&room=`, `src/screens/presentations/`, every member by
+  address; in the header for staff and logistics): the hall's computer is not signed in — a staff member downloads the day
+  every morning. `src/domain/presentations.ts`: `presentationRows` (closed lessons and memorial slots; `file` / `link` /
+  `missing` / `none` / `memorial`; the CURRENT lead's files, `lessonPresentations`), `weekPresentations` (the cover path,
+  admins upload, never Word), `orphanPresentations`, `dayZipPlan` (week decks `0000_השבוע_…` first, then `HHMM_<room>_<name>`
+  in the day's order — a night hour is 24–29 — plus `סדר-היום.txt` and, with a link-only row, `links.txt`, UTF-8 BOM, CRLF;
+  names through `safeEntryName` — control and bidi characters out — and `storedFileName`, the extension from the STORED path,
+  never the display name, also for «הורדה» and the archive, `src/exports/download.ts`); a night row reads «ליל ראשון–שני»
+  (`nightLabel`, `src/domain/time.ts`, shared with the reader and /s); `src/exports/presentationsZip.ts` (fflate, stored,
+  ≤ 250MB, cancel; the rest of a batch signed again after `RESIGN_AFTER_MS`, an address refused as expired asked for once
+  more; with a room chosen the card and its button name the room; not one file came = an error, no zip, no marker). The device remembers the day's last download (`readZipMarker`/`writeZipMarker`, localStorage in try/catch, server
+  upload times compared — `newSinceDownload`) and marks «חדש מאז ההורדה»; the week store reloads every
+  `PRESENTATIONS_POLL_MS` while the tab is visible (`source_files` is not in Realtime). Uploads: `checkPicked(file, cover,
+  "presentation")` then `port.sources.upload(…, { kind: "presentation" })` — the browser's own words `pptx_source`,
+  `presentation_bad_file`, `week_presentation_bad_file`; logistics never gets an input. `openOrDownload` (`open.ts`: PDF or
+  picture opens, pptx/docx downloads under its Hebrew name) is also `FileRow`'s. The lesson page's «מקורות ומצגת» has
+  `LessonPresentations` (`#presentations`); `SourceFiles skipPresentations`. **Cleanup:** `/grid` redirects (`gridRedirect`:
+  staff `/`, the rest `/week`; «טוען…» until the edition is known — a screen guard only, the SQL still lets a content member
+  reshape); no screen calls `set_transport_details` (`WeekCommands.setTransport`, `TransportBlock`, `TransportForm` gone; an
+  archive's lesson reads `TransportReadOnly`; CONTRACT says so); the grid panel of a closed lesson is a summary (details, the
+  five dots read-only, «לדף השיעור», «פעולות נוספות»); below 1024px the header shows its first four sections and «עוד», a
+  disclosure (`NavItem.more` and the disclosure in `Shell.tsx`; `splitNav`, `moreLabel` in `src/screens/nav.ts`; Escape and a
+  page change close it, focus back), the
+  trainee has none; «עזרה» per role (`src/domain/guide.ts`: `GUIDE_SECTIONS` maps every `##` of `docs/GUIDE.he.md` to the
+  personas — a unit test fails on an unmapped heading — `guideFor`, «כל המדריך» at `/help?all=1`). The demo seeds guest data
+  and three synthetic presentation PDFs in every persona (`seedDemoGuests`, `seedDemoPresentations`, `demoWeek.ts`). e2e:
+  `guests.spec.ts`, `presentations.spec.ts`; a header click goes through `goSection` (`tests/e2e/helpers.ts`), which opens
+  «עוד» first. DECISIONS «הריסט, שלב 5 — אתר האורחים, מילוי, מצגות וניקיון».
 - `src/screens/speakers/` — the speaker's shared parts (since phase 3 of the reset no screen of its own): `sheetParts.tsx`
   (contacts, hand-over and offers, claim, `mayEditSpeaker`), `call.tsx`, `parts.tsx`, `nameCheck.tsx`, `SpeakerReviews.tsx`
   — used by `src/screens/speakerPages/` and the lesson page. The week, the new pages and /approvals share one loaded edition

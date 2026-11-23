@@ -1,9 +1,10 @@
 // The side panel (a bottom sheet on a phone): what a lesson or an empty cell
-// offers — candidates, the call and closing, the lesson's details, its stages after it
-// closed (payment, the message, the escort, sources: src/screens/stages/,
-// handed in by the week as `stages`), and reshaping the cell. The reset, phase 3: the
-// staff's writing grid keeps it (shaping, moving, the grid's rules), and a lesson's panel
-// leads to the lesson's own page («לדף השיעור», /lesson/:id).
+// offers — candidates, the call and closing, the lesson's details, and reshaping the
+// cell. The reset, phase 3: the staff's writing grid keeps it (shaping, moving, the
+// grid's rules), and a lesson's panel leads to the lesson's own page («לדף השיעור»,
+// /lesson/:id). Phase 5: a closed lesson's panel is a summary only — its details, its
+// five stage dots to read, «לדף השיעור» and «פעולות נוספות» (the slot's shape, reopening);
+// the stages themselves are worked on the lesson page.
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { lessonHandler } from "../domain/handler";
@@ -87,10 +88,26 @@ export function Sheet({
     };
   }, [wide]);
   useEffect(() => {
+    // what opened the sheet (a card, a cell's button): closed by × or Escape, the focus goes back to it — only when it fell
+    // to the page (another sheet opening in its place keeps its own; a link that left the week finds no opener). The
+    // same sheet stays up when the next card switches it (the week is worked in beside it): the last element outside the
+    // sheet that took the focus is the one it gives back to, never the first card (the final review)
+    const outside = (t: EventTarget | null) => (t instanceof HTMLElement && t !== document.body && !ref.current?.contains(t) ? t : null);
+    let opener = outside(document.activeElement);
+    const track = (e: FocusEvent) => {
+      opener = outside(e.target) ?? opener;
+    };
+    document.addEventListener("focusin", track);
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus(); // a field with autoFocus keeps it
     const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("focusin", track);
+      window.removeEventListener("keydown", esc);
+      queueMicrotask(() => {
+        if (opener?.isConnected && focusLost()) opener.focus();
+      });
+    };
   }, []);
   return (
     <div
@@ -194,8 +211,6 @@ export interface LessonPanelProps {
   actions: PanelActions;
   onClose: () => void;
   wide: boolean;
-  /** A closed lesson's stages (src/screens/stages/LessonStages.tsx); without it, a read-only summary. */
-  stages?: (l: Lesson) => ReactNode;
   /** A draft's files from the speaker who left (src/screens/stages/SourceFiles.tsx), for removal. */
   files?: (l: Lesson) => ReactNode;
 }
@@ -525,7 +540,7 @@ export function CandidateCard({ model, pitch: p, me, isAdmin, global, canEdit, a
   );
 }
 
-function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages }: LessonPanelProps) {
+function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions }: LessonPanelProps) {
   const owner = lessonHandler(model.week, l.id);
   const mine = isAdmin || owner === me;
   const row = l.kind === "lesson" ? rowOf(model, l) : undefined;
@@ -533,21 +548,18 @@ function ClosedDetails({ model, lesson: l, me, isAdmin, canEdit, actions, stages
   return (
     <>
       <LessonDetails model={model} lesson={l} canEdit={canEdit} onSave={(patch) => actions.update(l.id, l.version, patch)} />
-      {stages ? (
-        stages(l)
-      ) : (
-        <Section title="שלבים">
-          <ul className="space-y-1 text-sm">
-            {stagesOf(l, readerFilesOf(model.week, l.id)).map((s) => (
-              <li key={s.key} className="flex items-center gap-2">
-                <span className={`size-2.5 rounded-full border ${STAGE_DOT[s.state]}`} />
-                <span className="font-semibold">{s.label}</span>
-                <span className="text-ink-soft">{s.note}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      {/* the five stages to read, as the card's dots — each is worked on the lesson page («לדף השיעור», above) */}
+      <Section title="שלבים">
+        <ul className="space-y-1 text-sm" data-panel-stages>
+          {stagesOf(l, readerFilesOf(model.week, l.id)).map((s) => (
+            <li key={s.key} data-stage={s.key} data-state={s.state} className="flex items-center gap-2">
+              <span aria-hidden className={`size-2.5 shrink-0 rounded-full border ${STAGE_DOT[s.state]}`} />
+              <span className="font-semibold">{s.label}</span>
+              <span className="min-w-0 text-ink-soft">{s.note}</span>
+            </li>
+          ))}
+        </ul>
+      </Section>
 
       {/* the occasional acts, one of them destructive: one quiet fold at the end, closed */}
       {canEdit && (row || mine) && (

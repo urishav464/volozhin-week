@@ -38,12 +38,13 @@ import type { Fallen, FallenContacts } from "../data/memorial";
 import type { LessonReview } from "../data/reviews";
 import type { ArchiveExtras } from "../data/outputs";
 import { prepKindOf, type RotaContact, type RotaData } from "../data/rota";
+import { parseSourcePath } from "../data/sourceRules";
 import { fallenName } from "../domain/memorial";
 import { displayName } from "../domain/names";
 import { canDrive, codeOf, helpsRota } from "../domain/rota";
 import { DAY_NAMES, fmt } from "../domain/time";
 import type { SourceFile, Week } from "../domain/types";
-import { PERSONAL_FILE } from "./download";
+import { PERSONAL_FILE, storedFileName } from "./download";
 import { speakersOf } from "./logistics";
 import { trackingRows, trackingTable } from "./tracking";
 import { toXlsx } from "./xlsx";
@@ -96,18 +97,13 @@ export function sourcesSize(week: Pick<Week, "sourceFiles">): { count: number; b
   return { count: files.length, bytes: files.reduce((a, f) => a + f.size_bytes, 0) };
 }
 
-/** A file's name as a zip entry may carry it: no folder separators or characters a file system refuses; at most 80 characters. */
-export function safeEntryName(name: string): string {
-  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^[._\s]+|[.\s]+$/g, "").trim();
-  return [...(clean || "file")].slice(-80).join("");
-}
 
 /**
  * Where a file goes in the zip: sources/<day>/<time>_<id>_<name>. A memorial file goes where its plan is placed now;
  * the poster to sources/שער; a file whose lesson is gone (or a plan in the tray) to sources/בלי-שיבוץ.
  */
 export function sourcePath(week: Pick<Week, "lessons" | "memorialPlans">, f: SourceFile): string {
-  const name = `${f.id}_${safeEntryName(f.display_name)}`;
+  const name = `${f.id}_${storedFileName(f.display_name, parseSourcePath(f.storage_path)?.ext)}`; // the stored type's extension
   if (f.cover) return `sources/שער/${name}`;
   const placed = f.fallen_id != null ? (week.memorialPlans ?? []).find((p) => p.fallen_id === f.fallen_id)?.lesson_id : undefined;
   const lessonId = f.fallen_id != null ? (placed ?? null) : f.lesson_id;

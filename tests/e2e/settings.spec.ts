@@ -7,7 +7,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import { DEFAULT_CALL_TEMPLATE } from "../../src/domain/callPoints";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -20,7 +20,7 @@ test.describe("demo build — an admin", () => {
   test("opens הגדרות from the header, adds a member, and pastes the trainees' names", async ({ page }, info) => {
     const wide = info.project.name === "desktop";
     await page.goto(demoUrl());
-    await page.getByRole("banner").getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await expect(page).toHaveURL(/\/settings\/team$/);
     await expect(page.getByRole("tablist", { name: "אזורי ההגדרות" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "צוות" })).toHaveAttribute("aria-selected", "true");
@@ -253,7 +253,7 @@ test.describe("mock build", () => {
     await signIn(page);
     await page.goto(mockUrl());
     await expect(page.getByRole("heading", { name: "עוד לא נפתח מחזור" })).toBeVisible();
-    await expect(page.getByRole("banner").getByRole("link", { name: "הגדרות" })).toHaveCount(0);
+    await expect(page.getByRole("banner").getByRole("link", { name: "הגדרות", includeHidden: true })).toHaveCount(0); // nor behind «עוד»
     await expect(page.getByRole("link", { name: "לפתיחת מחזור" })).toHaveCount(0);
 
     await page.goto(`${mockUrl()}/settings/team`);
@@ -269,7 +269,7 @@ test.describe("mock build", () => {
     const session = await signIn(page, "admin@example.org");
     sb.token = session.access_token;
     await page.goto(mockUrl());
-    await page.getByRole("banner").getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await expect(page.getByText(/מחזור:\s*תשפ"ז/)).toBeVisible();
     await expect(page.getByRole("banner").getByRole("button", { name: "התנתקות" })).toBeVisible(); // the fullest header still fits
     await noSidewaysScroll(page);

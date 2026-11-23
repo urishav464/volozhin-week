@@ -52,6 +52,9 @@ describe("sectionNeedingConnection", () => {
     expect(sectionNeedingConnection("/day/3")).toBeNull();
     expect(sectionNeedingConnection("/after")).toBe("אחרי השבוע");
     expect(sectionNeedingConnection("/approvals")).toBe("אישורים");
+    // the reset, phase 5: «מצגות», and «אתר האורחים» under «תוצרים»
+    expect(sectionNeedingConnection("/presentations")).toBe("מצגות");
+    expect(sectionNeedingConnection("/export/guests")).toBe("תוצרים");
     expect(sectionNeedingConnection("/mine/team")).toBe("המסך הזה"); // gone: its address only redirects
   });
 });

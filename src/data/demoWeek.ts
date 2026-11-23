@@ -302,13 +302,13 @@ export function demoLogisticsStart(nowIso: string): string {
  * the board's 06:30; Wednesday's 10:00, approved, not arranged: a pickup row of its own at 08:45, no driver yet), and two
  * more staff shifts — Monday morning a name as typed, Wednesday the logistics member as the shift's lead. Placeholder
  * words only («כתובת לדוגמה»), never a number or an address that could be someone's.
- * Phase 4 (v19) adds: cohort «ב»'s staff can drive and «נ» does not help with the duties; two items to buy («פריט
- * לדוגמה 1/2», «2 (לדוגמה)» each) after the tasks; and the lead of Sunday's closed 08:30 lesson approved for the guests'
- * schedule (public_ok), with a description «תיאור לדוגמה» and the demo's photo (built in code: src/data/demoPhoto.ts).
+ * Phase 4 (v19) adds: cohort «ב»'s staff can drive and «נ» does not help with the duties; and two items to buy («פריט
+ * לדוגמה 1/2», «2 (לדוגמה)» each) after the tasks. (Its guests' sample — Sunday's 08:30 lead approved, with a
+ * description and the photo — is every demo's since phase 5: seedDemoGuests.)
  */
 export function seedDemoLogistics(
-  shared: Pick<PoolShared, "transport" | "rota" | "photos">,
-  week: Pick<Week, "edition" | "lessons" | "speakers" | "approaches" | "lessonSpeakers">,
+  shared: Pick<PoolShared, "transport" | "rota">,
+  week: Pick<Week, "edition" | "lessons">,
   logistics: Pick<MemberRow, "id" | "display_name"> | null,
 ): void {
   const key = (day: Day, start: number) => `${week.edition.id}:${week.lessons.find((l) => l.kind === "lesson" && l.day === day && l.start_min === start && l.state === "closed")!.id}`;
@@ -340,16 +340,48 @@ export function seedDemoLogistics(
       kind: "item", qty: "2 (לדוגמה)",
     });
   }
-  // v19: one speaker the guests' schedule shows — Sunday's 08:30 lead, with a description and a photo
-  const sunday = week.lessons.find((l) => l.kind === "lesson" && l.day === 0 && l.start_min === 510 && l.state === "closed");
-  const lead = sunday && week.lessonSpeakers.find((x) => x.lesson_id === sunday.id && x.role === "lead");
-  const approach = lead && week.approaches.find((a) => a.speaker_id === lead.speaker_id);
-  const speaker = lead && week.speakers.find((s) => s.id === lead.speaker_id);
-  if (approach && speaker) {
-    approach.public_ok = true;
-    speaker.public_bio = "תיאור לדוגמה";
-    shared.photos[speaker.id] = { image: demoPhotoBytes(), uploaded_by: approach.owner_member_id, uploaded_at: "2026-11-01T08:00:00.000Z" };
+}
+
+/** A lesson's short description for guests in the demo (the reset, phase 5) — placeholder words. */
+export const DEMO_GUEST_NOTE = "תיאור קצר לשיעור (לדוגמה)";
+
+/** The demo's descriptions for guests: the approved speaker with a photo, the approved one without, the one not approved. */
+export const DEMO_GUEST_BIOS = { photo: "תיאור לדוגמה", bioOnly: "תיאור לדוגמה ב׳", notMarked: "תיאור לדוגמה ג׳" } as const;
+
+/**
+ * The guests' site in EVERY demo (the reset, phase 5 — the instructor's «קישורים ← הלו"ז לצפייה» and «תוצרים ← אתר
+ * האורחים» show a mixed state): Sunday's 08:30 — its lead (speaker 01, «חניך/ה א׳»'s) approved for the guests' schedule
+ * (public_ok) with the description «תיאור לדוגמה» and the demo's photo (built in code: src/data/demoPhoto.ts), the lesson
+ * with a short description; Wednesday's 10:00 with a description and nobody approved (a card with the note alone);
+ * Tuesday's 16:00 in the בית מדרש — its lead (speaker 16, the instructor's) approved with a description and no photo;
+ * and Sunday's 14:30's lead (speaker 07) with a description, not approved. Placeholder words only.
+ */
+export function seedDemoGuests(shared: Pick<PoolShared, "photos">, week: Pick<Week, "lessons" | "speakers" | "approaches" | "lessonSpeakers">): void {
+  const at = (day: Day, start: number, room = 1) => week.lessons.find((l) => l.kind === "lesson" && l.state === "closed" && l.day === day && l.start_min === start && l.room_id === room);
+  const leadOf = (day: Day, start: number, room = 1) => {
+    const l = at(day, start, room);
+    const id = l && week.lessonSpeakers.find((x) => x.lesson_id === l.id && x.role === "lead")?.speaker_id;
+    const speaker = id == null ? undefined : week.speakers.find((s) => s.id === id);
+    const approach = id == null ? undefined : week.approaches.find((a) => a.speaker_id === id);
+    return speaker && approach ? { speaker, approach } : null;
+  };
+  for (const [day, start] of [[0, 510], [3, 600]] as [Day, number][]) {
+    const l = at(day, start);
+    if (l) l.public_note = DEMO_GUEST_NOTE;
   }
+  const full = leadOf(0, 510);
+  if (full) {
+    full.approach.public_ok = true;
+    full.speaker.public_bio = DEMO_GUEST_BIOS.photo;
+    shared.photos[full.speaker.id] = { image: demoPhotoBytes(), uploaded_by: full.approach.owner_member_id, uploaded_at: "2026-11-01T08:00:00.000Z" };
+  }
+  const bioOnly = leadOf(2, 960, 1);
+  if (bioOnly) {
+    bioOnly.approach.public_ok = true;
+    bioOnly.speaker.public_bio = DEMO_GUEST_BIOS.bioOnly;
+  }
+  const notMarked = leadOf(0, 870);
+  if (notMarked) notMarked.speaker.public_bio = DEMO_GUEST_BIOS.notMarked;
 }
 
 /** Contacts for the demo's sheet: placeholder words, and addresses at example.org (which never delivers). */
@@ -464,5 +496,37 @@ export function seedDemoSources(week: Week): { samples: Record<string, Sample>; 
   word.in_reader = true;
   add(word.id, "מקורות לדוגמה.docx", { kind: "docx", title: "שיעור לדוגמה", pages: 1 }, 12_000, 3);
   at(1, 930).in_reader = true; // marked, nothing arrived: «חסר»
+  return { samples, objects };
+}
+
+/**
+ * The demo's presentations (the reset, phase 5), after seedDemoSources (the ids go on from its): Sunday's 08:30 «מצגת
+ * לדוגמה.pdf», Tuesday's 16:00 in «כיתת בית מדרש» «שקפים לדוגמה.pdf», and the week's deck «המצגת המלווה לשבוע
+ * (לדוגמה).pdf» on the cover path — PDFs of 16:9 pages made in the browser when first opened (src/data/demoFiles.ts;
+ * never a pptx: no hand-built PowerPoint, no file in git). With Sunday's 10:00 (a link only) and Tuesday's 16:00 in the
+ * בית מדרש («מצגת» marked, nothing uploaded), the page shows every state. Rows and the bucket's record only.
+ */
+export function seedDemoPresentations(week: Week): { samples: Record<string, Sample>; objects: Record<string, StoredObject> } {
+  const at = (day: number, start: number, room = 1) => week.lessons.find((l) => l.kind === "lesson" && l.day === day && l.start_min === start && l.room_id === room && l.state === "closed")!;
+  const lead = (lessonId: number) => week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")?.speaker_id ?? null;
+  const samples: Record<string, Sample> = {};
+  const objects: Record<string, StoredObject> = {};
+  let n = week.sourceFiles.reduce((m, f) => Math.max(m, f.id), 0);
+  const add = (lessonId: number | null, display: string, sample: Sample, size: number, by: number, uploaded_at: string) => {
+    n++;
+    const path = `${week.edition.id}/${lessonId ?? "cover"}/00000000-0000-4000-9000-${String(n).padStart(12, "0")}-deck-${n}.pdf`;
+    week.sourceFiles.push({
+      id: n, lesson_id: lessonId, cover: false, kind: "presentation", speaker_id: lessonId == null ? null : lead(lessonId), fallen_id: null, storage_path: path, display_name: display,
+      mime: "application/pdf", size_bytes: size, page_count: null, uploaded_by: by, uploaded_at,
+    });
+    samples[path] = sample;
+    objects[path] = { mime: "application/pdf", size, owner: `member:${by}` };
+  };
+  const deck = (title: string, pages: number): Sample => ({ kind: "pdf", title, pages, size: [960, 540], heading: "מצגת לדוגמה" });
+  const opening = at(0, 510);
+  add(opening.id, "מצגת לדוגמה.pdf", deck("פתיחת השבוע (לדוגמה)", 3), 640_000, 2, "2026-11-15T11:00:00Z");
+  const parallel = at(2, 960, 2);
+  add(parallel.id, "שקפים לדוגמה.pdf", deck("שיעור לדוגמה", 2), 410_000, 2, "2026-11-16T11:00:00Z");
+  add(null, "המצגת המלווה לשבוע (לדוגמה).pdf", deck("המצגת המלווה לשבוע (לדוגמה)", 2), 220_000, 1, "2026-11-14T11:00:00Z");
   return { samples, objects };
 }

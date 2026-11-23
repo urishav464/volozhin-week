@@ -1,8 +1,9 @@
 // «השבוע» for a trainee (the reset, phase 2; `/week`): the week to read — the full grid on a wide screen, the day
 // view on a phone or a tablet (as the week screen chooses) — with nothing to place, shape or drag; a lesson card opens
-// its page (`/lesson/:id`), a memorial slot «זמני זיכרון». The days I own are marked («היום שלי»). The old grid, which
-// writes, stays at `/grid` (and `/` for staff); logistics read the week here too (phase 4: «השבוע» in their header, the
-// link back «לבית»); OfflineWeek.tsx stays the copy without internet. No warnings' counts:
+// its page (`/lesson/:id`), a memorial slot «זמני זיכרון». The days I own are marked («היום שלי»). The grid that
+// writes is the staff's, at `/` only — since phase 5 `/grid` sends a trainee and logistics here (nav.ts gridRedirect);
+// logistics read the week here too (phase 4: «השבוע» in their header, the link back «לבית»); OfflineWeek.tsx stays the
+// copy without internet. No warnings' counts:
 // they are the staff's to act on, and nothing a trainee can open here explains them (no day panel, no warnings list).
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";

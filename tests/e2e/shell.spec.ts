@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, headerNav, INLINE_SECTIONS, LOGISTICS_SECTIONS, narrowHeader, noSidewaysScroll, STAFF_SECTIONS } from "./helpers";
 import { FakeSupabase, fakeSession, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -26,6 +26,82 @@ test.describe("demo build", () => {
     await expect(page.getByRole("status")).toContainText("מצב הדגמה");
     await expect(page.getByText("מדריך/ה (הדגמה)").first()).toBeVisible();
     await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible();
+    await noSidewaysScroll(page);
+  });
+
+  test("the header: below 1024px one row and «עוד» for the rest — by the keyboard, Escape gives it the focus back; from 1024px every section in the row", async ({ page }) => {
+    await page.goto(demoUrl());
+    const nav = headerNav(page);
+    const more = nav.locator("[data-nav-more]");
+    const panel = nav.locator("[data-nav-more-panel]");
+    await expectSections(page, STAFF_SECTIONS, INLINE_SECTIONS);
+    await noSidewaysScroll(page);
+    if (!narrowHeader(page)) {
+      // every section inline, in one row; «עוד»'s list is simply the row's end
+      await expect(more).toBeHidden();
+      await expect(panel).toBeVisible();
+      const tops = await nav.getByRole("link").evaluateAll((ls) => ls.map((l) => Math.round(l.getBoundingClientRect().top)));
+      expect(new Set(tops).size).toBe(1);
+      expect((await page.getByRole("banner").boundingBox())!.height).toBeLessThanOrEqual(56);
+      return;
+    }
+    // the staff's four, «עוד» closed — a header of two rows, not four
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(more).toHaveAttribute("aria-controls", "nav-more");
+    await expect(more).toHaveAccessibleName("עוד");
+    await expect(panel).toHaveAttribute("id", "nav-more");
+    await expect(panel).toBeHidden();
+    expect((await page.getByRole("banner").boundingBox())!.height).toBeLessThanOrEqual(120);
+    const box = (await more.boundingBox())!;
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44);
+
+    // by the keyboard: Enter opens, Tab walks into its links (a disclosure, never a menu), Escape closes — the focus back
+    await more.focus();
+    await page.keyboard.press("Enter");
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("link")).toHaveText(STAFF_SECTIONS.slice(INLINE_SECTIONS));
+    await noSidewaysScroll(page);
+    await page.keyboard.press("Tab");
+    await expect(panel.getByRole("link").first()).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(panel).toBeHidden();
+    await expect(more).toBeFocused();
+    // Space opens it, Enter on «עוד» closes it again
+    await page.keyboard.press("Space");
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Enter");
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    // a tap outside it closes it
+    await more.click();
+    await expect(panel).toBeVisible();
+    const main = (await page.locator("main").boundingBox())!;
+    await page.mouse.click(main.x + 8, main.y + main.height - 8);
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(panel).toBeHidden();
+
+    // a section behind it: the page changes, «עוד» closes with the focus on it, and wears the active pill
+    await more.click();
+    await panel.getByRole("link", { name: "ידע" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/knowledge/);
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(more).toHaveAttribute("data-active", "");
+    await expect(more).toHaveAccessibleName("עוד, כאן: ידע");
+    await expect(more).toBeFocused();
+    await noSidewaysScroll(page);
+  });
+
+  test("the header of each role below and above 1024px: logistics' four and «עוד», a trainee's few with no «עוד»", async ({ page }) => {
+    await page.goto(`${demoUrl()}/?as=logistics`);
+    await expect(page).toHaveURL(/\/logistics$/);
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS);
+    await noSidewaysScroll(page);
+    await page.goto(`${demoUrl()}/?as=trainee`);
+    await expect(page.getByRole("heading", { name: "היום שלי", level: 2 })).toBeVisible();
+    await expectSections(page, ["היום שלי", "מרצים", "השבוע", "עזרה"]);
+    await expect(headerNav(page).locator("[data-nav-more]")).toHaveCount(0);
     await noSidewaysScroll(page);
   });
 

@@ -18,8 +18,7 @@
 // src/reader/pages.ts — «צריך קובץ אחר»), and a previous speaker's files
 // (reopen_lesson keeps them, for removal). Never a presentation (v19: source_files.kind) — shown in the room, not
 // printed: no row, no leftover, never waiting, never the cover.
-import { displayName } from "../domain/names";
-import { DAY_NAMES, type Day, DAYS, fmtRange } from "../domain/time";
+import { DAY_NAMES, type Day, DAYS, fmtRange, nightLabel } from "../domain/time";
 import type { Lesson, MemorialPlan, SourceFile, SourcesKind, Week } from "../domain/types";
 import { scheduleEntries } from "../exports/designer";
 import { LRM } from "../exports/table";
@@ -125,7 +124,7 @@ export interface Manifest {
 
 /** «ראשון», «ליל ראשון–שני» — a lesson's day as the tracking table writes it. */
 export function dayLabel(day: Day, start: number): string {
-  return start >= 1440 && day < 4 ? `ליל ${DAY_NAMES[day]}–${DAY_NAMES[(day + 1) as Day]}` : DAY_NAMES[day];
+  return nightLabel(day, start) ?? DAY_NAMES[day];
 }
 
 /** The reader's header for a lesson or a memorial slot (`speaker`: the fallen of the plan placed on it, or ""). */
@@ -335,11 +334,4 @@ export function readerEstimate(m: Manifest, schedule: ScheduleLine[]): number {
 /** A day's rows in the reader, every day of the week (a «סיכום יום» page closes each one, even an empty day). */
 export function byDay<T extends { day: Day }>(rows: T[]): { day: Day; rows: T[] }[] {
   return DAYS.map((day) => ({ day, rows: rows.filter((r) => r.day === day) }));
-}
-
-/** The lead speaker's display name, for a lesson (used where a screen needs one name). */
-export function leadName(week: Week, lessonId: number): string | null {
-  const x = week.lessonSpeakers.find((s) => s.lesson_id === lessonId && s.role === "lead");
-  const s = x && week.speakers.find((p) => p.id === x.speaker_id);
-  return s ? displayName(s) : null;
 }

@@ -6,7 +6,7 @@ import { photoToBase64 } from "../domain/photo";
 import { CommandError } from "./commands";
 import { demoPhotoBytes } from "./demoPhoto";
 import { DEMO_LOGISTICS, DEMO_TRAINEE, DemoPort } from "./demoPort";
-import { demoLogisticsStart } from "./demoWeek";
+import { DEMO_GUEST_BIOS, DEMO_GUEST_NOTE, demoLogisticsStart } from "./demoWeek";
 import { Engine } from "./engine";
 import { personaOf } from "./gate";
 
@@ -86,7 +86,7 @@ describe("the other demos keep no pickup times and the rota's own staff shifts",
 });
 
 describe("v19 (the reset, phase 4): the logistics home's demo", () => {
-  it("`?as=logistics`: a date three weeks ahead (a Sunday), the two flags, a shopping list, one approved speaker with a photo", async () => {
+  it("`?as=logistics`: a date three weeks ahead (a Sunday), the two flags, a shopping list — and every demo's guests' sample", async () => {
     const port = new DemoPort(DEMO_LOGISTICS, { logistics: true, now: () => NOW });
     const week = await port.loadWeek(1);
     expect(week.edition.start_date).toBe(demoLogisticsStart(NOW));
@@ -97,27 +97,68 @@ describe("v19 (the reset, phase 4): the logistics home's demo", () => {
       ["פריט לדוגמה 2", "2 (לדוגמה)", false],
     ]);
     expect(rota.prep.filter((p) => p.kind === "task").every((p) => p.qty === null)).toBe(true);
-    const sunday = week.lessons.find((l) => l.kind === "lesson" && l.day === 0 && l.start_min === 510 && l.state === "closed")!;
-    const lead = week.lessonSpeakers.find((x) => x.lesson_id === sunday.id && x.role === "lead")!.speaker_id;
-    expect(week.approaches.filter((a) => a.public_ok).map((a) => a.speaker_id)).toEqual([lead]);
-    expect(week.speakers.find((s) => s.id === lead)).toMatchObject({ public_bio: "תיאור לדוגמה", has_photo: true });
-    expect((await port.speakers.photo(lead))?.photo).toBe(photoToBase64(demoPhotoBytes()));
-    // the guests' schedule shows them (a link the demo's instructor issues — logistics issues none)
+    // the guests' schedule shows every demo's two approved speakers (a link the demo's instructor issues — logistics issues none)
     const { token } = new Engine(port.engine(1).week, { memberId: 1, role: "admin", global: true }, undefined, port.shared).issueLink("schedule");
     const view = await port.public.scheduleView(token);
-    expect(view.people.map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true]]);
+    expect(view.people.map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true], ["תיאור לדוגמה ב׳", false]]);
   });
 
-  it("the default demo and `?as=trainee` stay as they were: no date, no flags set, no items, nobody approved, no photo", async () => {
+  it("the default demo and `?as=trainee` stay as they were: no date, no flags set, no items", async () => {
     for (const port of [new DemoPort(), new DemoPort(DEMO_TRAINEE, { trainee: true })]) {
       const week = await port.loadWeek(1);
       expect(week.edition.start_date).toBeNull();
       const rota = await port.rota.load(1);
       expect(rota.cohorts.every((c) => c.helps_rota === true && c.can_drive === false)).toBe(true);
       expect(rota.prep.every((p) => p.kind === "task" && p.qty === null)).toBe(true);
-      expect(week.approaches.some((a) => a.public_ok)).toBe(false);
-      expect(week.speakers.some((s) => s.has_photo || s.public_bio != null)).toBe(false);
-      expect(Object.keys(port.shared.photos)).toEqual([]);
+    }
+  });
+});
+
+describe("the reset, phase 5: the guests' sample and the presentations, in every demo", () => {
+  const demos = () => [new DemoPort(), new DemoPort(DEMO_TRAINEE, { trainee: true }), new DemoPort(DEMO_LOGISTICS, { logistics: true, now: () => NOW })];
+  const closedAt = (week: Awaited<ReturnType<DemoPort["loadWeek"]>>, day: number, start: number, room = 1) =>
+    week.lessons.find((l) => l.kind === "lesson" && l.state === "closed" && l.day === day && l.start_min === start && l.room_id === room)!;
+  const leadOf = (week: Awaited<ReturnType<DemoPort["loadWeek"]>>, lessonId: number) => week.lessonSpeakers.find((x) => x.lesson_id === lessonId && x.role === "lead")!.speaker_id;
+
+  it("two lessons with a description; Sunday's 08:30 lead approved with a description and the photo, Tuesday's 16:00 with a description only; Sunday's 14:30 lead not approved", async () => {
+    for (const port of demos()) {
+      const week = await port.loadWeek(1);
+      const notes = week.lessons.filter((l) => l.public_note != null);
+      expect(notes.map((l) => [l.day, l.start_min, l.public_note])).toEqual([
+        [0, 510, DEMO_GUEST_NOTE],
+        [3, 600, DEMO_GUEST_NOTE],
+      ]);
+      const full = leadOf(week, closedAt(week, 0, 510).id);
+      const bioOnly = leadOf(week, closedAt(week, 2, 960, 1).id);
+      const notMarked = leadOf(week, closedAt(week, 0, 870).id);
+      expect(week.approaches.filter((a) => a.public_ok).map((a) => a.speaker_id)).toEqual([full, bioOnly]);
+      expect(week.speakers.find((s) => s.id === full)).toMatchObject({ public_bio: DEMO_GUEST_BIOS.photo, has_photo: true });
+      expect(week.speakers.find((s) => s.id === bioOnly)).toMatchObject({ public_bio: DEMO_GUEST_BIOS.bioOnly, has_photo: false });
+      expect(week.speakers.find((s) => s.id === notMarked)).toMatchObject({ public_bio: DEMO_GUEST_BIOS.notMarked, has_photo: false });
+      expect(week.approaches.find((a) => a.speaker_id === notMarked)?.public_ok).toBe(false);
+      expect(week.speakers.filter((s) => s.public_bio != null)).toHaveLength(3);
+      expect(Object.keys(port.shared.photos).map(Number)).toEqual([full]);
+      expect((await port.speakers.photo(full))?.photo).toBe(photoToBase64(demoPhotoBytes()));
+      // Sunday's 08:30 is «חניך/ה א׳»'s speaker: the trainee may take the mark back
+      expect(week.approaches.find((a) => a.speaker_id === full)?.owner_member_id).toBe(DEMO_TRAINEE.memberId);
+    }
+  });
+
+  it("two lessons' presentations and the week's deck — PDFs, kind «presentation», never in the reader; every file readable by the team", async () => {
+    for (const port of demos()) {
+      const week = await port.loadWeek(1);
+      const decks = week.sourceFiles.filter((f) => f.kind === "presentation");
+      expect(decks.map((f) => [f.lesson_id, f.display_name, f.mime, f.cover])).toEqual([
+        [closedAt(week, 0, 510).id, "מצגת לדוגמה.pdf", "application/pdf", false],
+        [closedAt(week, 2, 960, 2).id, "שקפים לדוגמה.pdf", "application/pdf", false],
+        [null, "המצגת המלווה לשבוע (לדוגמה).pdf", "application/pdf", false],
+      ]);
+      expect(decks[2].storage_path).toMatch(/^1\/cover\//);
+      expect(decks[0].speaker_id).toBe(leadOf(week, closedAt(week, 0, 510).id));
+      expect(new Set(week.sourceFiles.map((f) => f.id)).size).toBe(week.sourceFiles.length);
+      expect(week.sourceFiles.filter((f) => f.kind !== "presentation")).toHaveLength(4); // seedDemoSources' own, unchanged
+      for (const f of decks) expect(port.shared.objects[f.storage_path]).toMatchObject({ mime: "application/pdf", size: f.size_bytes });
+      expect(port.samples.get(decks[0].storage_path)).toMatchObject({ kind: "pdf", heading: "מצגת לדוגמה", size: [960, 540] });
     }
   });
 

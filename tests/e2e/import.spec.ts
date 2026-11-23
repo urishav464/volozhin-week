@@ -9,7 +9,7 @@ import { strToU8, zipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -482,17 +482,22 @@ test.describe("demo build — the import of 5786", () => {
     await page.getByRole("group", { name: "אישור" }).getByRole("button", { name: "ייבוא" }).click();
     await expect(page.getByText(/2 קיבלו טלפון או מייל/)).toBeVisible();
 
-    // «איך עבר» on an imported archive with no date: the instructor writes it — said plainly, never «TBD»
+    // «איך עבר» on an imported archive with no date — on «אחרי השבוע» (the reset, phase 5: the grid's panel has no
+    // section of its own): the instructor writes it — said plainly, never «TBD»
     if (info.project.name === "desktop") {
       await page.getByRole("banner").getByRole("link", { name: "השבוע" }).click();
       await page.getByLabel("מחזור", { exact: true }).selectOption({ label: "ארכיון סבב שני (ארכיון)" });
-      await page.locator("[data-lesson-id]").filter({ hasText: "אלפא דוגמני" }).first().click();
-      const review = page.getByRole("dialog", { name: "שיעור סגור" }).getByRole("region", { name: "איך עבר", exact: true });
-      const head = review.getByRole("button", { name: /^איך עבר/ });
-      await expect(head).toContainText("מחזור שיובא — המדריך/ה כותב/ת");
-      await expect(head).not.toContainText("TBD");
-      await head.click();
-      await expect(review).toContainText("מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה");
+      await expect(page.locator("[data-lesson-id]").filter({ hasText: "אלפא דוגמני" }).first()).toBeVisible();
+      await goSection(page, "ידע");
+      await page.getByRole("navigation", { name: "ידע" }).getByRole("link", { name: "סיכום המחזור" }).click();
+      await page.getByRole("link", { name: 'לכתיבת "איך עבר"' }).click();
+      await expect(page).toHaveURL(/\/after\?all=1$/);
+      const row = page.locator("[data-after-row]").filter({ hasText: "אלפא דוגמני" });
+      await expect(row).toHaveCount(1);
+      await expect(row).not.toContainText("TBD");
+      await row.getByRole("button", { name: "כתיבה" }).click();
+      await expect(row.getByRole("form", { name: "איך עבר" })).toContainText("מחזור שיובא: את «איך עבר» של שנים קודמות כותב/ת המדריך/ה");
+      await expect(row).not.toContainText("TBD");
     }
   });
 

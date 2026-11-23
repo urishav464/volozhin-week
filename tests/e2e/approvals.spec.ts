@@ -20,7 +20,7 @@ import type { LessonTransport } from "../../src/data/commands";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
 import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, INLINE_SECTIONS, LOGISTICS_SECTIONS, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -236,7 +236,7 @@ test.describe("demo build — logistics", () => {
     await page.goto(`${demoUrl()}/?as=logistics`);
     // phase 4: logistics' own header — «בית» (their home, `/` sends them there), «אישורים», the week to read — and no settings
     await expect(page).toHaveURL(new RegExp(`${demoUrl()}/logistics$`));
-    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS); // «מצגות» since the reset's phase 5; below 1024px the row's four and «עוד»
     await expect(badge(page)).toHaveAccessibleName("אישורים, 1 ממתין"); // not the speaker who waits for the instructor
     await badge(page).click();
     await expect(page).toHaveURL(/\/approvals$/);
@@ -561,7 +561,7 @@ test.describe("mock build", () => {
     const { sb, session } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
     await page.goto(mockUrl());
     await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`)); // their home (phase 4)
-    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS); // «מצגות» since the reset's phase 5; below 1024px the row's four and «עוד»
     await expect(badge(page)).toHaveAccessibleName("אישורים, 2 ממתינים"); // the two requests: no vetting is counted
     await badge(page).click();
     await expect(page.locator("#vetting")).toHaveCount(0);

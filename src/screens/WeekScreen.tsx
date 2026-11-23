@@ -1,9 +1,12 @@
-// The writing grid — the staff's overview (`/`, and `/grid` for everyone): the grid (desktop) or the day view
+// The writing grid — the staff's overview (`/`; since the reset's phase 5 `/grid` only redirects: staff here, anyone
+// else to «השבוע», `/week`): the grid (desktop) or the day view
 // (phone/tablet), the panels, and every command — through the DataPort, so the demo and the real database behave the
 // same (docs/CONTRACT.md). The edition and its loaded week are shared with the pages (weekStore.tsx). The reset, phase 3:
 // no pool and no placing mode — a speaker is proposed from a cell's or a lesson's chooser, or from their page
 // (/speakers/:id); opening a speaker goes to that page, «+ מרצה חדש/ה» to /speakers/new; a lesson's panel stays (its
 // shaping, moving and the grid's rules live here) with «לדף השיעור»; the «התקדמות» lens is a lesson × step table.
+// Phase 5: a closed lesson's panel is a summary — its details, the five dots, «לדף השיעור» and «פעולות נוספות»; its
+// stages are worked on the lesson page only.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { type CellTarget, CommandError, type GridRules, type LessonPatch, type ReshapeOp } from "../data/commands";
@@ -30,7 +33,6 @@ import { TopicMatrix } from "../grid/TopicMatrix";
 import { WarningsPanel } from "../grid/WarningsPanel";
 import { useMedia } from "../lib/useMedia";
 import { NO_TOPIC_COLOR } from "../grid/bits";
-import { LessonStages } from "./stages/LessonStages";
 import { MemorialSlotPanel } from "./memorial/SlotPanel";
 import { ProgressTable } from "./progress/ProgressTable";
 import { RotaLoadFailed, useRota } from "./rota/shared";
@@ -449,18 +451,6 @@ export function WeekScreen({ port, me }: { port: DataPort; me: Me }) {
               <DraftFiles port={port} week={model.week} lesson={l} actor={actor} notify={(kind, text) => setToast({ kind, text })} reload={reload} />
             )
           }
-          stages={(l) => (
-            <LessonStages
-              key={l.id}
-              port={port}
-              week={model.week}
-              lessonId={l.id}
-              actor={actor}
-              notify={(kind, text) => setToast({ kind, text })}
-              clear={() => setToast(null)}
-              reload={reload}
-            />
-          )}
         />
       )}
       {panel?.kind === "cell" && <CellPanel model={model} me={memberId} day={panel.day} row={panel.row} canEdit={canEdit} actions={actions} onClose={() => setPanel(null)} wide={wide} />}

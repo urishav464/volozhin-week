@@ -4,7 +4,10 @@
 // moves on to the payment and the transport, asked for approval with the pickup's address and time, then only where it
 // stands; the sources and the escort; never «איך עבר». A lesson someone else handles reads only; a refused request is
 // asked again. Mock build: «שליחה לאישור» is set_payment, then set_transport_request with the pickup's minute on the
-// lesson's day, by the contract's parameter names, with the member's token. Synthetic people and places only.
+// lesson's day, by the contract's parameter names, with the member's token. The reset, phase 5: a closed lesson's
+// «לאתר האורחים» (#guest) under the stepper — never a seventh step —, and «מקורות ומצגת» with its «מצגות» apart (a
+// second file input; a PowerPoint file on the sources' input is refused for what it is); an archive's lesson, at every
+// width, reads last year's transport and has no «לאתר האורחים». Synthetic people and places only.
 import { expect, type Page, test } from "@playwright/test";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
@@ -45,6 +48,7 @@ test.describe("demo build — a trainee", () => {
     await expect(header).toContainText("משבצת בתהליך");
     await expect(header).toContainText("היום של חניך/ה א׳ ו-חניך/ה ב׳");
     await expect(page.locator("[data-page-step]")).toHaveCount(6);
+    await expect(page.locator("#guest")).toHaveCount(0); // a draft is not on the guests' site
     for (const k of ["pay", "msg", "sources", "escort"]) {
       await expect(step(page, k)).toHaveAttribute("data-state", "na");
       await expect(step(page, k)).toContainText("אחרי הסגירה");
@@ -60,6 +64,9 @@ test.describe("demo build — a trainee", () => {
     await expect(toast(page, "השיעור נסגר")).toBeVisible();
     await expect(header).toContainText("שיעור סגור");
     await expect(step(page, "close")).toHaveAttribute("data-state", "done");
+    // closed: what guests will see, below the steps — the six steps unchanged
+    await expect(page.locator("[data-lesson-guest] #guest")).toBeVisible();
+    await expect(page.locator("[data-page-step]")).toHaveCount(6);
 
     // closed here: the page moves on to the payment and the transport — the focus with it (the pressed button is gone)
     const pay = step(page, "pay");
@@ -144,6 +151,48 @@ test.describe("demo build — a trainee", () => {
     await page.goto(`${demoUrl()}/lesson/99999?as=trainee`);
     await expect(page.locator("[data-lesson-missing]")).toBeVisible();
     await expect(page.getByRole("link", { name: "להיום שלי" })).toBeVisible();
+  });
+});
+
+test.describe("demo build — a trainee, «מקורות ומצגת» and the guests' part", () => {
+  test("the sources' files are the sources; the presentations a part of their own, with their own input; a PowerPoint file is no source; #guest below the steps", async ({ page }) => {
+    // Sunday 08:30, «ד״ר מרצה 01» — mine (member 2), with a source and a presentation in the demo
+    await page.goto(`${demoUrl()}/lesson/${lessonAt(0, 510)}?step=sources&as=trainee`);
+    const sources = step(page, "sources");
+    await expect(sources.locator("h3 button")).toHaveAttribute("aria-expanded", "true");
+    const files = sources.getByRole("group", { name: "קבצי המקורות" });
+    const decks = sources.locator("[data-lesson-presentations]");
+    await expect(decks).toHaveAttribute("id", "presentations");
+    await expect(decks.getByRole("list", { name: "המצגות של השיעור" })).toContainText("מצגת לדוגמה.pdf");
+    await expect(files.getByRole("list", { name: "קבצים שהועלו" })).toContainText("דף מקורות לדוגמה.pdf");
+    await expect(files).not.toContainText("מצגת לדוגמה.pdf"); // «הקבצים» lists the sources only
+    // two inputs: the sources' and the presentations'
+    await expect(sources.locator("input[type=file]")).toHaveCount(2);
+    await expect(files.locator("input[type=file]")).toHaveCount(1);
+    await expect(decks.locator("input[type=file]")).toHaveCount(1);
+    // a PowerPoint file on the sources' input: refused before anything is sent, saying where it goes
+    await files.locator("input[type=file]").setInputFiles({
+      name: "מצגת.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      buffer: Buffer.from("PK synthetic, never opened"),
+    });
+    await expect(files.getByRole("list", { name: "העלאות" }).getByRole("alert")).toHaveText("קובץ PowerPoint הוא מצגת: מעלים אותו ב«העלאת מצגת», לא כמקור.");
+    await expect(files.getByRole("list", { name: "קבצים שהועלו" })).not.toContainText("מצגת.pptx");
+    await noSidewaysScroll(page);
+
+    // «לאתר האורחים» (#guest): under the steps, never one of them
+    await expect(page.locator("[data-page-step]")).toHaveCount(6);
+    const guest = page.locator("[data-lesson-guest] #guest");
+    await expect(guest).toBeVisible();
+    const stepper = (await page.getByRole("list", { name: "שלבי השיעור" }).boundingBox())!;
+    expect((await guest.boundingBox())!.y).toBeGreaterThanOrEqual(stepper.y + stepper.height);
+    await expect(page.getByRole("list", { name: "שלבי השיעור" }).locator("#guest")).toHaveCount(0);
+
+    // an address's #presentations opens «מקורות ומצגת» at that part, its focus there
+    await page.goto(`${demoUrl()}/lesson/${lessonAt(0, 510)}#presentations`);
+    await expect(sources.locator("h3 button")).toHaveAttribute("aria-expanded", "true");
+    await expect(decks).toBeFocused();
+    await expect(decks).toBeInViewport();
   });
 });
 
@@ -279,5 +328,36 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("set_payment")).toHaveLength(1);
     await expect(toast(page, "פרטי האיסוף נשמרו")).toBeVisible();
     await expect(pay.getByRole("form", { name: "בקשת תשלום והסעה" })).toHaveCount(0);
+  });
+});
+
+test.describe("mock build — an archive's lesson", () => {
+  test("every width: the pay step reads last year's transport — no form, no driver —; no «לאתר האורחים» (an archive is last year's)", async ({ page }) => {
+    const week = demoWeek();
+    week.edition = { ...week.edition, id: 9, kind: "archive", label: "ארכיון לדוגמה" };
+    const lesson = week.lessons.find((l) => l.day === 0 && l.start_min === 510 && l.state === "closed")!; // an approved transport
+    const sb = new FakeSupabase({
+      status: 200,
+      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email: "admin@example.org", display_name: "מדריך/ה לדוגמה", global_admin: true, memberships: [{ edition_id: null, role: "admin", member_id: 1 }] },
+    });
+    sb.answers.set("editions", [week.edition]);
+    sb.answers.set("load_week", week);
+    sb.answers.set("get_import_note", null);
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת לדוגמה", pickup_time: "07:30", pickup_min: 450, driver_name: "נהג/ת לדוגמה", driver_phone: null, arranged: true });
+    await sb.attach(page);
+    sb.token = (await signIn(page, "admin@example.org")).access_token;
+    await page.goto(`${mockUrl()}/lesson/${lesson.id}?step=pay`);
+    const pay = await open(page, "pay");
+    const read = pay.locator("[data-transport-read]");
+    await expect(read).toHaveAccessibleName("פרטי ההסעה");
+    await expect(read).toContainText("כתובת לדוגמה");
+    await expect(read).toContainText("נהג/ת לדוגמה");
+    await expect(pay.getByRole("form")).toHaveCount(0);
+    await expect(pay.locator("[data-staff-transport]")).toHaveCount(0);
+    await expect(pay.getByRole("button", { name: /^עריכת (פרטי ההסעה|הנהג)/ })).toHaveCount(0);
+    await expect(page.locator("#guest")).toHaveCount(0);
+    await expect(page.locator("[data-page-step]")).toHaveCount(6);
+    await noSidewaysScroll(page);
+    for (const fn of ["set_transport_details", "set_transport_driver", "set_transport_request", "set_payment", "update_lesson"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
   });
 });

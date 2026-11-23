@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateOf, fmt, fmtRange, hebrewDate, overlaps, parseClock, shortDate, weekMinute } from "./time";
+import { dateOf, fmt, fmtRange, hebrewDate, nightLabel, overlaps, parseClock, shortDate, weekMinute } from "./time";
 
 describe("the week's clock", () => {
   it("formats minutes past midnight, wrapping the night", () => {
@@ -37,5 +37,15 @@ describe("the week's clock", () => {
     expect(shortDate(d)).toBe("15.2");
     expect(shortDate(dateOf("2026-02-15", 4)!)).toBe("19.2");
     expect(hebrewDate(d)).toMatch(/שבט/);
+  });
+});
+
+describe("the night's name", () => {
+  it("an item after midnight belongs to the night after its day; Thursday's is the week's end", () => {
+    expect(nightLabel(0, 1470)).toBe("ליל ראשון–שני");
+    expect(nightLabel(3, 1440)).toBe("ליל רביעי–חמישי");
+    expect(nightLabel(0, 1439)).toBeNull();
+    expect(nightLabel(0, 510)).toBeNull();
+    expect(nightLabel(4, 1470)).toBeNull();
   });
 });

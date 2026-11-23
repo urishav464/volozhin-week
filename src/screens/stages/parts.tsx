@@ -1,13 +1,12 @@
-// Pieces the lesson's stage sections share (src/screens/stages/): the
-// disclosure each stage opens in, a row of radio choices, and what every
-// section is handed — the lesson, who is looking, the commands and the runner.
-// Built from «הגדרות»'s kit: one column on a phone, every control 44px tall.
+// Pieces the lesson's stage sections share (src/screens/stages/, the lesson page): a
+// stage's saved values, a row of radio choices, and what every section is handed —
+// the lesson, who is looking, the commands and the runner. Built from «הגדרות»'s kit:
+// one column on a phone, every control 44px tall. The reset, phase 5: the grid panel's
+// list of stages is gone, and with it its disclosure rows (StageSection, StageList).
 import type { ReactNode } from "react";
 import type { WeekCommands } from "../../data/commands";
-import type { Stage } from "../../domain/stages";
 import { TICK_TEAM_LABEL, ticksOf } from "../../domain/escorts";
 import { type Lesson, TICK_ITEMS, type Week } from "../../domain/types";
-import { STAGE_DOT } from "../../grid/bits";
 import { Button, CHOICE, CHOICE_OFF, CHOICE_ON } from "../settings/kit";
 import type { Actor } from "../weekStore";
 
@@ -46,45 +45,6 @@ export function whenText(at: string | null | undefined): string {
 /** An archive (or archived) edition: only admins act there (`archived`). */
 export function archivedEdition(week: Week): boolean {
   return week.edition.kind === "archive" || week.edition.status === "archived";
-}
-
-/**
- * One stage of the lesson as a disclosure: its dot, name and where it stands — tapping it
- * opens the section. Collapsed, the five read as the card's five dots do. A row of `StageList`:
- * the list draws the frame and the hairlines, an open row's body is tinted, never boxed.
- */
-export function StageSection({ stage, open, onToggle, children }: { stage: Pick<Stage, "label" | "state" | "note"> & { key: string }; open: boolean; onToggle: () => void; children: ReactNode }) {
-  const id = `stage-${stage.key}`;
-  return (
-    <section id={id} aria-label={stage.label} data-stage-section={stage.key} data-state={stage.state} className="group/stage scroll-mt-2">
-      <h4>
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={`${id}-body`}
-          onClick={onToggle}
-          className="flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-start transition-colors hover:bg-accent-soft/60 group-first/stage:rounded-t-[13px] group-last/stage:aria-[expanded=false]:rounded-b-[13px]"
-        >
-          <span aria-hidden className={`size-3 shrink-0 rounded-full border-2 ${STAGE_DOT[stage.state]}`} />
-          <span className="shrink-0 font-bold text-navy">{stage.label}</span>
-          <span className="min-w-0 truncate text-sm text-ink-soft">{stage.note}</span>
-          <span aria-hidden className={`ms-auto shrink-0 text-navy motion-safe:transition-transform ${open ? "rotate-180" : ""}`}>
-            ▾
-          </span>
-        </button>
-      </h4>
-      {open && (
-        <div id={`${id}-body`} className="space-y-3 bg-sand-soft px-3 pb-3.5 pt-2.5 group-last/stage:rounded-b-[13px]">
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** The frame of a list of `StageSection`s: one card, a hairline between rows (an open row's body tinted sand). */
-export function StageList({ children }: { children: ReactNode }) {
-  return <div className="divide-y divide-line rounded-xl border border-line bg-card shadow-sm">{children}</div>;
 }
 
 /**
@@ -152,7 +112,7 @@ export const LINK_PRIMARY =
 
 /**
  * The escort's four ticks, as the team reads them (written only through the escort's link): each with when it was
- * first ticked, or not yet. In the lesson panel and the escorts' list; not printed (the printed list is the escort's).
+ * first ticked, or not yet. On the lesson page's escort step and the escorts' list; not printed (the printed list is the escort's).
  */
 export function EscortTicksLine({ week, lessonId }: { week: Week; lessonId: number }) {
   const ticks = ticksOf(week.escortTicks ?? [], lessonId);

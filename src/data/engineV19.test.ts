@@ -140,7 +140,7 @@ describe("a file's kind (register_source_file's p_kind)", () => {
         }
       }
     }
-    expect(code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("bad_file");
+    expect(code(() => checkPicked({ name: "a.docx", type: DOCX, size: 10 }, true, "presentation"))).toBe("week_presentation_bad_file");
     expect(n).toBe(16); // the cover: 3 as a source, 4 as a presentation; a lesson: 4 and 5 — pinned, so a twin cannot quietly drop one
   });
 });

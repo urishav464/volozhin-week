@@ -4,7 +4,8 @@
 // «סודר» go through set_transport_driver only, and only once the request is approved: the database refuses them before,
 // so they are never offered then — the same form as the transport board's (DriverForm). Never the old screens'
 // whole-details write (set_transport_details): it sets a driver on a request that still waits, and rewrites the pickup
-// while leaving its minute behind. The grid's panel keeps that one (PaymentStage TransportBlock).
+// while leaving its minute behind. Since the reset's phase 5 no screen calls it (the grid's panel lost its stages, and
+// an archive's lesson reads its details: TransportReadOnly, below); the SQL function stays for the schema and parity.
 import { useRef, useState } from "react";
 import type { TransportDriverPatch } from "../../data/commands";
 import { mayLogisticsWrite } from "../../domain/approvals";
@@ -21,6 +22,42 @@ export const DRIVER_AFTER_APPROVAL = "את הנהג/ת קובעים אחרי ה�
 /** set_transport_driver's people (app.require_logistics): logistics or an admin; an archive the admins' only. */
 export function mayArrangeDriver(actor: Pick<StageCtx["actor"], "role" | "isAdmin">, week: StageCtx["week"]): boolean {
   return mayLogisticsWrite(actor, week.edition);
+}
+
+/**
+ * An archive's lesson (last year's, imported): the pickup and the driver to read, as the caller may read them — no
+ * edit (app.may_see_transport opens an archive's to a global admin only; everyone else reads why not).
+ */
+export function TransportReadOnly({ lesson: l, actor, cmds }: StageCtx) {
+  const t = useTransportDetails(cmds, l);
+  const d = t.d;
+  return (
+    <div role="group" aria-label="פרטי ההסעה" data-transport-read className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="text-sm font-bold">פרטי ההסעה</p>
+        <span className="text-xs text-ink-soft">· מידע אישי</span>
+        {d && (
+          <span className="ms-auto">
+            <Chip tone={d.arranged ? "ok" : "warn"}>{d.arranged ? "ההסעה סודרה" : "ההסעה עוד לא סודרה"}</Chip>
+          </span>
+        )}
+      </div>
+      {t.failed && d === undefined ? (
+        <div role="alert" className="space-y-1">
+          <p className="text-sm text-bad">לא הצלחנו לטעון.</p>
+          <button type="button" className={LINK_BUTTON} onClick={() => void t.load()}>
+            לנסות שוב
+          </button>
+        </div>
+      ) : d === undefined ? (
+        <p className="text-sm text-ink-soft">טוען…</p>
+      ) : d === null ? (
+        <p className="text-sm text-ink-soft">{transportHiddenText(actor, l)}</p>
+      ) : (
+        <TransportView d={d} />
+      )}
+    </div>
+  );
 }
 
 export function StaffTransport({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {

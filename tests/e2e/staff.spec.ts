@@ -5,8 +5,10 @@
 // owner of the day; /day with no day is my first owned day; /myday and a bad day send staff to /day. The grid's
 // «אחריות»: each day's header names its pair and a card handled outside it is «חריג» — the same lessons «ימים» lists;
 // a day with no pair marks nothing. «התקדמות» is a lesson × step table in the grid's place (cards on a phone and a
-// tablet): its rows, the six steps as links to the lesson page, its filters. The writing grid stays the staff's `/`: no
-// pool, a closed lesson's panel with «לדף השיעור», a speaker's name to their page, «+ מרצה חדש/ה» to /speakers/new.
+// tablet): its rows, the six steps as links to the lesson page, its filters. The writing grid stays the staff's `/` (and
+// since the reset's phase 5 `/grid` is it too): no pool, a closed lesson's panel a summary — its five stages to read,
+// «לדף השיעור», no stage worked there —, a speaker's name to their page, «+ מרצה חדש/ה» to /speakers/new. An admin's
+// «ימים» leads to «אתר האורחים» for the day.
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { demoWeek } from "../../src/data/demoWeek";
 import { noSidewaysScroll } from "./helpers";
@@ -126,6 +128,13 @@ test.describe("demo build — «ימים»", () => {
     await expect(page.locator("[data-day-page]")).toHaveAttribute("data-day-page", "0");
     await expect(page.locator("[data-day-pair]")).toContainText("אין עדיין זוג ליום");
     await expect(page.locator("[data-slot-card][data-exception]")).toHaveCount(0); // a day with no owners marks nothing
+    // an admin's way to what guests will see of the day (the reset, phase 5)
+    const guests = page.locator("[data-day-guests]");
+    await expect(guests).toHaveText("אתר האורחים ליום הזה ‹");
+    await expect(guests).toHaveAttribute("href", "/export/guests?day=0");
+    await guests.click();
+    await expect(page).toHaveURL(/\/export\/guests\?day=0$/);
+    await expect(page.locator("[data-guests-page]")).toBeVisible();
     await page.goto(`${demoUrl()}/day/9`);
     await expect(page).toHaveURL(/\/day$/);
     await page.goto(`${demoUrl()}/myday`);
@@ -233,8 +242,60 @@ test.describe("demo build — the writing grid stays the staff's overview", () =
     return panel;
   }
 
-  test("no pool; a closed lesson's panel leads to its page; a speaker's name to theirs; «+ מרצה חדש/ה» to /speakers/new", async ({ page }, info) => {
+  test("the panel closed by Escape or «סגירה» gives the focus back to the card that opened it — never to the page (the review)", async ({ page }, info) => {
     await page.goto(demoUrl());
+    if (info.project.name !== "desktop") await page.getByRole("tablist", { name: "ימים" }).getByRole("tab", { name: "ראשון" }).click();
+    const opening = page.locator(`[data-lesson-id="${lessonAt(0, 510)}"]`);
+    const panel = page.getByRole("dialog", { name: "שיעור סגור" });
+    await opening.focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(opening).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(panel).toBeFocused();
+    await panel.getByRole("button", { name: "סגירה", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(opening).toBeFocused();
+    // by the keyboard on «סגירה» too
+    await page.keyboard.press("Enter");
+    await expect(panel).toBeFocused();
+    await panel.getByRole("button", { name: "סגירה", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toHaveCount(0);
+    await expect(opening).toBeFocused();
+    await noSidewaysScroll(page);
+
+    // the panel switched to another card without closing (the week beside it, from 1280px): closed, the focus goes back to
+    // the card it shows now — never the first (the final review)
+    if (info.project.name !== "desktop") return;
+    const other = page.locator(`[data-lesson-id="${lessonAt(0, 600)}"]`);
+    const sheet = page.getByRole("dialog");
+    await opening.click();
+    await expect(sheet).toBeVisible();
+    await other.click();
+    await expect(other).toBeFocused();
+    await expect(sheet).toHaveCount(1);
+    await sheet.getByRole("button", { name: "סגירה", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(other).toBeFocused();
+    // by the keyboard: Enter on the first, Enter on the other, back into the panel, Escape
+    await opening.focus();
+    await page.keyboard.press("Enter");
+    await expect(sheet).toBeFocused();
+    await other.focus();
+    await page.keyboard.press("Enter");
+    await sheet.focus();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    await expect(other).toBeFocused();
+  });
+
+  test("no pool; a closed lesson's panel is a summary that leads to its page; a speaker's name to theirs; «+ מרצה חדש/ה» to /speakers/new", async ({ page }, info) => {
+    // the writing grid has one address (the reset, phase 5): `/grid` is the staff's `/`
+    await page.goto(`${demoUrl()}/grid`);
+    await expect(page).toHaveURL(new RegExp(`${demoUrl()}/$`));
     await expect(page.getByRole("radiogroup", { name: "עדשה" })).toBeVisible();
     await expect(page.getByRole("region", { name: "מאגר המרצים" })).toHaveCount(0);
     await expect(page.getByRole("complementary", { name: "מאגר" })).toHaveCount(0);
@@ -243,6 +304,17 @@ test.describe("demo build — the writing grid stays the staff's overview", () =
     await noSidewaysScroll(page);
 
     let panel = await openClosed(page, info, "שני", "מרצה 12");
+    // the summary: the five stages to read, as the card's dots — none of them worked here
+    const stages = panel.locator("[data-panel-stages] li[data-stage]");
+    await expect(stages).toHaveCount(5);
+    expect(await stages.evaluateAll((els) => els.map((e) => e.getAttribute("data-stage")))).toEqual(["pay", "msg", "escort", "sources", "reader"]);
+    const dots = page.locator("[data-lesson-id]").filter({ hasText: "מרצה 12" }).first().locator("[data-stage]");
+    expect(await stages.evaluateAll((els) => els.map((e) => e.getAttribute("data-state")))).toEqual(await dots.evaluateAll((els) => els.map((e) => e.getAttribute("data-state"))));
+    await expect(panel.getByRole("form")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "סומן כנשלח" })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "סימון ששולם" })).toHaveCount(0);
+    await expect(panel.locator("input[type=file]")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: /^עריכת (פרטי ההסעה|הנהג)/ })).toHaveCount(0);
     await panel.locator("[data-lesson-page]").click();
     await expect(page).toHaveURL(new RegExp(`/lesson/${lessonAt(1, 1200)}$`));
     await expect(page.locator("[data-lesson-header]")).toContainText("פרופ׳ מרצה 12");

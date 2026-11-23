@@ -118,3 +118,14 @@ export function photoFromBase64(v: unknown): Uint8Array | null {
 /** What an <img> shows, and what schedule_view gives a guest: «data:image/jpeg;base64,…». */
 export const PHOTO_DATA_PREFIX = "data:image/jpeg;base64,";
 export const photoDataUrl = (b64: string): string => PHOTO_DATA_PREFIX + b64;
+
+/**
+ * The reset, phase 5: what the guests' card may draw as a photo — schedule_view's «data:image/jpeg;base64,…» whose
+ * payload photoFromBase64 accepts (a JPEG the database would store), the same string back; anything else is null. Never
+ * an http(s) or another data: URL: an answer that was tampered with on the way could otherwise make a guest's browser
+ * fetch an address of its choosing, or draw something the database never checked.
+ */
+export function guestPhotoSrc(v: unknown): string | null {
+  if (typeof v !== "string" || !v.startsWith(PHOTO_DATA_PREFIX)) return null;
+  return photoFromBase64(v.slice(PHOTO_DATA_PREFIX.length)) ? v : null;
+}

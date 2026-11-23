@@ -10,16 +10,17 @@ import { CommandError } from "../../data/commands";
 import type { LinkScope } from "../../data/links";
 import { publicDemo } from "../../data/publicEntry";
 import { messageDate } from "../../domain/message";
-import { type Day, DAY_NAMES, fmtRange } from "../../domain/time";
+import { type Day, DAY_NAMES, fmtRange, nightLabel } from "../../domain/time";
 import { errorMessage } from "../../errors";
 import { useOnline } from "../../offline/online";
 import { Button } from "../settings/kit";
 import { Card, Shell } from "../Shell";
 
-export function PublicFrame({ children }: { children: ReactNode }) {
+/** `wide` (the schedule, the reset's phase 5): the reading column gives way from 1280px, where the days stand side by side. */
+export function PublicFrame({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
     <Shell demo={publicDemo}>
-      <div className="mx-auto max-w-2xl space-y-4 pb-16 print:max-w-none print:pb-0">
+      <div className={`mx-auto max-w-2xl space-y-4 pb-16 print:max-w-none print:pb-0 ${wide ? "xl:max-w-none" : ""}`}>
         {/* the seal on the parchment, above the page's title (on paper too, small, at the top corner) */}
         <img src={seal} alt="עין פרת" width={64} height={64} className="size-16 print:size-12" />
         {children}
@@ -155,7 +156,7 @@ export function Loading() {
 
 /** «ראשון», or a night's «ליל ראשון–שני» — as the team's tables write it (src/exports/tracking.ts). */
 export function dayLabel(day: Day, startMin: number): string {
-  return startMin >= 1440 && day < 4 ? `ליל ${DAY_NAMES[day]}–${DAY_NAMES[(day + 1) as Day]}` : DAY_NAMES[day];
+  return nightLabel(day, startMin) ?? DAY_NAMES[day];
 }
 
 /** The day, the time and the date (the calendar's: a night lesson's is the next morning's), or «התאריך TBD». */

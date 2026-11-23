@@ -1,25 +1,26 @@
 // After the week (milestone 6) in a real browser. Demo build, every width: the
-// week's date set in the past, «איך עבר» written in the lesson panel's sixth
-// section, the summary counting it (and its xlsx) — a missing one opens on
-// «אחרי השבוע» — the speaker page's past year; «אחרי השבוע» (/after, the reset,
-// phase 3) for the staff: my closed lessons and their windows, «כל השיעורים»
-// with the counts, a review written there; a trainee before the week's date is
-// known reads one line; the purge — refused while the week is not over, the
-// label typed, the report, the links revoked; the rollover checklist and its dry
-// run, the option «להשבית…» on by default and labelled «הצעה». Mock build: a
-// content member's review goes out by the parameter names
-// tests/sql/after.test.ts pins — from the panel and from «אחרי השבוע», where a
-// lesson whose day has not passed reads only and its window says when; before
-// the first day has passed the page is one line and the header hides it; a
-// logistics member never asks for a review — no section, no speaker page's
-// reviews, no summary, no «אחרי השבוע». Synthetic people and words only.
+// week's date set in the past, «איך עבר» written on «אחרי השבוע» (since the
+// reset's phase 5 the grid's panel is a summary: no section of its own), the
+// summary counting it (and its xlsx) — a missing one opens on «אחרי השבוע» — the
+// speaker page's past year; «אחרי השבוע» (/after, the reset, phase 3) for the
+// staff: my closed lessons and their windows, «כל השיעורים» with the counts, a
+// review written there; a trainee before the week's date is known reads one
+// line; the purge — refused while the week is not over, the label typed, the
+// report, the links revoked; the rollover checklist and its dry run, the option
+// «להשבית…» on by default and labelled «הצעה». Mock build: a content member's
+// review goes out by the parameter names tests/sql/after.test.ts pins — from
+// «אחרי השבוע», where a lesson whose day has not passed reads only and its window
+// says when; before the first day has passed the page is one line and the header
+// hides it; a logistics member never asks for a review — `/grid` sends them to
+// «השבוע», the lesson page has no «איך עבר», nor the speaker page's reviews, no
+// summary, no «אחרי השבוע». Synthetic people and words only.
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { addDays, israelDate } from "../../src/domain/israelTime";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { goSection, noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -50,17 +51,9 @@ async function openLesson(page: Page, info: TestInfo, day: string, speaker: stri
   return panel;
 }
 
-/** A section of the lesson panel, opened. */
-async function section(panel: Locator, name: string): Promise<Locator> {
-  const s = panel.getByRole("region", { name, exact: true });
-  const toggle = s.getByRole("button", { name: new RegExp(`^${name}`) });
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-  return s;
-}
-
 /** «הגדרות ← מחזור»: the demo week's opening date set (to a past Sunday: the week is over). */
 async function setDemoDate(page: Page, info: TestInfo, date: string) {
-  await nav(page).getByRole("link", { name: "הגדרות" }).click();
+  await goSection(page, "הגדרות");
   await page.getByRole("tab", { name: "מחזור" }).click();
   const editions = page.getByRole(info.project.name === "desktop" ? "table" : "list", { name: "המחזורים" });
   await editions.getByRole("button", { name: "עריכת התאריכים של הדגמה" }).click();
@@ -70,21 +63,27 @@ async function setDemoDate(page: Page, info: TestInfo, date: string) {
 }
 
 test.describe("demo build", () => {
-  test("«איך עבר» after the week: written in the lesson panel, counted in the summary and its xlsx; the sheet shows a past year", async ({ page }, info) => {
-    await page.goto(demoUrl());
-    // before: the week's date is TBD — the section says when it opens, and the instructor (the demo's user) may write anyway
-    let panel = await openLesson(page, info, "שני", "מרצה 12");
-    let review = await section(panel, "איך עבר");
-    await expect(review.getByRole("button", { name: /^איך עבר/ })).toContainText("נפתח אחרי השבוע");
-    await expect(review).toContainText("המדריך/ה יכול/ה לכתוב בכל זמן");
-    await panel.getByRole("button", { name: "סגירה" }).click();
+  test("«איך עבר» after the week: written on «אחרי השבוע», counted in the summary and its xlsx; the sheet shows a past year", async ({ page }, info) => {
+    await page.goto(`${demoUrl()}/after`);
+    // before: the week's date is TBD — the row says so, and the instructor (the demo's user) may write anyway
+    let twelve = page.locator("[data-after-row]").filter({ hasText: "מרצה 12" });
+    await expect(twelve).toHaveAttribute("data-window", "tbd");
+    await twelve.getByRole("button", { name: "כתיבה" }).click();
+    await expect(twelve).toContainText("המדריך/ה יכול/ה לכתוב בכל זמן");
+    await twelve.getByRole("button", { name: "סגירה" }).click();
+    await expect(twelve.getByRole("form", { name: "איך עבר" })).toHaveCount(0);
 
+    // the week in the past: «סיכום המחזור» → «לכתיבת "איך עבר"», every lesson's window open
     await setDemoDate(page, info, pastSunday(7));
-    await nav(page).getByRole("link", { name: "השבוע" }).click();
-    panel = await openLesson(page, info, "שני", "מרצה 12");
-    review = await section(panel, "איך עבר");
-    await expect(review.getByRole("button", { name: /^איך עבר/ })).toContainText("עוד לא נכתב");
-    const form = review.getByRole("form", { name: "איך עבר" });
+    await goSection(page, "ידע");
+    await page.getByRole("navigation", { name: "ידע" }).getByRole("link", { name: "סיכום המחזור" }).click();
+    await page.getByRole("link", { name: 'לכתיבת "איך עבר"' }).click();
+    await expect(page).toHaveURL(/\/after\?all=1$/);
+    twelve = page.locator("[data-after-row]").filter({ hasText: "מרצה 12" });
+    await expect(twelve).toHaveAttribute("data-window", "open");
+    await expect(twelve).toContainText("עוד לא נכתב");
+    await twelve.getByRole("button", { name: "כתיבה" }).click();
+    const form = twelve.getByRole("form", { name: "איך עבר" });
     await expect(form.getByRole("button", { name: "שמירה" })).toBeDisabled(); // nothing said yet
     await form.getByLabel("מה עבד (לא חובה)").fill("נכתב בבדיקה: השיעור היה ברור");
     await form.getByRole("group", { name: "להזמין שוב?" }).getByRole("radio", { name: "כן" }).check();
@@ -93,14 +92,17 @@ test.describe("demo build", () => {
     await noSidewaysScroll(page);
     await form.getByRole("button", { name: "שמירה" }).click();
     await expect(toast(page, "«איך עבר» נשמר")).toBeVisible();
-    await expect(review.getByRole("button", { name: /^איך עבר/ })).toContainText("להזמין שוב: כן · ציון 4/5 · חרגה מהזמן");
-    await expect(review).toContainText("נכתב ע״י");
-    // the card's five dots are what they were: «איך עבר» is the panel's alone
+    await expect(twelve).toHaveAttribute("data-written", "yes");
+    await expect(twelve).toContainText("להזמין שוב: כן · ציון 4/5 · חרגה מהזמן");
+    await expect(twelve).toContainText("נכתב ע״י"); // the form stays open, as saved
+
+    // the card's five dots are what they were: «איך עבר» is no stage
+    await goSection(page, "השבוע");
+    if (info.project.name !== "desktop") await page.getByRole("tab", { name: "שני" }).click();
     await expect(card(page, "מרצה 12").first().locator("[data-stage]")).toHaveCount(5);
-    await panel.getByRole("button", { name: "סגירה" }).click();
 
     // the summary: four of the eighteen closed lessons reviewed, the new one on «להזמין שוב»
-    await nav(page).getByRole("link", { name: "ידע" }).click();
+    await goSection(page, "ידע");
     await page.getByRole("navigation", { name: "ידע" }).getByRole("link", { name: "סיכום המחזור" }).click();
     await expect(page).toHaveURL(/\/knowledge\/summary$/);
     const held = demoWeek().lessons.filter((l) => l.kind === "lesson" && l.state === "closed").length;
@@ -129,9 +131,9 @@ test.describe("demo build", () => {
     await expect(row.getByRole("form", { name: "איך עבר" })).toBeVisible();
     await expect(page.getByRole("group", { name: "אילו שיעורים" }).getByRole("button", { name: "כל השיעורים" })).toHaveAttribute("aria-pressed", "true");
 
-    // the speaker page: the past year's «איך עבר» (the demo's synthetic past edition)
-    await nav(page).getByRole("link", { name: "השבוע" }).click();
-    panel = await openLesson(page, info, "ראשון", "מרצה 01");
+    // the speaker page: the past year's «איך עבר» (the demo's synthetic past edition), from the grid panel's heading
+    await goSection(page, "השבוע");
+    const panel = await openLesson(page, info, "ראשון", "מרצה 01");
     await panel.getByRole("button", { name: "ד״ר מרצה 01" }).click();
     await expect(page).toHaveURL(/\/speakers\/1$/);
     const past = page.getByRole("region", { name: "איך עבר בשנים קודמות" });
@@ -148,11 +150,11 @@ test.describe("demo build", () => {
     for (const r of await rows.all()) await expect(r).toHaveAttribute("data-window", "tbd");
     await expect(rows.first()).toContainText("התאריך עוד לא נקבע");
     await expect(rows.first().getByRole("button", { name: /^(כתיבה|עריכה)$/ })).toBeVisible();
-    await expect(nav(page).getByRole("link", { name: "אחרי השבוע" })).toHaveCount(0); // the staff reach it from «סיכום המחזור»
+    await expect(nav(page).getByRole("link", { name: "אחרי השבוע", includeHidden: true })).toHaveCount(0); // the staff reach it from «סיכום המחזור»
 
     // the week in the past: from «סיכום המחזור», «לכתיבת "איך עבר"» — every lesson, each window open
     await setDemoDate(page, info, pastSunday(7));
-    await nav(page).getByRole("link", { name: "ידע" }).click();
+    await goSection(page, "ידע");
     await page.getByRole("navigation", { name: "ידע" }).getByRole("link", { name: "סיכום המחזור" }).click();
     await page.getByRole("link", { name: 'לכתיבת "איך עבר"' }).click();
     await expect(page).toHaveURL(/\/after\?all=1$/);
@@ -312,7 +314,7 @@ test.describe("mock build", () => {
     status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email, display_name: "חבר/ת צוות לדוגמה", global_admin: false, memberships: [{ edition_id: 7, role, member_id: member }],
   });
 
-  test("a content member's review goes out as save_lesson_review by its parameter names, with the member's token", async ({ page }, info) => {
+  test("a content member's review goes out as save_lesson_review by its parameter names, with the member's token; `/grid` is not theirs", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the wire");
     const week = demoWeek();
     week.edition = { ...week.edition, id: 7, kind: "real", start_date: pastSunday(7) };
@@ -324,16 +326,19 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "content@example.org");
     sb.token = session.access_token;
-    // a content member's home is «היום שלי» (the reset, phase 2): «איך עבר» stays in the grid's panel, at /grid
+    // the writing grid is the staff's (the reset, phase 5): a trainee's `/grid` is «השבוע» to read
     await page.goto(`${mockUrl()}/grid`);
-    // member 2 handles «מרצה 01» (Sunday 08:30)
-    const panel = await openLesson(page, info, "ראשון", "מרצה 01");
-    const review = await section(panel, "איך עבר");
-    const form = review.getByRole("form", { name: "איך עבר" });
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/week$`));
+    // «איך עבר» is written on «אחרי השבוע»: member 2 handles «מרצה 01» (Sunday 08:30)
+    await goSection(page, "אחרי השבוע");
+    const lesson = week.lessons.find((l) => l.day === 0 && l.start_min === 510 && l.state === "closed")!.id;
+    const row = page.locator(`[data-after-row="${lesson}"]`);
+    await expect(row).toHaveAttribute("data-window", "open");
+    await row.getByRole("button", { name: "כתיבה" }).click();
+    const form = row.getByRole("form", { name: "איך עבר" });
     await form.getByLabel("מה פחות (לא חובה)").fill("נכתב בבדיקה");
     await form.getByRole("group", { name: "להזמין שוב?" }).getByRole("radio", { name: "אולי" }).check();
     await form.getByRole("button", { name: "שמירה" }).click();
-    const lesson = week.lessons.find((l) => l.day === 0 && l.start_min === 510 && l.state === "closed")!.id;
     await expect.poll(() => sb.rpc.get("save_lesson_review")).toEqual([
       { p_lesson: lesson, p_version: 0, p_went_well: null, p_issues: "נכתב בבדיקה", p_invite_again: "maybe", p_overran: false, p_rating: null },
     ]);
@@ -423,7 +428,7 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("load_reviews")).toBeUndefined();
   });
 
-  test("logistics never asks for «איך עבר»: no section in the panel, none on the speaker page, no summary, no «אחרי השבוע»", async ({ page }, info) => {
+  test("logistics never asks for «איך עבר»: `/grid` is «השבוע» to read, none on the lesson page or the speaker page, no summary, no «אחרי השבוע»", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the permissions");
     const week = demoWeek();
     week.edition = { ...week.edition, id: 7, kind: "real", start_date: pastSunday(7) };
@@ -433,20 +438,23 @@ test.describe("mock build", () => {
     await sb.attach(page);
     const session = await signIn(page, "logistics@example.org");
     sb.token = session.access_token;
-    // logistics' `/` is their home (phase 4): the grid's panel is at /grid
+    // the writing grid is the staff's (the reset, phase 5): logistics' `/grid` is «השבוע» to read
     await page.goto(`${mockUrl()}/grid`);
-    const panel = await openLesson(page, info, "ראשון", "מרצה 01");
-    await expect(panel.getByRole("region", { name: "תשלום/הסעה", exact: true })).toBeVisible();
-    await expect(panel.getByRole("region", { name: "איך עבר", exact: true })).toHaveCount(0);
-    await panel.getByRole("button", { name: "ד״ר מרצה 01" }).click();
+    await expect(page).toHaveURL(new RegExp(`${mockUrl()}/week$`));
+    // a card opens the lesson page: the payment and the transport — never «איך עבר»
+    await card(page, "מרצה 01").first().click();
+    await expect(page).toHaveURL(/\/lesson\/\d+$/);
+    await expect(page.locator('[data-page-step="pay"]')).toBeVisible();
+    await expect(page.getByText("איך עבר")).toHaveCount(0);
+    await page.locator("[data-lesson-header]").getByRole("link", { name: "ד״ר מרצה 01" }).click();
     await expect(page).toHaveURL(/\/speakers\/1$/);
     await expect(page.getByRole("region", { name: "שיעורים במחזורים" })).toBeVisible();
     await expect(page.getByRole("region", { name: "איך עבר בשנים קודמות" })).toHaveCount(0);
     // «אחרי השבוע» is not logistics': not in the header, and its address lands on their home
-    await expect(nav(page).getByRole("link", { name: "אחרי השבוע" })).toHaveCount(0);
+    await expect(nav(page).getByRole("link", { name: "אחרי השבוע", includeHidden: true })).toHaveCount(0);
     await page.goto(`${mockUrl()}/after`);
     await expect(page).toHaveURL(new RegExp(`${mockUrl()}/logistics$`));
-    await nav(page).getByRole("link", { name: "ידע" }).click();
+    await goSection(page, "ידע");
     await expect(page.getByRole("heading", { name: "ידע ואבני דרך" })).toBeVisible();
     await expect(page.getByRole("link", { name: "סיכום המחזור" })).toHaveCount(0);
     for (const fn of ["load_reviews", "speaker_reviews", "edition_returning", "save_lesson_review"]) expect(sb.rpc.get(fn), fn).toBeUndefined();

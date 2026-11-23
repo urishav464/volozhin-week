@@ -125,8 +125,9 @@ describe("the outbound leg", () => {
     expect(pickupText({ lesson: at510, details: null })).toEqual({ time: null, early: false, words: null });
   });
 
-  // the old screens' «עריכת פרטי ההסעה» (set_transport_details: the grid's panel) rewrites pickup_time and never
-  // pickup_min — the board says and draws what every other reader shows, never the minute left behind
+  // the old screens' «עריכת פרטי ההסעה» (set_transport_details — the grid's panel until the reset's phase 5) rewrote
+  // pickup_time and never pickup_min; its rows remain — the board says and draws what every other reader shows, never the
+  // minute left behind
   it("a pickup_min that is not the time typed (changed since by the old form) gives way to the time; words or a cleared time leave nothing", () => {
     const wed = lesson(1, { start_min: 600, end_min: 690 });
     // (a) approved, «08:45» / 525, then 07:30 typed in the old form: 07:30 in the list and the bar from it

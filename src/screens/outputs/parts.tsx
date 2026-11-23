@@ -71,7 +71,8 @@ export function usePhones(
 
 /**
  * The outputs, under the screen's title: a link each (the duty roster's pages for every member — v16; the reader for
- * everyone since v19 — logistics builds and sends it to print; the designer's export for the edition's admins only).
+ * everyone since v19 — logistics builds and sends it to print; the designer's export and, since the reset's phase 5,
+ * «אתר האורחים» — what the guests' schedule shows and still lacks — for the edition's admins only).
  */
 export function OutputsTabs({ admin }: { admin: boolean }) {
   const items = [
@@ -79,7 +80,7 @@ export function OutputsTabs({ admin }: { admin: boolean }) {
     { to: "/print/escorts", label: "רשימת מלווים" },
     { to: "/print/rota", label: "תורנויות" },
     { to: "/reader", label: "מקראה" },
-    ...(admin ? [{ to: "/export/designer", label: "ייצוא למעצבת" }] : []),
+    ...(admin ? [{ to: "/export/designer", label: "ייצוא למעצבת" }, { to: "/export/guests", label: "אתר האורחים" }] : []),
   ];
   return (
     <nav aria-label="תוצרים" className="flex flex-wrap gap-1 print:hidden">

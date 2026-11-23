@@ -46,5 +46,5 @@ export default function PublicApp({ scope, token }: { scope: LinkScope; token: s
         return <SchedulePage port={port} token={token} />;
     }
   };
-  return <PublicFrame>{body()}</PublicFrame>;
+  return <PublicFrame wide={scope === "schedule"}>{body()}</PublicFrame>;
 }

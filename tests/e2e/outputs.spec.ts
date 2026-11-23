@@ -19,7 +19,7 @@ import { strFromU8, unzipSync } from "fflate";
 import { demoWeek } from "../../src/data/demoWeek";
 import { trackingRows } from "../../src/exports/tracking";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
-import { noSidewaysScroll } from "./helpers";
+import { expectSections, goSection, INLINE_SECTIONS, LOGISTICS_SECTIONS, narrowHeader, noSidewaysScroll, sectionLink, STAFF_SECTIONS } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
 
 const demoUrl = () => process.env.E2E_DEMO_URL!;
@@ -50,7 +50,9 @@ test.describe("demo build", () => {
     const all = trackingRows(week);
     await page.goto(`${demoUrl()}/tracking`);
     await expect(page.getByRole("heading", { name: "טבלת מעקב" })).toBeVisible();
-    await expect(nav(page).getByRole("link", { name: "תוצרים" })).toHaveAttribute("aria-current", "page");
+    await expect(sectionLink(page, "תוצרים")).toHaveAttribute("aria-current", "page");
+    // an edition admin's tabs end with the designer's export and, since the reset's phase 5, «אתר האורחים»
+    await expect(outputsNav(page).getByRole("link")).toHaveText(["טבלת מעקב", "רשימת מלווים", "תורנויות", "מקראה", "ייצוא למעצבת", "אתר האורחים"]);
     await expect(rows(page)).toHaveCount(all.length);
     await expect(rows(page).first()).toHaveAttribute("data-tone", "received"); // Sunday 08:30: sources received — light blue
     await expect(page.locator(`[data-lesson-row="${all.find((r) => r.tone === "memorial")!.lesson.id}"]:visible`)).toHaveAttribute("data-tone", "memorial");
@@ -170,7 +172,7 @@ test.describe("demo build", () => {
     await page.getByLabel("ניסוח (אפשר כמה, ניסוח בכל שורה)").fill("ניסוח לדוגמה לכל שיעור");
     await page.getByRole("button", { name: "הוספה", exact: true }).click();
     await expect(toast(page, "הניסוח נוסף")).toBeVisible();
-    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await outputsNav(page).getByRole("link", { name: "רשימת מלווים" }).click();
     await expect(b.locator("[data-lesson-row]").first()).toContainText("משהו שחשוב לדעת");
     await expect(b.locator("[data-lesson-row]").first()).toContainText("ניסוח לדוגמה לכל שיעור");
@@ -226,7 +228,7 @@ test.describe("demo build", () => {
     await expect(toast(page, /^נשמר$/)).toBeVisible();
     await panel.getByRole("button", { name: "סגירה" }).click();
 
-    await nav(page).getByRole("link", { name: "תוצרים" }).click();
+    await goSection(page, "תוצרים");
     await outputsNav(page).getByRole("link", { name: "ייצוא למעצבת" }).click();
     const changed = page.getByRole("region", { name: "השתנו" });
     await expect(changed).toContainText("השתנו (1)");
@@ -270,7 +272,7 @@ test.describe("demo build", () => {
 
   test("«ידע»: a note in markdown-lite — bold and a list, never HTML; a milestone, W−n, done; a delete cancelled", async ({ page }) => {
     await page.goto(demoUrl());
-    await nav(page).getByRole("link", { name: "ידע" }).click();
+    await goSection(page, "ידע");
     await expect(page.getByRole("heading", { name: "ידע ואבני דרך" })).toBeVisible();
     const milestones = page.getByRole("list", { name: "אבני הדרך" });
     await expect(milestones.getByRole("listitem").first()).toContainText("W−42 · הצעה");
@@ -326,18 +328,28 @@ test.describe("demo build", () => {
 
   test("«עזרה»: the team's one-page guide, from the header", async ({ page }) => {
     await page.goto(demoUrl());
-    // the instructor's eleven sections (the reset, phase 3): every one inside the screen, none cut off or behind a sideways scroll
-    const links = nav(page).getByRole("link");
-    await expect(links).toHaveText(["השבוע", "ימים", "מרצים", /^אישורים/, "לוגיסטיקה", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "הגדרות", "עזרה"]);
+    // the instructor's twelve sections (the reset, phase 3; «מצגות» since phase 5): below 1024px the row's four and «עוד»,
+    // every one in view inside the screen — none cut off or behind a sideways scroll
+    await expectSections(page, STAFF_SECTIONS, INLINE_SECTIONS);
     const width = page.viewportSize()!.width;
-    for (const box of await links.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
+    const inView = nav(page).locator("a:visible, [data-nav-more]:visible");
+    for (const box of await inView.evaluateAll((ls) => ls.map((l) => l.getBoundingClientRect().toJSON() as DOMRect))) {
       expect(box.left, JSON.stringify(box)).toBeGreaterThanOrEqual(0);
       expect(box.right, JSON.stringify(box)).toBeLessThanOrEqual(width);
     }
-    await nav(page).getByRole("link", { name: "עזרה" }).click();
+    await goSection(page, "עזרה");
     await expect(page).toHaveURL(/\/help$/);
-    await expect(nav(page).getByRole("link", { name: "עזרה" })).toHaveAttribute("aria-current", "page");
-    await expect(nav(page).getByRole("link", { name: "עזרה" })).toBeInViewport({ ratio: 1 });
+    await expect(sectionLink(page, "עזרה")).toHaveAttribute("aria-current", "page");
+    if (narrowHeader(page)) {
+      // behind «עוד», closed again with the page: «עוד» wears the active pill and says where the page is
+      const more = nav(page).locator("[data-nav-more]");
+      await expect(more).toHaveAttribute("aria-expanded", "false");
+      await expect(more).toHaveAttribute("data-active", "");
+      await expect(more).toHaveAccessibleName("עוד, כאן: עזרה");
+      await expect(more).toBeInViewport({ ratio: 1 });
+    } else {
+      await expect(sectionLink(page, "עזרה")).toBeInViewport({ ratio: 1 });
+    }
     const guide = page.getByRole("article", { name: "מדריך קצר לצוות" });
     await expect(guide.getByRole("heading", { level: 2, name: "מדריך קצר לצוות" })).toBeVisible();
     // the staff's sections as the reset's phase 3 has them («המרצים שלי» and the speaker sheet are gone)
@@ -368,13 +380,14 @@ test.describe("mock build", () => {
     sb.token = session.access_token;
     return { sb, week, session };
   };
-  test("the header of an admin of every edition: all eleven sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
+  test("the header of an admin of every edition: all twelve sections inside the nav from 1024px, a long name giving way", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "the widths are set here");
     await signedIn(page, { role: "admin", global: true, member: 1, name: "שם ארוך מאוד של מדריך/ה לדוגמה" });
     await page.goto(mockUrl());
     await expect(page.getByRole("button", { name: "התנתקות" })).toBeVisible();
     const links = nav(page).getByRole("link");
-    await expect(links).toHaveCount(11);
+    await expect(links).toHaveCount(12); // «מצגות» since the reset's phase 5
+    await expectSections(page, STAFF_SECTIONS, INLINE_SECTIONS);
     for (const width of [1024, 1100, 1150, 1180, 1280]) {
       await page.setViewportSize({ width, height: 800 });
       const navBox = (await nav(page).boundingBox())!;
@@ -425,7 +438,7 @@ test.describe("mock build", () => {
     for (const r of body.payload) expect(Object.keys(r).sort()).toEqual(["category", "date", "day", "kind", "lesson_id", "parallel", "room", "speaker", "time", "title"]);
 
     // «ידע»: a note and a milestone, written by column — never an author, a time or a version
-    await nav(page).getByRole("link", { name: "ידע" }).click();
+    await goSection(page, "ידע");
     await page.getByRole("button", { name: "+ הערה חדשה" }).click();
     const form = page.getByRole("form", { name: "הערה חדשה" });
     await form.getByLabel("כותרת").fill("  הערה   לדוגמה ");
@@ -448,7 +461,7 @@ test.describe("mock build", () => {
     sb.answers.set("load_reviews", []); // v12: «איך עבר», as the caller reads it
     sb.answers.set("load_rota", { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] }); // v16: «תורנויות», never a phone
     sb.answers.set("get_rota_contacts", []); // the heads' phones the caller may see — none here
-    await nav(page).getByRole("link", { name: "הגדרות" }).click();
+    await goSection(page, "הגדרות");
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());
     expect(Object.keys(unzipSync(new Uint8Array(zip.bytes)))).toContain("PERSONAL-DATA_contacts_and_transport.json");
@@ -486,7 +499,7 @@ test.describe("mock build", () => {
     const { sb } = await signedIn(page, { role: "logistics", global: false, member: 5 });
     await page.goto(`${mockUrl()}/tracking`);
     await expect(page.locator("[data-lesson-row]").first()).toBeVisible();
-    await expect(nav(page).getByRole("link")).toHaveText(["בית", /^אישורים/, "השבוע", "תוצרים", "זמני זיכרון", "מכריכה לכריכה", "ידע", "עזרה"]);
+    await expectSections(page, LOGISTICS_SECTIONS, INLINE_SECTIONS);
     await expect(page.getByRole("checkbox", { name: "כולל טלפונים" })).toHaveCount(0);
     await expect(page.getByRole("checkbox", { name: "שלי" })).toHaveCount(0);
     // v19: the reader is every member's (logistics build it, download it and mark «נשלח לדפוס»)

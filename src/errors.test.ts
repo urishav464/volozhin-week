@@ -29,8 +29,8 @@ describe("the error catalog", () => {
   it("has a message for every code the browser refuses with — its own checks and the Storage API's answers as it maps them", () => {
     const codes = browserCodes();
     for (const status of [401, 403, 413, 415, 500]) codes.add(uploadRefusal(status, ""));
-    // the pick's three reasons (src/data/sourceRules.ts checkPicked) and the upload's, each its own
-    for (const c of ["bad_file", "cover_bad_file", "file_too_big", "upload_refused", "upload_failed"]) expect(codes).toContain(c);
+    // the pick's reasons (src/data/sourceRules.ts checkPicked — a presentation's three since the reset, phase 5) and the upload's, each its own
+    for (const c of ["bad_file", "cover_bad_file", "file_too_big", "upload_refused", "upload_failed", "pptx_source", "presentation_bad_file", "week_presentation_bad_file"]) expect(codes).toContain(c);
     expect([...codes].filter((c) => !ERRORS[c])).toEqual([]);
   });
 
@@ -47,5 +47,18 @@ describe("the error catalog", () => {
     expect(ERRORS.cover_bad_file).not.toContain("Word");
     expect(ERRORS.file_too_big).toContain("25MB");
     expect(ERRORS.file_too_big).not.toMatch(/Word|PNG/);
+  });
+
+  it("a presentation's three of its own (the reset, phase 5): a pptx is no source, what a deck may be, the week's never Word", () => {
+    expect(ERRORS.pptx_source).toContain("PowerPoint");
+    expect(ERRORS.pptx_source).toContain("«העלאת מצגת»");
+    expect(ERRORS.presentation_bad_file).toMatch(/^מצגת/);
+    for (const t of ["pptx", "PDF", "PNG/JPG", "Word"]) expect(ERRORS.presentation_bad_file).toContain(t);
+    expect(ERRORS.week_presentation_bad_file).toMatch(/^למצגת של השבוע/);
+    expect(ERRORS.week_presentation_bad_file).toMatch(/לא Word\.$/);
+    // the sources' own words stay as they were (tests/e2e/reader.spec.ts pins bad_file)
+    expect(ERRORS.bad_file).not.toMatch(/מצגת|pptx/);
+    expect(ERRORS.upload_refused).toMatch(/^אין הרשאה להעלות לכאן/);
+    expect(ERRORS.upload_refused).toContain("המצגת של השבוע");
   });
 });
