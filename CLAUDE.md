@@ -270,7 +270,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   keeps and why is DECISIONS «אבן דרך 6». `start_edition(…, p_deactivate_team)` (SQL default false; the screen's
   checkbox on, «הצעה») and its dry run `start_edition_preview` (STABLE, cannot write); both in `DemoSettings`. The
   «מעבר לשנה הבאה» checklist and the purge panel: `src/screens/settings/AfterWeek.tsx`. Tests: `tests/sql/after.test.ts`,
-  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on six bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe), v16 (bcab571), v17 (035f6fa) and v18 (512ae35, what production runs).
+  `tests/e2e/after.spec.ts`; `upgrade.test.ts` runs on seven bases, v13 (c6d6012), v14 (fe55f7c), v15 (baf3cbe), v16 (bcab571), v17 (035f6fa), v18 (512ae35) and v19 (9952be4, what production runs).
 - **Schema v12 is both parts at once** (the import and after the week, DECISIONS «איחוד גרסה 12»): an imported archive
   (`kind 'archive'`) is a past year for `edition_returning`, `speaker_history` and `speaker_reviews`; a re-run of its
   label is refused once a review is on it (`archive_reviewed` — the replace would cascade it away); the purge clears its
@@ -313,7 +313,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   «לוגיסטיקה ← ספרים»: one row per group with a book or an order line, `bookRows`), `/k` one «הספר שלי». kk.json has no tracks (archive
   `format_version` 4). DECISIONS «מכריכה לכריכה לפי שבוע — גרסה 15».
 - **תורנויות (milestone 7, schema v16):** the campus duty roster beside the lessons — `rota_*` / `RotaPort` / `port.rota`
-  («duty» and «roster» are taken: the escorts' phrases, the trainees). Cohorts (a letter, diets), presence per cohort × day ×
+  («duty» and «roster» are taken: the escorts' phrases, the trainees). Cohorts (a letter; since v20 trainees, three diet numbers and the duties they help in), presence per cohort × day ×
   shift (no row = not marked, never assumed), groups (a number; the code «א1» derived; size null = TBD; the head's name),
   duties (needs per shift, null = not set), assignments (`rota_assignments_one_duty`: one duty per group per shift), staff
   shifts (a member, a typed name or a cohort's staff; no phone), Saturday-night preparations — direct writes under RLS with
@@ -322,14 +322,15 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `rotaShiftActive` ≡ `app.rota_shift_active` (`src/domain/rota.ts`). **A head's phone is personal data:** `rota_group_contacts`,
   `app.may_see_rota_contacts` (a global admin, or admin/logistics of a real live edition), `get_rota_contacts` (invoker, one
   call) / `set_rota_contact`; never in `load_rota`, a Week, Realtime, the offline copy, a log or a file but behind
-  «כולל טלפונים של ראשי הקבוצות» (`useHeadPhones`, `maySeeRotaContacts` in `src/screens/rota/shared.tsx`); the purge deletes it.
+  «כולל טלפונים של ראשי הקבוצות» (`useHeadPhones`, `maySeeRotaContacts` in `src/screens/rota/shared.tsx`); the purge deletes it
+  (so, since v20, a cohort contact's phone — never printed at all: below).
   The fair suggestion is pure and deterministic (`src/domain/rotaSuggest.ts`: never touches an assignment, never an absent
   cohort; applied as ONE insert, `stale` on a clash); `rotaWarnings`. Screens: `/logistics/rota/:view?`
   (`src/screens/logistics/rota/`), «תוצרים ← תורנויות» `/print/rota` (`src/screens/outputs/RotaScreen.tsx`, every member;
   `GroupSheet.tsx` an A4 landscape page per group). Builders `src/exports/rota.ts` (`groupSchedule` takes the public schedule (and
   the closed cells' times), the rows, one group, the duties and its assignments — no Week, no phone: a future `/g` link would be anon's seventh function
   and waits; `rotaWorkbook` a sheet per page, «מוצ״ש» in gershayim). `start_edition` carries the duties, the preparations and
-  the shifts; archive `format_version` 5, 6 since v19 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
+  the shifts; archive `format_version` 5, 6 since v19, 7 since v20 (`rota.json` without phones; `rota_head_phones` only in the personal-data file).
   Shared cases on SQL and the demo: `src/testing/rotaCases.ts`. DECISIONS «תורנויות — גרסה 16». The week's fourth lens
   «תורנויות» (8.11, `src/grid/rotaLens.ts` → `RotaWeek.tsx`) draws the duties alone — `load_rota` only while it is on, never
   the phones; a shift links to `/logistics/rota` (the edition's logistics and admins) or `/print/rota` (DECISIONS «עדשת התורנויות…»).
@@ -421,7 +422,7 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `boardPickupMin` (`pickup_min` only when it is the clock time typed in `pickup_time` — the old `set_transport_details`
   form changes the text alone) to the start, clamped at 06:30, a marker «שעת איסוף לא ידועה» without one; a round trip's
   «חזרה מ-HH:MM» at the TEACHING end (`teachEndOf` ≡ `app.teach_end`) with no length — no return time, car or second
-  driver exists in the database, so none is drawn; the day's staff shifts, leads marked, no phones. Pending → `Decide`
+  driver exists in the database, so none is drawn; the day's staff shifts (no lead since v20), no phones. Pending → `Decide`
   («דחייה» asks once, everywhere); approved → `DriverForm` (`setTransportDriver` only, changed keys only; «סודר» publishes
   the driver on the escort's page — said on screen). The lesson page's pay step gives staff and logistics `StaffTransport`
   (`src/screens/lesson/`: the pickup read-only, the driver only after approval, `mayArrangeDriver`); the old
@@ -456,9 +457,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   («בית» · «אישורים» · «השבוע» `/week`, read-only with «לבית» · «תוצרים» · «זמני זיכרון» · «מכריכה לכריכה» · «ידע» · «עזרה»);
   their `/`, `/myday`, `/day/*` and `/after` go to `LOGISTICS_HOME` (`homeRedirect` and the other helpers in `nav.ts`). ONE
   browser twin of `app.require_logistics`: `mayLogisticsWrite` (`src/domain/approvals.ts`; `maySendReader`, `mayArrangeDriver`).
-  **Cohort flags** (`rota_cohorts.helps_rota` default true, `can_drive` default false; `helpsRota` / `canDrive` /
+  **Cohort flags** (`can_drive` default false; v19's `helps_rota` became v20's `rota_cohort_duties`, below; `canDrive` /
   `helpingGroups` / `byCohortOrder` / `presenceMarked` in `src/domain/rota.ts`): the fair suggestion and `unevenLoad` skip a
-  non-helping cohort's groups, a hand assignment of one warns `not_helping`, `presence_unknown` stays for every cohort (meals);
+  non-helping cohort's groups (`not_helping` is v20's `not_eligible`), `presence_unknown` stays for every cohort (meals);
   the board lists the cohorts whose staff can drive, on campus that day first (`transportLanes(…).drivers`, names only).
   **Saturday night** (`rota_prep_tasks.kind` `task` | `item`, `qty` ≤ 40 for an item, cleaned whatever the kind — a phone is
   `rota_contact_in_text`; «נקנה» is `done`): two lists with their own counts and paste (`addPrepTasks(edition, rows, kind)`,
@@ -511,9 +512,10 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   unchanged: `public_note` ≤ 400 through `updateLesson`, each speaker's mark, bio and photo, «כך זה ייראה לאורחים»), and
   «תוצרים ← אתר האורחים» (`/export/guests`, `src/screens/outputs/GuestsScreen.tsx`, edition admins: counts, filters in the
   address — `guestsPath`, what is missing, a take-back, «תצוגה מקדימה לאורחים» = `publicSchedule` with photos read ≤ 4 at a
-  time, only while open). **Presentations** (`/presentations?day=&room=`, `src/screens/presentations/`, every member by
-  address; in the header for staff and logistics): the hall's computer is not signed in — a staff member downloads the day
-  every morning. `src/domain/presentations.ts`: `presentationRows` (closed lessons and memorial slots; `file` / `link` /
+  time, only while open). **Presentations** (`/presentations`, `src/screens/presentations/`, every member by
+  address; in the header for staff and logistics; v20 rebuilt the page around one week zip — below, which supersedes the
+  per-day zip, the day tabs and the per-day marker here): the hall's computer is not signed in — a staff member downloads
+  before the week. `src/domain/presentations.ts`: `presentationRows` (closed lessons and memorial slots; `file` / `link` /
   `missing` / `none` / `memorial`; the CURRENT lead's files, `lessonPresentations`), `weekPresentations` (the cover path,
   admins upload, never Word), `orphanPresentations`, `dayZipPlan` (week decks `0000_השבוע_…` first, then `HHMM_<room>_<name>`
   in the day's order — a night hour is 24–29 — plus `סדר-היום.txt` and, with a link-only row, `links.txt`, UTF-8 BOM, CRLF;
@@ -539,6 +541,52 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   and three synthetic presentation PDFs in every persona (`seedDemoGuests`, `seedDemoPresentations`, `demoWeek.ts`). e2e:
   `guests.spec.ts`, `presentations.spec.ts`; a header click goes through `goSection` (`tests/e2e/helpers.ts`), which opens
   «עוד» first. DECISIONS «הריסט, שלב 5 — אתר האורחים, מילוי, מצגות וניקיון».
+- **The logistics and presentations notes (schema v20):** the owner's notes on the rota, the staff and the presentations
+  (DECISIONS «גרסה 20 — הערות הלוגיסטיקה והמצגות»; CONTRACT «v20»). **Cohorts:** `rota_cohorts` gains `trainees`,
+  `diet_veg` («צמחוני/טבעוני», one dish), `diet_gf`, `diet_both` («מהם גם וגם») — null = TBD, 0–1000; `rota_diets_exceed`
+  when «גם וגם» is above either, one is above the trainees, or veg + gf − both is (`checkCohortCounts` ≡ the guard;
+  `dietSplit` / `dietsOf`) — and `contact_name` («איש/אשת קשר מהצוות (משבץ/ת)», the team reads it); `diets` and `helps_rota`
+  are dropped. **The duties a cohort helps in:** `rota_cohort_duties` (no row = none; `cohortHelps`, `cohortDutyIds`,
+  `groupHelpsIn` in `src/domain/rota.ts`; `setCohortDuties` replaces the set, two requests); a group only in a cohort that
+  helps (`cohort_not_helping` on insert and move; the guard locks the cohort's duties), the last duty of a cohort with groups
+  is `in_use`. The fair suggestion places a group only in its cohort's duties at every step (a BFS chain refills a short duty
+  through the suggestion's own rows; duties in the list's order alone — «התורנות שלמעלה מתמלאת קודם»); a hand placement
+  elsewhere warns `not_eligible` (`not_helping` and `no_lead` are gone). **«חלוקה לקבוצות»:** `splitSizes(trainees,
+  perGroup)` («הצעה»: ⌈t/p⌉ groups, as equal as possible, larger first) → `rota_split_cohort(p_edition, p_cohort, p_sizes)`
+  (INVOKER, one transaction: the cohort's groups replaced by 1..n, their assignments and heads' phones with them; «חלוקה
+  מחדש» behind a Confirm). Duty order is «למעלה»/«למטה» (`prepMoves`) with `DUTY_ORDER_HINT`
+  (`src/screens/logistics/rota/cohorts.ts`); no «סדר» field. **Meals:** `cohortTotal` is `trainees`; `mealsTable`
+  (`src/exports/rota.ts`): day × the grid's /ארוח/ rows, a cohort counted when marked on campus in the shift the meal starts
+  in, TBD where unknown — in `FoodSheet.tsx` (then «תזונה לפי מכינה»), on the cohorts page (folded on a phone) and in the
+  xlsx. **A cohort contact's phone is personal data:** `rota_cohort_contacts` (`app.may_see_cohort_contacts`), read by
+  `get_rota_contacts` (heads, then cohorts), written only by `set_rota_contact(p_kind 'group'|'cohort', p_id, p_phone)` —
+  still the one definer (the 2-argument one dropped; Advisor 83); never in `load_rota`, a print, the offline copy or a file
+  but the personal-data file; the purge deletes it (counted with the heads'). **Staff shifts** lose `kind`: no lead anywhere
+  (`staffOn` replaces `leadsOf`; the lens says «צוות:»). «משמרות צוות» is a schedule of day × the grid's active rows
+  (`staffScheduleRows` / `staffScheduleTable`, `src/exports/staffSchedule.ts`; «+» fills a row's day and hours; one day at a
+  time below 1024px; a shift on no row is «מחוץ לשורות הלו״ז»); on the logistics side it shows the transports of the board's
+  own read (`useTransports`, `src/screens/logistics/useTransports.ts`: one `get_transports_for`, again when the tab is shown
+  and every `TRANSPORTS_POLL_MS`), a pickup before 06:30 in the night rows of the day before (`typedPickupMin`,
+  `src/domain/pickup.ts`); /print/rota and its xlsx hold names only, no transport and no note. **Driver suggestions** in
+  `DriverForm` (the board and the lesson page's `StaffTransport`; `driverSuggestions` in `lanes.ts`): «במשמרת בשעת האיסוף»
+  (staff on from the pickup to the start; the night before for a pickup before 06:30) and «אחריות של מכינה» (cohorts that
+  `can_drive`, on campus in the pickup's shift → «צוות מכינת X — איש/אשת קשר: Y» and the contact's phone, read on that
+  click for `maySeeRotaContacts`); every pick sets the phone too (a staff pick empties it); saved by `set_transport_driver`
+  as before. The board prints «הסעות וצוות». **Presentations, one week zip:** `presentationEntries(week)` (file id → path)
+  and `entryPrefix(day, startMin, room)` (`src/domain/presentationNames.ts`, the only part the public bundle imports):
+  `0-השבוע/` (the week's decks, once), `<n>-<day>/HHMM_<room>_<name>`, each day's `סדר-היום.txt` and, with a link-only
+  lesson, `links.txt`; a night lesson in the day before's folder («ליל …»); over 250MB, a part per day with the same paths.
+  `/presentations` (`WeekZip.tsx`, `HallPath.tsx`; `presentationsPath()` takes no argument, an old `?day=&room=` still
+  opens it): the download card, «עלו מאז ההורדה» / «שיעור זז מאז ההורדה» from ONE device key per edition
+  (`volozhin-presentations-zip:<edition>:week`: file ids and an FNV-1a of each path, no names), the week deck, «חסרות»,
+  the orphans; a lesson's presentation is uploaded on the lesson page only («במחשב של האולם: <folder> / <name>»).
+  **The escort:** `escort_view` lessons gain `presentation` (`file` | `link` | `missing` | `none` — never a name or a URL;
+  the current lead's file beats a link; ≡ `Engine.escortView`, parity `tests/parity/scenariosV20.ts`), and `/e` says «מצגת:
+  במחשב של האולם, בתיקייה «2-שני», הקובץ שמתחיל ב-«1030_בית מדרש_»». `start_edition` carries the cohorts (letter, name,
+  can_drive, sort) and their duties by name — never the numbers, the contact or a phone; archive `format_version` 7
+  (rota.json with `cohortDuties`, no phone; `rota_cohort_contacts` only in the personal-data file). Tests
+  `tests/sql/v20.test.ts`, `upgrade.test.ts` from v19; e2e `rota.spec.ts`, `presentations.spec.ts` (the week zip),
+  `links.spec.ts` (the escort's line).
 - `src/screens/speakers/` — the speaker's shared parts (since phase 3 of the reset no screen of its own): `sheetParts.tsx`
   (contacts, hand-over and offers, claim, `mayEditSpeaker`), `call.tsx`, `parts.tsx`, `nameCheck.tsx`, `SpeakerReviews.tsx`
   — used by `src/screens/speakerPages/` and the lesson page. The week, the new pages and /approvals share one loaded edition
