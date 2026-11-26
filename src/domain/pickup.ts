@@ -37,3 +37,18 @@ export function pickupInput(text: string | null | undefined): string {
   if (m == null) return "";
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
+
+/**
+ * The pickup's minute on the lesson's grid day as every logistics view reads it (moved here from the transport board in
+ * v20, so the «הסעות וצוות» print and the staff's schedule read it the same way): `pickup_time` is what every reader
+ * shows, and set_transport_details rewrote it while leaving pickup_min as it was — so pickup_min counts only while it is
+ * the time typed (the same minute of the clock: it keeps the request's day-or-night choice); a time typed since → its
+ * own minute (pickupMin); words («אחרי השיעור») or no time at all → null (not a time).
+ */
+export function typedPickupMin(start: number, d: { pickup_time: string | null; pickup_min: number | null } | null | undefined): number | null {
+  const typed = d?.pickup_time?.trim();
+  if (!typed) return null;
+  const fresh = pickupMin(typed, start);
+  if (fresh == null) return null;
+  return d!.pickup_min != null && d!.pickup_min % 1440 === fresh % 1440 ? d!.pickup_min : fresh;
+}

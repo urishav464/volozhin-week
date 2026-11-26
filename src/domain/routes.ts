@@ -216,28 +216,9 @@ export function parseGuestsQuery(search: string): GuestsQuery {
 }
 
 /**
- * «מצגות» (`/presentations`, the reset, phase 5 — every member of the edition reads it): the day's tab and the room's
- * chip, only what is set — `?day=2&room=3`. No room: «כל החדרים».
+ * «מצגות» (`/presentations` — every member of the edition reads it). v20: the page is the week's, so its address has no
+ * query; an old one with `?day=` or `?room=` (a bookmark, a link in a message) opens the same page, the query unread.
  */
-export interface PresentationsQuery {
-  day?: Day;
-  room?: number;
-}
-
-export function presentationsPath(q: PresentationsQuery = {}): string {
-  const parts: string[] = [];
-  if (q.day != null) parts.push(`day=${q.day}`);
-  if (q.room != null) parts.push(`room=${q.room}`);
-  return parts.length ? `/presentations?${parts.join("&")}` : "/presentations";
-}
-
-/** The page's day and room back: a day of the five, a room as a whole number above 0; anything else dropped. */
-export function parsePresentationsQuery(search: string): PresentationsQuery {
-  const p = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  const out: PresentationsQuery = {};
-  const day = parseDay(p.get("day"));
-  if (day != null) out.day = day;
-  const room = wholeNumber(p.get("room"));
-  if (room != null && room > 0) out.room = room;
-  return out;
+export function presentationsPath(): string {
+  return "/presentations";
 }

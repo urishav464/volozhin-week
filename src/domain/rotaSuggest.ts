@@ -6,9 +6,12 @@
 // shift its cohort is not marked on campus in, never a group on a duty its cohort does not help in (v20
 // `cohortDuties`, at every step; a cohort that helps in none has no groups — a duty one was given by hand still counts
 // as filled), never two duties to one group in one shift, and never fills a duty in a
-// shift whose need is not set. The tightest shifts first (the fewest free groups for what they need, suggestionOrder),
-// then by time; within a shift every duty's need first — the duties with a minimum of people first, then by their
-// order —, and only then, from the groups still free, the extras for a minimum. A group is chosen by, in this order:
+// shift whose need is not set. The tightest shifts first (the fewest free groups for what they need — v20: for each duty,
+// the free groups that may take it —, suggestionOrder), then by time; within a shift every duty's need first — the
+// duties with a minimum of people first, then by their order —, and only then, from the groups still free, the extras
+// for a minimum. A group is chosen by, in this order:
+//   0. (v20) the fewest other duties still short in this shift that it may also take — so a group that can do only this
+//      duty takes it before one another duty needs (with every group eligible for every duty: all the same);
 //   1. no shift right before or after it (a night and the morning after it are neighbours, as every two shifts in a row);
 //   2. the fewest shifts per shift its cohort is on campus («הצעה»: a cohort there for part of the week is not loaded
 //      more on its days) — compared exactly, by integer cross-multiplication;
@@ -21,7 +24,10 @@
 // no load or pair changes; the other duty keeps its own minimum) —, else one more free group joins (at most
 // ROTA_MAX_EXTRA beyond the need, «הצעה»); and only as many as it needs: a suggested group whose leaving keeps the
 // minimum leaves (the smallest first), and a group that would leave one already there unneeded is not added — the
-// suggestion never makes a cell «too many» (overNeed, the board's «over»). Then a polish of at most ROTA_MAX_SWAPS
+// suggestion never makes a cell «too many» (overNeed, the board's «over»). (v20) A duty still short then takes a group
+// freed by the minimum's trim, and — through a chain of this suggestion's own rows in that shift — a group of another
+// duty that it may use, a free group standing in for it there (each duty on the way keeps its minimum and is never
+// «too many»): a duty is left short only when no free group could reach it so. Then a polish of at most ROTA_MAX_SWAPS
 // moves: a suggested row moves from a group loaded more than its share to one loaded less, while their gap is above
 // ROTA_LOAD_TOLERANCE shifts («הצעה»); then a suggested night of a group two or more nights above another changes places
 // with a suggested day shift of that other (the loads stay). No move makes a new pair of shifts in a row, takes a duty
@@ -92,8 +98,10 @@ export function overNeed(need: number | null, minPeople: number | null, sizes: r
 
 /**
  * The order the suggestion fills the shifts in: the tightest first — the fewest groups free (on campus, of a cohort
- * that helps, not busy by an assignment already there) for the groups still needed —, then by time. A hand-made
- * assignment of a group that does not help still fills its duty.
+ * that helps, not busy by an assignment already there) for the groups still needed; v20: and for each duty still
+ * short, the free groups whose cohort helps in it for what it still needs (a duty only one cohort helps in is tight
+ * when that cohort is short, however many others are free) —, then by time. A hand-made assignment of a group that
+ * does not help still fills its duty.
  */
 export function suggestionOrder(input: RotaSuggestInput): RotaSlot[] {
   const { data, edition } = input;
@@ -108,13 +116,19 @@ export function suggestionOrder(input: RotaSuggestInput): RotaSlot[] {
     const k = `${a.day}:${a.shift}:${a.duty_id}`;
     count.set(k, (count.get(k) ?? 0) + 1);
   }
+  const helpsIn = new Set((data.cohortDuties ?? []).map((x) => `${x.cohort_id}:${x.duty_id}`));
   const slack = (s: RotaSlot) => {
-    const open = helping.filter((g) => here.has(`${g.cohort_id}:${s.day}:${s.shift}`) && !busy.has(`${g.id}:${s.day}:${s.shift}`)).length;
-    const wanted = data.duties.reduce((sum, d) => {
+    const open = helping.filter((g) => here.has(`${g.cohort_id}:${s.day}:${s.shift}`) && !busy.has(`${g.id}:${s.day}:${s.shift}`));
+    let wanted = 0;
+    let tightest = Infinity;
+    for (const d of data.duties) {
       const need = needOf(d, s.shift);
-      return need != null && need > 0 ? sum + Math.max(0, need - (count.get(`${s.day}:${s.shift}:${d.id}`) ?? 0)) : sum;
-    }, 0);
-    return open - wanted;
+      if (need == null || need <= 0) continue;
+      const w = Math.max(0, need - (count.get(`${s.day}:${s.shift}:${d.id}`) ?? 0));
+      wanted += w;
+      if (w > 0) tightest = Math.min(tightest, open.filter((g) => helpsIn.has(`${g.cohort_id}:${d.id}`)).length - w);
+    }
+    return Math.min(open.length - wanted, tightest);
   };
   return rotaSlots(edition)
     .map((s) => ({ s, slack: slack(s) }))
@@ -177,7 +191,7 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
   const adjacentBusy = (st: G, idx: number) => Number(st.busy.has(idx - 1)) + Number(st.busy.has(idx + 1));
   const free = (st: G, s: RotaSlot) => st.helps && st.present > 0 && presentAt(st.g, s) && !st.busy.has(slotIndex(s.day, s.shift));
   // v20: a group may take a duty only if its cohort helps in it — held at every step: the fill, the minimum's extra and
-  // trade, the polish and the night swaps (stream A deepens the order and the fairness around it)
+  // trade, the chain of step 3, the polish and the night swaps
   const helpsIn = new Set((data.cohortDuties ?? []).map((x) => `${x.cohort_id}:${x.duty_id}`));
   const eligible = (st: G, duty: number) => helpsIn.has(`${st.g.cohort_id}:${duty}`);
   const sizeOf = (id: number) => state.get(id)?.g.size ?? null;
@@ -303,7 +317,10 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
         trim();
       }
     }
-    // 3. (v20) a group the minimum's trim set free may take a duty its cohort helps in that is still short in this shift
+    // 3. (v20) a duty still short: a group the minimum's trim set free may take it — and then a chain: it takes a group
+    //    this suggestion put on another duty in this shift that may do it, a free group standing in for that one there
+    //    (or a group of a third duty, and so on), every duty on the way keeping its minimum and never «too many». The
+    //    same groups work, and one more: no load changes but the one that joins, chosen as the fill chooses (ranked).
     if (unfilled.some((u) => slotIndex(u.day, u.shift) === idx)) {
       for (const { d, need } of needs(s)) {
         const on = () => cell.get(cellKey(idx, d.id)) ?? [];
@@ -312,6 +329,41 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
           place(st, d.id);
         }
       }
+      /** A step of a chain: `row`'s group leaves its duty for `to`. */
+      type Step = { row: (typeof added)[number]; to: number };
+      /** The shortest chain that ends in a free group for `d` (breadth first, each of this suggestion's rows once), applied; false — none. */
+      const chain = (d: RotaDuty): boolean => {
+        const used = new Set<(typeof added)[number]>();
+        let frontier: { duty: RotaDuty; path: Step[] }[] = [{ duty: d, path: [] }];
+        while (frontier.length > 0) {
+          const next: typeof frontier = [];
+          for (const { duty: x, path } of frontier) {
+            // the group that leaves x (none for d itself, which is short: one more only helps it)
+            const out = path.length > 0 ? path[path.length - 1].row.st : null;
+            const fits = (inn: G) => out == null || (keepsMin(idx, x.id, out, inn) && staysNeeded(idx, x.id, s.shift, out, inn));
+            const end = ranked(x).find(fits);
+            if (end) {
+              for (const { row, to } of path) {
+                drop(row.st, idx, s.shift, row.duty);
+                take(row.st, idx, s.shift, to);
+                row.duty = to;
+              }
+              place(end, x.id);
+              return true;
+            }
+            const onPath = new Set([d.id, ...path.map((p) => p.row.duty)]);
+            for (const row of rowsHere()) {
+              if (used.has(row) || onPath.has(row.duty) || !eligible(row.st, x.id) || !fits(row.st)) continue;
+              used.add(row);
+              const y = dutyOf.get(row.duty);
+              if (y) next.push({ duty: y, path: [...path, { row, to: x.id }] });
+            }
+          }
+          frontier = next;
+        }
+        return false;
+      };
+      for (const { d, need } of needs(s)) while ((cell.get(cellKey(idx, d.id)) ?? []).length < need && chain(d));
       for (let i = unfilled.length - 1; i >= 0; i--) if (slotIndex(unfilled[i].day, unfilled[i].shift) === idx) unfilled.splice(i, 1);
       for (const { d, need } of needs(s)) {
         const n = (cell.get(cellKey(idx, d.id)) ?? []).length;

@@ -1,8 +1,8 @@
 // «תוצרים ← תורנויות» (/print/rota, every member of the edition; milestone 7, schema v16): every page of the duty
 // roster, to print or download — the board, a schedule per group (all or one: one A4 landscape page each, GroupSheet),
 // a page per day, the kitchen's, the heads, the staff's shifts, מוצ"ש–ראשון (the tasks, and the shopping list on a page of
-// its own — v19), the food, who is on campus, the loads. v20: the food page is FoodSheet (stream A's) and the staff's
-// shifts StaffSheet (stream B's: the day × grid-rows schedule, never a transport) — src/screens/outputs/rota/.
+// its own — v19), the food, who is on campus, the loads. v20: the food page is FoodSheet (a row per day × meal, then per cohort) and the
+// staff's shifts StaffSheet (the day × grid-rows schedule, never a transport) — src/screens/outputs/rota/.
 // Each is a builder of src/exports/rota.ts: the screen, the paper and the files are one list. «הורדת xlsx (כל
 // הגיליונות)» writes all of them, a sheet each; «הורדת CSV» the page on screen. Made in this browser, nothing uploaded.
 // The heads' phones are personal data: «כולל טלפונים של ראשי הקבוצות» only for an edition's logistics and admins in a

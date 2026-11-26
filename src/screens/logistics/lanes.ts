@@ -7,20 +7,28 @@
 //   for «הלוך ושוב», the return as a marker at the END OF THE TEACHING (app.teach_end: start + teachMinutes — what the
 //   speaker's message, the escort's page and the files say; not the grid row's end) with no length: the data has no
 //   return time, no travel time, no car, one driver per lesson — never invented here;
-//   a shift lane per staff shift of that day (a team member, a name as typed or a cohort's staff; its lead marked), so
+//   a shift lane per staff shift of that day (a team member, a name as typed or a cohort's staff — v20: no lead), so
 //   whoever finds a driver sees who is on duty; and (v19) beside them the cohorts whose staff can drive («הצוות שלה
 //   יכול להסיע», canDrive), those on campus that day first — names only. No phone: shifts and cohorts have none, and a
 //   lane carries none but what the read returned for whom it may show it.
+// v20 — the driver's two suggestion lists for an approved transport (driverSuggestions; the owner's «הצעה: נהג/ת
+// מהמשמרת»): «במשמרת בשעת האיסוף», the staff whose hours overlap the trip [pickup, the lesson's start] — a pickup before
+// 06:30 against the night of the day before, as the staff's clock has it (onStaffClock) — and «אחריות של מכינה», the
+// cohorts whose staff can drive and that are on campus in the pickup's shift. A pick only FILLS the form's fields (the
+// cohort's contact's phone only for whom app.may_see_rota_contacts lets read it, fetched on the click): saving is still
+// set_transport_driver, typing by hand stays, and no transport ever reaches the rota.
 import type { LessonTransport, TransportDriverPatch } from "../../data/commands";
 import type { RotaCohort, RotaData, RotaStaffShift } from "../../data/rota";
+import { STAGE_LIMITS } from "../../data/stageRules";
 import { lessonHandler } from "../../domain/handler";
 import { teachMinutes } from "../../domain/message";
-import { pickupMin } from "../../domain/pickup";
-import { byCohortOrder, canDrive } from "../../domain/rota";
+import { typedPickupMin } from "../../domain/pickup";
+import { byCohortOrder, canDrive, presentAt } from "../../domain/rota";
 import { DAY_END, DAY_START, type Day, DAYS, fmt } from "../../domain/time";
 import type { Lesson, TransportDetails, Week } from "../../domain/types";
 import { speakersOf } from "../../exports/logistics";
-import { staffWho } from "../../exports/rota";
+import { shiftAt, staffInOrder, staffWho } from "../../exports/rota";
+import { onStaffClock } from "../../exports/staffSchedule";
 import { todayColumn } from "../../offline/view";
 
 /** The board's time axis: the grid's day, fixed — 06:30 to 06:30 the next morning. */
@@ -194,19 +202,12 @@ export function axisPercent(min: number): number {
 export const AXIS_TICKS: readonly number[] = Array.from({ length: 12 }, (_, i) => 480 + i * 120);
 
 /**
- * The pickup's minute on the lesson's grid day, as the board draws and says it. `pickup_time` is what every other reader
- * shows (the lesson page, the files, «אישורים»), and set_transport_details rewrote it while leaving pickup_min as it was
- * (CONTRACT: pickup_min is set_transport_request's alone; no screen calls set_transport_details since the reset's
- * phase 5, but rows it wrote remain) — so pickup_min counts only while it is
- * the time typed (the same minute of the clock: it keeps the request's day-or-night choice); a time typed since → its
- * own minute (pickupMin, as the request form computes it); words («אחרי השיעור») or no time at all → null (not a time).
+ * The pickup's minute on the lesson's grid day, as the board draws and says it — the one rule of every logistics view
+ * (typedPickupMin, src/domain/pickup.ts): pickup_min counts only while it is the time typed in `pickup_time`; a time typed
+ * since → its own minute; words («אחרי השיעור») or no time at all → null (not a time).
  */
 export function boardPickupMin(start: number, d: Pick<LessonTransport, "pickup_time" | "pickup_min"> | null | undefined): number | null {
-  const typed = d?.pickup_time?.trim();
-  if (!typed) return null;
-  const fresh = pickupMin(typed, start);
-  if (fresh == null) return null;
-  return d!.pickup_min != null && d!.pickup_min % 1440 === fresh % 1440 ? d!.pickup_min : fresh;
+  return typedPickupMin(start, d);
 }
 
 /**
@@ -235,4 +236,86 @@ export function driverPatch(
   if (phone !== (loaded.driver_phone ?? null)) p.driver_phone = phone;
   if (draft.arranged !== loaded.arranged) p.arranged = draft.arranged;
   return p;
+}
+
+// ------------------------------------------------------------------ v20: who could drive
+
+/** A staff shift a driver could come from: who (the team's name for a member, else as the rota says), on which day. */
+export interface StaffPick {
+  shift: RotaStaffShift;
+  who: string;
+}
+
+/** A cohort whose staff could take the transport, and what a pick writes into «שם הנהג/ת». */
+export interface CohortPick {
+  cohort: RotaCohort;
+  /** «צוות מכינת X — איש/אשת קשר: Y» (no contact named: «צוות מכינת X»), within the field's 80 characters. */
+  fill: string;
+}
+
+export interface DriverSuggestions {
+  /** The pickup on the staff's clock (a pickup before 06:30 is the night of the day before); null: no pickup time — no suggestion. */
+  at: { day: Day; min: number } | null;
+  /** «במשמרת בשעת האיסוף»: whose hours overlap the trip [pickup, the lesson's start], those of the night before first; a name once. */
+  staff: StaffPick[];
+  /** «אחריות של מכינה»: the cohorts whose staff can drive, marked on campus in the pickup's shift (no row: not marked, never assumed). */
+  cohorts: CohortPick[];
+}
+
+/** What a cohort pick writes: «צוות מכינת X — איש/אשת קשר: Y» — «צוות X» when the name already says «מכינ…»; the contact left out when none is named or it would not fit. */
+export function cohortDriverText(c: Pick<RotaCohort, "name" | "contact_name">): string {
+  const base = (c.name.startsWith("מכינ") ? `צוות ${c.name}` : `צוות מכינת ${c.name}`).slice(0, STAGE_LIMITS.driver_name);
+  if (!c.contact_name) return base;
+  const full = `${base} — איש/אשת קשר: ${c.contact_name}`;
+  return [...full].length <= STAGE_LIMITS.driver_name ? full : base;
+}
+
+/**
+ * The pieces of the trip [pickup, the lesson's start] on the staff's clock, as (day, from, to): from 06:30 it is the
+ * lesson's own day; a pickup before it starts in the night of the day before (+24h, to 06:30) and goes on to the start
+ * — on Sunday, with no day before it in the week, from 06:30. A pickup at or after the start: that minute alone.
+ */
+export function tripPieces(day: Day, pickup: number, start: number): { day: Day; from: number; to: number }[] {
+  const at = onStaffClock(day, pickup);
+  const out: { day: Day; from: number; to: number }[] = [];
+  if (at && at.day !== day) out.push({ day: at.day, from: at.min, to: DAY_END });
+  const from = Math.max(pickup, DAY_START);
+  out.push({ day, from, to: Math.max(start, from + 1) });
+  return out;
+}
+
+/**
+ * v20: who could drive an approved transport — the staff on shift during the trip and the cohorts that can drive and are
+ * on campus in the pickup's shift. Nothing without a pickup time (the form still takes a name typed by hand). Pure; the
+ * rota as load_rota gave it (no phone) — or null while it loads.
+ */
+export function driverSuggestions(
+  week: Pick<Week, "team" | "edition">,
+  rota: Pick<RotaData, "staff" | "cohorts" | "presence"> | null,
+  lesson: Pick<Lesson, "day" | "start_min">,
+  pickup: number | null,
+): DriverSuggestions {
+  if (pickup == null) return { at: null, staff: [], cohorts: [] };
+  // Sunday before 06:30 has no night before it in the week: its own morning
+  const at = onStaffClock(lesson.day, pickup) ?? { day: lesson.day, min: DAY_START };
+  if (!rota) return { at, staff: [], cohorts: [] };
+  const team = new Map(week.team.map((t) => [t.id, t.display_name]));
+  const ordered = staffInOrder(rota);
+  const seen = new Set<string>();
+  const staff: StaffPick[] = [];
+  for (const p of tripPieces(lesson.day, pickup, lesson.start_min)) {
+    for (const s of ordered) {
+      if (s.day !== p.day || !(s.start_min < p.to && s.end_min > p.from)) continue;
+      const who = (s.member_id != null ? team.get(s.member_id) : undefined) ?? staffWho(rota, s);
+      if (seen.has(who)) continue;
+      seen.add(who);
+      staff.push({ shift: s, who });
+    }
+  }
+  const shift = shiftAt(week.edition, at.min);
+  const cohorts = rota.cohorts
+    .filter((c) => canDrive(c) && presentAt(rota, c.id, at.day, shift))
+    .sort(byCohortOrder)
+    .map((cohort) => ({ cohort, fill: cohortDriverText(cohort) }));
+  return { at, staff, cohorts };
 }

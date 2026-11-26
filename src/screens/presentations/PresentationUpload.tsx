@@ -16,7 +16,7 @@ import { errorMessage } from "../../errors";
 import type { Notify } from "../speakers/parts";
 import { LINK_BUTTON } from "../stages/parts";
 
-/** What a presentation may be, under the button (or once above a day's list). */
+/** What a presentation may be, under the button. */
 export const PRESENTATION_HINT = "PowerPoint \u200f(pptx), \u200fPDF, תמונה או Word · עד 25MB · לא נכנסת למקראה";
 export const WEEK_PRESENTATION_HINT = "PowerPoint \u200f(pptx), \u200fPDF או תמונה · עד 25MB · לא נכנסת למקראה";
 
@@ -35,14 +35,11 @@ export interface PresentationUploadProps {
   notify: Notify;
   clear: () => void;
   reload: () => Promise<void>;
-  /** A row of the day's list: the button alone (the hint is above the list, `hintId`), no drop area. */
-  compact?: boolean;
-  hintId?: string;
   /** On the lesson page itself: the «טרם התקבלו» line has no link to it. */
   onLessonPage?: boolean;
 }
 
-export function PresentationUpload({ port, week, lessonId, notify, clear, reload, compact = false, hintId, onLessonPage = false }: PresentationUploadProps) {
+export function PresentationUpload({ port, week, lessonId, notify, clear, reload, onLessonPage = false }: PresentationUploadProps) {
   const id = useId();
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [over, setOver] = useState(false);
@@ -97,7 +94,7 @@ export function PresentationUpload({ port, week, lessonId, notify, clear, reload
         // never `disabled` while busy: the input holds the focus once the picker closes, and a disabled one drops it to
         // the page — aria-disabled, and no picker or new files until the upload ends (kit's Button does the same)
         aria-disabled={busy || undefined}
-        aria-describedby={compact ? hintId : `${id}-hint`}
+        aria-describedby={`${id}-hint`}
         onClick={(e) => {
           if (busy) e.preventDefault();
         }}
@@ -119,25 +116,21 @@ export function PresentationUpload({ port, week, lessonId, notify, clear, reload
 
   return (
     <div data-upload-presentation={lessonId ?? "week"} className="space-y-1">
-      {compact ? (
-        <div>{input}</div>
-      ) : (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setOver(true);
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={onDrop}
-          className={`rounded-xl border-2 border-dashed p-3 text-sm transition-colors ${over ? "border-navy bg-accent-soft" : "border-line bg-paper-light"}`}
-        >
-          {input}
-          <span className="ms-2 text-ink-soft pointer-coarse:hidden">או לגרור לכאן</span>
-          <p id={`${id}-hint`} className="mt-1 text-xs text-ink-soft">
-            {hint}
-          </p>
-        </div>
-      )}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={onDrop}
+        className={`rounded-xl border-2 border-dashed p-3 text-sm transition-colors ${over ? "border-navy bg-accent-soft" : "border-line bg-paper-light"}`}
+      >
+        {input}
+        <span className="ms-2 text-ink-soft pointer-coarse:hidden">או לגרור לכאן</span>
+        <p id={`${id}-hint`} className="mt-1 text-xs text-ink-soft">
+          {hint}
+        </p>
+      </div>
       {uploads.length > 0 && (
         <ul aria-label="העלאות" className="space-y-1">
           {uploads.map((u) => (

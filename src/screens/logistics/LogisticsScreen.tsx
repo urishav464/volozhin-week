@@ -62,8 +62,8 @@ export function logisticsPageOf(tab: string | undefined): LogisticsPage | null {
   return LOGISTICS_TABS.some(([k]) => k === tab && k !== "home") ? (tab as LogisticsPage) : null;
 }
 
-/** The lists' own names on paper and in a file's title (the board keeps «הסעות»: it prints the transports alone). */
-const PRINT_LABEL: Record<LogisticsTab, string> = { transports: "הסעות", payments: "תשלומים", books: "ספרים", prints: "הדפסות", rota: "תורנויות" };
+/** The lists' own names on paper and in a file's title (v20: the board prints «הסעות וצוות» — the staff and the transports). */
+const PRINT_LABEL: Record<LogisticsTab, string> = { transports: "הסעות וצוות", payments: "תשלומים", books: "ספרים", prints: "הדפסות", rota: "תורנויות" };
 
 /** May this member open «לוגיסטיקה» in this edition: its logistics team and its admins. */
 export function mayLogistics(actor: Actor): boolean {

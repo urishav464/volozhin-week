@@ -28,9 +28,9 @@ const leads = (): RotaStaffShift[] =>
 const helping = (cohorts: number[], duties: number[]): RotaData["cohortDuties"] => cohorts.flatMap((cohort_id) => duties.map((duty_id) => ({ cohort_id, duty_id })));
 const prep = (id: number, done: boolean, extra: Partial<RotaPrepTask> = {}): RotaPrepTask => ({ id, edition_id: 1, text: `משימה לדוגמה ${id}`, group_id: null, done, sort: id, ...extra });
 
-/** A rota where nothing is left: one cohort on campus helping in its duty, one group with a size and a head, a duty that needs nobody, staff all week. */
+/** A rota where nothing is left: one cohort on campus (its trainees typed) helping in its duty, one group with a size and a head, a duty that needs nobody, staff all week. */
 function readyRota(): RotaData {
-  return { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], cohortDuties: helping([1], [1]), presence: [at(1, 0, 1)], groups: [group(11, 1)], duties: [duty(1)], staff: leads() };
+  return { ...EMPTY_ROTA, cohorts: [cohort(1, "א", { trainees: 10 })], cohortDuties: helping([1], [1]), presence: [at(1, 0, 1)], groups: [group(11, 1)], duties: [duty(1)], staff: leads() };
 }
 
 const kkGroup = (id: number, title: string | null): KkGroup => ({ id, title, author: null, place: null, capacity: null, open: false });
@@ -190,23 +190,34 @@ describe("«נוכחות המכינות»", () => {
   });
 
   it("open: the cohorts never marked on campus (presence_unknown), by the cohorts' order", () => {
-    const rota: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(2, "ב"), cohort(1, "א"), cohort(3, "ג")], presence: [at(2, 1, 0)] };
+    const t = { trainees: 10 };
+    const rota: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(2, "ב", t), cohort(1, "א", t), cohort(3, "ג", t)], presence: [at(2, 1, 0)] };
     expect(stateLine(one("presence", input({ rota })))).toEqual(["open", "לא סומן מתי בקמפוס: מכינה לדוגמה א, מכינה לדוגמה ג"]);
     // a cohort that helps in no duty is still asked: its presence feeds the meal counts
-    const notHelping: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], presence: [] };
+    const notHelping: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א", t)], presence: [] };
     expect(stateLine(one("presence", input({ rota: notHelping })))).toEqual(["open", "לא סומן מתי בקמפוס: מכינה לדוגמה א"]);
   });
 
-  it("done: every cohort marked somewhere; those that help in a duty (v20) and those that can drive counted (absent: does not drive)", () => {
+  it("v20 open: a cohort whose trainees are TBD (the meals count them), after the presence — each by the cohorts' order", () => {
+    const rota: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(2, "ב"), cohort(1, "א", { trainees: 0 }), cohort(3, "ג")], presence: [at(1, 0, 0), at(2, 1, 0), at(3, 2, 2)] };
+    expect(stateLine(one("presence", input({ rota })))).toEqual(["open", "לא הוזן כמה חניכים: מכינה לדוגמה ב, מכינה לדוגמה ג"]); // 0 is a number, not TBD
+    const both: RotaData = { ...rota, presence: [at(2, 1, 0)] };
+    expect(stateLine(one("presence", input({ rota: both })))).toEqual([
+      "open",
+      "לא סומן מתי בקמפוס: מכינה לדוגמה א, מכינה לדוגמה ג · לא הוזן כמה חניכים: מכינה לדוגמה ב, מכינה לדוגמה ג",
+    ]);
+  });
+
+  it("done: every cohort marked somewhere and its trainees typed — added up; those that help in a duty (v20) and those that can drive counted (absent: does not drive)", () => {
     const rota: RotaData = {
       ...EMPTY_ROTA,
-      cohorts: [cohort(1, "א"), cohort(2, "ב", { can_drive: true }), cohort(3, "ג", { can_drive: true }), cohort(4, "ד", { can_drive: false })],
+      cohorts: [cohort(1, "א", { trainees: 48 }), cohort(2, "ב", { can_drive: true, trainees: 47 }), cohort(3, "ג", { can_drive: true, trainees: 40 }), cohort(4, "ד", { can_drive: false, trainees: 0 })],
       cohortDuties: [...helping([1, 2], [1]), ...helping([4], [1, 2])], // «ג» helps in none
       presence: [at(1, 0, 0), at(2, 4, 2), at(3, 2, 1), at(4, 1, 1)],
     };
-    expect(stateLine(one("presence", input({ rota })))).toEqual(["done", "4 מכינות · עוזרות בתורנויות: 3 · יכולות להסיע: 2"]);
-    const single: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], cohortDuties: helping([1], [1]), presence: [at(1, 0, 0)] };
-    expect(stateLine(one("presence", input({ rota: single })))).toEqual(["done", "מכינה אחת · עוזרות בתורנויות: 1 · יכולות להסיע: 0"]);
+    expect(stateLine(one("presence", input({ rota })))).toEqual(["done", "4 מכינות · 135 חניכים · עוזרות בתורנויות: 3 · יכולות להסיע: 2"]);
+    const single: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א", { trainees: 12 })], cohortDuties: helping([1], [1]), presence: [at(1, 0, 0)] };
+    expect(stateLine(one("presence", input({ rota: single })))).toEqual(["done", "מכינה אחת · 12 חניכים · עוזרות בתורנויות: 1 · יכולות להסיע: 0"]);
   });
 });
 

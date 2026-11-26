@@ -258,10 +258,11 @@ function weekOf(kind: "real" | "practice" = "real") {
 /** A small rota: one cohort marked on campus, one group with its size and head, one duty — every shift short of it. */
 function rotaOf(): RotaData {
   return {
-    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1, helps_rota: true, can_drive: true }],
+    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1, can_drive: true }],
     presence: [{ cohort_id: 1, day: 0, shift: 0 }],
     groups: [{ id: 11, edition_id: 7, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" }],
     duties: [],
+    cohortDuties: [],
     assignments: [],
     staff: [],
     prep: [{ id: 51, edition_id: 7, text: "משימת הכנה לדוגמה", group_id: null, done: true, sort: 1, kind: "task", qty: null }],

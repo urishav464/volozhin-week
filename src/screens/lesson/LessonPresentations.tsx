@@ -3,11 +3,12 @@
 // data-lesson-presentations>` with its own top border (it draws nothing when there is nothing to say: a memorial time,
 // or a lesson that is not closed and kept no presentation). A previous speaker's are «מהמרצה הקודם», for removal; the
 // link (`presentation_url`) is edited below («קישור למצגת», SourcesStage) and only opened here. Uploading changes nothing on the lesson:
-// sources still «טרם התקבלו» say how to mark «מצגת».
-import { useId, useRef } from "react";
+// sources still «טרם התקבלו» say how to mark «מצגת». Each current file says its place on the hall's computer (v20): «במחשב
+// של האולם: <folder> / <name>», the path the week's zip gives it (`presentationEntries` — the one naming).
+import { useId, useMemo, useRef } from "react";
 import { Link } from "react-router";
 import type { DataPort } from "../../data/port";
-import { lessonPresentations, PRESENTATION_STATE_LABEL } from "../../domain/presentations";
+import { lessonPresentations, PRESENTATION_STATE_LABEL, presentationEntries } from "../../domain/presentations";
 import { presentationsPath } from "../../domain/routes";
 import type { Lesson, Week } from "../../domain/types";
 import { PRESENTATION_TONE, PresentationFile, PresentationLink } from "../presentations/PresentationFile";
@@ -32,6 +33,7 @@ export function LessonPresentations({ port, week, lesson: l, actor, notify, clea
   const id = useId();
   const root = useRef<HTMLElement>(null);
   const rescue = useFocusRescue();
+  const entries = useMemo(() => presentationEntries(week), [week]);
   if (l.kind !== "lesson") return null;
   const p = lessonPresentations(week, l);
   const closed = l.state === "closed";
@@ -45,7 +47,7 @@ export function LessonPresentations({ port, week, lesson: l, actor, notify, clea
         </h4>
         {closed && <Badge tone={PRESENTATION_TONE[p.state]}>{PRESENTATION_STATE_LABEL[p.state]}</Badge>}
         {closed && (
-          <Link to={presentationsPath({ day: l.day, room: l.room_id })} className="ms-auto inline-flex min-h-11 items-center text-sm font-bold text-navy underline-offset-4 hover:underline">
+          <Link to={presentationsPath()} className="ms-auto inline-flex min-h-11 items-center text-sm font-bold text-navy underline-offset-4 hover:underline">
             לדף המצגות ‹
           </Link>
         )}
@@ -63,7 +65,18 @@ export function LessonPresentations({ port, week, lesson: l, actor, notify, clea
       {p.files.length > 0 && (
         <ul aria-label="המצגות של השיעור" className="divide-y divide-line">
           {p.files.map((f) => (
-            <PresentationFile key={f.id} port={port} week={week} file={f} actor={actor} notify={notify} clear={clear} reload={reload} onRemoved={() => rescue(() => root.current)} />
+            <PresentationFile
+              key={f.id}
+              port={port}
+              week={week}
+              file={f}
+              actor={actor}
+              notify={notify}
+              clear={clear}
+              reload={reload}
+              path={entries.get(f.id)}
+              onRemoved={() => rescue(() => root.current)}
+            />
           ))}
         </ul>
       )}

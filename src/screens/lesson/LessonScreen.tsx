@@ -504,7 +504,7 @@ function CloseClosed({ model, ctx, actions }: StepBodyProps) {
  * set_transport_driver once approved). An archive's lesson (the reset, phase 5): last year's sheet, what was asked,
  * «שולם», and the transport's details to read only — no screen writes them whole any more (set_transport_details).
  */
-function PayStep({ ctx }: StepBodyProps) {
+function PayStep({ ctx, port }: StepBodyProps) {
   const { week, lesson: l, actor, cmds, busy, act, mine } = ctx;
   if (week.edition.kind === "archive") {
     const asked = l.pay_amount != null || l.transport !== "none";
@@ -550,7 +550,7 @@ function PayStep({ ctx }: StepBodyProps) {
       {staff && l.transport !== "none" && (
         <div className="border-t border-line pt-3">
           {/* the pickup read-only, the driver once approved (set_transport_driver) — never the old whole-details form */}
-          <StaffTransport {...ctx} />
+          <StaffTransport {...ctx} port={port} />
         </div>
       )}
     </>

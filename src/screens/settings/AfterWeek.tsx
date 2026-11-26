@@ -186,7 +186,11 @@ function DryRun({ deactivate, setDeactivate }: { deactivate: boolean; setDeactiv
           <dd data-dry="copy">
             {p.grid_rows} שורות רשת · {p.milestones} אבני דרך · {p.call_template ? "«נקודות לשיחה» שנערכו" : "בלי «נקודות לשיחה» שנערכו (נשאר הטקסט המובנה)"} ·{" "}
             {p.confirm_template ? "תבנית הודעת הסיכום" : "בלי תבנית הודעה"} · {p.duty_phrases} ניסוחי מלווים ·{" "}
-            {p.rota_duties === 1 ? "תורנות אחת" : `${p.rota_duties} תורנויות`} · {p.rota_prep_tasks === 1 ? "משימת הכנה אחת למוצ״ש" : `${p.rota_prep_tasks} משימות הכנה למוצ״ש`} ·{" "}
+            {/* v20: the cohorts carry over — a letter, a name, «יכול להסיע», the duties they help in; never the numbers or the contact */}
+            {p.rota_cohorts === 0
+              ? "0 מכינות"
+              : `${p.rota_cohorts === 1 ? "מכינה אחת ובאילו תורנויות היא עוזרת" : `${p.rota_cohorts} מכינות ובאילו תורנויות הן עוזרות`} (בלי המספרים ואיש/אשת הקשר)`}{" "}
+            · {p.rota_duties === 1 ? "תורנות אחת" : `${p.rota_duties} תורנויות`} · {p.rota_prep_tasks === 1 ? "משימת הכנה אחת למוצ״ש" : `${p.rota_prep_tasks} משימות הכנה למוצ״ש`} ·{" "}
             {p.rota_shifts ? "שעות המשמרות שנקבעו" : "בלי שעות משמרות שנקבעו (נשארות של אשתקד)"} ·{" "}
             {p.titles ? "רשימת התארים שנקבעה" : "בלי רשימת תארים משלו (נשארת הרשימה הקבועה)"}
           </dd>

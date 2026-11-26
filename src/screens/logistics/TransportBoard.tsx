@@ -1,13 +1,16 @@
-// «לוגיסטיקה ← הסעות» — the transport board (the reset, phase 3), for logistics and the admins: ONE transports read
+// «לוגיסטיקה ← הסעות וצוות» — the transport board (the reset, phase 3), for logistics and the admins: ONE transports read
 // (cmds.transports(): the requests that wait and the approved ones, each with its pickup_min — personal data, never in
 // the Week) and the edition's staff shifts (useRota: port.rota.load, no phones), re-read when a board lesson's version
 // or decision changes and after every write. One day at a time (`?day=`): a time axis from a tablet up (BoardAxis —
 // aria-hidden) and its text twin, the list, which is the phone's whole board. A request is decided right here by whoever
 // public.decide_payments lets (mayDecide; one approval decides the payment and the transport together); an approved
-// transport gets its driver and «סודר» through set_transport_driver only (DriverForm). Beside the day's staff shifts (v19)
-// the cohorts whose staff can drive, those on campus that day first — names only (lanes.ts driveCohorts). The pickup is the handler's:
-// read-only here, written on the lesson page («לדף השיעור»). The addresses and the drivers' phones only behind «כולל
-// כתובות וטלפונים». Print and the files keep the approved transports only (transportRows / transportTable).
+// transport gets its driver and «סודר» through set_transport_driver only (DriverForm — v20: with its two suggestion
+// lists, «במשמרת בשעת האיסוף» and «אחריות של מכינה», lanes.ts driverSuggestions; a cohort's contact's phone only for
+// whom maySeeRotaContacts, read on the click). Beside the day's staff shifts (v19) the cohorts whose staff can drive,
+// those on campus that day first — names only (lanes.ts driveCohorts). The pickup is the handler's: read-only here,
+// written on the lesson page («לדף השיעור»). The addresses and the drivers' phones only behind «כולל כתובות וטלפונים».
+// Print and the files (v20): «הסעות וצוות» — the staff's shifts and the APPROVED transports by day and time
+// (transportStaffTable); the xlsx adds «הסעות», the approved transports alone (transportRows / transportTable).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { LessonTransport, TransportDriverPatch } from "../../data/commands";
@@ -15,17 +18,20 @@ import { mayDecide } from "../../domain/approvals";
 import { lessonPath } from "../../domain/routes";
 import { shekels } from "../../domain/stages";
 import { DAY_NAMES, DAYS, type Day, fmt, fmtRange } from "../../domain/time";
-import { transportRows, transportTable } from "../../exports/logistics";
+import { transportRows, transportStaffTable, transportTable } from "../../exports/logistics";
 import { teachingWhen } from "../../exports/tracking";
 import { Chip } from "../../grid/bits";
-import { useRota } from "../rota/shared";
+import { maySeeRotaContacts, useRota } from "../rota/shared";
 import { Button, useFocusBack, useFocusRescue, useRunner } from "../settings/kit";
 import { Decide } from "../stages/PaymentStage";
 import { mayArrangeDriver } from "../lesson/StaffTransport";
 import { type Act, LINK_BUTTON, memberName } from "../stages/parts";
 import { BoardAxis } from "./BoardAxis";
-import { ARRANGED_NOTE, DriverForm } from "./DriverForm";
-import { AXIS, boardCounts, boardDayParam, type BoardState, defaultBoardDay, type DriveCohort, lanesPerDay, onBoard, pickupText, type ShiftLane, type TransportLane, transportLanes } from "./lanes";
+import { ARRANGED_NOTE, DriverForm, type DriverSuggest, useCohortPhone } from "./DriverForm";
+import {
+  AXIS, boardCounts, boardDayParam, boardPickupMin, type BoardState, defaultBoardDay, type DriveCohort, driverSuggestions, lanesPerDay, onBoard, pickupText, type ShiftLane, type TransportLane,
+  transportLanes,
+} from "./lanes";
 import { Bar, PaperTable, PersonalToggle, type TabProps } from "./parts";
 
 /** Where a transport stands, in words (the axis draws it in colour). */
@@ -91,9 +97,18 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
   // set_transport_driver's people (app.require_logistics): logistics or an admin, an archive the admins' only — one
   // rule with the lesson page's «פרטי ההסעה»
   const mayDriver = mayArrangeDriver(actor, week);
+  // v20: a cohort's contact's phone into «טלפון הנהג/ת» — only for whom app.may_see_rota_contacts would give one
+  const phoneFor = useCohortPhone(port, week.edition.id, maySeeRotaContacts(actor, week.edition));
+  const suggestFor = (t: TransportLane): DriverSuggest => ({
+    lists: rota.data ? driverSuggestions(week, rota.data, t.lesson, boardPickupMin(t.lesson.start_min, t.details)) : null,
+    failed: rota.data == null && rota.failed != null,
+    phoneFor,
+  });
 
   const rows = useMemo(() => transportRows(week, details), [week, details]);
-  const table = () => transportTable(rows, week.edition.label, personal);
+  // on paper and in the CSV «הסעות וצוות»; the xlsx also the approved transports alone
+  const table = () => transportStaffTable({ week, details, rota: rota.data, personal });
+  const sheets = () => [table(), transportTable(rows, week.edition.label, personal)];
 
   /** A write, then the week and the read again (a stale answer: the runner says so, and both are fresh). */
   const act: Act = async (k, fn, ok, onRefused) => {
@@ -120,7 +135,7 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
   return (
     <>
       <PaperTable table={table()} title={`${label} · שבוע וולוז'ין ${week.edition.label}${personal ? " · כולל כתובות וטלפונים: מידע אישי" : ""}`} landscape />
-      <Bar week={week} tab="transports" table={table} personal={personal} notify={notify} summary={summary}>
+      <Bar week={week} tab="transports" table={table} sheets={sheets} personal={personal} notify={notify} summary={summary}>
         <PersonalToggle on={personal} setOn={setPersonal} />
       </Bar>
       {failed && (
@@ -134,7 +149,7 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
           {PICKUP_ON_LESSON_PAGE} {ARRANGED_NOTE}
         </p>
         {!deciding && counts.pending > 0 && <p>אישור תשלום והסעה פתוח רק במחזור האמיתי של השנה.</p>}
-        <p>בהדפסה ובקבצים — רק ההסעות שאושרו.</p>
+        <p>בהדפסה ובקבצים: «הסעות וצוות» — משמרות הצוות וההסעות שאושרו, לפי יום ושעה (הסעה לפני 06:30 עם הלילה שלפניה).</p>
       </div>
 
       <div role="group" aria-label="ימים" className="flex flex-wrap gap-1.5 print:hidden">
@@ -179,6 +194,7 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
                     act={act}
                     decide={cmds.decidePayments}
                     editing={editing === t.lesson.id}
+                    suggest={editing === t.lesson.id ? suggestFor(t) : undefined}
                     onEdit={() => setEditing(t.lesson.id)}
                     editRef={focus.ref(`driver-${t.lesson.id}`)}
                     onDecided={() => rescue(() => document.getElementById(rowId(t.lesson.id)) ?? document.getElementById("board-transports"))}
@@ -220,6 +236,7 @@ function TransportItem({
   act,
   decide,
   editing,
+  suggest,
   onEdit,
   editRef,
   onDecided,
@@ -238,6 +255,8 @@ function TransportItem({
   act: Act;
   decide: Parameters<typeof Decide>[0]["decide"];
   editing: boolean;
+  /** v20: who could drive, while the driver's form is open. */
+  suggest?: DriverSuggest;
   onEdit: () => void;
   editRef: (el: HTMLElement | null) => void;
   onDecided: () => void;
@@ -344,7 +363,7 @@ function TransportItem({
       {t.state !== "pending" && mayDriver && d && (
         editing ? (
           <div className="rounded-lg border border-line bg-paper-light p-3">
-            <DriverForm label={name} d={d} busy={mine === "driver"} onSave={onSave} onClose={onClose} />
+            <DriverForm label={name} d={d} busy={mine === "driver"} onSave={onSave} onClose={onClose} suggest={suggest} />
           </div>
         ) : (
           <Button ref={editRef} onClick={onEdit} aria-label={`עריכת הנהג/ת: ${name}`}>

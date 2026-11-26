@@ -12,18 +12,29 @@
 //              place and leaders — the copies to order and «הוזמן»;
 //   הדפסות     the lessons whose sources are printed ahead or on the day, by
 //              that and by day: «מרצה – כותרת», the files and their pages.
+// v20 «הסעות וצוות» (transportStaffTable): the week by day — the staff's shifts
+// and the approved transports at their times, a pickup before 06:30 in the
+// night of the day before (the staff's clock), a round trip's way back at the
+// teaching's end; the address and the driver's phone only with «כולל כתובות
+// וטלפונים». The logistics side's alone: /print/rota, every member's, never
+// has a transport.
 // Nothing here fills in a number nobody entered: no amounts, no books, and the
 // copies are what logistics saved — the book order's «הצעה» (signed up +
 // leaders: suggestedCopies, src/domain/kk.ts) fills the screen's field only on
 // «למלא», is saved only on «שמירה», and never reaches a file.
 import type { LessonTransport } from "../data/commands";
 import type { KkData, KkGroup } from "../data/kk";
+import type { RotaData } from "../data/rota";
 import { fromPreviousSpeaker, isPresentation } from "../data/sourceRules";
 import { groupName, LEADER_KIND_LABEL, leaderName, leadersOf } from "../domain/kk";
+import { teachMinutes } from "../domain/message";
 import { displayName } from "../domain/names";
+import { typedPickupMin } from "../domain/pickup";
 import { PRINT_WHEN_LABEL, TRANSPORT_LABEL } from "../domain/stages";
-import { type Day, DAYS } from "../domain/time";
+import { DAY_NAMES, type Day, DAYS, fmt, fmtRange, LRM, nightLabel } from "../domain/time";
 import type { Lesson, SourceFile, TransportDetails, Week } from "../domain/types";
+import { staffInOrder, staffWho } from "./rota";
+import { onStaffClock, type TransportLeg } from "./staffSchedule";
 import type { Table } from "./table";
 import { gridOrder, phoneCell, teachingWhen, whenCell } from "./tracking";
 
@@ -118,6 +129,96 @@ export function transportTable(rows: TransportRow[], editionLabel: string, perso
         d == null ? "" : d.arranged ? "סודר" : "טרם סודר",
       ];
     }),
+  };
+}
+
+// ------------------------------------------------------------------ הסעות וצוות (v20)
+
+/**
+ * v20: the legs of the transports the read returned — only what app.may_see_transport let this viewer read: the way
+ * there at the pickup (its minute as every logistics view reads it, typedPickupMin; null when no time is typed) and, for
+ * «הלוך ושוב», the way back at the teaching's end (app.teach_end). The APPROVED ones (the print's); `pending` adds the
+ * requests that still wait for the decision (the staff's schedule on screen, as the board shows them). In grid order.
+ * For the logistics side only.
+ */
+export function transportLegs(
+  week: Pick<Week, "lessons" | "lessonSpeakers" | "speakers" | "rooms" | "edition">,
+  details: readonly LessonTransport[] | null,
+  opts: { pending?: boolean } = {},
+): TransportLeg[] {
+  const by = new Map((details ?? []).filter((d) => d.approval === "approved" || (opts.pending && d.approval === "pending")).map((d) => [d.lesson_id, d]));
+  const lessonMinutes = week.edition.settings?.lesson_minutes;
+  const asked = (l: Lesson) => l.state === "closed" && l.kind === "lesson" && l.transport !== "none" && (l.approval === "approved" || (opts.pending === true && l.approval === "pending"));
+  return week.lessons
+    .filter((l) => asked(l) && by.has(l.id))
+    .sort(gridOrder(week))
+    .flatMap((l) => {
+      const d = by.get(l.id)!;
+      const state: TransportLeg["state"] = l.approval === "pending" || d.approval === "pending" ? "pending" : d.arranged ? "arranged" : "approved";
+      const there: TransportLeg = { lessonId: l.id, leg: "pickup", day: l.day, min: typedPickupMin(l.start_min, d), start: l.start_min, speaker: speakersOf(week, l.id), state };
+      return l.transport === "round_trip" ? [there, { ...there, leg: "return" as const, min: l.start_min + teachMinutes(l, lessonMinutes) }] : [there];
+    });
+}
+
+/** The words of a leg in «מה». */
+export const LEG_LABEL: Record<TransportLeg["leg"], string> = { pickup: "הסעה הלוך", return: "הסעה חזרה" };
+
+export interface TransportStaffInput {
+  week: Week;
+  /** The one transports read (get_transports_for); null: not loaded — the staff alone. */
+  details: readonly LessonTransport[] | null;
+  /** The rota (load_rota: no phone); null: not loaded — the transports alone. */
+  rota: Pick<RotaData, "staff" | "cohorts"> | null;
+  /** «כולל כתובות וטלפונים». */
+  personal: boolean;
+}
+
+/**
+ * «הסעות וצוות»: the whole week by day, and in each day by time, the staff's shifts («צוות», who, the hours, the note)
+ * and the legs of the approved transports («הסעה הלוך» at the pickup, «הסעה חזרה» at the teaching's end; who = the
+ * speaker; the lesson, the driver, «סודר»). On the staff's clock: a night hour is the day before it («ליל ראשון–שני»),
+ * so a pickup before 06:30 sits with the night staff who could take it. `personal`: the pickup address (the way there)
+ * and the driver's phone; off, neither column exists.
+ */
+export function transportStaffTable({ week, details, rota, personal }: TransportStaffInput): Table {
+  type Item = { col: Day; min: number; order: number; row: string[] };
+  const items: Item[] = [];
+  const blank = personal ? ["", ""] : [];
+  const day = (col: Day, min: number) => nightLabel(col, min) ?? DAY_NAMES[col];
+  for (const s of rota ? staffInOrder(rota) : []) {
+    items.push({ col: s.day, min: s.start_min, order: 0, row: [day(s.day, s.start_min), `${LRM}${fmtRange(s.start_min, s.end_min)}`, "צוות", staffWho(rota!, s), s.note ?? "", "", ...blank, ""] });
+  }
+  const lessons = new Map(week.lessons.map((l) => [l.id, l]));
+  const by = new Map((details ?? []).map((d) => [d.lesson_id, d]));
+  for (const g of transportLegs(week, details)) {
+    const l = lessons.get(g.lessonId)!;
+    const d = by.get(g.lessonId)!;
+    const at = g.min ?? g.start;
+    const clock = onStaffClock(g.day, at) ?? { day: g.day, min: at };
+    const lesson = `${g.leg === "return" ? "מהשיעור של" : "לשיעור של"} ${LRM}${fmt(g.start)}${clock.day !== g.day ? ` (${DAY_NAMES[g.day]})` : ""} · ${l.title ?? "TBD"}`;
+    items.push({
+      col: clock.day,
+      min: clock.min,
+      order: 1,
+      row: [
+        day(clock.day, clock.min),
+        g.min == null ? "TBD" : `${LRM}${fmt(g.min)}`,
+        LEG_LABEL[g.leg],
+        g.speaker || "TBD",
+        lesson,
+        d.driver_name ?? "",
+        ...(personal ? [g.leg === "pickup" ? (d.pickup_address ?? "") : "", phoneCell(d.driver_phone ?? undefined)] : []),
+        d.arranged ? "סודר" : "טרם סודר",
+      ],
+    });
+  }
+  items.sort((a, b) => a.col - b.col || a.min - b.min || a.order - b.order);
+  return {
+    name: `הסעות וצוות ${week.edition.label}`,
+    headers: ["יום", "שעה", "מה", "מי", "פרטים", "נהג/ת", ...(personal ? ["כתובת איסוף", "טלפון הנהג/ת"] : []), "סודר"],
+    widths: [16, 14, 12, 24, 40, 18, ...(personal ? [28, 18] : []), 10],
+    landscape: true,
+    rows: items.map((i) => i.row),
   };
 }
 

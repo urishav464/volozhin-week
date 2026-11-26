@@ -26,10 +26,29 @@ export interface TabProps {
 }
 
 /** The tab's bar: what it holds, and print / xlsx / CSV of the very table the page prints. */
-export function Bar({ week, tab, table, personal, notify, children, summary }: { week: Week; tab: LogisticsTab; table: () => Table; personal?: boolean; notify: Notify; children?: ReactNode; summary: ReactNode }) {
+export function Bar({
+  week,
+  tab,
+  table,
+  sheets,
+  personal,
+  notify,
+  children,
+  summary,
+}: {
+  week: Week;
+  tab: LogisticsTab;
+  table: () => Table;
+  /** The xlsx's sheets, when it holds more than the page's table (v20: «הסעות וצוות», then «הסעות» alone); the page's table by default. */
+  sheets?: () => Table[];
+  personal?: boolean;
+  notify: Notify;
+  children?: ReactNode;
+  summary: ReactNode;
+}) {
   const save = (kind: "xlsx" | "csv") => {
     const name = fileName(`${TAB_FILE[tab]}${personal ? "-with-addresses-phones" : ""}`, week.edition, israelDay(), kind);
-    if (kind === "xlsx") download(name, toXlsx([table()]), XLSX_MIME);
+    if (kind === "xlsx") download(name, toXlsx(sheets ? sheets() : [table()]), XLSX_MIME);
     else download(name, csvBytes(table()), CSV_MIME);
     notify("ok", personal ? "הקובץ ירד. יש בו כתובות וטלפונים: לא לשתף, ולמחוק כשמסיימים." : "הקובץ ירד.");
   };

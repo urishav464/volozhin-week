@@ -1,8 +1,8 @@
 // «תורנויות» as a lens of the week (8.11, the instructor's: «רק תורנויות, בלי שיעורים»): every shift of the week, the
 // duties in it with their groups' codes («בית מדרש: נ1 נ2 · מטבח: א3»), and (v20) all its staff — there is no
-// «אחראי/ת משמרת». Pure; src/grid/RotaWeek.tsx draws it. The rota's own order (dutiesInOrder, groupsInOrder) and rules
-// (rotaShiftRange, staffOn, staffWho) — and nothing of a phone: it reads load_rota's RotaData alone.
-// (Stream B owns the lens's look; the foundation only replaced the leads with the shift's whole staff.)
+// «אחראי/ת משמרת»: whoever's hours overlap the shift, each name once. Pure; src/grid/RotaWeek.tsx draws it. The rota's
+// own order (dutiesInOrder, groupsInOrder) and rules (rotaShiftRange, staffOn, staffWho) — and nothing of a phone or a
+// transport: it reads load_rota's RotaData alone.
 import type { RotaData, ShiftIndex } from "../data/rota";
 import { codeOf, ROTA_DAYS, rotaShiftRange, SHIFTS, staffOn } from "../domain/rota";
 import type { Day } from "../domain/time";
@@ -28,7 +28,7 @@ export interface LensShift {
   range: { start: number; end: number } | null;
   /** The duties with a group in this shift, in the duties' order — a duty with none is left out. */
   duties: LensDuty[];
-  /** v20: the staff whose hours overlap the shift (staffOn), by name or cohort's staff, in their order. */
+  /** v20: the staff whose hours overlap the shift (staffOn), by name or cohort's staff, in their order — a name once (two shifts of one person in it). */
   staff: string[];
 }
 
@@ -54,7 +54,7 @@ export function rotaLens(edition: RotaEdition, data: RotaData): LensShift[][] {
               .map((a) => ({ id: a.group_id, code: codeOf(data, groupById.get(a.group_id)!), suggested: a.source === "suggested" })),
           }))
           .filter((d) => d.groups.length > 0),
-        staff: staffOn(edition, [...data.staff].sort((a, b) => a.start_min - b.start_min || a.id - b.id), day, shift).map((s) => staffWho(data, s)),
+        staff: [...new Set(staffOn(edition, [...data.staff].sort((a, b) => a.start_min - b.start_min || a.id - b.id), day, shift).map((s) => staffWho(data, s)))],
       };
     }),
   );

@@ -738,17 +738,17 @@ test.describe("mock build", () => {
         lesson_id: 41, kind: "lesson", day: 1, date: addDays(start, 1), start_min: 1200, end_min: 1275, room: "חדר לדוגמה",
         speaker: { name: "ד״ר מרצה לדוגמה", gender: "f" }, title: "כותרת לדוגמה", self_intro: false, duty_notes: ["ניסוח לדוגמה"],
         escort_note: "הערה לדוגמה", phone: "טלפון לדוגמה מהשרת", transport: true, driver: { name: "נהג/ת לדוגמה", phone: "טלפון נהג/ת לדוגמה" },
-        ticks: { reminded: null, met: null, introduced: null, gift: null },
+        ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
       {
         lesson_id: 42, kind: "lesson", day: 2, date: addDays(start, 2), start_min: 510, end_min: 585, room: "חדר לדוגמה",
         speaker: { name: "מרצה בלי טלפון לדוגמה", gender: "m" }, title: "כותרת שנייה לדוגמה", self_intro: true, duty_notes: [],
-        escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null },
+        escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
       {
         lesson_id: 43, kind: "memorial", day: 2, date: addDays(start, 2), start_min: 780, end_min: 795, room: "חדר לדוגמה",
         speaker: null, title: null, self_intro: false, duty_notes: [], escort_note: null, phone: null, transport: false, driver: null,
-        ticks: { reminded: null, met: null, introduced: null, gift: null },
+        ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
     ],
   };

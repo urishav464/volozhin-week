@@ -1,14 +1,17 @@
-// «מצגות» (the reset, phase 5): the rows of a day and their states on the demo week (every state shows there), the week's
-// decks and the presentations left without a lesson, the day's zip plan — its names, their order, the two text files —
-// and this device's memory of the last download (a storage that throws forgets, never breaks the page).
+// «מצגות» (the reset, phase 5; v20 the week's zip): the rows and their states on the demo week (every state shows there),
+// the week's decks and the presentations left without a lesson, the week's zip plan — a folder per day, the week's decks
+// once, every lesson file's path starting with the entryPrefix the escort's page is told, the day's two text files, the
+// parts when it is too big — and this device's memory of the last download (ids and fingerprints; a storage that throws
+// forgets, never breaks the page).
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { demoWeek, seedDemoPresentations, seedDemoSources } from "../data/demoWeek";
 import { scheduleEntries } from "../exports/designer";
 import {
-  dayRows, dayZipPlan, hhmm, LINKS_FILE, lessonPresentations, markerTime, megabytes, newestUpload, newSinceDownload, ORDER_FILE, orphanPresentations, presentationRows,
-  presentationsDay, presentationsRoomKey, presentationsZipKey, readRoom, readZipMarker, weekPresentations, writeRoom, writeZipMarker, zipLine,
+  dayFolder, dayZipPlan, decksZipPlan, entryPrefix, hhmm, LINKS_FILE, lessonPresentations, markerTime, megabytes, nameFingerprint, ORDER_FILE, orphanPresentations, presentationEntries,
+  presentationRows, presentationsZipKey, readZipMarker, sinceDownload, splitEntry, WEEK_FOLDER, weekPresentations, weekZipPlan, writeZipMarker, zipLine, zipMarker,
 } from "./presentations";
+import { DAYS, fmt } from "./time";
 import { DOCX, PPTX } from "../data/sourceRules";
 import type { SourceFile, Week } from "./types";
 
@@ -90,14 +93,6 @@ describe("the day's rows", () => {
     expect(lessonPresentations(w, l)).toMatchObject({ files: [], state: "none" });
     expect(lessonPresentations(w, l).previous.map((f) => f.id)).toEqual([5, old.id]);
   });
-
-  it("dayRows: one day, all rooms or one", () => {
-    const w = week();
-    const rows = presentationRows(w);
-    expect(dayRows(rows, 2, null).filter((r) => r.start_min === 960).map((r) => r.roomId)).toEqual([1, 2]);
-    expect(dayRows(rows, 2, 2).map((r) => r.roomId)).toEqual([2]);
-    expect(dayRows(rows, 2, 3)).toEqual([]);
-  });
 });
 
 describe("the week's decks and the presentations without a lesson", () => {
@@ -128,65 +123,113 @@ describe("the week's decks and the presentations without a lesson", () => {
   });
 });
 
-describe("the day's zip", () => {
-  it("names: the week's decks first «0000_השבוע_…», then HHMM_<room>_<name> in the day's order; the bytes the rows say", () => {
+
+/** The room's name of a lesson — as escort_view gives it (rm.name). */
+const roomOf = (w: Week, l: { room_id: number }) => w.rooms.find((r) => r.id === l.room_id)!.name;
+
+describe("the week's zip (v20): a folder per day, the week's decks once", () => {
+  it("paths: «0-השבוע/<name>» for the week's decks, «<n>-<day>/HHMM_<room>_<name>» for a lesson's; the bytes the rows say; a day's order in every folder", () => {
     const w = week();
-    const plan = dayZipPlan(w, 0, null);
-    expect(plan.entries.map((e) => e.name)).toEqual(["0000_השבוע_המצגת המלווה לשבוע (לדוגמה).pdf", "0830_בית מדרש_מצגת לדוגמה.pdf"]);
-    expect(plan.bytes).toBe(220_000 + 640_000);
-    expect(plan.texts.map((t) => t.name)).toEqual([ORDER_FILE, LINKS_FILE]);
-    const tuesday = dayZipPlan(w, 2, null);
-    expect(tuesday.entries.map((e) => e.name)).toEqual(["0000_השבוע_המצגת המלווה לשבוע (לדוגמה).pdf", "1600_כיתת בית מדרש_שקפים לדוגמה.pdf"]);
-    expect(tuesday.texts.map((t) => t.name)).toEqual([ORDER_FILE]); // no link-only row that day
-    // one room: its files and the week's decks (they are every room's)
-    expect(dayZipPlan(w, 2, 1).entries.map((e) => e.name)).toEqual(["0000_השבוע_המצגת המלווה לשבוע (לדוגמה).pdf"]);
-    expect(dayZipPlan(w, 2, 2).entries.map((e) => e.file.id)).toEqual([7, 6]);
+    const plan = weekZipPlan(w);
+    expect(plan.entries.map((e) => e.name)).toEqual([
+      `${WEEK_FOLDER}/המצגת המלווה לשבוע (לדוגמה).pdf`,
+      "1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf",
+      "3-שלישי/1600_כיתת בית מדרש_שקפים לדוגמה.pdf",
+    ]);
+    expect(plan.bytes).toBe(220_000 + 640_000 + 410_000);
+    // an order in each of the five folders, links.txt only where a lesson has a link and no file (Sunday's)
+    expect(plan.texts.map((t) => t.name)).toEqual([
+      `1-ראשון/${ORDER_FILE}`, `1-ראשון/${LINKS_FILE}`, `2-שני/${ORDER_FILE}`, `3-שלישי/${ORDER_FILE}`, `4-רביעי/${ORDER_FILE}`, `5-חמישי/${ORDER_FILE}`,
+    ]);
+    expect(DAYS.map(dayFolder)).toEqual(["1-ראשון", "2-שני", "3-שלישי", "4-רביעי", "5-חמישי"]);
+    // the one naming: every file of the zip, once, by its id
+    expect([...presentationEntries(w)]).toEqual(plan.entries.map((e) => [e.file.id, e.name]));
   });
 
-  it("a night item's hour runs on (24–29) so the names sort as the day runs; a name twice gets its id before the extension; a name a file system refuses is cleaned", () => {
-    expect([hhmm(390), hhmm(510), hhmm(1439), hhmm(1440), hhmm(1470), hhmm(1829)]).toEqual(["0630", "0830", "2359", "2400", "2430", "3029"]);
+  it("every lesson file's path starts with its lesson's entryPrefix (day, start, room — what the escort's page has); the week's decks are in the zip once", () => {
     const w = week();
+    // more of everything: two decks of the week, a night lesson's two files, a lesson in the second room, names twice
+    deck(w, null, "פתיח.pdf", { mime: "application/pdf" });
+    deck(w, null, "פתיח.PDF", { mime: "application/pdf" });
+    for (const l of w.lessons.filter((x) => x.kind === "lesson" && x.state === "closed")) deck(w, l.id, "שקפים.pptx");
     const night = at(w, 0, 1470);
-    const a = deck(w, night.id, "שקפים.pptx");
-    const b = deck(w, night.id, "שקפים.PPTX"); // the same name to a file system that ignores case
-    const c = deck(w, at(w, 0, 690).id, 'א/ב:"ג".pptx');
-    const plan = dayZipPlan(w, 0, null);
-    const names = plan.entries.map((e) => e.name);
-    expect(names).toEqual([
-      "0000_השבוע_המצגת המלווה לשבוע (לדוגמה).pdf",
-      "0830_בית מדרש_מצגת לדוגמה.pdf",
-      "1130_בית מדרש_א_ב__ג_.pptx",
-      "2430_בית מדרש_שקפים.pptx",
-      `2430_בית מדרש_שקפים_${b.id}.pptx`, // the stored type's extension, whatever case the name typed
-    ]);
-    expect([...names].sort()).toEqual(names); // sorted by name = the day's order
-    expect(plan.entries.map((e) => e.file.id)).toEqual([7, 5, c.id, a.id, b.id]);
+    deck(w, night.id, "שקפים.pptx");
+    const plan = weekZipPlan(w);
+    const lessons = new Map(w.lessons.map((l) => [l.id, l]));
+    const ids = plan.entries.map((e) => e.file.id);
+    expect(new Set(ids).size).toBe(ids.length); // a file once
+    expect(new Set(plan.entries.map((e) => e.name.toLowerCase())).size).toBe(ids.length); // a path once
+    const decks = plan.entries.filter((e) => e.file.lesson_id == null);
+    expect(decks.map((e) => e.file.id).sort((a, b) => a - b)).toEqual(weekPresentations(w).map((f) => f.id));
+    for (const e of decks) expect(e.name.startsWith(`${WEEK_FOLDER}/`)).toBe(true);
+    for (const day of DAYS) expect(dayZipPlan(w, day).entries.some((e) => e.file.lesson_id == null)).toBe(false); // never in a day's folder
+    const lessonEntries = plan.entries.filter((e) => e.file.lesson_id != null);
+    expect(lessonEntries.length).toBeGreaterThan(20);
+    for (const e of lessonEntries) {
+      const l = lessons.get(e.file.lesson_id!)!;
+      expect(e.name.startsWith(entryPrefix(l.day, l.start_min, roomOf(w, l))), e.name).toBe(true);
+    }
+    // a night lesson is in its day column's folder — the day before the calendar's — at its hour 24–29
+    expect(lessonEntries.filter((e) => e.file.lesson_id === night.id).map((e) => e.name)).toEqual(["1-ראשון/2430_בית מדרש_שקפים.pptx", `1-ראשון/2430_בית מדרש_שקפים_${nextId}.pptx`]);
+    // in each folder, sorted by name = the day's order
+    for (const day of DAYS) {
+      const names = dayZipPlan(w, day).entries.map((e) => e.name);
+      expect([...names].sort(), dayFolder(day)).toEqual(names);
+    }
+    // the second deck of the same name to a file system that ignores case gets its id
+    expect(decks.map((e) => e.name)).toContain(`${WEEK_FOLDER}/פתיח_${decks.at(-1)!.file.id}.pdf`);
+  });
+
+  it("entryPrefix: the day's folder, HHMM (a night hour 24–29) and the room made safe; no room, «חדר»", () => {
+    expect([hhmm(390), hhmm(510), hhmm(1439), hhmm(1440), hhmm(1470), hhmm(1829)]).toEqual(["0630", "0830", "2359", "2400", "2430", "3029"]);
+    expect(entryPrefix(1, 630, "בית מדרש")).toBe("2-שני/1030_בית מדרש_");
+    expect(entryPrefix(0, 1470, "בית מדרש")).toBe("1-ראשון/2430_בית מדרש_");
+    expect(entryPrefix(4, 510, 'א/ב:"ג"')).toBe("5-חמישי/0830_א_ב__ג__"); // the room's own last «"» made safe, then the separator
+    expect(entryPrefix(2, 600, "")).toBe("3-שלישי/1000_חדר_");
+    expect(splitEntry("2-שני/1030_בית מדרש_x.pdf")).toEqual({ folder: "2-שני", name: "1030_בית מדרש_x.pdf" });
+    expect(splitEntry("x.pdf")).toEqual({ folder: "", name: "x.pdf" });
+  });
+
+  it("a lesson moved or a room renamed: its files' paths change with it (what «שיעור זז מאז ההורדה» compares)", () => {
+    const w = week();
+    const opening = at(w, 0, 510);
+    const before = presentationEntries(w).get(5);
+    expect(before).toBe("1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf");
+    opening.day = 1;
+    opening.start_min = 630;
+    expect(presentationEntries(w).get(5)).toBe("2-שני/1030_בית מדרש_מצגת לדוגמה.pdf");
+    w.rooms.find((r) => r.id === opening.room_id)!.name = "אולם";
+    expect(presentationEntries(w).get(5)).toBe("2-שני/1030_אולם_מצגת לדוגמה.pdf");
+    expect(presentationEntries(w).get(7)).toBe(`${WEEK_FOLDER}/המצגת המלווה לשבוע (לדוגמה).pdf`); // the decks stay where they are
   });
 
   it("a name ends in the STORED file's extension, never its own, and carries no control or bidi character (the review's disguised file)", () => {
     const w = week();
     const l = at(w, 0, 690).id;
-    const rlo = deck(w, l, "שקפים\u202efdp.scr", { mime: "application/pdf" }); // shows as «…rcs.pdf» on Windows
+    const rlo = deck(w, l, "שקפים‮fdp.scr", { mime: "application/pdf" }); // shows as «…rcs.pdf» on Windows
     const exe = deck(w, l, "slides.pdf.exe", { mime: "application/pdf" });
     const bare = deck(w, l, "1000012345", { mime: "application/pdf" }); // a phone's picked file: a type, no extension
     const pptx = deck(w, l, "deck.pdf"); // PowerPoint bytes registered under a PDF's name
-    const marks = deck(w, l, "\u0085a\u007f\u200f\u2066b\u2069.pdf", { mime: "application/pdf" });
-    const names = new Map(dayZipPlan(w, 0, null).entries.map((e) => [e.file.id, e.name]));
-    expect(names.get(rlo.id)).toBe("1130_בית מדרש_שקפים_fdp.pdf");
-    expect(names.get(exe.id)).toBe("1130_בית מדרש_slides.pdf.pdf");
-    expect(names.get(bare.id)).toBe("1130_בית מדרש_1000012345.pdf");
-    expect(names.get(pptx.id)).toBe("1130_בית מדרש_deck.pptx");
-    expect(names.get(marks.id)).toBe("1130_בית מדרש_a___b_.pdf");
+    const marks = deck(w, l, "\u0085a\u007f‏⁦b⁩.pdf", { mime: "application/pdf" });
+    const names = presentationEntries(w);
+    expect(names.get(rlo.id)).toBe("1-ראשון/1130_בית מדרש_שקפים_fdp.pdf");
+    expect(names.get(exe.id)).toBe("1-ראשון/1130_בית מדרש_slides.pdf.pdf");
+    expect(names.get(bare.id)).toBe("1-ראשון/1130_בית מדרש_1000012345.pdf");
+    expect(names.get(pptx.id)).toBe("1-ראשון/1130_בית מדרש_deck.pptx");
+    expect(names.get(marks.id)).toBe("1-ראשון/1130_בית מדרש_a___b_.pdf");
     for (const n of names.values()) expect(n).not.toMatch(/[\p{Cc}\p{Cf}]/u);
-    // the order names the same entries
-    expect(lines(dayZipPlan(w, 0, null).texts[0]).some((x) => x.includes("1130_בית מדרש_slides.pdf.pdf"))).toBe(true);
+    // the order names the same entries, in its own folder
+    expect(lines(weekZipPlan(w).texts[0]).some((x) => x.endsWith("— 1130_בית מדרש_שקפים_fdp.pdf / 1130_בית מדרש_slides.pdf.pdf / 1130_בית מדרש_1000012345.pdf / 1130_בית מדרש_deck.pptx / 1130_בית מדרש_a___b_.pdf"))).toBe(true);
   });
 
-  it("סדר-היום.txt: the day's head, the week's deck, every row's time, room, speaker · title and what to open — UTF-8 with a BOM, CRLF", () => {
+  it("סדר-היום.txt in each folder: the day's head, where the week's deck is, every row's time (a night's «ליל ראשון–שני»), room, speaker · title and what to open — UTF-8 with a BOM, CRLF", () => {
     const w = week();
-    const order = lines(dayZipPlan(w, 0, null).texts[0]);
+    const night = at(w, 0, 1470);
+    const nightDeck = deck(w, night.id, "לילה.pptx");
+    const text = (name: string) => weekZipPlan(w).texts.find((t) => t.name === name)!;
+    const order = lines(text(`1-ראשון/${ORDER_FILE}`));
     expect(order[0]).toBe("סדר היום — יום ראשון · TBD · הדגמה");
-    expect(order[1]).toBe("המצגת של השבוע — 0000_השבוע_המצגת המלווה לשבוע (לדוגמה).pdf");
+    expect(order[1]).toBe(`המצגת של השבוע — ${WEEK_FOLDER}/המצגת המלווה לשבוע (לדוגמה).pdf`);
     expect(order[2]).toBe("");
     const entries = scheduleEntries(w).filter((e) => e.day === 0);
     const lesson = (start: number) => entries.find((e) => e.kind === "lesson" && e.start_min === start)!;
@@ -195,51 +238,66 @@ describe("the day's zip", () => {
     expect(order).toContain(`10:00–11:15 · בית מדרש · ${head(600)} — קישור: https://slides.example/presentation-demo`);
     expect(order).toContain(`11:30–12:45 · בית מדרש · ${head(690)} — בלי מצגת`);
     expect(order).toContain("13:00–13:15 · בית מדרש · זמן זיכרון"); // never a name
+    const n = lesson(1470);
+    expect(order).toContain(`${[`00:30–${fmt(n.end_min)}`, "ליל ראשון–שני", "בית מדרש", head(1470)].join(" · ")} — 2430_בית מדרש_${nightDeck.display_name}`);
     expect(order).toHaveLength(3 + entries.length);
-    const tuesday = lines(dayZipPlan(w, 2, null).texts[0]);
+    const tuesday = lines(text(`3-שלישי/${ORDER_FILE}`));
     expect(tuesday.some((x) => x.startsWith("16:00–17:15 · בית מדרש · ") && x.endsWith(" — מצגת צפויה — עוד לא הועלתה"))).toBe(true);
-    // a date once the week has one, and the room when the zip is one room's
+    expect(tuesday.some((x) => x.startsWith("16:00–17:15 · כיתת בית מדרש · ") && x.endsWith(" — 1600_כיתת בית מדרש_שקפים לדוגמה.pdf"))).toBe(true);
+    // a date once the week has one
     w.edition.start_date = "2027-02-14";
-    expect(lines(dayZipPlan(w, 2, 2).texts[0])[0]).toBe("סדר היום — יום שלישי · 16.2.2027 · הדגמה · כיתת בית מדרש");
+    expect(lines(text(`3-שלישי/${ORDER_FILE}`))[0]).toBe("סדר היום — יום שלישי · 16.2.2027 · הדגמה");
   });
 
-  it("a file the download could not fetch is named so in the order; links.txt has a line per link-only row: «HH:MM · speaker · URL»", () => {
+  it("a file the download could not fetch is named so in its day's order; links.txt has a line per link-only row: «HH:MM · speaker · URL»", () => {
     const w = week();
-    const failed = lines(dayZipPlan(w, 0, null, new Set([5])).texts[0]);
+    const failed = lines(weekZipPlan(w, new Set([5])).texts[0]);
     expect(failed.some((x) => x.endsWith("— 0830_בית מדרש_מצגת לדוגמה.pdf (לא ירדה — מורידים מדף המצגות)"))).toBe(true);
-    const links = lines(dayZipPlan(w, 0, null).texts[1]);
+    expect(lines(weekZipPlan(w, new Set([7])).texts[0])[1]).toBe(`המצגת של השבוע — ${WEEK_FOLDER}/המצגת המלווה לשבוע (לדוגמה).pdf (לא ירדה — מורידים מדף המצגות)`);
+    const links = lines(weekZipPlan(w).texts.find((t) => t.name === `1-ראשון/${LINKS_FILE}`)!);
     const speaker = scheduleEntries(w).find((e) => e.lesson_id === at(w, 0, 600).id)!.speaker;
     expect(links).toEqual(["קישורים למצגות — יום ראשון · TBD · הדגמה", "", `10:00 · ${speaker} · https://slides.example/presentation-demo`]);
     // a row with a file AND a link: the order says both, links.txt only the link-only rows
     deck(w, at(w, 0, 600).id, "גם קובץ.pdf", { mime: "application/pdf" });
-    const both = dayZipPlan(w, 0, null);
-    expect(both.texts.map((t) => t.name)).toEqual([ORDER_FILE]);
+    const both = weekZipPlan(w);
+    expect(both.texts.some((t) => t.name.endsWith(LINKS_FILE))).toBe(false);
     expect(lines(both.texts[0]).some((x) => x.endsWith("— 1000_בית מדרש_גם קובץ.pdf / קישור: https://slides.example/presentation-demo"))).toBe(true);
   });
 
-  it("an empty day: no entries but the week's, the order says so; the line before the download counts and sizes", () => {
+  it("an empty day: its folder holds its order alone, which says so; the line before the download counts and sizes", () => {
     const w = week();
     w.lessons = w.lessons.filter((l) => l.day !== 4);
-    const plan = dayZipPlan(w, 4, null);
-    expect(plan.entries.map((e) => e.file.id)).toEqual([7]);
-    expect(lines(plan.texts[0]).at(-1)).toBe("אין שיעורים סגורים ביום הזה.");
-    expect(zipLine(plan)).toBe("מצגת אחת · כ-0.2 MB");
-    expect(zipLine({ entries: [], bytes: 0 })).toMatch(/^עוד אין מצגות ליום הזה/);
-    expect(zipLine(dayZipPlan(week(), 0, null))).toBe("2 מצגות · כ-0.8 MB");
+    const thursday = dayZipPlan(w, 4);
+    expect(thursday.entries).toEqual([]);
+    expect(thursday.texts.map((t) => t.name)).toEqual([`5-חמישי/${ORDER_FILE}`]);
+    expect(lines(thursday.texts[0]).at(-1)).toBe("אין שיעורים סגורים ביום הזה.");
+    expect(zipLine(thursday, "day")).toBe("עוד אין מצגות ליום הזה — בקובץ רק סדר היום");
+    expect(zipLine({ entries: [], bytes: 0 })).toBe("עוד אין מצגות — בקובץ רק סדר היום של כל יום");
+    expect(zipLine(weekZipPlan(week()))).toBe("3 מצגות · כ-1.2 MB");
+    expect(zipLine(decksZipPlan(week()))).toBe("מצגת אחת · כ-0.2 MB");
     expect([megabytes(1), megabytes(5 * 1024 * 1024), megabytes(123.4 * 1024 * 1024)]).toEqual(["כ-0.1 MB", "כ-5 MB", "כ-123 MB"]);
+  });
+
+  it("the parts (the week too big for one file): the decks and each day under the week's own paths — together, the week's zip", () => {
+    const w = week();
+    const plan = weekZipPlan(w);
+    const parts = [decksZipPlan(w), ...DAYS.map((d) => dayZipPlan(w, d))];
+    expect(parts.flatMap((p) => p.entries)).toEqual(plan.entries);
+    expect(parts.flatMap((p) => p.texts)).toEqual(plan.texts);
+    expect(parts.reduce((n, p) => n + p.bytes, 0)).toBe(plan.bytes);
+    expect(decksZipPlan(w).texts).toEqual([]);
+    expect(dayZipPlan(w, 2, new Set([6])).texts[0].text).toContain("(לא ירדה — מורידים מדף המצגות)");
   });
 });
 
-describe("this device's memory", () => {
-  it("the privacy page says what the day's zip holds and where it goes, and what this device keeps of it (the review)", () => {
+describe("this device's memory (v20: the week's download)", () => {
+  it("the privacy page says what the week's zip holds and where it goes, and what this device keeps of it (the review)", () => {
     const html = readFileSync(new URL("../../public/privacy.html", import.meta.url), "utf8");
-    const zip = html.split("\n").find((l) => l.includes("«הורדת כל המצגות של היום»"))!;
-    for (const w of ["נבנית בדפדפן", "סדר היום", "הקישורים למצגות", "למחשב של האולם, שלא מחובר לאתר", "באחריות מי שהוריד/ה"]) expect(zip, w).toContain(w);
+    const zip = html.split("\n").find((l) => l.includes("«הורדת כל המצגות של השבוע»"))!;
+    for (const w of ["נבנית בדפדפן", "תיקייה לכל יום", "סדר היום", "הקישורים למצגות", "0-השבוע", "למחשב של האולם, שלא מחובר לאתר", "באחריות מי שהוריד/ה"]) expect(zip, w).toContain(w);
     const kept = html.split("\n").find((l) => l.includes("דף «מצגות» זוכר במכשיר הזה"))!;
-    for (const w of ["מתי ירד ה-zip", "איזה חדר נבחר", "בלי מידע אישי", "«התנתקות» לא מוחקת את זה"]) expect(kept, w).toContain(w);
-    // the keys it speaks of
-    expect(presentationsZipKey(1, 0)).toMatch(/^volozhin-presentations-zip:/);
-    expect(presentationsRoomKey(1)).toMatch(/^volozhin-presentations-room:/);
+    for (const w of ["מתי ירד ה-zip של השבוע", "מספרים בלבד", "בלי שמות", "«התנתקות» לא מוחקת את זה"]) expect(kept, w).toContain(w);
+    expect(presentationsZipKey(1)).toMatch(/^volozhin-presentations-zip:/); // the key it speaks of
   });
 
   const store = () => {
@@ -255,67 +313,64 @@ describe("this device's memory", () => {
     },
   };
 
-  it("the day's last zip: per edition and day; a missing, broken or edited value is none; a storage that throws forgets quietly", () => {
+  it("the week's last zip: per edition (a new key — the per-day keys of before are never read); numbers only; a missing, broken or edited value is none; a storage that throws forgets quietly", () => {
     const s = store();
-    expect(presentationsZipKey(7, 2)).toBe("volozhin-presentations-zip:7:2");
-    expect(readZipMarker(s, 7, 2)).toBeNull();
-    writeZipMarker(s, 7, 2, { at: "2026-11-22T06:10:00Z", upTo: "2026-11-21T18:00:00Z", room: null });
-    expect(readZipMarker(s, 7, 2)).toEqual({ at: "2026-11-22T06:10:00Z", upTo: "2026-11-21T18:00:00Z", room: null });
-    expect(readZipMarker(s, 7, 3)).toBeNull();
-    expect(readZipMarker(s, 8, 2)).toBeNull();
-    s.m.set(presentationsZipKey(7, 1), "not json");
-    expect(readZipMarker(s, 7, 1)).toBeNull();
-    s.m.set(presentationsZipKey(7, 1), JSON.stringify({ at: "yesterday" }));
-    expect(readZipMarker(s, 7, 1)).toBeNull();
-    s.m.set(presentationsZipKey(7, 1), JSON.stringify({ at: "2026-11-22T06:10:00Z", upTo: 5, room: "3" }));
-    expect(readZipMarker(s, 7, 1)).toEqual({ at: "2026-11-22T06:10:00Z", upTo: null, room: null });
-    expect(readZipMarker(broken, 7, 2)).toBeNull();
-    expect(() => writeZipMarker(broken, 7, 2, { at: "2026-11-22T06:10:00Z", upTo: null, room: 2 })).not.toThrow();
-    expect(readZipMarker(null, 7, 2)).toBeNull();
+    expect(presentationsZipKey(7)).toBe("volozhin-presentations-zip:7:week");
+    expect(readZipMarker(s, 7)).toBeNull();
+    s.m.set("volozhin-presentations-zip:7:2", JSON.stringify({ at: "2026-11-22T06:10:00Z", upTo: null, room: null })); // v19's day marker
+    expect(readZipMarker(s, 7)).toBeNull();
+    const m = zipMarker("2026-11-22T06:10:00Z", weekZipPlan(week()).entries);
+    writeZipMarker(s, 7, m);
+    expect(readZipMarker(s, 7)).toEqual(m);
+    expect(Object.keys(m.names)).toEqual(["5", "6", "7"]);
+    expect(s.m.get(presentationsZipKey(7))).not.toMatch(/[֐-׿]/); // no name, no Hebrew: ids and fingerprints
+    expect(readZipMarker(s, 8)).toBeNull();
+    s.m.set(presentationsZipKey(7), "not json");
+    expect(readZipMarker(s, 7)).toBeNull();
+    s.m.set(presentationsZipKey(7), JSON.stringify({ at: "yesterday", names: {} }));
+    expect(readZipMarker(s, 7)).toBeNull();
+    s.m.set(presentationsZipKey(7), JSON.stringify({ at: "2026-11-22T06:10:00Z" }));
+    expect(readZipMarker(s, 7)).toBeNull(); // the day's shape, or none: not a marker of the week
+    s.m.set(presentationsZipKey(7), JSON.stringify({ at: "2026-11-22T06:10:00Z", names: { 5: 12, x: 1, 6: "3", 7: -1, 8: 1.5, 9: 2 ** 32 } }));
+    expect(readZipMarker(s, 7)).toEqual({ at: "2026-11-22T06:10:00Z", names: { 5: 12 } });
+    expect(readZipMarker(broken, 7)).toBeNull();
+    expect(() => writeZipMarker(broken, 7, m)).not.toThrow();
+    expect(readZipMarker(null, 7)).toBeNull();
   });
 
-  it("the room chip: per edition; «all» and anything else is none", () => {
-    const s = store();
-    expect(presentationsRoomKey(7)).toBe("volozhin-presentations-room:7");
-    expect(readRoom(s, 7)).toBeNull();
-    writeRoom(s, 7, 3);
-    expect(readRoom(s, 7)).toBe(3);
-    writeRoom(s, 7, null);
-    expect(s.m.get(presentationsRoomKey(7))).toBe("all");
-    expect(readRoom(s, 7)).toBeNull();
-    s.m.set(presentationsRoomKey(7), "-2");
-    expect(readRoom(s, 7)).toBeNull();
-    expect(readRoom(broken, 7)).toBeNull();
-    expect(() => writeRoom(broken, 7, 1)).not.toThrow();
+  it("since the download: a file it did not hold is fresh (uploaded after, or did not come), a path changed since is moved; nothing without a marker", () => {
+    const w = week();
+    const plan = weekZipPlan(w);
+    expect(sinceDownload(presentationEntries(w), null)).toEqual({ fresh: [], moved: [] });
+    // the download: every file but #6 came
+    const m = zipMarker("2026-11-22T06:10:00Z", plan.entries.filter((e) => e.file.id !== 6));
+    expect(sinceDownload(presentationEntries(w), m)).toEqual({ fresh: [6], moved: [] });
+    // an upload after it, then the lesson moved
+    const later = deck(w, at(w, 0, 690).id, "חדש.pdf", { mime: "application/pdf" });
+    const opening = at(w, 0, 510);
+    opening.start_min = 1470 + 60;
+    expect(sinceDownload(presentationEntries(w), m)).toEqual({ fresh: [later.id, 6], moved: [5] }); // in the zip's order: Sunday's, then Tuesday's
+    // a part downloaded later adds to the device's marker; the whole week replaces it
+    const tuesday = zipMarker("2026-11-22T07:00:00Z", dayZipPlan(w, 2).entries, m);
+    expect(tuesday.names["5"]).toBe(m.names["5"]);
+    expect(sinceDownload(presentationEntries(w), tuesday)).toEqual({ fresh: [later.id], moved: [5] });
+    const again = zipMarker("2026-11-22T08:00:00Z", weekZipPlan(w).entries);
+    expect(sinceDownload(presentationEntries(w), again)).toEqual({ fresh: [], moved: [] });
+    // a room renamed moves every file in it
+    w.rooms.find((r) => r.id === 2)!.name = "כיתה";
+    expect(sinceDownload(presentationEntries(w), again)).toEqual({ fresh: [], moved: [6] });
   });
 
-  it("new since the download: by the server's clock (the newest upload the zip was planned from), none without a download, every file when there was none", () => {
-    const files = [
-      { id: 1, uploaded_at: "2026-11-21T18:00:00Z" },
-      { id: 2, uploaded_at: "2026-11-22T07:30:00Z" },
-      { id: 3, uploaded_at: "2026-11-22T06:00:00Z" },
-    ];
-    expect(newestUpload(files.slice(0, 1))).toBe("2026-11-21T18:00:00Z");
-    expect(newestUpload([...files, { uploaded_at: "garbage" }])).toBe("2026-11-22T07:30:00Z");
-    expect(newestUpload([])).toBeNull();
-    expect(newSinceDownload(files, null)).toEqual(new Set());
-    // the device's clock ran an hour ahead: its «at» says nothing about what came after
-    const marker = { at: "2026-11-22T08:00:00Z", upTo: "2026-11-21T18:00:00Z", room: null };
-    expect(newSinceDownload(files, marker)).toEqual(new Set([2, 3]));
-    expect(newSinceDownload(files, { ...marker, upTo: null })).toEqual(new Set([1, 2, 3]));
+  it("the fingerprint: the same path the same number, another path another; 32 bits", () => {
+    const a = nameFingerprint("1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf");
+    expect(nameFingerprint("1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf")).toBe(a);
+    expect(nameFingerprint("1-ראשון/0830_אולם_מצגת לדוגמה.pdf")).not.toBe(a);
+    expect(nameFingerprint("2-שני/0830_בית מדרש_מצגת לדוגמה.pdf")).not.toBe(a);
+    for (const n of [a, nameFingerprint(""), nameFingerprint("x".repeat(500))]) expect(Number.isInteger(n) && n >= 0 && n <= 0xffffffff).toBe(true);
   });
 
   it("the time it says: HH:MM in Israel today, the date as well on another day", () => {
     expect(markerTime("2026-11-22T06:10:00Z", "2026-11-22T12:00:00Z")).toBe("08:10");
     expect(markerTime("2026-11-21T06:10:00Z", "2026-11-22T12:00:00Z")).toBe("21.11, 08:10");
-  });
-
-  it("the day the page opens on: Israel's date when it is one of the five, else the first", () => {
-    expect(presentationsDay(null, "2027-02-15T08:00:00Z")).toBe(0);
-    expect(presentationsDay("2027-02-14", "2027-02-14T05:00:00Z")).toBe(0);
-    expect(presentationsDay("2027-02-14", "2027-02-16T04:00:00Z")).toBe(2); // 06:00 in Israel: that day's, not the night before
-    expect(presentationsDay("2027-02-14", "2027-02-18T21:30:00Z")).toBe(4); // 23:30 Thursday
-    expect(presentationsDay("2027-02-14", "2027-02-10T08:00:00Z")).toBe(0);
-    expect(presentationsDay("2027-02-14", "2027-02-20T08:00:00Z")).toBe(0);
   });
 });

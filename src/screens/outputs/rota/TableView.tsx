@@ -8,12 +8,29 @@ import { TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH } from "../../settings/kit";
  * sage header, the key column bold navy; a band row in sage); a phone: a card per row, its first cell the heading and
  * the others as labelled lines, so nothing scrolls sideways.
  */
-export function TableView({ table: t, keys = 1 }: { table: Table; /** The leading cells a phone's card is headed by. */ keys?: number }) {
+export function TableView({
+  table: t,
+  keys = 1,
+  fixed = false,
+}: {
+  table: Table;
+  /** The leading cells a phone's card is headed by. */
+  keys?: number;
+  /** v20: a fixed layout, the columns as wide as the sheet's own widths say (the staff's schedule: five equal days). */
+  fixed?: boolean;
+}) {
   if (t.rows.length === 0) return <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">אין עדיין מה להראות כאן.</p>;
   return (
     <div data-rota-table={t.name}>
       <div className="hidden overflow-x-auto rounded-xl border border-line bg-card shadow-sm md:block print:block print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
-        <table aria-label={t.name} className="w-full border-collapse text-start text-sm print:text-[8pt]">
+        <table aria-label={t.name} className={`w-full border-collapse text-start text-sm print:text-[8pt] ${fixed ? "table-fixed" : ""}`}>
+          {fixed && t.widths && (
+            <colgroup>
+              {t.widths.map((w, i) => (
+                <col key={i} style={{ width: `${(w / t.widths!.reduce((a, b) => a + b, 0)) * 100}%` }} />
+              ))}
+            </colgroup>
+          )}
           <thead>
             <tr className={TABLE_HEAD}>
               {t.headers.map((h, i) => (

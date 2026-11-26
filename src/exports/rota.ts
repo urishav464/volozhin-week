@@ -15,7 +15,10 @@
 //   kitchenSheet    one duty (the caller's pick; «מטבח» by default, kitchenDutyId) in every shift: who, how many,
 //                   the trainees on campus, their diets, the meals of the shift
 //   headsTable · staffTable · prepTable (the tasks) · shoppingTable (v19: the shopping list, its quantities) ·
-//   foodTable (per cohort, «חניכים בלבד») · campusTable · loadsTable
+//   mealsTable      v20 «כמויות אוכל»: a row per day × meal (the grid's fixed rows whose label is a meal's, as the
+//                   kitchen sheet finds them), the cohorts on campus in the shift the meal starts in, their trainees
+//                   and the four diet columns — mealCounts is its model (the cohorts page draws the same rows)
+//   foodTable (per cohort, «חניכים בלבד»: its trainees and its meals by diet) · campusTable · loadsTable
 //   rotaWorkbook    all of them, a sheet each, for «הורדת xlsx (כל הגיליונות)» (v20: the staff's schedule is
 //                   src/exports/staffSchedule.ts's — the day × grid rows sheet, never a transport)
 //
@@ -24,8 +27,8 @@
 // «צמחוני/טבעוני» only, «ללא גלוטן» only, both, the regular rest); a staff shift has no kind.
 import { isHeadContact, type PrepKind, prepKindOf, type RotaAssignment, type RotaCohort, type RotaContactRow, type RotaData, type RotaDuty, type RotaGroup, type RotaPrepTask, type RotaStaffShift, type ShiftIndex } from "../data/rota";
 import { nameKey } from "../domain/nameKey";
-import { type DietSplit, dietSplit, groupCode, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, staffOn, type RotaSlot } from "../domain/rota";
-import { DAY_NAMES, type Day, dateOf, fmtRange, LRM, overlaps, shortDate } from "../domain/time";
+import { type DietSplit, dietSplit, groupCode, loadsOf, presenceMarked, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, staffOn, type RotaSlot } from "../domain/rota";
+import { DAY_NAMES, type Day, dateOf, fmtRange, LRM, nightLabel, overlaps, shortDate } from "../domain/time";
 import type { Edition, GridRow, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { type ScheduleEntry, scheduleEntries } from "./designer";
@@ -57,6 +60,7 @@ export const SHEET = {
   prep: "מוצ״ש",
   shopping: "קניות מוצ״ש",
   food: "אוכל",
+  foodCohorts: "תזונה לפי מכינה",
   campus: "מי בקמפוס",
   loads: "עומס",
 } as const;
@@ -556,31 +560,106 @@ export function shoppingTable(data: RotaData): Table {
 
 // ------------------------------------------------------------------ אוכל
 
-/** «ראשון בוקר». */
-const slotLabel = (edition: RotaEdition, s: RotaSlot) => `${DAY_NAMES[s.day]} ${rotaShiftsOf(edition).labels[s.shift]}`;
+/** v20: one meal of the week — a fixed row of the grid whose label is a meal's (isMeal), on a day the week has it. */
+export interface MealCount {
+  day: Day;
+  start: number;
+  end: number;
+  /** The row's label as the grid has it («ארוחת צהריים / חבורות»). */
+  label: string;
+  /** The shift the meal starts in (shiftOfStart): the cohorts marked on campus in it are the ones counted. */
+  shift: ShiftIndex;
+  /** The cohorts marked on campus in that shift, in their order. */
+  cohorts: RotaCohort[];
+  /**
+   * The cohorts not marked on campus in any shift of the week (presence_unknown): whether they eat here is not known —
+   * never assumed either way, so while one is left every number of every meal is TBD.
+   */
+  unmarked: RotaCohort[];
+  /** Their trainees and meals by diet, added up (dietsOf): TBD where a cohort's number is, and everywhere while `unmarked`. */
+  counts: DietSplit;
+}
+
+const UNKNOWN: DietSplit = { trainees: null, veg_only: null, gf_only: null, both: null, regular: null };
 
 /**
- * The food quantities, trainees only («חניכים בלבד» — the staff and guests are not counted): per cohort its trainees
- * (v20: its own field; TBD while unknown), its meals by diet (dietSplit — «צמחוני/טבעוני» only, «ללא גלוטן» only,
- * both, regular), and in each shift of the week its trainees if it is marked on campus; a last row adds them up.
- * (Stream A's per-day per-meal builder replaces it on /print/rota.)
+ * v20 «כמויות אוכל לכל יום» (the owner's words): per day, each meal — the grid's fixed rows whose label is a meal's
+ * («ארוח», as the kitchen sheet finds them), active that day (rowActive: Sunday from the opening, Thursday to the close)
+ * — with the cohorts marked on campus in the shift the meal starts in, and their trainees by diet: «צמחוני/טבעוני»
+ * only, «ללא גלוטן» only, both, the regular rest (dietSplit — «מהם גם וגם» counted once). Trainees only: the staff and
+ * the guests are not counted. Nothing is filled in: a cohort whose number is TBD makes the meal's sum TBD, and a cohort
+ * not marked anywhere makes every meal TBD. A night meal (after midnight) is the night's, of the day before.
  */
-export function foodTable(data: RotaData, edition: RotaEdition): Table {
+export function mealCounts(data: Pick<RotaData, "cohorts" | "presence">, edition: RotaEdition, rows: readonly GridRow[]): MealCount[] {
   const cohorts = cohortsInOrder(data);
-  const slots = rotaSlots(edition);
-  const rows = cohorts.map((c) => {
-    const total = cohortTotal(data, c.id);
-    return [c.name, num(total), ...dietCells(dietSplit(c)), ...slots.map((s) => (presentAt(data, c.id, s.day, s.shift) ? num(total) : ""))];
-  });
-  if (cohorts.length) {
-    const all = dietsOf(cohorts);
-    rows.push(["סה״כ", num(all.trainees), ...dietCells(all), ...slots.map((s) => num(presentTotal(data, s.day, s.shift)))]);
-  }
+  const unmarked = cohorts.filter((c) => !presenceMarked(data, c.id));
+  const meals = [...rows].filter(isMeal).sort((a, b) => a.start_min - b.start_min || a.end_min - b.end_min || a.id - b.id);
+  return ROTA_DAYS.flatMap((day) =>
+    meals
+      .filter((r) => rowActive(r, day, edition))
+      .map((r): MealCount => {
+        const shift = shiftOfStart(edition, day, r.start_min);
+        const here = cohorts.filter((c) => presentAt(data, c.id, day, shift));
+        return { day, start: r.start_min, end: r.end_min, label: r.label, shift, cohorts: here, unmarked, counts: unmarked.length > 0 ? UNKNOWN : dietsOf(here) };
+      }),
+  );
+}
+
+/** A meal's day as the food page writes it: «ראשון 14.2» (the date while it is known), a night meal «ליל ראשון–שני». */
+export function mealDay(edition: Partial<Pick<Edition, "start_date">>, m: Pick<MealCount, "day" | "start">): string {
+  const night = nightLabel(m.day, m.start);
+  if (night) return night;
+  const date = dateOf(edition.start_date ?? null, m.day);
+  return date ? `${DAY_NAMES[m.day]} ${shortDate(date)}` : DAY_NAMES[m.day];
+}
+
+/** Who a meal counts: the cohorts on campus then («אין מכינות בקמפוס» when none), and those never marked at all. */
+export function mealCohorts(m: Pick<MealCount, "cohorts" | "unmarked">): string {
+  const here = m.cohorts.length > 0 ? m.cohorts.map((c) => c.name).join(", ") : m.unmarked.length > 0 ? "" : "אין מכינות בקמפוס";
+  const open = m.unmarked.length > 0 ? `לא סומן מתי בקמפוס: ${m.unmarked.map((c) => c.name).join(", ")}` : "";
+  return [here, open].filter(Boolean).join(" · ");
+}
+
+/** The headers of the food page's meals table (mealsTable), DIET_HEADERS after the trainees. */
+export const MEAL_HEADERS = ["יום", "ארוחה", "מכינות בקמפוס", "חניכים", ...DIET_HEADERS] as const;
+
+/**
+ * v20 «כמויות אוכל»: mealCounts as a table — a row per day × meal: the day, the meal and its hours, the cohorts
+ * counted, the trainees, the four meal columns (TBD where unknown). /print/rota's food page, the xlsx's «אוכל» and the
+ * cohorts page («קבוצות ומכינות») draw these rows.
+ */
+export function mealsTable(data: Pick<RotaData, "cohorts" | "presence">, edition: RotaEdition & Partial<Pick<Edition, "start_date">>, rows: readonly GridRow[]): Table {
   return {
     name: SHEET.food,
-    headers: ["מכינה (חניכים בלבד)", "חניכים", ...DIET_HEADERS, ...slots.map((s) => slotLabel(edition, s))],
-    widths: [24, 9, 14, 14, 10, 10, ...slots.map(() => 11)],
+    headers: [...MEAL_HEADERS],
+    widths: [16, 36, 36, 9, 14, 14, 10, 10],
     landscape: true,
+    rows: mealCounts(data, edition, rows).map((m) => [
+      mealDay(edition, m),
+      `${m.label || "TBD"} ${LRM}${fmtRange(m.start, m.end)}`,
+      mealCohorts(m),
+      num(m.counts.trainees),
+      ...dietCells(m.counts),
+    ]),
+  };
+}
+
+/**
+ * Per cohort, trainees only («חניכים בלבד» — the staff and guests are not counted): its trainees (v20: its own field;
+ * TBD while unknown) and its meals by diet (dietSplit — «צמחוני/טבעוני» only, «ללא גלוטן» only, both, regular); a last
+ * row adds them up (TBD while one of them is). Who is on campus when is mealsTable's.
+ */
+export function foodTable(data: Pick<RotaData, "cohorts">): Table {
+  const cohorts = cohortsInOrder(data);
+  const rows = cohorts.map((c) => [c.name, num(cohortTotal(data, c.id)), ...dietCells(dietSplit(c))]);
+  if (cohorts.length) {
+    const all = dietsOf(cohorts);
+    rows.push(["סה״כ", num(all.trainees), ...dietCells(all)]);
+  }
+  return {
+    name: SHEET.foodCohorts,
+    headers: ["מכינה (חניכים בלבד)", "חניכים", ...DIET_HEADERS],
+    widths: [28, 9, 16, 16, 10, 10],
     rows,
   };
 }
@@ -635,7 +714,7 @@ export interface RotaWorkbookInput {
   kitchenDuty?: number | null;
 }
 
-/** Every page as a sheet, for «הורדת xlsx (כל הגיליונות)»: the board, a schedule per group, a sheet per day, the kitchen, the heads, the staff, מוצ״ש and its shopping list, the food, on campus, the loads. */
+/** Every page as a sheet, for «הורדת xlsx (כל הגיליונות)»: the board, a schedule per group, a sheet per day, the kitchen, the heads, the staff, מוצ״ש and its shopping list, the food (v20: per meal, then per cohort), on campus, the loads. */
 export function rotaWorkbook({ week, data, phones, kitchenDuty }: RotaWorkbookInput): Table[] {
   const e = week.edition;
   const kitchen = kitchenDuty === undefined ? kitchenDutyId(data) : kitchenDuty;
@@ -648,7 +727,8 @@ export function rotaWorkbook({ week, data, phones, kitchenDuty }: RotaWorkbookIn
     staffScheduleTable(week, data),
     prepTable(data),
     shoppingTable(data),
-    foodTable(data, e),
+    mealsTable(data, e, week.rows),
+    foodTable(data),
     campusTable(data, e),
     loadsTable(data, e),
   ];

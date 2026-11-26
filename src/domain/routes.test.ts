@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   afterPath, dayPath, guestsPath, type GuestsQuery, lessonPath, newSpeakerPath, pageStepOf, parseAfterQuery, parseDay, parseGuestsQuery, parseLessonSection, parsePageStep,
-  parsePresentationsQuery, parseSlot, parseSpeakerSection, parseSpeakersQuery, presentationsPath, type PresentationsQuery, speakerPath, speakersPath, type SpeakersQuery,
+  parseSlot, parseSpeakerSection, parseSpeakersQuery, presentationsPath, speakerPath, speakersPath, type SpeakersQuery,
 } from "./routes";
 
 describe("the trainee's pages' addresses", () => {
@@ -140,13 +140,7 @@ describe("the pages of the reset, phase 5", () => {
     expect(parseGuestsQuery("day=1.0&h=x")).toEqual({});
   });
 
-  it("«מצגות»: the day's tab and the room's chip — only what is set, and back", () => {
+  it("«מצגות» (v20): the week's page — no day, no room in its address", () => {
     expect(presentationsPath()).toBe("/presentations");
-    expect(presentationsPath({ day: 2 })).toBe("/presentations?day=2");
-    expect(presentationsPath({ room: 3, day: 0 })).toBe("/presentations?day=0&room=3");
-    const cases: PresentationsQuery[] = [{}, { day: 4 }, { room: 1 }, { day: 1, room: 2 }];
-    for (const q of cases) expect(parsePresentationsQuery(presentationsPath(q).replace(/^\/presentations/, ""))).toEqual(q);
-    expect(parsePresentationsQuery("?day=7&room=0")).toEqual({});
-    expect(parsePresentationsQuery("room=all&day=")).toEqual({});
   });
 });

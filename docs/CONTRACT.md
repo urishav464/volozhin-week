@@ -2262,7 +2262,7 @@ On both ports: `port.sources.setReaderSent`, `UploadOptions.kind` (`src/data/sou
 
 # v20 — the cohorts' numbers and help, the staff's schedule, the escort's presentation (schema v20)
 
-The owner's feedback on logistics and presentations (DECISIONS, the v20 entry). Where this section and «תורנויות» or v19's
+The owner's feedback on logistics and presentations (DECISIONS «גרסה 20 — הערות הלוגיסטיקה והמצגות»). Where this section and «תורנויות» or v19's
 «The cohorts' two flags» differ, this one holds. Still no engine for the rota: `src/data/demoRota.ts` and
 `src/testing/rotaCases.ts` hold it to the SQL; the escort's page is a link answer, so it is parity-tested
 (`tests/parity/scenariosV20.ts`, every step pinned with `is`).

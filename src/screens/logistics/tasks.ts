@@ -90,7 +90,11 @@ const task = (base: Base, state: TaskState, line: string): Task => ({ ...base, s
 
 // ------------------------------------------------------------------ בהתחלה
 
-/** «נוכחות המכינות»: the cohorts entered, each marked on campus somewhere (rotaWarnings' presence_unknown); those that help (v20: in some duty) and can drive counted. */
+/**
+ * «נוכחות המכינות»: the cohorts entered, each marked on campus somewhere (rotaWarnings' presence_unknown) and (v20) with
+ * its trainees typed — the meals count them (mealsTable: a cohort marked nowhere, or whose trainees are TBD, makes them
+ * TBD); done, the trainees added up and those that help (in some duty) and can drive counted.
+ */
 function presenceTask(rota: RotaData | null): Task {
   const base: Base = { key: "presence", title: "נוכחות המכינות", to: "/logistics/rota/setup" };
   if (!rota) return task(base, "unknown", NOT_LOADED);
@@ -98,9 +102,15 @@ function presenceTask(rota: RotaData | null): Task {
   if (cohorts.length === 0) return task(base, "empty", "עוד לא הוזנו מכינות");
   // presence_unknown's rule: no presence row at all for the cohort (never assumed)
   const unmarked = cohorts.filter((c) => !presenceMarked(rota, c.id));
-  if (unmarked.length > 0) return task(base, "open", `לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`);
+  const uncounted = cohorts.filter((c) => c.trainees == null);
+  const open = [
+    ...(unmarked.length > 0 ? [`לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`] : []),
+    ...(uncounted.length > 0 ? [`לא הוזן כמה חניכים: ${uncounted.map((c) => c.name).join(", ")}`] : []),
+  ];
+  if (open.length > 0) return task(base, "open", open.join(" · "));
   const n = count(cohorts.length, "מכינה אחת", (k) => `${k} מכינות`);
-  return task(base, "done", `${n} · עוזרות בתורנויות: ${cohorts.filter((c) => cohortHelps(rota, c.id)).length} · יכולות להסיע: ${cohorts.filter(canDrive).length}`);
+  const trainees = cohorts.reduce((sum, c) => sum + (c.trainees ?? 0), 0);
+  return task(base, "done", `${n} · ${trainees} חניכים · עוזרות בתורנויות: ${cohorts.filter((c) => cohortHelps(rota, c.id)).length} · יכולות להסיע: ${cohorts.filter(canDrive).length}`);
 }
 
 /**

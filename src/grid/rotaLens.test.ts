@@ -80,6 +80,19 @@ describe("rotaLens", () => {
     expect(cells[1][0].staff).toEqual([]);
   });
 
+  it("v20: someone on from 14:00 to 22:30 is on two shifts; two shifts of one person in a shift name them once", () => {
+    const data = rota();
+    data.staff = [
+      { id: 1, edition_id: 1, day: 1, start_min: 840, end_min: 1350, member_id: null, name: "שם לדוגמה", cohort_id: null, note: null },
+      { id: 2, edition_id: 1, day: 1, start_min: 960, end_min: 1050, member_id: null, name: "שם לדוגמה", cohort_id: null, note: null },
+      { id: 3, edition_id: 1, day: 1, start_min: 900, end_min: 1000, member_id: null, name: "שם לדוגמה 2", cohort_id: null, note: null },
+    ];
+    const monday = rotaLens(EDITION, data)[1];
+    expect(monday[0].staff).toEqual(["שם לדוגמה"]); // 14:00–14:30 of the morning
+    expect(monday[1].staff).toEqual(["שם לדוגמה", "שם לדוגמה 2"]);
+    expect(monday[2].staff).toEqual([]); // ends as the night begins
+  });
+
   it("said in words: the duties, then the staff; «אין שיבוצים» when empty", () => {
     const cells = rotaLens(EDITION, rota());
     expect(lensShiftText(cells[0][0])).toBe("בית מדרש: א1 א2 · מטבח: נ1 · צוות: שם לדוגמה");

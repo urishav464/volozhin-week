@@ -480,13 +480,14 @@ function mockRota(): RotaData {
   const slots: [number, number][] = [];
   for (let day = 0; day < 5; day++) for (let shift = 0; shift < 3; shift++) if (!(day === 4 && shift === 2)) slots.push([day, shift]);
   return {
-    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1 }],
+    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 }],
     presence: slots.map(([day, shift]) => ({ cohort_id: 1, day: day as 0, shift: shift as 0 })),
     groups: [
       { id: 11, edition_id: 7, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" },
       { id: 12, edition_id: 7, cohort_id: 1, number: 2, size: 7, head_name: null },
     ],
     duties: [{ id: 21, edition_id: 7, name: "מטבח", description: null, need_morning: 1, need_afternoon: 1, need_night: 1, min_people: null, sort: 1 }],
+    cohortDuties: [{ cohort_id: 1, duty_id: 21 }],
     assignments: [
       { id: 31, edition_id: 7, day: 0, shift: 0, duty_id: 21, group_id: 11, source: "suggested" },
       { id: 32, edition_id: 7, day: 0, shift: 1, duty_id: 21, group_id: 12, source: "hand" },
@@ -618,8 +619,8 @@ test.describe("mock build", () => {
     sb.answers.set("load_rota", {
       ...base,
       cohorts: [
-        { ...base.cohorts[0], helps_rota: true, can_drive: false },
-        { id: 2, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, helps_rota: false, can_drive: true },
+        { ...base.cohorts[0], can_drive: false },
+        { id: 2, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2, can_drive: true },
       ],
       presence: [...base.presence, ...slots], // on campus all week, as א: only the flag keeps its groups out
       groups: [...base.groups, { id: 13, edition_id: 7, cohort_id: 2, number: 1, size: 9, head_name: null }],
