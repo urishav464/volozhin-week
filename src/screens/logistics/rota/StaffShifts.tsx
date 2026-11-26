@@ -12,9 +12,8 @@
 // board shows (approved, or waiting for the decision — said so) a chip «הסעה HH:MM · <מרצה>» in the row holding its
 // pickup on the staff's clock (a pickup before 06:30 is the night of the day before), and for «הלוך ושוב» «הסעה חזרה»
 // at the teaching's end; a click opens that day on the transport board. Nothing of a transport is written to the rota, and /print/rota (every member's) never shows one. No phones.
-import { type FormEvent, Fragment, type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, Fragment, type ReactNode, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
-import type { LessonTransport } from "../../../data/commands";
 import type { NewStaffShift, RotaStaffShift } from "../../../data/rota";
 import { ROTA_DAYS } from "../../../domain/rota";
 import { DAY_END, DAY_NAMES, DAY_START, type Day, fmt, fmtRange, LRM, nightLabel, parseClock } from "../../../domain/time";
@@ -24,7 +23,7 @@ import { dayRowIndexes, legText, OUTSIDE_ROWS, type PlacedLeg, placeLegs, rowEnd
 import { useMedia } from "../../../lib/useMedia";
 import { todayColumn } from "../../../offline/view";
 import { Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, Field, INPUT, useFocusBack, useFocusRescue } from "../../settings/kit";
-import { onBoard } from "../lanes";
+import { useTransports } from "../useTransports";
 import { formRefusal, Problem, type RotaCtx } from "./parts";
 
 type Who = "member" | "name" | "cohort";
@@ -52,38 +51,13 @@ function endText(day: Day, end: number): string {
   return `${LRM}${fmt(end)}${night ? ` (${night})` : ""}`;
 }
 
-/**
- * The one transports read, again whenever a lesson the board shows changes its version or decision (the board's own key:
- * the schedule draws the requests that wait too, so a request sent, changed or decided reads again); a failure said
- * once, with «לנסות שוב».
- */
-function useTransports(ctx: RotaCtx) {
-  const { port, week } = ctx;
-  const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
-  const [rows, setRows] = useState<LessonTransport[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const key = week.lessons
-    .filter(onBoard)
-    .map((l) => `${l.id}:${l.version}:${l.approval}`)
-    .join(",");
-  const load = useCallback(async () => {
-    try {
-      setRows(await cmds.transports());
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [cmds]);
-  useEffect(() => void load(), [load, key]);
-  return { rows, failed, load };
-}
-
 export function StaffShifts({ ctx }: { ctx: RotaCtx }) {
   const { port, week, data, busy, act, mayWrite } = ctx;
   const e = week.edition;
   const wide = useMedia("(min-width: 1024px)");
   const sched = useMemo(() => staffSchedule(week, data), [week, data]);
-  const transports = useTransports(ctx);
+  // the board's one read, the same key and the same re-reads (useTransports.ts — also on the tab's return and every two minutes)
+  const transports = useTransports(port, week);
   const legs = useMemo(() => placeLegs(sched.rows, transportLegs(week, transports.rows, { pending: true })), [sched.rows, week, transports.rows]);
   const [day, setDayState] = useState<Day>(() => todayColumn(e.start_date, new Date().toISOString()) ?? 0);
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -117,7 +91,13 @@ export function StaffShifts({ ctx }: { ctx: RotaCtx }) {
           busy={busy === `staff-new-${p.day}`}
           onCancel={() => close(addKey(p.day, rowIdx))}
           onSave={async (v, refused) => {
-            if (await act(`staff-new-${p.day}`, () => port.rota.addStaffShift(e.id, v), "משמרת הצוות נוספה", refused)) close(addKey(p.day, rowIdx));
+            if (!(await act(`staff-new-${p.day}`, () => port.rota.addStaffShift(e.id, v), "משמרת הצוות נוספה", refused))) return;
+            // the review: saved for another day than the one tab drawn below 1024px — that day's tab, so the new shift is in
+            // view, and the focus to its schedule (the «+» it came from is on the other tab)
+            if (!wide && v.day !== day) {
+              setDay(v.day);
+              rescue(() => document.getElementById("staff-schedule"));
+            } else close(addKey(p.day, rowIdx));
           }}
         />
       );
@@ -136,7 +116,11 @@ export function StaffShifts({ ctx }: { ctx: RotaCtx }) {
           busy={busy === `staff-${s.id}`}
           onCancel={() => close(`edit-${s.id}`)}
           onSave={async (v, refused) => {
-            if (await act(`staff-${s.id}`, () => port.rota.updateStaffShift(s.id, v), "משמרת הצוות נשמרה", refused)) close(`edit-${s.id}`);
+            if (!(await act(`staff-${s.id}`, () => port.rota.updateStaffShift(s.id, v), "משמרת הצוות נשמרה", refused))) return;
+            // the review: moved to another day below 1024px — that day's tab, where the shift and its «עריכה» are drawn, takes
+            // the focus back (the tab it was on no longer has it: the focus would fall to the page)
+            if (!wide && v.day !== day) setDayState(v.day);
+            close(`edit-${s.id}`);
           }}
         />
       );

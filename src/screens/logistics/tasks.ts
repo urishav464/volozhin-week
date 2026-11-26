@@ -92,8 +92,9 @@ const task = (base: Base, state: TaskState, line: string): Task => ({ ...base, s
 
 /**
  * «נוכחות המכינות»: the cohorts entered, each marked on campus somewhere (rotaWarnings' presence_unknown) and (v20) with
- * its trainees typed — the meals count them (mealsTable: a cohort marked nowhere, or whose trainees are TBD, makes them
- * TBD); done, the trainees added up and those that help (in some duty) and can drive counted.
+ * its trainees and its three diet numbers typed — the meals count them (mealsTable: a cohort marked nowhere, or whose
+ * trainees are TBD, makes them TBD; a diet TBD, its columns); done, the trainees added up and those that help (in some
+ * duty) and can drive counted.
  */
 function presenceTask(rota: RotaData | null): Task {
   const base: Base = { key: "presence", title: "נוכחות המכינות", to: "/logistics/rota/setup" };
@@ -103,9 +104,12 @@ function presenceTask(rota: RotaData | null): Task {
   // presence_unknown's rule: no presence row at all for the cohort (never assumed)
   const unmarked = cohorts.filter((c) => !presenceMarked(rota, c.id));
   const uncounted = cohorts.filter((c) => c.trainees == null);
+  // the review: the three diet numbers too — four of the meals' five columns are theirs (dietSplit: TBD while any is)
+  const undieted = cohorts.filter((c) => c.diet_veg == null || c.diet_gf == null || c.diet_both == null);
   const open = [
     ...(unmarked.length > 0 ? [`לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`] : []),
     ...(uncounted.length > 0 ? [`לא הוזן כמה חניכים: ${uncounted.map((c) => c.name).join(", ")}`] : []),
+    ...(undieted.length > 0 ? [`לא הוזנה תזונה: ${undieted.map((c) => c.name).join(", ")}`] : []),
   ];
   if (open.length > 0) return task(base, "open", open.join(" · "));
   const n = count(cohorts.length, "מכינה אחת", (k) => `${k} מכינות`);

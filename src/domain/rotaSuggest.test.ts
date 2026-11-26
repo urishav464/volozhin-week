@@ -462,13 +462,32 @@ describe("a minimum of people", () => {
     }
   });
 
-  it("a duty with a minimum is filled first in its shift", () => {
+  it("the larger group still goes to the duty with a minimum — through a trade, whatever its place in the order", () => {
     const input = build({ cohorts: [{ letter: "א", sizes: [4, 9, 4] }], duties: [{ need: [1, 1, 1] }, { need: [1, 1, 1], min: 9 }] });
     const r = suggestRota(input);
     invariants(input, r);
     // the 9 goes to the duty with the minimum whenever it is free to
     const nine = r.add.filter((a) => a.group_id === 2);
     expect(nine.every((a) => a.duty_id === 2)).toBe(true);
+  });
+
+  it("the review: when groups are short, the duty higher in the list fills first — a minimum of people lower down does not jump it (the owner's «התורנות שלמעלה מתמלאת קודם»)", () => {
+    // three groups of 5, two duties needing 2 each: four places, three groups — whatever the minimums, the top duty is full
+    const slots = rotaSlots(WEEK).length;
+    for (const [top, lower] of [[undefined, undefined], [undefined, 5], [5, 5], [5, undefined]] as const) {
+      const input = build({ cohorts: [{ letter: "א", sizes: [5, 5, 5] }], duties: [{ need: [2, 2, 2], min: top }, { need: [2, 2, 2], min: lower }] });
+      const r = suggestRota(input);
+      invariants(input, r);
+      const short = (duty: number) => r.unfilled.filter((u) => u.duty_id === duty).length;
+      expect([short(1), short(2)], `min ${top}/${lower}`).toEqual([0, slots]);
+    }
+    // the order moved: the other one fills first
+    const moved = build({ cohorts: [{ letter: "א", sizes: [5, 5, 5] }], duties: [{ need: [2, 2, 2] }, { need: [2, 2, 2], min: 5 }] });
+    moved.data.duties[0].sort = 2;
+    moved.data.duties[1].sort = 1;
+    const r = suggestRota(moved);
+    invariants(moved, r);
+    expect([r.unfilled.filter((u) => u.duty_id === 1).length, r.unfilled.filter((u) => u.duty_id === 2).length]).toEqual([slots, 0]);
   });
 });
 

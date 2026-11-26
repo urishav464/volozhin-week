@@ -1,5 +1,6 @@
 // src/data/rota.ts's cleaners — the browser's twins of the guards (supabase/schema.sql «תורנויות»): what a write sends
 // is cleaned here first, so the server's refusal is only a backstop. Synthetic values only.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
 import {
@@ -48,9 +49,15 @@ describe("the cohorts' and groups' fields", () => {
     expect(code(() => checkCohortCounts({ trainees: null, diet_veg: null, diet_gf: 1, diet_both: 2 }))).toBe("rota_diets_exceed"); // both > gf
     expect(code(() => checkCohortCounts({ trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("rota_diets_exceed"); // 4 + 3 − 1 > 5
     expect(code(() => checkCohortCounts({ trainees: 6, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("ok"); // exactly
-    // a side TBD holds nothing: the sum needs all four
-    expect(code(() => checkCohortCounts({ trainees: 1, diet_veg: 400, diet_gf: 400, diet_both: null }))).toBe("ok");
+    // the review: one diet number above the trainees is refused already — «גם וגם» ≤ the other, so no number typed later
+    // could make the sum fit (veg + gf − both ≥ the larger of the two)
+    expect(code(() => checkCohortCounts({ trainees: 1, diet_veg: 400, diet_gf: 400, diet_both: null }))).toBe("rota_diets_exceed");
+    expect(code(() => checkCohortCounts({ trainees: 40, diet_veg: 80, diet_gf: null, diet_both: 0 }))).toBe("rota_diets_exceed");
+    expect(code(() => checkCohortCounts({ trainees: 40, diet_veg: null, diet_gf: 41, diet_both: null }))).toBe("rota_diets_exceed");
+    expect(code(() => checkCohortCounts({ trainees: 40, diet_veg: 40, diet_gf: null, diet_both: null }))).toBe("ok"); // all of them, and gf may still be 0–40
+    // a side TBD holds nothing else: the trainees TBD, any diets; the sum itself needs all four
     expect(code(() => checkCohortCounts({ trainees: null, diet_veg: 400, diet_gf: 400, diet_both: 0 }))).toBe("ok");
+    expect(code(() => checkCohortCounts({ trainees: 40, diet_veg: 30, diet_gf: 30, diet_both: null }))).toBe("ok"); // «גם וגם» 20 or more would fit
     // the whole row, in the guard's order: the contact's name first, then the numbers, then the rule
     expect(cleanCohortFields({})).toEqual({ contact_name: null, trainees: null, diet_veg: null, diet_gf: null, diet_both: null });
     expect(cleanCohortFields({ contact_name: "  איש/אשת קשר  לדוגמה ", trainees: 8 })).toMatchObject({ contact_name: "איש/אשת קשר לדוגמה", trainees: 8 });
@@ -259,5 +266,31 @@ describe("v19: a cohort's two flags, and Saturday night's two lists", () => {
     expect(code(() => parsePrepItems("פריט\tטל' 1234567"))).toBe("rota_contact_in_text");
     expect(code(() => parsePrepItems(`פריט\t${"א".repeat(41)}`))).toBe("bad_value");
     expect(code(() => parsePrepItems(Array.from({ length: 201 }, (_, i) => `פריט ${i}`).join("\n")))).toBe("bad_value");
+  });
+});
+
+// The review: the privacy page said a cohort contact's phone was behind the heads' «כולל טלפונים…» and never in a link
+// without an account. The screens do otherwise, as the owner's plan asks (§ו): the cohort's form reads it with no toggle,
+// it is never printed, and a pick of the cohort as a transport's driver copies it into «טלפון הנהג/ת» — from there a
+// driver's phone, shown on the escort's link once «סודר». And a staff shift has no kind since v20, but a note.
+describe("the privacy page's «תורנויות» says what the screens do (the review)", () => {
+  const html = readFileSync(new URL("../../public/privacy.html", import.meta.url), "utf8");
+  const section = html.slice(html.indexOf("<h2>תורנויות</h2>"), html.indexOf("<h2>תוצרים וייצוא</h2>"));
+  const items = section.split("<li>").slice(1);
+  const item = (w: string) => items.find((l) => l.includes(w)) ?? "";
+
+  it("the heads' switch is the heads' phones alone; a cohort contact's phone has its own line — its form with no switch, never printed, and as a driver's phone the transport's rules and the escort's link once «סודר»", () => {
+    const heads = item("כולל טלפונים של ראשי הקבוצות");
+    expect(heads).toContain("הטלפון של ראש/ת קבוצה");
+    expect(heads).not.toContain("איש/אשת הקשר");
+    const cohort = item("הטלפון של איש/אשת הקשר של מכינה");
+    expect(cohort).not.toContain("כולל טלפונים של ראשי הקבוצות");
+    for (const w of ["בטופס של המכינה", "לא מודפס", "טופס הנהג/ת", "«טלפון הנהג/ת»", "פרטי הנהג/ת של ההסעה", "שמלווה את השיעור", "סודרה"]) expect(cohort, w).toContain(w);
+  });
+
+  it("a staff shift keeps its hours and a note the edition's team reads — no kind of shift (v20)", () => {
+    expect(html).not.toContain("סוג המשמרת");
+    const staff = item("<strong>משמרות הצוות</strong>");
+    for (const w of ["את השעות", "הערה", "כל הצוות של המחזור", "בלי טלפונים"]) expect(staff, w).toContain(w);
   });
 });

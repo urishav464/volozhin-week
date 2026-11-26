@@ -5,7 +5,9 @@
 //   * the duties a cohort helps in (rota_cohort_duties): its policies (the team reads; the writers insert and delete;
 //     nobody updates), a row kept in its edition, a cohort with groups keeping its last duty (in_use — deleting the row
 //     or the duty), deleting the cohort or the edition taking them, never in Realtime;
-//   * a group only in a cohort that helps (cohort_not_helping: inserted or moved there; never for staying);
+//   * a group only in a cohort that helps (cohort_not_helping: inserted or moved there; never for staying) — and (the
+//     review) on two connections at once, the last duty taken away against a group given, in either order: the second
+//     waits for the first, then in_use or cohort_not_helping, never a cohort with groups and no duty;
 //   * «חלוקה לקבוצות» — rota_split_cohort: invoker (the caller's RLS and the guards), one transaction (a refusal leaves the
 //     old groups as they were), its refusals in order, the cascades of the groups it replaces;
 //   * a cohort's staff contact's phone — rota_cohort_contacts: read only through app.may_see_cohort_contacts (a role ×
@@ -16,8 +18,8 @@
 // (escort_view's `presentation` is tests/sql/links.test.ts and tests/parity; the upgrade from v19 tests/sql/upgrade.test.ts.)
 // Synthetic only: no scanner takes these phones for real ones.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type pg from "pg";
-import { SCHEMA, dropDatabase, freshDatabase, google } from "./db";
+import pg from "pg";
+import { SCHEMA, adminUrl, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
 const KINDS = ["live", "practice", "demo", "archived", "archive"] as const;
@@ -237,6 +239,72 @@ describe("v20", () => {
         expect((await run(member("practice", "admin"), "select * from public.rota_cohort_duties")).rows).toEqual([]);
         expect((await run(STRANGER, "select * from public.rota_cohort_duties")).rows).toEqual([]);
       });
+    });
+  });
+
+  // The review: two connections, as two logistics members' browsers at once (READ COMMITTED, as PostgREST runs) — one
+  // takes a cohort's last duty away while the other gives it a group (one insert, or «חלוקה לקבוצות»). The group's guard
+  // reads the cohort's duties FOR KEY SHARE, so whichever writes second waits for the first to commit and then sees what
+  // it did: never a cohort with groups and no duty (before, neither saw the other's row, and both committed).
+  describe("a cohort's last duty and a new group at the same moment (two connections — the review)", () => {
+    const outcome = (p: Promise<unknown>) => p.then(() => "ok", (e: { code?: string; message: string }) => (e.code === "P0001" ? e.message : (e.code ?? "error")));
+    const asMember = (c: pg.Client, email: string) =>
+      c.query("begin; set local role authenticated; select set_config('request.jwt.claims', $$" + JSON.stringify(google(email)) + "$$, true)");
+    /** Whether the connection `pid` waits on a lock (within a second), or the statement `done` settled first. */
+    const waitsOnLock = async (pid: number, done: () => boolean) => {
+      for (let i = 0; i < 100 && !done(); i++) {
+        const w = (await db.query("select wait_event_type as w from pg_stat_activity where pid = $1", [pid])).rows[0]?.w;
+        if (w === "Lock") return true;
+        await new Promise((res) => setTimeout(res, 10));
+      }
+      return false;
+    };
+    type Write = "delete" | "insert" | "split";
+    const SQL: Record<Write, string> = {
+      delete: "delete from public.rota_cohort_duties where cohort_id = $1",
+      insert: "insert into public.rota_groups (edition_id, cohort_id, number, size) select edition_id, id, 1, 8 from public.rota_cohorts where id = $1",
+      split: "select public.rota_split_cohort((select edition_id from public.rota_cohorts where id = $1), $1, array[8, 8, 7])",
+    };
+    /** `first` written and left open on one connection, then `second` on the other; the first commits; what the second got, and what stays. */
+    async function race(first: Write, second: Write) {
+      const cohort = Number((await db.query("insert into public.rota_cohorts (edition_id, letter, name, trainees) values ($1, 'ר', 'מכינה לבדיקת מרוץ', 23) returning id", [ed.live])).rows[0].id);
+      const duty = Number((await db.query("insert into public.rota_duties (edition_id, name, need_morning, sort) values ($1, 'תורנות לבדיקת מרוץ', 1, 9) returning id", [ed.live])).rows[0].id);
+      await db.query("insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3)", [ed.live, cohort, duty]);
+      const url = new URL(adminUrl());
+      url.pathname = `/${dbName}`;
+      const [c1, c2] = [new pg.Client({ connectionString: url.toString() }), new pg.Client({ connectionString: url.toString() })];
+      await c1.connect();
+      await c2.connect();
+      try {
+        await asMember(c1, L);
+        await asMember(c2, L);
+        await c1.query(SQL[first], [cohort]); // not committed yet
+        const pid = Number((await c2.query("select pg_backend_pid() as p")).rows[0].p);
+        let settled = false;
+        const got = outcome(c2.query(SQL[second], [cohort])).finally(() => (settled = true));
+        const waited = await waitsOnLock(pid, () => settled);
+        await c1.query("commit");
+        const answer = await got;
+        await c2.query(answer === "ok" ? "commit" : "rollback");
+        const count = async (table: string) => Number((await db.query(`select count(*) as n from public.${table} where cohort_id = $1`, [cohort])).rows[0].n);
+        return { waited, answer, groups: await count("rota_groups"), duties: await count("rota_cohort_duties") };
+      } finally {
+        await c1.end();
+        await c2.end();
+        await db.query("delete from public.rota_groups where cohort_id = $1", [cohort]);
+        await db.query("delete from public.rota_cohorts where id = $1", [cohort]);
+        await db.query("delete from public.rota_duties where id = $1", [duty]);
+      }
+    }
+
+    it("the last duty taken away first: the group waits, then is refused cohort_not_helping — one insert, or «חלוקה לקבוצות»", async () => {
+      expect(await race("delete", "insert")).toEqual({ waited: true, answer: "cohort_not_helping", groups: 0, duties: 0 });
+      expect(await race("delete", "split")).toEqual({ waited: true, answer: "cohort_not_helping", groups: 0, duties: 0 });
+    });
+
+    it("the group given first: taking the last duty away waits, then is refused in_use — one insert, or «חלוקה לקבוצות»", async () => {
+      expect(await race("insert", "delete")).toEqual({ waited: true, answer: "in_use", groups: 1, duties: 1 });
+      expect(await race("split", "delete")).toEqual({ waited: true, answer: "in_use", groups: 3, duties: 1 });
     });
   });
 

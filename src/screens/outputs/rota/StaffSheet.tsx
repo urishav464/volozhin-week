@@ -52,7 +52,11 @@ export function StaffSheet({ week, data }: { week: Week; data: RotaData }) {
   );
 }
 
-/** One day of the schedule, row under row: the time, the grid's label, the staff on then (the hours beside a name in its first row). */
+/**
+ * One day of the schedule, row under row: the time, the grid's label, the staff on then (the hours beside a name in its
+ * first row). A range never breaks at its dash (the review: «08:30–» / «14:30» read as two times) — nowrap, as the
+ * table's WORD JOINERs do.
+ */
 function StaffDay({ week, data, day }: { week: Week; data: RotaData; day: Day }) {
   const s = staffSchedule(week, data);
   const outside = s.outside[day];
@@ -65,7 +69,7 @@ function StaffDay({ week, data, day }: { week: Week; data: RotaData; day: Day })
         return (
           <li key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-sm">
             <span className="min-w-0 basis-40">
-              <bdi dir="ltr" className="font-bold text-navy tabular-nums">
+              <bdi dir="ltr" className="font-bold whitespace-nowrap text-navy tabular-nums">
                 {fmtRange(r.start, r.end)}
               </bdi>
               {(r.label || night) && <span className="block text-xs text-ink-soft">{[night, r.label].filter(Boolean).join(" · ")}</span>}
@@ -80,7 +84,7 @@ function StaffDay({ week, data, day }: { week: Week; data: RotaData; day: Day })
                       {s.first.get(x.id) === i && (
                         <>
                           {" "}
-                          <bdi dir="ltr" className="text-ink-soft tabular-nums">
+                          <bdi dir="ltr" className="whitespace-nowrap text-ink-soft tabular-nums">
                             {fmtRange(x.start_min, x.end_min)}
                           </bdi>
                         </>
@@ -99,7 +103,7 @@ function StaffDay({ week, data, day }: { week: Week; data: RotaData; day: Day })
               <span key={x.id}>
                 {k > 0 && ", "}
                 {staffWho(data, x)}{" "}
-                <bdi dir="ltr" className="text-ink-soft tabular-nums">
+                <bdi dir="ltr" className="whitespace-nowrap text-ink-soft tabular-nums">
                   {fmtRange(x.start_min, x.end_min)}
                 </bdi>
               </span>

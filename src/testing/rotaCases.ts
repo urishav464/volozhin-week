@@ -110,6 +110,11 @@ export const ROTA_CASES: RotaCase[] = [
     name: "the diets more than the trainees", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 },
     expect: "rota_diets_exceed",
   },
+  // the review: one diet number above the trainees can never fit, whatever is typed later (both ≤ each, so veg + gf − both ≥ either)
+  { name: "the vegetarians more than the trainees, the gluten-free TBD", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", trainees: 40, diet_veg: 80, diet_both: 0 }, expect: "rota_diets_exceed" },
+  { name: "the gluten-free more than the trainees, «גם וגם» TBD", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", trainees: 40, diet_veg: 30, diet_gf: 41 }, expect: "rota_diets_exceed" },
+  { name: "one diet number within the trainees, the rest TBD", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", trainees: 40, diet_veg: 30, diet_both: 0 }, expect: "ok" },
+  { name: "the trainees lowered under one diet number, the others TBD", op: "updateCohort", ref: "A", args: { trainees: 40, diet_veg: 50, diet_gf: null, diet_both: null }, expect: "rota_diets_exceed" },
   { name: "the diets exactly the trainees", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", trainees: 6, diet_veg: 4, diet_gf: 3, diet_both: 1 }, expect: "ok" },
   { name: "a phone in the contact's name", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", contact_name: "איש קשר 000-000-0055" }, expect: "rota_contact_in_text" },
   { name: "the contact's name too long", op: "addCohort", args: { letter: "ב", name: "מכינה לדוגמה ב", contact_name: "א".repeat(81) }, expect: "bad_value" },

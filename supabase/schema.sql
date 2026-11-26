@@ -6907,7 +6907,8 @@ drop function if exists app.rota_clean_diets(jsonb);
 -- cleanCohortFields): the staff contact's name — one line ≤ 80, no phone or e-mail
 -- (its phone has its own table); the four numbers, each NULL (TBD) or a whole
 -- number 0–1000 (`bad_value`); then between them, where both sides are known, «מהם
--- גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», and (all four known) «צמחוני/טבעוני» +
+-- גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», each of those two ≤ the trainees (the
+-- review: else no number typed later could fit), and (all four known) «צמחוני/טבעוני» +
 -- «ללא גלוטן» − «גם וגם» ≤ the trainees (`rota_diets_exceed`); the sort; «יכול
 -- להסיע» true or false.
 create or replace function app.rota_cohorts_guard() returns trigger
@@ -6928,8 +6929,10 @@ create or replace function app.rota_cohorts_guard() returns trigger
        or (new.diet_both is not null and new.diet_both not between 0 and 1000) then
       perform app.refuse('bad_value');
     end if;
-    -- a comparison with a NULL (TBD) side is NULL: not refused (the sum only when all four are known)
+    -- a comparison with a NULL (TBD) side is NULL: not refused (the sum only when all four are known). The review: one
+    -- diet number above the trainees already breaks it, whatever comes later («גם וגם» ≤ each, so veg + gf − both ≥ either)
     if new.diet_both > new.diet_veg or new.diet_both > new.diet_gf
+       or new.diet_veg > new.trainees or new.diet_gf > new.trainees
        or new.diet_veg + new.diet_gf - new.diet_both > new.trainees then
       perform app.refuse('rota_diets_exceed');
     end if;
@@ -6946,7 +6949,11 @@ create trigger rota_cohorts_guard before insert or update on public.rota_cohorts
 -- v20: after the values, a group goes only into a cohort that helps in a duty
 -- (rota_cohort_duties) — inserted, or moved there — else `cohort_not_helping`; a
 -- cohort that is not the edition's is left to the foreign key (`stale`). A group
--- already in a cohort is never refused for staying there.
+-- already in a cohort is never refused for staying there. The duties are read FOR
+-- KEY SHARE (the review): a delete of the cohort's last duty at the same moment
+-- waits for this insert, and its guard then sees the group (`in_use`); a delete
+-- already made waits this read, which then skips the deleted row
+-- (`cohort_not_helping`) — never a cohort with groups and no duty.
 create or replace function app.rota_groups_guard() returns trigger
   language plpgsql security definer set search_path = ''
   as $$
@@ -6957,7 +6964,7 @@ create or replace function app.rota_groups_guard() returns trigger
     new.head_name := app.rota_no_contact(app.clean_line(new.head_name, 80));
     if (tg_op = 'INSERT' or new.cohort_id is distinct from old.cohort_id)
        and exists (select 1 from public.rota_cohorts c where c.id = new.cohort_id and c.edition_id = new.edition_id)
-       and not exists (select 1 from public.rota_cohort_duties x where x.cohort_id = new.cohort_id) then
+       and not exists (select 1 from public.rota_cohort_duties x where x.cohort_id = new.cohort_id for key share) then
       perform app.refuse('cohort_not_helping');
     end if;
     return new;

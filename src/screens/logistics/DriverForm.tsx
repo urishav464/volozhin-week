@@ -5,6 +5,8 @@
 // v20 — two suggestion lists (lanes.ts driverSuggestions; the owner's «הצעה: נהג/ת מהמשמרת»): «במשמרת בשעת האיסוף»
 // (a click fills «שם הנהג/ת») and «אחריות של מכינה» (a click fills «צוות מכינת X — איש/אשת קשר: Y» and — only for whom
 // app.may_see_rota_contacts lets read it, fetched on that click, one call — the contact's phone into «טלפון הנהג/ת»).
+// Every pick sets the phone too (the review): a pick that fills none empties «טלפון הנהג/ת», so the phone of whoever was
+// there before (the saved driver, an earlier pick) is never saved under another name.
 // A pick only fills the fields: typing by hand stays, and nothing is sent before «שמירה».
 import { type FormEvent, useId, useMemo, useRef, useState } from "react";
 import { CommandError, type TransportDriverPatch } from "../../data/commands";
@@ -141,7 +143,11 @@ function phoneOk(phone: string): boolean {
 
 const PICK = "inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-navy/40 bg-card px-3 text-start text-sm font-semibold text-navy break-words hover:bg-accent-soft";
 
-/** The two lists; a pick fills the fields, and a line says what it filled (read out, the focus stays on the pick). */
+/**
+ * The two lists; a pick fills the fields, and a line says what it filled (read out, the focus stays on the pick). Every
+ * pick sets both fields: a pick with no phone to fill empties «טלפון הנהג/ת» (the review) — another person's phone never
+ * stays beside the new name.
+ */
 function Suggestions({ suggest, onName, onPhone }: { suggest: DriverSuggest; onName: (v: string) => void; onPhone: (v: string) => void }) {
   const id = useId();
   const [said, setSaid] = useState("");
@@ -150,6 +156,7 @@ function Suggestions({ suggest, onName, onPhone }: { suggest: DriverSuggest; onN
   const pickCohort = async (c: CohortPick) => {
     const n = ++last.current;
     onName(c.fill);
+    onPhone(""); // until the contact's phone comes (if it does): never the one of whoever was there before
     if (!phoneFor) return setSaid(`מולא שם הנהג/ת: ${c.fill}. את הטלפון מקלידים.`);
     setSaid(`מולא שם הנהג/ת: ${c.fill}. טוען את הטלפון של איש/אשת הקשר…`);
     try {
@@ -198,7 +205,8 @@ function Suggestions({ suggest, onName, onPhone }: { suggest: DriverSuggest; onN
                       onClick={() => {
                         last.current++;
                         onName(p.who.slice(0, STAGE_LIMITS.driver_name));
-                        setSaid(`מולא שם הנהג/ת: ${p.who}.`);
+                        onPhone(""); // the site keeps no staff member's phone: typed by hand, never the one before
+                        setSaid(`מולא שם הנהג/ת: ${p.who}. את הטלפון מקלידים.`);
                       }}
                     >
                       <span className="min-w-0">{p.who}</span>

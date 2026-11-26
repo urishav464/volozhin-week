@@ -7,9 +7,16 @@
 // lesson's day, by the contract's parameter names, with the member's token. The reset, phase 5: a closed lesson's
 // «לאתר האורחים» (#guest) under the stepper — never a seventh step —, and «מקורות ומצגת» with its «מצגות» apart (a
 // second file input; a PowerPoint file on the sources' input is refused for what it is); an archive's lesson, at every
-// width, reads last year's transport and has no «לאתר האורחים». Synthetic people and places only.
+// width, reads last year's transport and has no «לאתר האורחים». v20: the staff's driver form (StaffTransport → the board's
+// DriverForm) with its two suggestion lists — load_rota read only once the form opens, a pick only fills the fields, the
+// cohort contact's phone read through get_rota_contacts on that click, saved through set_transport_driver alone; and each
+// presentation's place on the hall's computer («במחשב של האולם: …»), the very path of the week's zip, «לדף המצגות ‹» the
+// week's page with no day in its address. Synthetic people and places only.
+import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
+import { strFromU8, unzipSync } from "fflate";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
+import type { RotaData } from "../../src/data/rota";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { noSidewaysScroll } from "./helpers";
 import { FakeSupabase, signIn } from "./mock";
@@ -194,6 +201,33 @@ test.describe("demo build — a trainee, «מקורות ומצגת» and the gue
     await expect(decks).toBeFocused();
     await expect(decks).toBeInViewport();
   });
+
+  test("v20: each presentation says its place on the hall's computer — «במחשב של האולם: <folder> / <name>», the very entry of the week's zip; «לדף המצגות ‹» is the week's page, no day in its address", async ({ page }) => {
+    await page.goto(`${demoUrl()}/lesson/${lessonAt(0, 510)}?step=sources&as=trainee#presentations`);
+    const decks = page.locator("[data-lesson-presentations]");
+    await expect(decks).toBeFocused();
+    const deck = decks.getByRole("list", { name: "המצגות של השיעור" }).locator("[data-file-row]");
+    await expect(deck).toHaveCount(1);
+    // Sunday (folder «1-ראשון»), 08:30, the בית מדרש — then the file's own name
+    await expect(deck.locator("[data-hall-line]")).toHaveText("במחשב של האולם: 1-ראשון / 0830_בית מדרש_מצגת לדוגמה.pdf");
+    const hall = (await deck.locator("[data-hall-path]").getAttribute("data-hall-path"))!;
+    expect(hall).toBe("1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf");
+    // the folder and the name each isolated (a room or a name may be in Latin letters)
+    expect(await deck.locator("[data-hall-path] bdi").allTextContents()).toEqual(["1-ראשון", "0830_בית מדרש_מצגת לדוגמה.pdf"]);
+    const toPage = decks.getByRole("link", { name: "לדף המצגות ‹" });
+    await expect(toPage).toHaveAttribute("href", "/presentations");
+    expect((await toPage.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await noSidewaysScroll(page);
+    await toPage.click();
+    await expect(page).toHaveURL(/\/presentations$/);
+    // the week's zip holds that file at exactly that path, its bytes the file's
+    const [d] = await Promise.all([page.waitForEvent("download"), page.locator("[data-week-zip]").getByRole("button", { name: "הורדת כל המצגות של השבוע" }).click()]);
+    const files = unzipSync(new Uint8Array(await readFile((await d.path())!)));
+    expect(Object.keys(files)).toContain(hall);
+    expect(strFromU8(files[hall].subarray(0, 5))).toBe("%PDF-");
+    // and its file only there: nowhere else under another name
+    expect(Object.keys(files).filter((n) => n.endsWith("_מצגת לדוגמה.pdf"))).toEqual([hall]);
+  });
 });
 
 test.describe("demo build — a trainee, on another pair's day", () => {
@@ -359,5 +393,71 @@ test.describe("mock build — an archive's lesson", () => {
     await expect(page.locator("[data-page-step]")).toHaveCount(6);
     await noSidewaysScroll(page);
     for (const fn of ["set_transport_details", "set_transport_driver", "set_transport_request", "set_payment", "update_lesson"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
+  });
+});
+
+test.describe("mock build — the staff's driver on the lesson page (v20)", () => {
+  test("the board's suggestions in the driver's form: load_rota read only once it opens; a staff pick, then a cohort's — its contact's phone on that click; saved through set_transport_driver alone", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire format");
+    const week = demoWeek();
+    week.edition.id = 7;
+    week.edition.kind = "real";
+    week.dayOwners = demoDayOwners();
+    // Wednesday 10:00, approved: the driver is the staff's to set
+    const lesson = week.lessons.find((l) => l.day === 3 && l.start_min === 600 && l.kind === "lesson" && l.state === "closed")!;
+    expect(lesson.approval).toBe("approved");
+    const sb = new FakeSupabase({
+      status: 200,
+      body: { status: "ok", schema_version: EXPECTED_SCHEMA_VERSION, email: "logistics@example.org", display_name: "לוגיסטיקה (הדגמה)", global_admin: false, memberships: [{ edition_id: 7, role: "logistics", member_id: 5 }] },
+    });
+    const rota: RotaData = {
+      // a name that does not say «מכינה» itself: the pick says «צוות מכינת …» (the owner's words, plan §ו)
+      cohorts: [{ id: 2, edition_id: 7, letter: "ב", name: "לדוגמה ב", trainees: 10, diet_veg: null, diet_gf: null, diet_both: null, contact_name: "איש/אשת קשר לדוגמה ב", sort: 1, can_drive: true }],
+      cohortDuties: [],
+      presence: [{ cohort_id: 2, day: 3, shift: 0 }],
+      groups: [],
+      duties: [],
+      assignments: [],
+      staff: [{ id: 41, edition_id: 7, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, note: null }],
+      prep: [],
+    };
+    sb.answers.set("editions", [week.edition]);
+    sb.answers.set("load_week", week);
+    sb.answers.set("get_transport_details", { pickup_address: "כתובת לדוגמה", pickup_time: "08:45", pickup_min: 525, driver_name: null, driver_phone: null, arranged: false });
+    sb.answers.set("load_rota", rota);
+    sb.answers.set("get_rota_contacts", [{ cohort_id: 2, phone: "000-000-0077" }]);
+    sb.answers.set("set_transport_driver", null);
+    await sb.attach(page);
+    const session = await signIn(page, "logistics@example.org");
+    sb.token = session.access_token;
+    await page.goto(`${mockUrl()}/lesson/${lesson.id}?step=pay`);
+    const pay = await open(page, "pay");
+    const details = pay.getByRole("group", { name: "פרטי ההסעה" });
+    await expect(details).toContainText("08:45");
+    await page.waitForLoadState("networkidle");
+    expect(sb.rpc.get("load_rota")).toBeUndefined(); // not until the form opens
+    await details.getByRole("button", { name: "עריכת הנהג/ת" }).click();
+    const form = details.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    const suggestions = form.locator("[data-driver-suggestions]");
+    await expect(suggestions.locator("[data-suggest-staff]")).toHaveText([/^לוגיסטיקה \(הדגמה\)\s*08:30–14:30$/]);
+    await expect(suggestions.locator("[data-suggest-cohort]")).toHaveText(["צוות מכינת לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב"]);
+    expect(sb.rpc.get("load_rota")).toEqual([{ p_edition: 7 }]);
+    expect(sb.rpc.get("get_rota_contacts")).toBeUndefined();
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0077");
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("צוות מכינת לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב");
+    expect(sb.rpc.get("get_rota_contacts")).toEqual([{ p_edition: 7 }]);
+    // typed by hand over the pick: what is in the fields is what goes
+    await form.getByLabel("שם הנהג/ת").fill("נהג/ת לדוגמה");
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")?.length ?? 0).toBe(1);
+    expect(sb.rpc.get("set_transport_driver")![0]).toEqual({ p_lesson: lesson.id, p_fields: { driver_name: "נהג/ת לדוגמה", driver_phone: "000-000-0077" } });
+    for (const fn of ["set_transport_details", "set_transport_request", "set_payment"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
+    expect(sb.writes).toEqual([]);
+    for (const fn of ["load_rota", "get_rota_contacts", "set_transport_driver"]) {
+      for (const c of sb.calls.filter((x) => x.path === `/rest/v1/rpc/${fn}`)) expect(c.auth, fn).toBe(`Bearer ${session.access_token}`);
+    }
   });
 });

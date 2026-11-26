@@ -328,12 +328,15 @@ export interface CohortCounts {
 }
 
 /**
- * v20 (app.rota_cohorts_guard): «מהם גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», and — all four known — «צמחוני/טבעוני» +
- * «ללא גלוטן» − «גם וגם» ≤ the trainees; else rota_diets_exceed. A side that is TBD (null) holds nothing.
+ * v20 (app.rota_cohorts_guard): «מהם גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», each of those two ≤ the trainees, and —
+ * all four known — «צמחוני/טבעוני» + «ללא גלוטן» − «גם וגם» ≤ the trainees; else rota_diets_exceed. A comparison with a
+ * side TBD (null) holds nothing. The review: one diet number above the trainees can never fit, whatever is typed later
+ * (both ≤ each, so veg + gf − both ≥ either) — refused at once, not on the last number typed.
  */
 export function checkCohortCounts(c: CohortCounts): CohortCounts {
   const { trainees: t, diet_veg: v, diet_gf: g, diet_both: b } = c;
   if (b != null && ((v != null && b > v) || (g != null && b > g))) return fail("rota_diets_exceed");
+  if (t != null && ((v != null && v > t) || (g != null && g > t))) return fail("rota_diets_exceed");
   if (t != null && v != null && g != null && b != null && v + g - b > t) return fail("rota_diets_exceed");
   return c;
 }

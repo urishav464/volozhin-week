@@ -1,7 +1,7 @@
 // «לוגיסטיקה ← הסעות וצוות» — the transport board (the reset, phase 3), for logistics and the admins: ONE transports read
 // (cmds.transports(): the requests that wait and the approved ones, each with its pickup_min — personal data, never in
 // the Week) and the edition's staff shifts (useRota: port.rota.load, no phones), re-read when a board lesson's version
-// or decision changes and after every write. One day at a time (`?day=`): a time axis from a tablet up (BoardAxis —
+// or decision changes, after every write, and (the review) on the tab's return and every two minutes (useTransports.ts). One day at a time (`?day=`): a time axis from a tablet up (BoardAxis —
 // aria-hidden) and its text twin, the list, which is the phone's whole board. A request is decided right here by whoever
 // public.decide_payments lets (mayDecide; one approval decides the payment and the transport together); an approved
 // transport gets its driver and «סודר» through set_transport_driver only (DriverForm — v20: with its two suggestion
@@ -11,9 +11,9 @@
 // written on the lesson page («לדף השיעור»). The addresses and the drivers' phones only behind «כולל כתובות וטלפונים».
 // Print and the files (v20): «הסעות וצוות» — the staff's shifts and the APPROVED transports by day and time
 // (transportStaffTable); the xlsx adds «הסעות», the approved transports alone (transportRows / transportTable).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import type { LessonTransport, TransportDriverPatch } from "../../data/commands";
+import type { TransportDriverPatch } from "../../data/commands";
 import { mayDecide } from "../../domain/approvals";
 import { lessonPath } from "../../domain/routes";
 import { shekels } from "../../domain/stages";
@@ -29,10 +29,11 @@ import { type Act, LINK_BUTTON, memberName } from "../stages/parts";
 import { BoardAxis } from "./BoardAxis";
 import { ARRANGED_NOTE, DriverForm, type DriverSuggest, useCohortPhone } from "./DriverForm";
 import {
-  AXIS, boardCounts, boardDayParam, boardPickupMin, type BoardState, defaultBoardDay, type DriveCohort, driverSuggestions, lanesPerDay, onBoard, pickupText, type ShiftLane, type TransportLane,
+  AXIS, boardCounts, boardDayParam, boardPickupMin, type BoardState, defaultBoardDay, type DriveCohort, driverSuggestions, lanesPerDay, pickupText, type ShiftLane, type TransportLane,
   transportLanes,
 } from "./lanes";
 import { Bar, PaperTable, PersonalToggle, type TabProps } from "./parts";
+import { useTransports } from "./useTransports";
 
 /** Where a transport stands, in words (the axis draws it in colour). */
 export const BOARD_STATE: Record<BoardState, { text: string; tone: "warn" | "info" | "ok" }> = {
@@ -53,8 +54,10 @@ const rowId = (lessonId: number) => `board-row-${lessonId}`;
 
 export function TransportBoard({ port, week, actor, notify, clear, label, reload }: TabProps & { reload: () => Promise<void> }) {
   const cmds = useMemo(() => port.commands(week.edition.id), [port, week.edition.id]);
-  const [details, setDetails] = useState<LessonTransport[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  // the one transports read: again whenever a board lesson's version or decision changes (a request sent, decided,
+  // changed), when the tab comes back into view and every two minutes while it is (the review: a pickup corrected or a
+  // driver set elsewhere changes no lesson) — useTransports.ts, the staff schedule's too
+  const { rows: details, failed, load } = useTransports(port, week);
   // «כולל כתובות וטלפונים»: off by default; the board is keyed by the edition, so another edition starts it off again
   const [personal, setPersonal] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
@@ -63,21 +66,6 @@ export function TransportBoard({ port, week, actor, notify, clear, label, reload
   const focus = useFocusBack();
   const rescue = useFocusRescue();
   const [params, setParams] = useSearchParams();
-
-  // the read again whenever a board lesson's version or decision changes (a request sent, decided, changed)
-  const key = week.lessons
-    .filter(onBoard)
-    .map((l) => `${l.id}:${l.version}:${l.approval}`)
-    .join(",");
-  const load = useCallback(async () => {
-    try {
-      setDetails(await cmds.transports());
-      setFailed(false);
-    } catch {
-      setFailed(true);
-    }
-  }, [cmds]);
-  useEffect(() => void load(), [load, key]);
 
   const day: Day = boardDayParam(params.get("day")) ?? defaultBoardDay(week, new Date().toISOString());
   const setDay = (d: Day) =>

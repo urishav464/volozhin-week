@@ -767,6 +767,9 @@ function SplitCohort({ ctx, cohort: c }: { ctx: RotaCtx; cohort: RotaCohort }) {
   const [confirming, setConfirming] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const again = data.groups.some((g) => g.cohort_id === c.id);
+  // where the fold starts, once (the review): <details open> follows its prop, so the first split — `again` turning true —
+  // would close the fold the focus is in, and the focus fall to the page; it stays open, «חלוקה מחדש» focused
+  const [startOpen] = useState(!again);
   const perGroup = intOrNull(per);
   const sizes = c.trainees != null && perGroup != null && Number.isInteger(perGroup) ? splitSizes(c.trainees, perGroup) : [];
   const preview = splitPreviewText(c.letter, sizes);
@@ -792,7 +795,7 @@ function SplitCohort({ ctx, cohort: c }: { ctx: RotaCtx; cohort: RotaCohort }) {
     run();
   };
   return (
-    <Fold title={label} hint={again ? "מחליפה את הקבוצות שיש" : undefined} defaultOpen={!again} size="sm">
+    <Fold title={label} hint={again ? "מחליפה את הקבוצות שיש" : undefined} defaultOpen={startOpen} size="sm">
       {c.trainees == null ? (
         <p className="text-sm text-ink-soft">כדי לחלק, קודם כותבים כמה חניכים יש ב{c.name} («עריכה» ב«המכינות»).</p>
       ) : c.trainees === 0 ? (

@@ -7,9 +7,9 @@
 // `cohortDuties`, at every step; a cohort that helps in none has no groups — a duty one was given by hand still counts
 // as filled), never two duties to one group in one shift, and never fills a duty in a
 // shift whose need is not set. The tightest shifts first (the fewest free groups for what they need — v20: for each duty,
-// the free groups that may take it —, suggestionOrder), then by time; within a shift every duty's need first — the
-// duties with a minimum of people first, then by their order —, and only then, from the groups still free, the extras
-// for a minimum. A group is chosen by, in this order:
+// the free groups that may take it —, suggestionOrder), then by time; within a shift every duty's need first — in the
+// list's order (v20, the review: «התורנות שלמעלה מתמלאת קודם»; a minimum of people lower down does not jump it) —, and
+// only then, from the groups still free, the extras for a minimum. A group is chosen by, in this order:
 //   0. (v20) the fewest other duties still short in this shift that it may also take — so a group that can do only this
 //      duty takes it before one another duty needs (with every group eligible for every duty: all the same);
 //   1. no shift right before or after it (a night and the morning after it are neighbours, as every two shifts in a row);
@@ -151,7 +151,9 @@ export function suggestRota(input: RotaSuggestInput, options: RotaSuggestOptions
     .sort((a, b) => (cohortRank.get(a.cohort_id) ?? cohorts.length) - (cohortRank.get(b.cohort_id) ?? cohorts.length) || a.number - b.number || a.id - b.id)
     // the groups that help first, so their places (and the rotation) are as if the others were not there
     .sort((a, b) => Number(!helps.has(a.id)) - Number(!helps.has(b.id)));
-  const duties = [...data.duties].sort((a, b) => Number(a.min_people == null) - Number(b.min_people == null) || a.sort - b.sort || a.id - b.id);
+  // the list's order alone (the owner's «כשאין מספיק קבוצות, התורנות שלמעלה מתמלאת קודם», the review): a minimum of
+  // people lower down never jumps it — its larger group comes through step 2's trade
+  const duties = [...data.duties].sort((a, b) => a.sort - b.sort || a.id - b.id);
   const dutyRank = new Map(duties.map((d, i) => [d.id, i]));
   const slots = rotaSlots(edition);
   const here = new Set(data.presence.map((p) => `${p.cohort_id}:${p.day}:${p.shift}`));

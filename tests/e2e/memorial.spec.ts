@@ -426,9 +426,26 @@ test.describe("demo build", () => {
     expect(kk.groups.map((g: { title: string | null; place: string | null }) => [g.title, g.place])).toContainEqual(["ספר לדוגמה א׳", "הדשא"]);
     expect(kk.leaders.every((x: { name: string | null }) => typeof x.name === "string")).toBe(true);
     expect(kk.signups.every((s: { name: string | null }) => typeof s.name === "string")).toBe(true);
-    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(6); // v16: rota.json; v19: its Saturday-night rows' kind and qty
+    // v16: rota.json; v19: its Saturday-night rows' kind and qty; v20: the cohorts' numbers and contact's name, cohortDuties
+    expect(JSON.parse(strFromU8(files["edition.json"])).format_version).toBe(7);
     const rota = JSON.parse(strFromU8(files["rota.json"]));
-    expect(rota.cohorts.map((c: { letter: string; helps_rota: boolean; can_drive: boolean }) => [c.letter, c.helps_rota, c.can_drive])).toEqual([["א", true, false], ["ב", true, false], ["נ", true, false]]);
+    type Cohort = { id: number; letter: string; can_drive: boolean; trainees: number | null; contact_name: string | null };
+    expect(rota.cohorts.map((c: Cohort) => [c.letter, c.can_drive, c.trainees, c.contact_name])).toEqual([
+      ["א", false, 48, "איש/אשת קשר לדוגמה א"],
+      ["ב", false, 47, "איש/אשת קשר לדוגמה ב"],
+      ["נ", false, 40, "איש/אשת קשר לדוגמה נ"],
+    ]);
+    for (const c of rota.cohorts) for (const k of ["helps_rota", "diets"]) expect(c, k).not.toHaveProperty(k); // v20: gone
+    // the duties each helps in (v20): «נ» in «בית מדרש» alone, the others in every duty
+    const helps = (letter: string) => rota.cohortDuties.filter((x: { cohort_id: number }) => x.cohort_id === rota.cohorts.find((c: Cohort) => c.letter === letter).id).map((x: { duty_id: number }) => rota.duties.find((d: { id: number }) => d.id === x.duty_id).name);
+    expect(helps("נ")).toEqual(["בית מדרש"]);
+    expect(helps("א")).toHaveLength(rota.duties.length);
+    expect(strFromU8(files["rota.json"])).not.toContain("טלפון לדוגמה"); // no head's phone, no contact's phone
+    // the contacts' phones only in the personal-data file, by cohort and contact name
+    const personal = JSON.parse(strFromU8(files["PERSONAL-DATA_contacts_and_transport.json"]));
+    expect(personal.rota_cohort_contacts.map((c: { cohort: string; contact_name: string; phone: string }) => [c.cohort, c.contact_name, c.phone])).toEqual(
+      ["א", "ב", "נ"].map((l) => [`מכינה לדוגמה ${l}`, `איש/אשת קשר לדוגמה ${l}`, "טלפון לדוגמה"]),
+    );
     expect(rota.prep.map((t: { kind: string; qty: string | null }) => [t.kind, t.qty])).toEqual([["task", null], ["task", null], ["task", null], ["task", null]]);
     const memorial = JSON.parse(strFromU8(files["memorial.json"]));
     expect(memorial.fallen).toHaveLength(9);

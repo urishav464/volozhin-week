@@ -8,16 +8,19 @@
 // synthetic pickup times and staff shifts): their header («בית» first since phase 4), «אישורים» in it counting the requests only, the requests with
 // their pickups and no vetting; the board — the counts, a day at a time on the axis (a tablet up; aria-hidden) with its
 // text twin, the list (the phone's whole board), the clamped early pickup and the round trip's return, the staff shifts
-// and their lead, a pending request decided on the board (the payment with it), then the driver and «סודר» on it, the
-// addresses and phones only behind «כולל כתובות וטלפונים». Mock build: decide_payments and set_transport_driver go out
+// (v20: no «אחראי/ת משמרת» — every shift is a shift), a pending request decided on the board (the payment with it), then
+// the driver and «סודר» on it, the addresses and phones only behind «כולל כתובות וטלפונים»; v20's driver suggestions —
+// «במשמרת בשעת האיסוף» and «אחריות של מכינה» — on the board and on the lesson page, a pick filling the fields only. Mock build: decide_payments and set_transport_driver go out
 // by the contract's parameter names with the member's own token — from the approvals page and from the board, for a
-// global admin and for logistics; a decision someone else made first (`stale`) says so in one line and reads again;
+// global admin and for logistics; v20: a pick of the suggestions saves through set_transport_driver alone, the cohort
+// contact's phone read through get_rota_contacts on that click only; a decision someone else made first (`stale`) says so in one line and reads again;
 // an edition's admin decides the requests and only reads how many wait for the vetting; logistics never sends
 // set_transport_request (nor the old screens' set_transport_details); a trainee never sees «אישורים». Synthetic people,
 // places and numbers only («נהג/ת לדוגמה», «כתובת לדוגמה», «123 456 789»).
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import type { LessonTransport } from "../../src/data/commands";
 import { demoDayOwners, demoWeek } from "../../src/data/demoWeek";
+import type { RotaData } from "../../src/data/rota";
 import { toXlsx } from "../../src/exports/xlsx";
 import { EXPECTED_SCHEMA_VERSION } from "../../src/lib/schema";
 import { expectSections, INLINE_SECTIONS, LOGISTICS_SECTIONS, noSidewaysScroll } from "./helpers";
@@ -269,10 +272,12 @@ test.describe("demo build — logistics", () => {
     await expect(sunday).toContainText("סודר");
     await expect(sunday.locator("[data-pickup]")).toHaveText("07:15");
     await expect(sunday.locator("[data-driver]")).toHaveText("נהג/ת לדוגמה");
-    // the shifts beside it: the day's lead marked, never a phone
+    // the shifts beside it, never a phone — v20 (plan §ה): no «אחראי/ת משמרת», no lead's badge
     const shifts = page.getByRole("list", { name: "משמרות צוות" });
-    await expect(shifts.locator("[data-shift][data-lead]")).toContainText("אחראי/ת משמרת");
     await expect(shifts).toContainText("איש/אשת צוות לדוגמה");
+    await expect(shifts.locator("[data-shift]").first()).toBeVisible();
+    await expect(shifts.locator("[data-lead]")).toHaveCount(0);
+    await expect(page.getByText("אחראי/ת")).toHaveCount(0);
     // the addresses and the phones: only when asked
     await expect(page.getByText("טלפון לדוגמה")).toHaveCount(0);
     await expect(page.getByText("כתובת לדוגמה")).toHaveCount(0);
@@ -359,17 +364,42 @@ test.describe("demo build — logistics", () => {
     await expect(monday).toContainText("כתובת לדוגמה");
     await expect(monday).toContainText("123 456 789");
 
-    // Wednesday: approved, a pickup of its own, no driver yet; the logistics member leads the day's shift
+    // Wednesday: approved, a pickup of its own, no driver yet; the logistics member on the day's shift
     await page.getByRole("button", { name: "יום רביעי: הסעה אחת" }).click();
     const wednesday = boardRow(page, lessonAt(3, 600));
     await expect(wednesday).toHaveAttribute("data-state", "approved");
     await expect(wednesday.locator("[data-pickup]")).toHaveText("08:45");
     await expect(wednesday.locator("[data-driver]")).toHaveText("—");
-    await expect(page.getByRole("list", { name: "משמרות צוות" }).locator("[data-shift][data-lead]")).toContainText("לוגיסטיקה (הדגמה)");
+    await expect(page.getByRole("list", { name: "משמרות צוות" }).locator("[data-shift]")).toContainText(["לוגיסטיקה (הדגמה)"]);
     // the pickup is the handler's: read-only here, «לדף השיעור» for it
     await expect(wednesday.getByRole("link", { name: /^לדף השיעור/ })).toHaveAttribute("href", `/lesson/${lessonAt(3, 600)}?step=pay`);
     await expect(wednesday.getByLabel("כתובת איסוף")).toHaveCount(0);
     await noSidewaysScroll(page);
+
+    // v20 (plan §ו): who could drive — the staff on shift at 08:45 (the logistics member, 08:30–14:30) and the cohorts
+    // whose staff can drive and are on campus that morning («ב»); a pick only fills the fields, «ביטול» saves nothing
+    const wedEdit = wednesday.getByRole("button", { name: /^עריכת הנהג\/ת/ });
+    await wedEdit.click();
+    const wedForm = wednesday.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    const suggestions = wedForm.locator("[data-driver-suggestions]");
+    await expect(suggestions).toContainText("במשמרת בשעת האיסוף");
+    await expect(suggestions.locator("[data-suggest-staff]")).toHaveText([/^לוגיסטיקה \(הדגמה\)\s*08:30–14:30$/]);
+    await expect(suggestions.locator("[data-suggest-cohort]")).toHaveText(["צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב"]);
+    for (const b of await suggestions.locator("[data-suggest-staff], [data-suggest-cohort]").all()) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(wedForm.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    await expect(suggestions.getByRole("status")).toHaveText("מולא שם הנהג/ת: לוגיסטיקה (הדגמה). את הטלפון מקלידים.");
+    await expect(suggestions.locator("[data-suggest-staff]")).toBeFocused(); // the focus stays on the pick
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(wedForm.getByLabel("שם הנהג/ת")).toHaveValue("צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב");
+    // the demo's contact phone is a placeholder word, not a number: the phone field stays empty, and the line says why
+    await expect(suggestions.getByRole("status")).toContainText("לא נראה כמו מספר טלפון — אפשר להקליד");
+    await expect(wedForm.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await noSidewaysScroll(page);
+    await wedForm.getByRole("button", { name: "ביטול" }).click();
+    await expect(wedForm).toHaveCount(0);
+    await expect(wedEdit).toBeFocused();
+    await expect(wednesday.locator("[data-driver]")).toHaveText("—"); // nothing was sent
 
     // «אישורים»: nothing waits now
     await badge(page).click();
@@ -413,6 +443,15 @@ test.describe("demo build — logistics: a refusal asks once; the lesson page's 
     await expect(driver).toContainText("כשמסמנים «סודר», דף המלווה מציג את השם והטלפון של הנהג/ת.");
     await expect(driver.getByLabel("כתובת איסוף")).toHaveCount(0);
     await expect(driver.getByLabel("שעת איסוף")).toHaveCount(0);
+    // v20: the board's suggestions here too — a pickup at 06:10 is checked against Sunday's night shift, then Monday's
+    // morning: «איש/אשת צוות לדוגמה ב׳» (06:30–12:00); «ב»'s staff can drive and is on campus that night
+    const suggestions = driver.locator("[data-driver-suggestions]");
+    await expect(suggestions).toContainText("ליל ראשון–שני");
+    await expect(suggestions.locator("[data-suggest-staff]")).toHaveText([/^איש\/אשת צוות לדוגמה ב׳\s*06:30–12:00$/]);
+    await expect(suggestions.locator("[data-suggest-cohort]")).toHaveText(["צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב"]);
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(driver.getByLabel("שם הנהג/ת")).toHaveValue("איש/אשת צוות לדוגמה ב׳");
+    await noSidewaysScroll(page);
     await driver.getByLabel("שם הנהג/ת").fill("נהג/ת לדוגמה ב׳");
     await driver.getByRole("checkbox", { name: "סודר" }).check();
     await driver.getByRole("button", { name: "שמירה" }).click();
@@ -476,12 +515,40 @@ async function signedIn(page: Page, who: Who, week = realWeek()) {
   sb.answers.set("editions", [week.edition]);
   sb.answers.set("load_week", week);
   sb.answers.set("get_transports_for", transportsOf());
-  sb.answers.set("load_rota", { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] });
+  sb.answers.set("load_rota", { cohorts: [], cohortDuties: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] } satisfies RotaData);
   for (const fn of ["decide_payments", "set_transport_driver"]) sb.answers.set(fn, null);
   await sb.attach(page);
   const session = await signIn(page, who.email);
   sb.token = session.access_token;
   return { sb, week, session };
+}
+
+/**
+ * v20: a rota for the driver's suggestions (load_rota's answer — names only, never a phone): on Wednesday the logistics
+ * member 08:30–14:30 and a named member 14:30–22:30; «א» on campus that morning but its staff cannot drive, «ב» can and
+ * is there, «ג» can and is there only on Tuesday.
+ */
+function suggestRota(): RotaData {
+  const cohort = (id: number, letter: string, can_drive: boolean, contact_name: string | null) => ({
+    id, edition_id: 7, letter, name: `מכינה לדוגמה ${letter}`, trainees: 10, diet_veg: null, diet_gf: null, diet_both: null, contact_name, sort: id, can_drive,
+  });
+  return {
+    cohorts: [cohort(1, "א", false, "איש/אשת קשר לדוגמה א"), cohort(2, "ב", true, "איש/אשת קשר לדוגמה ב"), cohort(3, "ג", true, null)],
+    cohortDuties: [],
+    presence: [
+      { cohort_id: 1, day: 3, shift: 0 },
+      { cohort_id: 2, day: 3, shift: 0 },
+      { cohort_id: 3, day: 2, shift: 0 },
+    ],
+    groups: [],
+    duties: [],
+    assignments: [],
+    staff: [
+      { id: 41, edition_id: 7, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, note: null },
+      { id: 42, edition_id: 7, day: 3, start_min: 870, end_min: 1350, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: null },
+    ],
+    prep: [],
+  };
 }
 
 /** Every call of these functions carried the member's own token. */
@@ -599,6 +666,83 @@ test.describe("mock build", () => {
 
     tokens(sb, session.access_token, ["decide_payments", "set_transport_driver", "get_transports_for", "get_transport_details"]);
     for (const fn of ["set_transport_request", "set_transport_details", "set_payment", "vet_speakers"]) expect(sb.rpc.get(fn), fn).toBeUndefined();
+  });
+
+  test("v20 on the wire: the driver's suggestions — a staff pick fills the name, a cohort pick the cohort and its contact (the phone read through get_rota_contacts on that click alone); saved through set_transport_driver, nothing else new", async ({ page }, info) => {
+    desktopOnly(info);
+    const { sb, session } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
+    const wed = lessonAt(3, 600);
+    sb.answers.set("get_transports_for", [
+      { lesson_id: wed, pickup_address: "כתובת לדוגמה", pickup_time: "08:45", driver_name: null, driver_phone: null, arranged: false, approval: "approved", pickup_min: 525 },
+    ] satisfies LessonTransport[]);
+    sb.answers.set("load_rota", suggestRota());
+    sb.answers.set("get_rota_contacts", [
+      { group_id: 11, head_phone: "000-000-0011" },
+      { cohort_id: 2, phone: "000-000-0077" },
+    ]);
+    await page.goto(`${mockUrl()}/logistics/transports?day=3`);
+    const row = boardRow(page, wed);
+    await expect(row.locator("[data-pickup]")).toHaveText("08:45");
+    await row.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    const form = row.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    const suggestions = form.locator("[data-driver-suggestions]");
+    // on shift during the trip (08:45 to 10:00): the logistics member — not the afternoon's; the cohort that can drive and is
+    // on campus that morning — not «ג» (another day), not «א» (cannot drive)
+    await expect(suggestions.locator("[data-suggest-staff]")).toHaveText([/^לוגיסטיקה \(הדגמה\)\s*08:30–14:30$/]);
+    await expect(suggestions.locator("[data-suggest-cohort]")).toHaveText(["צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב"]);
+    expect(sb.rpc.get("get_rota_contacts")).toBeUndefined(); // nothing read before a pick
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    expect(sb.rpc.get("get_rota_contacts")).toBeUndefined(); // a staff pick reads nothing
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0077");
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב");
+    await expect(suggestions.getByRole("status")).toHaveText("מולאו השם והטלפון של איש/אשת הקשר של מכינה לדוגמה ב.");
+    expect(sb.rpc.get("get_rota_contacts")).toEqual([{ p_edition: 7 }]); // on that click, once
+    // the review: a staff pick after it empties the phone — the contact's number never stays beside another name
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await expect(suggestions.getByRole("status")).toHaveText("מולא שם הנהג/ת: לוגיסטיקה (הדגמה). את הטלפון מקלידים.");
+    // and back to the cohort: its contact's phone again, read on that click
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0077");
+    expect(sb.rpc.get("get_rota_contacts")).toHaveLength(2);
+    expect(sb.rpc.get("set_transport_driver")).toBeUndefined(); // a pick only fills the fields
+    await form.getByRole("checkbox", { name: "סודר" }).check();
+    const before = new Set(sb.rpc.keys());
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "פרטי הנהג/ת נשמרו")).toBeVisible();
+    expect(sb.rpc.get("set_transport_driver")).toEqual([
+      { p_lesson: wed, p_fields: { driver_name: "צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב", driver_phone: "000-000-0077", arranged: true } },
+    ]);
+    // nothing else new: no table written, no link to a shift or a cohort stored; the phone not read again
+    await page.waitForLoadState("networkidle");
+    expect([...sb.rpc.keys()].filter((k) => !before.has(k))).toEqual(["set_transport_driver"]);
+    expect(sb.writes).toEqual([]);
+    expect(sb.rpc.get("get_rota_contacts")).toHaveLength(2);
+    tokens(sb, session.access_token, ["get_rota_contacts", "set_transport_driver", "load_rota", "get_transports_for"]);
+  });
+
+  test("the review: a staff pick on an arranged transport whose driver has a phone — the new name is saved with no phone, never the one before", async ({ page }, info) => {
+    desktopOnly(info);
+    const { sb } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
+    const wed = lessonAt(3, 600);
+    sb.answers.set("get_transports_for", [
+      { lesson_id: wed, pickup_address: "כתובת לדוגמה", pickup_time: "08:45", driver_name: "נהג/ת לדוגמה א", driver_phone: "000-000-0001", arranged: true, approval: "approved", pickup_min: 525 },
+    ] satisfies LessonTransport[]);
+    sb.answers.set("load_rota", suggestRota());
+    await page.goto(`${mockUrl()}/logistics/transports?day=3`);
+    const row = boardRow(page, wed);
+    await row.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    const form = row.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0001");
+    await form.locator("[data-driver-suggestions] [data-suggest-staff]").click();
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")?.length ?? 0).toBe(1);
+    expect(sb.rpc.get("set_transport_driver")![0]).toEqual({ p_lesson: wed, p_fields: { driver_name: "לוגיסטיקה (הדגמה)", driver_phone: null } });
   });
 
   test("the board when its one transports read fails: it says so, and never what only that read can say — then reads again", async ({ page }, info) => {

@@ -2277,8 +2277,10 @@ The owner's feedback on logistics and presentations (DECISIONS «גרסה 20 —
   both, both, regular = trainees − veg − gf + both — each null where a number it needs is TBD.
 - **The guard** (`app.rota_cohorts_guard`), in this order (≡ `cleanCohortFields`, `src/data/rota.ts`): `edition_id`
   unchanged (`bad_value`), `letter`, `name`, `contact_name` (`bad_value` / `rota_contact_in_text`), the four numbers
-  (`bad_value`), then between them, where both sides are known: both ≤ veg and both ≤ gf, and — all four known — veg + gf −
-  both ≤ trainees → else **`rota_diets_exceed`**; the sort; `can_drive` (a null `bad_value`).
+  (`bad_value`), then between them, where both sides are known: both ≤ veg and both ≤ gf, veg ≤ trainees and gf ≤
+  trainees (the review: either above the trainees can never fit, whatever is typed later — both ≤ each, so veg + gf −
+  both ≥ either), and — all four known — veg + gf − both ≤ trainees → else **`rota_diets_exceed`**; the sort;
+  `can_drive` (a null `bad_value`).
 - Column grants: INSERT and UPDATE of `letter name trainees diet_veg diet_gf diet_both contact_name sort can_drive`
   (and INSERT `edition_id`).
 
@@ -2292,7 +2294,10 @@ UPDATE). Never in Realtime.
 
 - **A group needs a helping cohort:** `app.rota_groups_guard`, after its fields, on an INSERT or an UPDATE that changes
   `cohort_id`: a cohort of the row's edition with no `rota_cohort_duties` row → **`cohort_not_helping`** (a cohort that is
-  not the edition's is left to the FK: `stale`). A group already in a cohort is never refused for staying there.
+  not the edition's is left to the FK: `stale`). A group already in a cohort is never refused for staying there. The
+  duties are read `FOR KEY SHARE` (the review): a delete of the cohort's last duty at the same moment waits for the
+  group's transaction and then answers `in_use`; a delete made first makes the group wait, then `cohort_not_helping` —
+  never a cohort with groups and no duty (`tests/sql/v20.test.ts`, two connections).
 - **A cohort with groups keeps a duty:** `app.rota_cohort_duties_guard` (BEFORE DELETE, SECURITY INVOKER — it raises
   `in_use` itself): deleting a cohort's last row while it has groups → `in_use`, whether the row is deleted or the duty
   is (taking it). Deleting the cohort or the edition is never refused here.
