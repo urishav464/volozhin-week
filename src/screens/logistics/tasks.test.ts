@@ -14,21 +14,23 @@ import { logisticsTasks, NOT_HERE, NOT_LOADED, type Task, type TaskKey, TASK_STA
 
 const NOW = "2027-01-24T10:00:00Z"; // three weeks before the week (Sunday 14.2.2027)
 
-const cohort = (id: number, letter: string, extra: Partial<RotaCohort> = {}): RotaCohort => ({ id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, diets: [], sort: id, ...extra });
+const cohort = (id: number, letter: string, extra: Partial<RotaCohort> = {}): RotaCohort => ({ id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: id, ...extra });
 const group = (id: number, cohort_id: number, extra: Partial<RotaGroup> = {}): RotaGroup => ({ id, edition_id: 1, cohort_id, number: id, size: 10, head_name: "ראש/ת קבוצה לדוגמה", ...extra });
 const duty = (id: number, extra: Partial<RotaDuty> = {}): RotaDuty => ({
   id, edition_id: 1, name: `תורנות לדוגמה ${id}`, description: null, need_morning: 0, need_afternoon: 0, need_night: 0, min_people: null, sort: id, ...extra,
 });
 const at = (cohort_id: number, day: number, shift: number): RotaPresence => ({ cohort_id, day: day as Day, shift: shift as ShiftIndex });
 const assign = (id: number, day: number, shift: number, duty_id: number, group_id: number): RotaAssignment => ({ id, edition_id: 1, day: day as Day, shift: shift as ShiftIndex, duty_id, group_id, source: "hand" });
-/** A lead on duty the whole of every day: no shift is without «אחראי/ת משמרת». */
+/** Someone of the staff on duty the whole of every day (v20: no «אחראי/ת משמרת» — nothing on the home asks for one). */
 const leads = (): RotaStaffShift[] =>
-  [0, 1, 2, 3, 4].map((day, i) => ({ id: 100 + i, edition_id: 1, day: day as Day, start_min: 390, end_min: 1830, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }));
+  [0, 1, 2, 3, 4].map((day, i) => ({ id: 100 + i, edition_id: 1, day: day as Day, start_min: 390, end_min: 1830, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: null }));
+/** v20: every cohort given helps in every duty given (the duties a cohort helps in). */
+const helping = (cohorts: number[], duties: number[]): RotaData["cohortDuties"] => cohorts.flatMap((cohort_id) => duties.map((duty_id) => ({ cohort_id, duty_id })));
 const prep = (id: number, done: boolean, extra: Partial<RotaPrepTask> = {}): RotaPrepTask => ({ id, edition_id: 1, text: `משימה לדוגמה ${id}`, group_id: null, done, sort: id, ...extra });
 
-/** A rota where nothing is left: one cohort on campus, one group with a size and a head, a duty that needs nobody, leads all week. */
+/** A rota where nothing is left: one cohort on campus helping in its duty, one group with a size and a head, a duty that needs nobody, staff all week. */
 function readyRota(): RotaData {
-  return { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], presence: [at(1, 0, 1)], groups: [group(11, 1)], duties: [duty(1)], staff: leads() };
+  return { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], cohortDuties: helping([1], [1]), presence: [at(1, 0, 1)], groups: [group(11, 1)], duties: [duty(1)], staff: leads() };
 }
 
 const kkGroup = (id: number, title: string | null): KkGroup => ({ id, title, author: null, place: null, capacity: null, open: false });
@@ -190,19 +192,20 @@ describe("«נוכחות המכינות»", () => {
   it("open: the cohorts never marked on campus (presence_unknown), by the cohorts' order", () => {
     const rota: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(2, "ב"), cohort(1, "א"), cohort(3, "ג")], presence: [at(2, 1, 0)] };
     expect(stateLine(one("presence", input({ rota })))).toEqual(["open", "לא סומן מתי בקמפוס: מכינה לדוגמה א, מכינה לדוגמה ג"]);
-    // a cohort that does not help is still asked: its presence feeds the meal counts
-    const notHelping: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א", { helps_rota: false })], presence: [] };
+    // a cohort that helps in no duty is still asked: its presence feeds the meal counts
+    const notHelping: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], presence: [] };
     expect(stateLine(one("presence", input({ rota: notHelping })))).toEqual(["open", "לא סומן מתי בקמפוס: מכינה לדוגמה א"]);
   });
 
-  it("done: every cohort marked somewhere; the two flags counted (absent: helps, does not drive)", () => {
+  it("done: every cohort marked somewhere; those that help in a duty (v20) and those that can drive counted (absent: does not drive)", () => {
     const rota: RotaData = {
       ...EMPTY_ROTA,
-      cohorts: [cohort(1, "א"), cohort(2, "ב", { can_drive: true }), cohort(3, "ג", { helps_rota: false, can_drive: true }), cohort(4, "ד", { helps_rota: true, can_drive: false })],
+      cohorts: [cohort(1, "א"), cohort(2, "ב", { can_drive: true }), cohort(3, "ג", { can_drive: true }), cohort(4, "ד", { can_drive: false })],
+      cohortDuties: [...helping([1, 2], [1]), ...helping([4], [1, 2])], // «ג» helps in none
       presence: [at(1, 0, 0), at(2, 4, 2), at(3, 2, 1), at(4, 1, 1)],
     };
     expect(stateLine(one("presence", input({ rota })))).toEqual(["done", "4 מכינות · עוזרות בתורנויות: 3 · יכולות להסיע: 2"]);
-    const single: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], presence: [at(1, 0, 0)] };
+    const single: RotaData = { ...EMPTY_ROTA, cohorts: [cohort(1, "א")], cohortDuties: helping([1], [1]), presence: [at(1, 0, 0)] };
     expect(stateLine(one("presence", input({ rota: single })))).toEqual(["done", "מכינה אחת · עוזרות בתורנויות: 1 · יכולות להסיע: 0"]);
   });
 });
@@ -224,30 +227,31 @@ describe("«שיבוץ התורנויות»", () => {
 
   it("open, one of each in the singular", () => {
     const r = readyRota();
-    r.cohorts = [cohort(1, "א"), cohort(2, "נ", { helps_rota: false })];
+    r.cohorts = [cohort(1, "א"), cohort(2, "נ")];
     r.presence = [at(1, 1, 1), at(2, 1, 0)];
     r.groups = [group(11, 1, { size: null }), group(12, 1, { head_name: null }), group(21, 2)];
     // duty 1 needs nobody in the afternoon; duty 2's night is not set; duty 3 needs a group every morning but Monday's
     r.duties = [duty(1), duty(2, { need_night: null }), duty(3, { need_morning: 1 })];
+    // «א» helps in every duty; «נ» (v20) only in duty 1
+    r.cohortDuties = [...helping([1], [1, 2, 3]), ...helping([2], [1])];
     r.assignments = [
       assign(1, 1, 1, 1, 11), // Monday afternoon on duty 1 (needs 0): too many in one shift
-      assign(2, 0, 0, 3, 21), // Sunday morning, by hand, a group whose cohort does not help
+      assign(2, 0, 0, 3, 21), // Sunday morning, by hand, a group whose cohort does not help in duty 3
       assign(3, 1, 0, 3, 12),
       assign(4, 2, 0, 3, 12),
       assign(5, 3, 0, 3, 11),
     ];
-    // Thursday morning is short; every other shift has its lead but Thursday morning too
-    r.staff = leads().filter((s) => s.day !== 4).concat([{ ...leads()[4], start_min: 870 }]);
+    // Thursday morning is short; the staff's hours ask for nothing (v20: no «אחראי/ת משמרת»)
+    r.staff = [];
     expect(stateLine(one("assign", input({ rota: r })))).toEqual([
       "open",
       [
         "קבוצה אחת בלי גודל",
         "קבוצה אחת בלי ראש/ת קבוצה",
         "תורנות אחת בלי מספר קבוצות",
-        "משמרת אחת בלי אחראי/ת",
         "חסרות קבוצות במשמרת אחת",
         "יותר מדי קבוצות במשמרת אחת",
-        "שיבוץ אחד לקבוצה שלא עוזרת",
+        "שיבוץ אחד בתורנות שהמכינה לא עוזרת בה",
       ].join(" · "),
     ]);
   });
@@ -255,9 +259,11 @@ describe("«שיבוץ התורנויות»", () => {
   it("open, in the plural — the shifts counted once each, whatever the duties in them", () => {
     const r = readyRota();
     r.groups = [group(11, 1, { size: null, head_name: null }), group(12, 1, { size: null, head_name: null })];
-    r.cohorts = [cohort(1, "א", { helps_rota: false })];
+    r.cohorts = [cohort(1, "א")];
     // duties 1 and 2 need nobody (two groups on them are too many); 3 and 4 are short every afternoon; 5 and 6 have no target
     r.duties = [duty(1), duty(2), duty(3, { need_afternoon: 1 }), duty(4, { need_afternoon: 2 }), duty(5, { need_afternoon: null }), duty(6, { need_morning: null, need_night: null })];
+    // v20: «א» helps in duties 3–6 only — the four rows on duties 1 and 2 are on duties it does not help in
+    r.cohortDuties = helping([1], [3, 4, 5, 6]);
     r.assignments = [assign(1, 2, 2, 1, 11), assign(2, 2, 2, 2, 12), assign(3, 3, 0, 1, 11), assign(4, 3, 0, 2, 12)];
     r.staff = [];
     const line = one("assign", input({ rota: r })).line.split(" · ");
@@ -265,14 +271,13 @@ describe("«שיבוץ התורנויות»", () => {
       "2 קבוצות בלי גודל",
       "2 קבוצות בלי ראש/ת קבוצה",
       "2 תורנויות בלי מספר קבוצות",
-      "14 משמרות בלי אחראי/ת", // the week's 14 shifts (Thursday has no night: the week closes at 19:00)
       "חסרות קבוצות ב-5 משמרות", // duties 3 and 4 both short every afternoon: five afternoons, each once
       "יותר מדי קבוצות ב-2 משמרות", // Tuesday night and Wednesday morning, each with two duties over
-      "4 שיבוצים לקבוצות שלא עוזרות",
+      "4 שיבוצים בתורנויות שהמכינה לא עוזרת בהן",
     ]);
   });
 
-  it("an assignment to a group of a cohort that helps is not «שלא עוזרת»", () => {
+  it("an assignment on a duty the group's cohort helps in is not counted as «לא עוזרת»", () => {
     const r = readyRota();
     r.duties = [duty(1, { need_afternoon: 1 })];
     r.presence = [0, 1, 2, 3, 4].map((d) => at(1, d, 1));

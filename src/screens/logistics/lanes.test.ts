@@ -27,7 +27,7 @@ const transport = (lesson_id: number, extra: Partial<LessonTransport> = {}): Les
 });
 
 const shift = (id: number, day: Day, start: number, end: number, extra: Partial<RotaStaffShift> = {}): RotaStaffShift => ({
-  id, edition_id: 1, day, start_min: start, end_min: end, member_id: null, name: null, cohort_id: null, kind: "shift", note: null, ...extra,
+  id, edition_id: 1, day, start_min: start, end_min: end, member_id: null, name: null, cohort_id: null, note: null, ...extra,
 });
 
 type BoardWeek = Pick<Week, "lessons" | "lessonSpeakers" | "speakers" | "approaches" | "team" | "edition">;
@@ -217,25 +217,26 @@ describe("the states", () => {
 });
 
 describe("the staff shifts of the day", () => {
-  const cohorts: RotaCohort[] = [{ id: 7, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 1 }];
+  const cohorts: RotaCohort[] = [{ id: 7, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 }];
   const staff = [
     shift(1, 0, 870, 1350, { name: "איש/אשת צוות לדוגמה", note: "הקפצת מרצה (לדוגמה)" }),
-    shift(2, 0, 510, 870, { member_id: 5, name: "שם שנשמר לדוגמה", kind: "lead" }),
+    shift(2, 0, 510, 870, { member_id: 5, name: "שם שנשמר לדוגמה" }),
     shift(3, 0, 510, 600, { cohort_id: 7 }),
     shift(4, 0, 1350, 1830, { cohort_id: 99 }),
     shift(5, 1, 390, 720, { name: "איש/אשת צוות לדוגמה ב׳" }),
     shift(6, 0, 600, 700, { member_id: 42, name: "חבר/ת צוות שעזב/ה" }),
   ];
 
-  it("by start then id; a team member by the team's name, a typed name as typed, a cohort's whole staff; leads marked", () => {
+  it("by start then id; a team member by the team's name, a typed name as typed, a cohort's whole staff (v20: no lead)", () => {
     const shifts = transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 0).shifts;
-    expect(shifts.map((s) => [s.shift.id, s.who, s.lead])).toEqual([
-      [2, "לוגיסטיקה לדוגמה", true],
-      [3, "צוות מכינה לדוגמה נ", false],
-      [6, "חבר/ת צוות שעזב/ה", false], // not in the team any more: the name it was saved with
-      [1, "איש/אשת צוות לדוגמה", false],
-      [4, "TBD", false], // a cohort that is gone
+    expect(shifts.map((s) => [s.shift.id, s.who])).toEqual([
+      [2, "לוגיסטיקה לדוגמה"],
+      [3, "צוות מכינה לדוגמה נ"],
+      [6, "חבר/ת צוות שעזב/ה"], // not in the team any more: the name it was saved with
+      [1, "איש/אשת צוות לדוגמה"],
+      [4, "TBD"], // a cohort that is gone
     ]);
+    expect(shifts.every((s) => !("lead" in s))).toBe(true);
     expect(shifts.find((s) => s.shift.id === 1)!.shift.note).toBe("הקפצת מרצה (לדוגמה)");
     expect(transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 1).shifts.map((s) => s.who)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
   });
@@ -250,11 +251,11 @@ describe("the staff shifts of the day", () => {
 
 describe("the cohorts whose staff can drive (v19), beside the shifts", () => {
   const cohort = (id: number, letter: string, sort: number, extra: Partial<RotaCohort> = {}): RotaCohort => ({
-    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, diets: [], sort, ...extra,
+    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort, ...extra,
   });
   const cohorts = [
     cohort(1, "א", 1, { can_drive: true }),
-    cohort(2, "ב", 2, { can_drive: true, helps_rota: false }), // not helping the rota: still drives
+    cohort(2, "ב", 2, { can_drive: true }), // whatever duties it helps in: it drives
     cohort(3, "ג", 3), // can_drive absent = no
     cohort(4, "ד", 2, { can_drive: true }),
     cohort(5, "ה", 5, { can_drive: false }),

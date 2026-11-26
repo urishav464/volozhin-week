@@ -1,6 +1,7 @@
 // «תורנויות» against the real database (docs/CONTRACT.md «תורנויות»): direct writes under RLS with guard triggers
-// (supabase/schema.sql «תורנויות»), public.load_rota to read, and the heads' phones through get_rota_contacts /
-// set_rota_contact. Every refusal comes back as a CommandError with a code from src/errors.ts.
+// (supabase/schema.sql «תורנויות»), public.load_rota to read, and the phones (the heads', v20 the cohorts' contacts')
+// through get_rota_contacts / set_rota_contact; v20 «חלוקה לקבוצות» through rota_split_cohort (invoker). Every refusal
+// comes back as a CommandError with a code from src/errors.ts.
 //
 // Every write is cleaned first with src/data/rota.ts's cleaners (≡ the guards), so a refusal from the server is its
 // backstop. A write by id asks for the row back (`select("id")`): RLS filtering it away answers nothing → `forbidden`.
@@ -16,10 +17,11 @@ import { rotaSlots } from "../domain/rota";
 import type { Edition } from "../domain/types";
 import { CommandError } from "./commands";
 import {
-  cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter,
-  cleanFlag, cleanMinPeople, cleanNeed, cleanNote, cleanPrepKind, cleanPrepRows, cleanPrepText, cleanQty, cleanShift, cleanShifts, cleanStaffKind, cleanStaffName, cleanStaffTimes,
-  cleanStaffWho, type CohortPatch, type Diet, type DutyPatch, type GroupPatch, type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewPrepRow, type NewStaffShift,
-  type PrepKind, type PrepPatch, type PresenceScope, type RotaContact, type RotaData, type RotaPort, type RotaShiftsSetting, type ShiftIndex, type StaffPatch,
+  checkCohortCounts, cleanCohortFields, cleanCohortName, cleanContactName, cleanCount, cleanDay, cleanDescription, cleanDutyIds, cleanDutyName, cleanGroupNumber,
+  cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter, cleanFlag, cleanMinPeople, cleanNeed, cleanNote, cleanPrepKind, cleanPrepRows, cleanPrepText,
+  cleanQty, cleanShift, cleanShifts, cleanSplitSizes, cleanStaffName, cleanStaffTimes, cleanStaffWho, type CohortPatch, type DutyPatch, type GroupPatch,
+  type NewAssignment, type NewCohort, type NewDuty, type NewGroup, type NewPrepRow, type NewStaffShift, type PrepKind, type PrepPatch, type PresenceScope,
+  type RotaContactRow, type RotaContactTarget, type RotaData, type RotaGroup, type RotaPort, type RotaShiftsSetting, type ShiftIndex, type StaffPatch,
 } from "./rota";
 import { callRpc } from "./supabaseCommands";
 import { refusal } from "./supabaseSettings";
@@ -42,11 +44,12 @@ function rotaRefusal(error: PostgrestError, unique: string, fk: "stale" | "in_us
   return error.code === "23503" ? new CommandError(fk) : refusal(error, unique);
 }
 
-/** A write RLS may filter: no row back → forbidden. */
-async function one(q: Q, unique = "duplicate", fk: "stale" | "in_use" = "stale"): Promise<void> {
+/** A write RLS may filter: no row back → forbidden. Answers the row's id (the query selects it). */
+async function one(q: Q, unique = "duplicate", fk: "stale" | "in_use" = "stale"): Promise<number> {
   const { data, error } = await q;
   if (error) throw rotaRefusal(error, unique, fk);
   if (!Array.isArray(data) || data.length === 0) throw new CommandError("forbidden");
+  return Number((data[0] as { id?: unknown }).id);
 }
 
 const num = (v: unknown) => Number(v);
@@ -54,17 +57,24 @@ const numOrNull = (v: unknown) => (v == null ? null : Number(v));
 const strOrNull = (v: unknown) => (v == null ? null : String(v));
 
 /** load_rota's answer as the port's types: exactly their keys, numbers as numbers (a bigint may arrive as a string). */
+const readGroup = (g: Record<string, unknown>): RotaGroup => ({
+  id: num(g.id), edition_id: num(g.edition_id), cohort_id: num(g.cohort_id), number: num(g.number), size: numOrNull(g.size), head_name: strOrNull(g.head_name),
+});
+
 function readRota(d: Record<string, unknown[] | undefined>): RotaData {
   const rows = (k: string) => (Array.isArray(d[k]) ? (d[k] as Record<string, unknown>[]) : []);
   return {
     cohorts: rows("cohorts").map((c) => ({
       id: num(c.id), edition_id: num(c.edition_id), letter: String(c.letter), name: String(c.name),
-      diets: (Array.isArray(c.diets) ? (c.diets as Diet[]) : []).map((x) => ({ label: String(x.label), count: Number(x.count) })), sort: num(c.sort ?? 0),
-      // v19 — a row from before reads as the columns' defaults
-      helps_rota: c.helps_rota !== false, can_drive: c.can_drive === true,
+      // v20: the meals' numbers and the staff contact's name (null = TBD)
+      trainees: numOrNull(c.trainees), diet_veg: numOrNull(c.diet_veg), diet_gf: numOrNull(c.diet_gf), diet_both: numOrNull(c.diet_both),
+      contact_name: strOrNull(c.contact_name), sort: num(c.sort ?? 0),
+      // v19 — a row from before reads as the column's default
+      can_drive: c.can_drive === true,
     })),
+    cohortDuties: rows("cohortDuties").map((x) => ({ cohort_id: num(x.cohort_id), duty_id: num(x.duty_id) })),
     presence: rows("presence").map((p) => ({ cohort_id: num(p.cohort_id), day: num(p.day) as Day, shift: num(p.shift) as ShiftIndex })),
-    groups: rows("groups").map((g) => ({ id: num(g.id), edition_id: num(g.edition_id), cohort_id: num(g.cohort_id), number: num(g.number), size: numOrNull(g.size), head_name: strOrNull(g.head_name) })),
+    groups: rows("groups").map(readGroup),
     duties: rows("duties").map((x) => ({
       id: num(x.id), edition_id: num(x.edition_id), name: String(x.name), description: strOrNull(x.description), need_morning: numOrNull(x.need_morning),
       need_afternoon: numOrNull(x.need_afternoon), need_night: numOrNull(x.need_night), min_people: numOrNull(x.min_people), sort: num(x.sort ?? 0),
@@ -75,7 +85,7 @@ function readRota(d: Record<string, unknown[] | undefined>): RotaData {
     })),
     staff: rows("staff").map((s) => ({
       id: num(s.id), edition_id: num(s.edition_id), day: num(s.day) as Day, start_min: num(s.start_min), end_min: num(s.end_min), member_id: numOrNull(s.member_id),
-      name: strOrNull(s.name), cohort_id: numOrNull(s.cohort_id), kind: s.kind === "lead" ? "lead" : "shift", note: strOrNull(s.note),
+      name: strOrNull(s.name), cohort_id: numOrNull(s.cohort_id), note: strOrNull(s.note),
     })),
     prep: rows("prep").map((t) => ({
       id: num(t.id), edition_id: num(t.edition_id), text: String(t.text), group_id: numOrNull(t.group_id), done: t.done === true, sort: num(t.sort ?? 0),
@@ -97,25 +107,58 @@ export class SupabaseRota implements RotaPort {
 
   // ------------------------------------------------------------------ cohorts
 
-  async addCohort(editionId: number, c: NewCohort): Promise<void> {
+  async addCohort(editionId: number, c: NewCohort): Promise<number> {
     const row = {
-      edition_id: editionId, letter: cleanLetter(c.letter), name: cleanCohortName(c.name), diets: cleanDiets(c.diets ?? []), ...(c.sort !== undefined ? { sort: cleanSort(c.sort) } : {}),
-      // v19: the two flags, when given (absent: the columns' defaults, true and false)
-      ...(c.helps_rota !== undefined ? { helps_rota: cleanFlag(c.helps_rota) } : {}),
+      edition_id: editionId, letter: cleanLetter(c.letter), name: cleanCohortName(c.name),
+      // v20: the contact's name and the four numbers (absent: null, TBD), then the rule between them
+      ...cleanCohortFields(c),
+      ...(c.sort !== undefined ? { sort: cleanSort(c.sort) } : {}),
+      // v19: the flag, when given (absent: the column's default, false)
       ...(c.can_drive !== undefined ? { can_drive: cleanFlag(c.can_drive) } : {}),
     };
-    await one(this.sb.from("rota_cohorts").insert(row).select("id"), "rota_letter_taken");
+    return one(this.sb.from("rota_cohorts").insert(row).select("id"), "rota_letter_taken");
   }
 
+  /**
+   * A patch is cleaned field by field, in the guard's order; the rule between the four numbers on the patch when it has
+   * all four (the screen's form sends them together) — else the guard holds it on the row.
+   */
   async updateCohort(id: number, patch: CohortPatch): Promise<void> {
     const p: Record<string, unknown> = {};
     if (patch.letter !== undefined) p.letter = cleanLetter(patch.letter);
     if (patch.name !== undefined) p.name = cleanCohortName(patch.name);
-    if (patch.diets !== undefined) p.diets = cleanDiets(patch.diets);
+    if (patch.contact_name !== undefined) p.contact_name = cleanContactName(patch.contact_name);
+    for (const k of ["trainees", "diet_veg", "diet_gf", "diet_both"] as const) if (patch[k] !== undefined) p[k] = cleanCount(patch[k]);
+    if (["trainees", "diet_veg", "diet_gf", "diet_both"].every((k) => k in p)) {
+      checkCohortCounts(p as { trainees: number | null; diet_veg: number | null; diet_gf: number | null; diet_both: number | null });
+    }
     if (patch.sort !== undefined) p.sort = cleanSort(patch.sort);
-    if (patch.helps_rota !== undefined) p.helps_rota = cleanFlag(patch.helps_rota);
     if (patch.can_drive !== undefined) p.can_drive = cleanFlag(patch.can_drive);
     await one(this.sb.from("rota_cohorts").update(p).eq("id", id).select("id"), "rota_letter_taken");
+  }
+
+  /**
+   * The set replaced: ONE insert of the missing rows (ON CONFLICT DO NOTHING — no UPDATE grant), then ONE delete of the
+   * rest, so a cohort with groups never has none in between. An empty set → the delete alone (in_use while it has
+   * groups); a duty or cohort gone or another edition's → stale.
+   */
+  async setCohortDuties(editionId: number, cohortId: number, dutyIds: number[]): Promise<void> {
+    const ids = cleanDutyIds(dutyIds);
+    if (ids.length > 0) {
+      const rows = ids.map((duty_id) => ({ edition_id: editionId, cohort_id: cohortId, duty_id }));
+      const { error } = await this.sb.from("rota_cohort_duties").upsert(rows, { onConflict: "cohort_id,duty_id", ignoreDuplicates: true });
+      if (error) throw rotaRefusal(error, "duplicate", "stale");
+    }
+    let q = this.sb.from("rota_cohort_duties").delete().eq("edition_id", editionId).eq("cohort_id", cohortId);
+    if (ids.length > 0) q = q.not("duty_id", "in", `(${ids.join(",")})`);
+    const { error } = await q;
+    if (error) throw rotaRefusal(error, "duplicate", "in_use");
+  }
+
+  async splitCohort(editionId: number, cohortId: number, sizes: number[]): Promise<RotaGroup[]> {
+    const v = cleanSplitSizes(sizes);
+    const d = (await callRpc(this.sb, "rota_split_cohort", { p_edition: editionId, p_cohort: cohortId, p_sizes: v })) as Record<string, unknown>[] | null;
+    return (d ?? []).map(readGroup);
   }
 
   async deleteCohort(id: number): Promise<void> {
@@ -233,7 +276,7 @@ export class SupabaseRota implements RotaPort {
   // ------------------------------------------------------------------ staff shifts
 
   private staffRow(s: NewStaffShift) {
-    return { day: cleanDay(s.day), ...cleanStaffTimes(s.start_min, s.end_min), ...cleanStaffWho(s), kind: cleanStaffKind(s.kind), note: cleanNote(s.note) };
+    return { day: cleanDay(s.day), ...cleanStaffTimes(s.start_min, s.end_min), ...cleanStaffWho(s), note: cleanNote(s.note) };
   }
 
   async addStaffShift(editionId: number, s: NewStaffShift): Promise<void> {
@@ -258,7 +301,6 @@ export class SupabaseRota implements RotaPort {
       if (patch.cohort_id !== undefined) p.cohort_id = patch.cohort_id;
       if (patch.member_id !== undefined) p.member_id = patch.member_id;
     }
-    if (patch.kind !== undefined) p.kind = cleanStaffKind(patch.kind);
     if (patch.note !== undefined) p.note = cleanNote(patch.note);
     await one(this.sb.from("rota_staff_shifts").update(p).eq("id", id).select("id"));
   }
@@ -306,12 +348,17 @@ export class SupabaseRota implements RotaPort {
     await callRpc(this.sb, "set_rota_shifts", { p_edition: editionId, p_shifts: s == null ? null : cleanShifts(s) });
   }
 
-  async contacts(editionId: number): Promise<RotaContact[]> {
-    const d = (await callRpc(this.sb, "get_rota_contacts", { p_edition: editionId })) as { group_id: unknown; head_phone: unknown }[] | null;
-    return (d ?? []).map((c) => ({ group_id: Number(c.group_id), head_phone: String(c.head_phone) }));
+  async contacts(editionId: number): Promise<RotaContactRow[]> {
+    const d = (await callRpc(this.sb, "get_rota_contacts", { p_edition: editionId })) as Record<string, unknown>[] | null;
+    // the heads' first, then (v20) the cohorts' contacts' — exactly their two keys each
+    return (d ?? []).map((c): RotaContactRow =>
+      c.group_id != null ? { group_id: Number(c.group_id), head_phone: String(c.head_phone) } : { cohort_id: Number(c.cohort_id), phone: String(c.phone) },
+    );
   }
 
-  async setContact(groupId: number, phone: string | null): Promise<void> {
-    await callRpc(this.sb, "set_rota_contact", { p_group: groupId, p_phone: cleanHeadPhone(phone) });
+  async setContact(target: RotaContactTarget, phone: string | null): Promise<void> {
+    const v = cleanHeadPhone(phone);
+    const [kind, id] = "group" in target ? ["group", target.group] : ["cohort", target.cohort];
+    await callRpc(this.sb, "set_rota_contact", { p_kind: kind, p_id: id, p_phone: v });
   }
 }

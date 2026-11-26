@@ -71,9 +71,9 @@ describe("the board's cohorts that can drive", () => {
   const rota = {
     ...EMPTY_ROTA,
     cohorts: [
-      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1, can_drive: true },
-      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, can_drive: true },
-      { id: 3, edition_id: 1, letter: "ג", name: "מכינה לדוגמה ג", diets: [], sort: 3 },
+      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1, can_drive: true },
+      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2, can_drive: true },
+      { id: 3, edition_id: 1, letter: "ג", name: "מכינה לדוגמה ג", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 3 },
     ],
     presence: [{ cohort_id: 2, day: 0 as const, shift: 1 as const }],
   };

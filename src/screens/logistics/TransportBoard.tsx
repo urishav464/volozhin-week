@@ -19,7 +19,7 @@ import { transportRows, transportTable } from "../../exports/logistics";
 import { teachingWhen } from "../../exports/tracking";
 import { Chip } from "../../grid/bits";
 import { useRota } from "../rota/shared";
-import { Badge, Button, useFocusBack, useFocusRescue, useRunner } from "../settings/kit";
+import { Button, useFocusBack, useFocusRescue, useRunner } from "../settings/kit";
 import { Decide } from "../stages/PaymentStage";
 import { mayArrangeDriver } from "../lesson/StaffTransport";
 import { type Act, LINK_BUTTON, memberName } from "../stages/parts";
@@ -362,7 +362,7 @@ function TransportItem({
   );
 }
 
-/** The day's staff shifts: who is on when (a lead marked), so whoever finds a driver sees who is free. No phones. */
+/** The day's staff shifts: who is on when, so whoever finds a driver sees who is free. No phones. */
 function Shifts({ shifts, loading, failed, retry }: { shifts: ShiftLane[]; loading: boolean; failed: boolean; retry: () => void }) {
   return (
     <section aria-labelledby="board-shifts" className="min-w-0 space-y-2">
@@ -381,12 +381,11 @@ function Shifts({ shifts, loading, failed, retry }: { shifts: ShiftLane[]; loadi
       ) : (
         <ul aria-labelledby="board-shifts" className="divide-y divide-sage/60 rounded-xl border border-line bg-card px-3 shadow-sm">
           {shifts.map((s) => (
-            <li key={s.shift.id} data-shift={s.shift.id} data-lead={s.lead || undefined} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm">
+            <li key={s.shift.id} data-shift={s.shift.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm">
               <bdi dir="ltr" className="font-semibold">
                 {fmtRange(s.shift.start_min, s.shift.end_min)}
               </bdi>
               <span className="min-w-0 break-words">{s.who}</span>
-              {s.lead && <Badge tone="accent">אחראי/ת משמרת</Badge>}
               {s.shift.note && <span className="basis-full text-xs break-words text-ink-soft">{s.shift.note}</span>}
             </li>
           ))}

@@ -1637,6 +1637,9 @@ Saturday-night preparations. Two implementations: `supabase/schema.sql` «תור
 guard trigger per table, the knowledge notes' way; the heads' phones through two functions) and `src/data/demoRota.ts`
 (in memory, the same rules and refusals). Shared cases: `src/testing/rotaCases.ts`, run on both
 (`tests/sql/rota.test.ts`, `src/data/rotaPorts.test.ts`). Not grid commands: no engine, no parity harness.
+**v20** changed the cohorts (three diet numbers and a staff contact instead of `diets`; the duties each helps in), the
+groups' rule, the staff shifts (no `kind`), the contacts and `load_rota` — «v20» at the end of this file holds where
+they differ.
 
 ## Who
 - **Reads:** every member of the edition (`app.can_see_edition`) — the content team too («תוצרים ← תורנויות»).
@@ -2175,6 +2178,9 @@ of the block is as it was (it never rewrites the size, it always makes the bucke
 
 ## The cohorts' two flags, and Saturday night's shopping list («תורנויות»)
 
+(v20: `helps_rota` became the duties a cohort helps in, `rota_cohort_duties`, and `not_helping` became `not_eligible` —
+«v20» below.)
+
 - `rota_cohorts.helps_rota` («עוזרת בתורנויות»): off, the fair suggestion leaves its groups out, `unevenLoad` ignores
   them, and an assignment made by hand to one is the warning `not_helping`; its presence still counts (the meals).
   `can_drive` («הצוות שלה יכול להסיע»): the transport board lists such cohorts (names only), those on campus that day
@@ -2253,3 +2259,137 @@ compares the catalog with a fresh install.
 On both ports: `port.sources.setReaderSent`, `UploadOptions.kind` (`src/data/sources.ts`); `port.speakers.photo`,
 `setPhoto`, `setPublicOk`, `SpeakerFields.public_bio` (`src/data/speakers.ts`); `LessonPatch.public_note`
 (`src/data/commands.ts`); `RotaPort.addPrepTasks(edition, rows, kind)` (`src/data/rota.ts`).
+
+# v20 — the cohorts' numbers and help, the staff's schedule, the escort's presentation (schema v20)
+
+The owner's feedback on logistics and presentations (DECISIONS, the v20 entry). Where this section and «תורנויות» or v19's
+«The cohorts' two flags» differ, this one holds. Still no engine for the rota: `src/data/demoRota.ts` and
+`src/testing/rotaCases.ts` hold it to the SQL; the escort's page is a link answer, so it is parity-tested
+(`tests/parity/scenariosV20.ts`, every step pinned with `is`).
+
+## A cohort's numbers and its staff contact — `rota_cohorts`
+
+- **Gone:** `diets` (v16–v19's free-typed labels and counts — the run drops the column: no edition held a cohort) and
+  `helps_rota` (v19's flag — converted, below). `app.rota_clean_diets` is dropped.
+- **New, each NULL = TBD:** `trainees`, `diet_veg` («צמחוני/טבעוני»), `diet_gf` («ללא גלוטן»), `diet_both` («מהם גם וגם»),
+  each a whole number 0–1000; `contact_name` («איש/אשת קשר מהצוות»: one line ≤ 80, no phone or e-mail — its phone has its
+  own table). The browser's split (`dietSplit`, `src/domain/rota.ts`): veg only = veg − both, gluten-free only = gf −
+  both, both, regular = trainees − veg − gf + both — each null where a number it needs is TBD.
+- **The guard** (`app.rota_cohorts_guard`), in this order (≡ `cleanCohortFields`, `src/data/rota.ts`): `edition_id`
+  unchanged (`bad_value`), `letter`, `name`, `contact_name` (`bad_value` / `rota_contact_in_text`), the four numbers
+  (`bad_value`), then between them, where both sides are known: both ≤ veg and both ≤ gf, and — all four known — veg + gf −
+  both ≤ trainees → else **`rota_diets_exceed`**; the sort; `can_drive` (a null `bad_value`).
+- Column grants: INSERT and UPDATE of `letter name trainees diet_veg diet_gf diet_both contact_name sort can_drive`
+  (and INSERT `edition_id`).
+
+## The duties a cohort helps in — `rota_cohort_duties`
+
+`(edition_id, cohort_id, duty_id)`, PK `(cohort_id, duty_id)`; FKs `(cohort_id, edition_id)` → cohorts and `(duty_id,
+edition_id)` → duties, both cascade (another edition's id is 23503 → `stale`). A row = the cohort helps in that duty;
+**no row for a cohort = it helps in none** (its presence still counts — the meals). Read with `app.can_see_edition`,
+insert and delete with `app.may_write_rota`; grants SELECT, INSERT `(edition_id, cohort_id, duty_id)`, DELETE (no
+UPDATE). Never in Realtime.
+
+- **A group needs a helping cohort:** `app.rota_groups_guard`, after its fields, on an INSERT or an UPDATE that changes
+  `cohort_id`: a cohort of the row's edition with no `rota_cohort_duties` row → **`cohort_not_helping`** (a cohort that is
+  not the edition's is left to the FK: `stale`). A group already in a cohort is never refused for staying there.
+- **A cohort with groups keeps a duty:** `app.rota_cohort_duties_guard` (BEFORE DELETE, SECURITY INVOKER — it raises
+  `in_use` itself): deleting a cohort's last row while it has groups → `in_use`, whether the row is deleted or the duty
+  is (taking it). Deleting the cohort or the edition is never refused here.
+- **The conversion** (once, in the schema run): v19's `helps_rota` true → every duty of its edition, false → none, then
+  the column goes; on a v16–v18 database (no flag) every cohort → every duty. A v20 database has neither column and
+  nothing to convert; what v20 wrote survives a second run (`tests/sql/upgrade.test.ts`).
+- **The browser's rule** (`src/domain/rota.ts`): `cohortDutyIds(data, cohort)`, `cohortHelps(data, cohort)` (any duty),
+  `groupHelpsIn(data, group, duty)`, `helpingGroups(data)` (the groups of cohorts that help in some duty). The fair
+  suggestion (`src/domain/rotaSuggest.ts`) places a group only in a duty its cohort helps in (`eligible`), the least
+  flexible first; an assignment made by hand outside them is the warning **`not_eligible`** (`src/domain/rotaWarnings.ts`;
+  v19's `not_helping` is gone).
+
+## A cohort's staff contact's phone — `rota_cohort_contacts`
+
+`cohort_id` PK, `edition_id`, `phone` (one line ≤ 40, ≥ 6 digits); FK `(cohort_id, edition_id)` → cohorts (cascade).
+Personal data, as a head's phone: read under `app.may_see_cohort_contacts(p_cohort)` (invoker; a global admin, or an
+admin or logistics member of the cohort's edition when it is `real` and not `archived`), SELECT only — written by
+`set_rota_contact` alone; never in `load_rota`, a Week, Realtime, the offline copy, a log or a file but the archive's
+personal-data file.
+
+- **`get_rota_contacts(p_edition)`** (invoker) answers the heads' rows `{group_id, head_phone}` (by group id), then the
+  cohorts' `{cohort_id, phone}` (by cohort id), each row passing its own rule. `RotaPort.contacts` answers
+  `RotaContactRow[]` (`isHeadContact` / `isCohortContact`).
+- **`set_rota_contact(p_kind text, p_id bigint, p_phone text)`** (SECURITY DEFINER; v16–v19's `(bigint, text)` dropped with
+  its grant), in this order: not a member `not_member`; `p_kind` not `group` / `cohort` `bad_value`; the row locked FOR
+  KEY SHARE (gone `stale`); not of an edition the caller sees `not_member`; not the caller's to see (`may_see_rota_contacts`
+  / `may_see_cohort_contacts`) `rota_contact_hidden`; blank or NULL deletes; else ≥ 6 digits (`bad_phone`); upsert. Never
+  logged. `RotaPort.setContact({group: id} | {cohort: id}, phone)`.
+
+## «חלוקה לקבוצות» — `splitCohort(e, cohort, sizes)` — `rota_split_cohort(p_edition bigint, p_cohort bigint, p_sizes integer[])` → `jsonb`
+
+SECURITY INVOKER (every row through the caller's RLS and the guards; it raises its own refusals). In this order: no
+sizes, more than 99, a size missing or outside 0–200 `bad_value`; not `app.may_write_rota` `forbidden`; the cohort not
+the edition's `stale`; then the cohort's groups are deleted (their assignments and heads' phones with them; their
+Saturday-night tasks keep their text without a group) and new ones inserted, numbered 1…n with these sizes (the guard:
+`cohort_not_helping`). Answers the new groups as `load_rota` has them, by number. ONE call, one transaction. The
+screen's «הצעה» is `splitSizes(trainees, perGroup)` (`src/domain/rota.ts`: ⌈trainees / perGroup⌉ groups, as equal as
+possible, the larger first; an invalid input `[]`). `cleanSplitSizes` (`src/data/rota.ts`) ≡ the first check.
+
+## `setCohortDuties(e, cohort, dutyIds)` — the set replaced
+
+`cleanDutyIds` first (an array of positive whole numbers, deduplicated; else `bad_value`). **SupabaseRota:** ONE upsert
+of the set (`onConflict (cohort_id, duty_id)`, duplicates ignored), then ONE delete of the cohort's other rows — two
+requests, not one transaction: a delete refused (`in_use`) leaves the rows added. For a member who may not write, the
+insert is RLS's `forbidden`; an empty set is a delete alone, which RLS makes a no-op without an error (as
+`clearSuggested`). **DemoRota:** the same rules, `forbidden` for a non-writer always.
+
+## The staff's shifts — no kind
+
+`rota_staff_shifts.kind` is dropped (a lead's row stays as a shift; no «אחראי/ת» anywhere); the guard checks `day`, the
+times, the who, the member, `note`; the grants lose `kind`. `staffOn(edition, staff, day, shift)` (`src/domain/rota.ts`)
+is who is on in a shift; «לו״ז צוות» is `staffScheduleRows` / `staffScheduleTable` (`src/exports/staffSchedule.ts`).
+v19's warning `no_lead` is gone.
+
+## `load_rota` (v20)
+
+Cohorts exactly `id edition_id letter name trainees diet_veg diet_gf diet_both contact_name sort can_drive`; staff
+exactly `id edition_id day start_min end_min member_id name cohort_id note`; a new key **`cohortDuties`**
+`[{cohort_id, duty_id}]` by `cohort_id`, `duty_id`. Never a phone.
+
+## Next year, after the week, the archive (v20)
+
+- **`start_edition`** also copies the cohorts (`letter name can_drive sort`; the numbers, the contact's name and phone
+  TBD again) and the duties each helps in (by the duty's `name_key` in the new edition). Never presence, groups, heads,
+  assignments or staff shifts. **`start_edition_preview`** gains `rota_cohorts` and `rota_cohort_duties` (counts).
+- **`purge_edition_private`** also deletes the edition's `rota_cohort_contacts`, counted in `rota_contacts`.
+- **The archive** (`format_version` 7): `rota.json` carries `cohortDuties` and no phone; the personal-data file adds
+  `rota_cohort_contacts` (`[{cohort, cohort_id, contact_name, phone}]`, only those the exporter may see).
+
+## `escort_view` — `presentation` (v20)
+
+Every lesson gains exactly one key, `presentation`, a state — never a file's name, path or link:
+- a memorial slot → `none`;
+- else `file` when a `source_files` row of kind `presentation` is the lesson's and the CURRENT lead speaker's
+  (`speaker_id`; a previous speaker's file does not count);
+- else `link` when `presentation_url` is set;
+- else `missing` when `sources_kind` is `presentation` or `sheet_presentation`;
+- else `none`.
+The engine's `escortPresentation` (`src/data/engine.ts`) is the twin; `EscortPresentation` / `EscortLesson.presentation`
+in `src/data/publicPort.ts`. Anon's reach is as it was (the six link functions and `ping`).
+
+## Errors (v20)
+
+New: **`cohort_not_helping`** (a group into a cohort that helps in no duty), **`rota_diets_exceed`** (the numbers
+between them). Also `in_use` (a cohort's last duty while it has groups), and `bad_value forbidden stale not_member
+rota_contact_hidden rota_contact_in_text bad_phone name_required`.
+
+## RPC signatures (v20)
+
+| RPC | Parameters | Returns | Role |
+|---|---|---|---|
+| `set_rota_contact` | `p_kind text, p_id bigint, p_phone text` | `void` | authenticated |
+| `rota_split_cohort` | `p_edition bigint, p_cohort bigint, p_sizes integer[]` | `jsonb` | authenticated (invoker) |
+
+Changed under the same signatures: `load_rota` and `get_rota_contacts` (invoker), `escort_view` (anon), `start_edition`,
+`start_edition_preview`, `purge_edition_private`, the cohorts', groups' and staff guards. `app.may_see_cohort_contacts` is
+granted to `authenticated` (its policy runs it); `app.rota_cohort_duties_guard` is a trigger only. No new SECURITY
+DEFINER function: the Security Advisor's count stays 83. `tests/sql/v20.test.ts`, `tests/sql/rota.test.ts`,
+`tests/sql/links.test.ts`; `tests/sql/upgrade.test.ts` runs on seven bases, v13–v19 (v19 = `9952be4`, what production
+runs).

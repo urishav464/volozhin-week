@@ -13,6 +13,7 @@ import {
 } from "./settings";
 import type { Note } from "./knowledge";
 import { prepKindOf } from "./rota";
+import { byCohortOrder } from "../domain/rota";
 import { TEMPLATE_2026 } from "../domain/template2026";
 
 const fail = (code: string): never => {
@@ -124,17 +125,35 @@ export class DemoSettings implements SettingsPort {
     };
     this.s.addEngine(edition, { id: nextId(weeks.flatMap((w) => w.rooms)), name: "בית מדרש", sort: 1, is_default: true });
     // v16 «תורנויות»: the duties (what each is and needs) and the Saturday-night preparations (no group, not done) —
-    // never the cohorts, presence, groups, heads, assignments or staff shifts
+    // never the presence, groups, heads, assignments or staff shifts; v20 and the cohorts (a letter, a name, «יכול
+    // להסיע», their place) with the duties each helps in — never their trainees, diets, staff contact or its phone
     const rota = this.s.shared.rota;
     if (prevEdition) {
+      const dutyOf = new Map<number, number>();
       for (const d of rota.duties.filter((x) => x.edition_id === prevEdition.id).sort((a, b) => a.sort - b.sort || a.id - b.id)) {
         const { id: _id, edition_id: _e, ...fields } = d;
-        rota.duties.push({ ...fields, id: nextId(rota.duties), edition_id: edition.id });
+        const id = nextId(rota.duties);
+        rota.duties.push({ ...fields, id, edition_id: edition.id });
+        dutyOf.set(d.id, id);
       }
       for (const t of rota.prep.filter((x) => x.edition_id === prevEdition.id).sort((a, b) => a.sort - b.sort || a.id - b.id)) {
         // v19: a task stays a task, an item an item with its quantity — «בוצע»/«נקנה» start over
         rota.prep.push({ id: nextId(rota.prep), edition_id: edition.id, text: t.text, group_id: null, done: false, sort: t.sort, kind: prepKindOf(t), qty: t.qty ?? null });
       }
+      const cohortOf = new Map<number, number>();
+      for (const c of rota.cohorts.filter((x) => x.edition_id === prevEdition.id).sort(byCohortOrder)) {
+        const id = nextId(rota.cohorts);
+        rota.cohorts.push({
+          id, edition_id: edition.id, letter: c.letter, name: c.name, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null,
+          sort: c.sort, can_drive: c.can_drive === true,
+        });
+        cohortOf.set(c.id, id);
+      }
+      const carried = rota.cohortDuties
+        .filter((x) => x.edition_id === prevEdition.id && cohortOf.has(x.cohort_id) && dutyOf.has(x.duty_id))
+        .map((x) => ({ edition_id: edition.id, cohort_id: cohortOf.get(x.cohort_id)!, duty_id: dutyOf.get(x.duty_id)! }))
+        .sort((a, b) => a.cohort_id - b.cohort_id || a.duty_id - b.duty_id);
+      rota.cohortDuties.push(...carried);
     }
     // v8: and its milestones — titles and W−n, none of them done
     const carried = this.s.milestones.filter((m) => prevEdition && m.edition_id === prevEdition.id).sort((a, b) => b.days_before - a.days_before || a.id - b.id);
@@ -164,6 +183,8 @@ export class DemoSettings implements SettingsPort {
       rota_duties: from ? this.s.shared.rota.duties.filter((d) => d.edition_id === from.id).length : 0,
       rota_prep_tasks: from ? this.s.shared.rota.prep.filter((t) => t.edition_id === from.id).length : 0,
       rota_shifts: from?.settings.rota_shifts != null,
+      rota_cohorts: from ? this.s.shared.rota.cohorts.filter((c) => c.edition_id === from.id).length : 0,
+      rota_cohort_duties: from ? this.s.shared.rota.cohortDuties.filter((x) => x.edition_id === from.id).length : 0,
       titles: Array.isArray(from?.settings.titles) && from.settings.titles.length > 0,
       deactivate: deactivateTeam ? of(false) : 0,
       admins_stay: of(true),

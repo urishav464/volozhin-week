@@ -19,8 +19,11 @@
 //                    when each is on campus, the groups and their heads' names,
 //                    the duties, the assignments, the staff's shifts and the
 //                    Saturday-night preparations; never a phone (format 6, v19:
-//                    every cohort with helps_rota/can_drive, every preparation
-//                    with its kind — a task or a shopping item — and qty)
+//                    every cohort with can_drive, every preparation with its
+//                    kind — a task or a shopping item — and qty; format 7, v20:
+//                    a cohort's trainees, diet numbers and staff contact's name,
+//                    cohortDuties — the duties each helps in —, no helps_rota,
+//                    diets or staff kind)
 //   sources/<day>/   the files themselves — only when «כולל קבצי המקורות» was
 //                    asked for; a file that could not be read is listed in
 //                    sources.json and README.txt, not silently left out
@@ -30,18 +33,19 @@
 //                    lessons' transport details, the families' contact persons
 //                    of the fallen this edition has a plan for — never another
 //                    year's family (admins only — so only here) — and the group
-//                    heads' phones the caller may see (get_rota_contacts), apart,
-//                    named so nobody mistakes it.
+//                    heads' phones the caller may see (get_rota_contacts) — and v20
+//                    the cohorts' staff contacts' phones —, apart, named so
+//                    nobody mistakes it.
 import { strToU8, zipSync } from "fflate";
 import type { KkData } from "../data/kk";
 import type { Fallen, FallenContacts } from "../data/memorial";
 import type { LessonReview } from "../data/reviews";
 import type { ArchiveExtras } from "../data/outputs";
-import { prepKindOf, type RotaContact, type RotaData } from "../data/rota";
+import { isCohortContact, isHeadContact, prepKindOf, type RotaContactRow, type RotaData } from "../data/rota";
 import { parseSourcePath } from "../data/sourceRules";
 import { fallenName } from "../domain/memorial";
 import { displayName } from "../domain/names";
-import { canDrive, codeOf, helpsRota } from "../domain/rota";
+import { canDrive, codeOf } from "../domain/rota";
 import { DAY_NAMES, fmt } from "../domain/time";
 import type { SourceFile, Week } from "../domain/types";
 import { PERSONAL_FILE, storedFileName } from "./download";
@@ -66,8 +70,8 @@ export interface ArchiveMore {
   reviews?: LessonReview[] | null;
   /** «תורנויות» (milestone 7, load_rota — never a phone); null or absent: not read. */
   rota?: RotaData | null;
-  /** The group heads' phones the caller may see (get_rota_contacts) — personal data, for the personal-data file only. */
-  rotaPhones?: RotaContact[];
+  /** The group heads' and (v20) cohort contacts' phones the caller may see (get_rota_contacts) — personal data, for the personal-data file only. */
+  rotaPhones?: RotaContactRow[];
 }
 
 export const NO_MORE: ArchiveMore = { kk: null, fallen: [], fallenContacts: [], sources: null, reviews: null, rota: null, rotaPhones: [] };
@@ -142,14 +146,14 @@ function readme(input: ArchiveInput, more: ArchiveMore, personal: boolean): stri
     "- sources.json: רשימת קבצי המקורות — מה כל קובץ, של איזה שיעור, ואיפה הוא בזיפ.",
     more.reviews ? "- reviews.json: «איך עבר» לכל שיעור שנכתב לו — דעות על המרצים. לשמור במקום מוגן, כמו כל הארכיון." : "- «איך עבר» לא נקרא בייצוא הזה.",
     more.rota
-      ? "- rota.json: התורנויות — המכינות ומתי כל אחת בקמפוס, הקבוצות ושמות ראשי הקבוצות, התורנויות, השיבוצים, משמרות הצוות, ומשימות מוצ״ש–ראשון ורשימת הקניות עם הכמויות (בלי טלפונים)."
+      ? "- rota.json: התורנויות — המכינות (מספרי החניכים והתזונה, איש/אשת הקשר מהצוות, באילו תורנויות כל אחת עוזרת) ומתי כל אחת בקמפוס, הקבוצות ושמות ראשי הקבוצות, התורנויות, השיבוצים, משמרות הצוות, ומשימות מוצ״ש–ראשון ורשימת הקניות עם הכמויות (בלי טלפונים)."
       : "- התורנויות לא נקראו בייצוא הזה.",
     more.sources
       ? `- sources/: קבצי המקורות עצמם, בתיקייה לכל יום.${skipped.length ? ` ${skipped.length} קבצים לא נקראו ולא נכללו: ${skipped.map((x) => x.name).join(", ")}.` : ""}`
       : "- קבצי המקורות עצמם לא נכללו (אפשר לבחור «כולל קבצי המקורות»).",
     "- tracking.xlsx: טבלת המעקב (בלי טלפונים).",
     personal
-      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים), אנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות) והטלפונים של ראשי הקבוצות בתורנויות.`
+      ? `- ${PERSONAL_FILE}: מידע אישי — פרטי הקשר של המרצים, פרטי ההסעה (כתובות איסוף, נהגים), אנשי הקשר של המשפחות של החללים שיש להם תוכנית במחזור הזה (לא של שנים אחרות) והטלפונים של ראשי הקבוצות ושל אנשי הקשר של המכינות בתורנויות.`
       : "- אין בקובץ הזה פרטי קשר או פרטי הסעה: מי שייצא/ה לא רשאי/ת לראות אותם.",
     "",
     personal
@@ -169,7 +173,7 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const rosterName = new Map(week.roster.map((r) => [r.id, r.full_name]));
   const edition = {
     format: ARCHIVE_FORMAT,
-    format_version: 6, // v19: rota.json's cohorts carry helps_rota/can_drive, its prep kind/qty; v16: rota.json; v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
+    format_version: 7, // v20: rota.json's cohorts carry trainees/diet_*/contact_name and cohortDuties, no helps_rota/diets/staff kind; the cohorts' contacts' phones in the personal file; v19: can_drive, prep kind/qty; v16: rota.json; v15: kk.json without tracks (a group is the week's); v14: slot_availability in place of availability
     schema_version: input.schemaVersion,
     exported_at: input.exportedAt,
     edition: week.edition,
@@ -223,12 +227,18 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   }
   if (more.rota) {
     // load_rota's answer, as it came — never a phone: a head's phone is its own table, and a stray key is dropped here too.
-    // v19's keys are written out even when a port left them out (absent reads as the column's default): format 6.
+    // v19's keys are written out even when a port left them out (absent reads as the column's default); v20 (format 7):
+    // the cohorts' numbers and staff contact's name, and the duties each helps in — never the contact's phone.
     const { presence, groups, duties, assignments, staff } = more.rota;
-    const cohorts = more.rota.cohorts.map((c) => ({ ...c, helps_rota: helpsRota(c), can_drive: canDrive(c) }));
+    const cohortDuties = more.rota.cohortDuties ?? [];
+    const cohorts = more.rota.cohorts.map((c) => ({ ...c, can_drive: canDrive(c) }));
     const prep = more.rota.prep.map((t) => ({ ...t, kind: prepKindOf(t), qty: prepKindOf(t) === "item" ? (t.qty ?? null) : null }));
     files["rota.json"] = strToU8(
-      JSON.stringify({ format: ARCHIVE_FORMAT, exported_at: input.exportedAt, shifts: week.edition.settings?.rota_shifts ?? null, cohorts, presence, groups, duties, assignments, staff, prep }, (k, v) => (k === "head_phone" ? undefined : v), 2),
+      JSON.stringify(
+        { format: ARCHIVE_FORMAT, exported_at: input.exportedAt, shifts: week.edition.settings?.rota_shifts ?? null, cohorts, cohortDuties, presence, groups, duties, assignments, staff, prep },
+        (k, v) => (k === "head_phone" || k === "phone" ? undefined : v),
+        2,
+      ),
     );
   }
   const included = more.sources?.bytes;
@@ -257,15 +267,17 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
   const transport = extras.transport.filter((t) => t.pickup_address || t.pickup_time || t.driver_name || t.driver_phone || t.arranged);
   const planned = new Set(plannedFallen(week));
   const families = more.fallenContacts.filter((c) => planned.has(c.fallen_id) && (c.contact_name || c.relation || c.phone || c.email || c.note));
-  // the heads' phones the caller was given, of this edition's groups only, by their code
+  // the heads' phones the caller was given, of this edition's groups only, by their code; v20 the cohorts' contacts', by cohort
   const rotaGroups = new Map((more.rota?.groups ?? []).map((g) => [g.id, g]));
-  const heads = (more.rotaPhones ?? []).filter((c) => c.head_phone && rotaGroups.has(c.group_id)).sort((a, b) => a.group_id - b.group_id);
-  const personal = contacts.length > 0 || transport.length > 0 || families.length > 0 || heads.length > 0;
+  const rotaCohorts = new Map((more.rota?.cohorts ?? []).map((c) => [c.id, c]));
+  const heads = (more.rotaPhones ?? []).filter(isHeadContact).filter((c) => c.head_phone && rotaGroups.has(c.group_id)).sort((a, b) => a.group_id - b.group_id);
+  const cohortPhones = (more.rotaPhones ?? []).filter(isCohortContact).filter((c) => c.phone && rotaCohorts.has(c.cohort_id)).sort((a, b) => a.cohort_id - b.cohort_id);
+  const personal = contacts.length > 0 || transport.length > 0 || families.length > 0 || heads.length > 0 || cohortPhones.length > 0;
   if (personal) {
     const name = new Map(week.speakers.map((s) => [s.id, displayName(s)]));
     const fallen = new Map(more.fallen.map((f) => [f.id, f.name]));
     files[PERSONAL_FILE] = json({
-      warning: "מידע אישי: פרטי קשר של מרצים, פרטי הסעה, אנשי הקשר של משפחות שכולות והטלפונים של ראשי הקבוצות. לשמור במקום מוגן, לא לשתף ולא להעלות לשום מקום.",
+      warning: "מידע אישי: פרטי קשר של מרצים, פרטי הסעה, אנשי הקשר של משפחות שכולות, הטלפונים של ראשי הקבוצות ושל אנשי הקשר של המכינות. לשמור במקום מוגן, לא לשתף ולא להעלות לשום מקום.",
       format: ARCHIVE_FORMAT,
       exported_at: input.exportedAt,
       edition: { id: week.edition.id, label: week.edition.label },
@@ -273,6 +285,10 @@ export function archiveFiles(input: ArchiveInput): Record<string, Uint8Array> {
       transport_details: transport,
       family_contacts: families.map((c) => ({ fallen: fallen.get(c.fallen_id) ?? null, ...c })),
       rota_head_phones: heads.map((c) => ({ group: codeOf(more.rota!, rotaGroups.get(c.group_id)!), group_id: c.group_id, head_phone: c.head_phone })),
+      rota_cohort_contacts: cohortPhones.map((c) => {
+        const cohort = rotaCohorts.get(c.cohort_id)!;
+        return { cohort: cohort.name, cohort_id: c.cohort_id, contact_name: cohort.contact_name, phone: c.phone };
+      }),
     });
   }
   files["README.txt"] = strToU8(readme(input, more, personal));

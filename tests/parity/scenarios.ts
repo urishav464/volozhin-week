@@ -4,6 +4,7 @@
 import { addDays, israelDate } from "../../src/domain/israelTime";
 import { EDITION, FOREIGN_EDITION, FOREIGN_ROOM, FOREIGN_TRAINEE, type ImportLessonStep, type ImportSpeakerStep, type Step } from "./fixture";
 import { V19 } from "./scenariosV19";
+import { V20 } from "./scenariosV20";
 
 // Dates and instants relative to now, fixed once for both drivers: the links' rules count from today.
 const NOW = Date.now();
@@ -1852,4 +1853,5 @@ export const SCENARIOS: Record<string, Step[]> = {
   ],
 
   ...V19,
+  ...V20,
 };

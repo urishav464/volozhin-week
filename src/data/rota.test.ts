@@ -3,9 +3,10 @@
 import { describe, expect, it } from "vitest";
 import { CommandError } from "./commands";
 import {
-  cleanCohortName, cleanDay, cleanDescription, cleanDiets, cleanDutyName, cleanGroupNumber, cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter, cleanMinPeople,
-  cleanNeed, cleanNote, cleanPrepText, cleanShift, cleanShifts, cleanStaffKind, cleanStaffName, cleanStaffTimes, cleanStaffWho, LAST_YEAR_DUTIES, parsePrepList, ROTA_LIMITS,
-  cleanFlag, cleanPrepKind, cleanPrepRows, cleanQty, parsePrepItems, prepKindOf,
+  checkCohortCounts, cleanCohortFields, cleanCohortName, cleanContactName, cleanCount, cleanDay, cleanDescription, cleanDutyIds, cleanDutyName, cleanGroupNumber,
+  cleanGroupSize, cleanHeadName, cleanHeadPhone, cleanLetter, cleanMinPeople, cleanNeed, cleanNote, cleanPrepText, cleanShift, cleanShifts, cleanSplitSizes, cleanStaffName,
+  cleanStaffTimes, cleanStaffWho, isCohortContact, isHeadContact, LAST_YEAR_DUTIES, parsePrepList, ROTA_LIMITS, cleanFlag, cleanPrepKind, cleanPrepRows, cleanQty,
+  parsePrepItems, prepKindOf,
 } from "./rota";
 
 const code = (f: () => unknown) => {
@@ -36,17 +37,42 @@ describe("the cohorts' and groups' fields", () => {
     expect(code(() => cleanCohortName("מכינה x@example.org"))).toBe("rota_contact_in_text");
   });
 
-  it("diets: up to six, each a label and a count 0–1000", () => {
-    expect(cleanDiets([{ label: " צמחוני ", count: 3 }])).toEqual([{ label: "צמחוני", count: 3 }]);
-    expect(cleanDiets([])).toEqual([]);
-    expect(code(() => cleanDiets(Array.from({ length: 7 }, (_, i) => ({ label: `ד${i}`, count: 1 }))))).toBe("bad_value");
-    expect(code(() => cleanDiets([{ label: "צמחוני", count: 1001 }]))).toBe("bad_value");
-    expect(code(() => cleanDiets([{ label: "צמחוני", count: -1 }]))).toBe("bad_value");
-    expect(code(() => cleanDiets([{ label: "צמחוני", count: 1.5 }]))).toBe("bad_value");
-    expect(code(() => cleanDiets([{ label: " ", count: 1 }]))).toBe("bad_value");
-    expect(code(() => cleanDiets([{ label: "טל' 1234567", count: 1 }]))).toBe("rota_contact_in_text");
-    expect(code(() => cleanDiets("צמחוני"))).toBe("bad_value");
-    expect(code(() => cleanDiets([null]))).toBe("bad_value");
+  it("v20: the trainees and the three diet numbers — each 0–1000 or null (TBD), and the rule between them", () => {
+    expect(cleanCount(null)).toBeNull();
+    expect(cleanCount(undefined)).toBeNull();
+    expect(cleanCount(0)).toBe(0);
+    expect(cleanCount(ROTA_LIMITS.count)).toBe(1000);
+    for (const bad of [1001, -1, 1.5, "2", Number.NaN]) expect(code(() => cleanCount(bad)), String(bad)).toBe("bad_value");
+    expect(checkCohortCounts({ trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2 })).toEqual({ trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2 });
+    expect(code(() => checkCohortCounts({ trainees: null, diet_veg: 1, diet_gf: null, diet_both: 2 }))).toBe("rota_diets_exceed"); // both > veg
+    expect(code(() => checkCohortCounts({ trainees: null, diet_veg: null, diet_gf: 1, diet_both: 2 }))).toBe("rota_diets_exceed"); // both > gf
+    expect(code(() => checkCohortCounts({ trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("rota_diets_exceed"); // 4 + 3 − 1 > 5
+    expect(code(() => checkCohortCounts({ trainees: 6, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("ok"); // exactly
+    // a side TBD holds nothing: the sum needs all four
+    expect(code(() => checkCohortCounts({ trainees: 1, diet_veg: 400, diet_gf: 400, diet_both: null }))).toBe("ok");
+    expect(code(() => checkCohortCounts({ trainees: null, diet_veg: 400, diet_gf: 400, diet_both: 0 }))).toBe("ok");
+    // the whole row, in the guard's order: the contact's name first, then the numbers, then the rule
+    expect(cleanCohortFields({})).toEqual({ contact_name: null, trainees: null, diet_veg: null, diet_gf: null, diet_both: null });
+    expect(cleanCohortFields({ contact_name: "  איש/אשת קשר  לדוגמה ", trainees: 8 })).toMatchObject({ contact_name: "איש/אשת קשר לדוגמה", trainees: 8 });
+    expect(code(() => cleanCohortFields({ contact_name: "טל' 1234567", trainees: 2000 }))).toBe("rota_contact_in_text");
+    expect(code(() => cleanCohortFields({ trainees: 2000, diet_veg: 1, diet_both: 5 }))).toBe("bad_value");
+    expect(code(() => cleanContactName("א".repeat(81)))).toBe("bad_value");
+    expect(cleanContactName("   ")).toBeNull();
+  });
+
+  it("v20: the duties a cohort helps in — a set of ids; the split's sizes — 1–99 groups of 0–200", () => {
+    expect(cleanDutyIds([3, 1, 3])).toEqual([3, 1]);
+    expect(cleanDutyIds([])).toEqual([]);
+    for (const bad of [null, "1", [0], [1.5], ["2"]]) expect(code(() => cleanDutyIds(bad)), JSON.stringify(bad)).toBe("bad_value");
+    expect(cleanSplitSizes([8, 8, 7])).toEqual([8, 8, 7]);
+    expect(cleanSplitSizes([0])).toEqual([0]);
+    for (const bad of [[], [201], [-1], [1.5], [null], Array.from({ length: 100 }, () => 1), "8"]) expect(code(() => cleanSplitSizes(bad)), JSON.stringify(bad)).toBe("bad_value");
+    expect(cleanSplitSizes(Array.from({ length: 99 }, () => 1))).toHaveLength(99);
+  });
+
+  it("v20: a contacts row is a head's or a cohort contact's", () => {
+    expect([isHeadContact({ group_id: 1, head_phone: "x" }), isCohortContact({ group_id: 1, head_phone: "x" })]).toEqual([true, false]);
+    expect([isHeadContact({ cohort_id: 1, phone: "x" }), isCohortContact({ cohort_id: 1, phone: "x" })]).toEqual([false, true]);
   });
 
   it("a group's number 1–99, its size 0–200 or TBD, its head's name a line or none", () => {
@@ -128,8 +154,6 @@ describe("assignments and staff shifts", () => {
     expect(code(() => cleanStaffWho({ member_id: null, name: "x", cohort_id: 4 }))).toBe("bad_value");
     expect(code(() => cleanStaffWho({ member_id: 3, name: null, cohort_id: 4 }))).toBe("bad_value");
     expect(code(() => cleanStaffName("איש/אשת צוות 000-000-0055"))).toBe("rota_contact_in_text");
-    expect(cleanStaffKind("lead")).toBe("lead");
-    expect(code(() => cleanStaffKind("boss"))).toBe("bad_value");
     expect(cleanNote("  הקפצת מרצה ")).toBe("הקפצת מרצה");
     expect(code(() => cleanNote("הקפצת מרצה, טל' 1234567"))).toBe("rota_contact_in_text");
   });

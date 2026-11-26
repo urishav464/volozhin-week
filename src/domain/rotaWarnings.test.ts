@@ -1,6 +1,7 @@
 // src/domain/rotaWarnings.ts: each warning fires where it should and stays quiet otherwise — from a quiet rota (one
-// cohort on campus all week, four groups each with a head, one duty a group a shift, every shift with its lead), one
-// change at a time. Synthetic only.
+// cohort on campus all week helping in its one duty, four groups each with a head, one duty a group a shift), one
+// change at a time. v20: no «אחראי/ת משמרת» (no_lead) and no diets_exceed (the guard holds the diets); a hand-made row on
+// a duty the group's cohort does not help in is `not_eligible`. Synthetic only.
 import { describe, expect, it } from "vitest";
 import type { RotaData, ShiftIndex } from "../data/rota";
 import { rotaSlots, slotIndex } from "./rota";
@@ -14,12 +15,13 @@ function quiet(): RotaData {
   const slots = rotaSlots(WEEK);
   const groups = [11, 12, 13, 14];
   return {
-    cohorts: [{ id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 3 }], sort: 1 }],
+    cohorts: [{ id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: 34, diet_veg: 3, diet_gf: 0, diet_both: 0, contact_name: null, sort: 1 }],
+    cohortDuties: [{ cohort_id: 1, duty_id: 1 }],
     presence: slots.map((s) => ({ cohort_id: 1, ...s })),
     groups: groups.map((id, i) => ({ id, edition_id: 1, cohort_id: 1, number: i + 1, size: [8, 9, 10, 7][i], head_name: `ראש/ת קבוצה לדוגמה ${i + 1}` })),
     duties: [{ id: 1, edition_id: 1, name: "מטבח", description: null, need_morning: 1, need_afternoon: 1, need_night: 1, min_people: null, sort: 1 }],
     assignments: slots.map((s, i) => ({ id: i + 1, edition_id: 1, day: s.day, shift: s.shift, duty_id: 1, group_id: groups[i % 4], source: "hand" as const })),
-    staff: [0, 1, 2, 3, 4].map((day) => ({ id: day + 1, edition_id: 1, day: day as Day, start_min: 390, end_min: 1830, member_id: null, name: "אחראי/ת לדוגמה", cohort_id: null, kind: "lead" as const, note: null })),
+    staff: [0, 1, 2, 3, 4].map((day) => ({ id: day + 1, edition_id: 1, day: day as Day, start_min: 390, end_min: 1830, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: null })),
     prep: [],
   };
 }
@@ -45,7 +47,7 @@ describe("each warning fires, and only it", () => {
 
   it("presence_unknown: a cohort never marked on campus", () => {
     const d = quiet();
-    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2 });
+    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 });
     const ws = rotaWarnings(d, WEEK);
     expect(kinds(ws)).toEqual(["presence_unknown"]);
     expect(ws[0]).toMatchObject({ severity: "warn", groupIds: [] });
@@ -155,7 +157,8 @@ describe("each warning fires, and only it", () => {
 
   it("uneven is per shift on campus: a cohort there two days doing less is even", () => {
     const d = quiet();
-    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2 });
+    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 });
+    d.cohortDuties.push({ cohort_id: 2, duty_id: 1 });
     d.groups.push({ id: 21, edition_id: 1, cohort_id: 2, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 5" });
     // on campus Monday only, one duty there
     for (const shift of [0, 1, 2] as ShiftIndex[]) d.presence.push({ cohort_id: 2, day: 1, shift });
@@ -182,34 +185,10 @@ describe("each warning fires, and only it", () => {
     expect(rotaWarnings(d, named)[0].message).toBe("לא נקבע כמה קבוצות צריך ב«מטבח»: משמרת שחרית, משמרת ערבית");
   });
 
-  it("no_lead: a shift with no «אחראי/ת משמרת» — a staff shift that is not a lead does not count; without the staff, not checked", () => {
+  it("v20: no staff at all, or every shift's — nothing is warned about the staff (there is no «אחראי/ת משמרת»)", () => {
     const d = quiet();
-    d.staff[2].kind = "shift"; // Tuesday
-    d.staff[3].start_min = 870; // Wednesday's lead from 14:30: its morning has none
-    const ws = rotaWarnings(d, WEEK);
-    expect(kinds(ws)).toEqual(["no_lead"]);
-    expect(ws.map((w) => `${w.day}:${w.shift}`)).toEqual(["2:0", "2:1", "2:2", "3:0"]);
-    expect(ws[0]).toMatchObject({ severity: "warn", message: "אין אחראי/ת משמרת ביום שלישי · משמרת בוקר" });
-    const { staff: _s, ...noStaff } = d;
-    expect(rotaWarnings(noStaff, WEEK)).toEqual([]);
-    // Sunday's lead from the opening covers the morning as the week has it (08:30–14:30)
-    const e = quiet();
-    e.staff[0].start_min = 510;
-    e.staff[0].end_min = 600;
-    expect(rotaWarnings(e, WEEK).map((w) => w.key)).toEqual(["no_lead:0:1", "no_lead:0:2"]);
-  });
-
-  it("no_lead: a lead leads every shift its hours overlap — one from 14:00 to 22:30 the morning and the afternoon", () => {
-    const d = quiet();
-    // Monday: 06:30–14:20, 14:00–22:30, 22:30–06:30 — every shift has a lead
-    d.staff = d.staff.filter((x) => x.day !== 1);
-    for (const [i, [start, end]] of [[390, 860], [840, 1350], [1350, 1830]].entries()) {
-      d.staff.push({ id: 20 + i, edition_id: 1, day: 1, start_min: start, end_min: end, member_id: null, name: "אחראי/ת לדוגמה", cohort_id: null, kind: "lead", note: null });
-    }
+    d.staff = [];
     expect(rotaWarnings(d, WEEK)).toEqual([]);
-    // the afternoon's lead ends at 22:30 exactly: the night is not theirs
-    d.staff = d.staff.filter((x) => x.id !== 22);
-    expect(rotaWarnings(d, WEEK).map((w) => w.key)).toEqual(["no_lead:1:2"]);
   });
 
   it("no_head: the groups without a head, in one warning", () => {
@@ -223,25 +202,18 @@ describe("each warning fires, and only it", () => {
     expect(rotaWarnings(d, WEEK)[0].message).toBe("אין ראש/ת קבוצה ל-א2");
   });
 
-  it("diets_exceed: a cohort's diets more than its groups' people — quiet while a size is TBD", () => {
+  it("v20: the diets are no warning — the guard holds them to the trainees (rota_diets_exceed)", () => {
     const d = quiet();
-    d.cohorts[0].diets = [{ label: "צמחוני", count: 20 }, { label: "טבעוני", count: 15 }]; // 35 > 8 + 9 + 10 + 7
-    const ws = rotaWarnings(d, WEEK);
-    expect(kinds(ws)).toEqual(["diets_exceed"]);
-    expect(ws[0]).toMatchObject({ severity: "warn", groupIds: [11, 12, 13, 14], message: "במכינה לדוגמה א 35 בדיאטות, יותר מ-34 האנשים בקבוצות שלה" });
-    d.cohorts[0].diets = [{ label: "צמחוני", count: 34 }];
-    expect(rotaWarnings(d, WEEK)).toEqual([]);
-    d.cohorts[0].diets = [{ label: "צמחוני", count: 40 }];
-    d.groups[0].size = null;
+    d.cohorts[0] = { ...d.cohorts[0], trainees: null, diet_veg: 40, diet_gf: 40, diet_both: null };
     expect(rotaWarnings(d, WEEK)).toEqual([]);
   });
 });
 
-describe("a cohort that does not help (v19)", () => {
-  /** The quiet rota and «נ» (not helping) on campus all week with one group, נ1 (21). */
+describe("a cohort that does not help in the duty (v20: cohortDuties)", () => {
+  /** The quiet rota and «נ» — helping in no duty (an old row: since v20 such a cohort has no groups) — on campus all week with one group, נ1 (21). */
   function withNun(): RotaData {
     const d = quiet();
-    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2, helps_rota: false });
+    d.cohorts.push({ id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 });
     d.groups.push({ id: 21, edition_id: 1, cohort_id: 2, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 5" });
     for (const s of rotaSlots(WEEK)) d.presence.push({ cohort_id: 2, ...s });
     return d;
@@ -250,24 +222,32 @@ describe("a cohort that does not help (v19)", () => {
   it("its idle groups are not «uneven»: the fairness weighs only the groups that help", () => {
     const d = withNun();
     expect(rotaWarnings(d, WEEK)).toEqual([]); // the same rota with «נ» helping would be uneven (נ1 does nothing)
-    d.cohorts[1].helps_rota = true;
+    d.cohortDuties.push({ cohort_id: 2, duty_id: 1 });
     expect(kinds(rotaWarnings(d, WEEK))).toEqual(["uneven"]);
-    d.cohorts[1].helps_rota = false;
+    d.cohortDuties.pop();
     expect(unevenLoad(d, WEEK)).toBeNull();
   });
 
-  it("not_helping: a duty given by hand to one of its groups — each such row, in the cell it is in", () => {
+  it("not_eligible: a duty given by hand to a group whose cohort does not help in it — each such row, in the cell it is in", () => {
     const d = withNun();
     at(d, 1, 1).group_id = 21; // א1's Monday afternoon (one of its four) to נ1: the helping groups 3/4/3/3, even
     const ws = rotaWarnings(d, WEEK);
-    expect(kinds(ws)).toEqual(["not_helping"]);
-    expect(ws[0]).toMatchObject({ kind: "not_helping", severity: "warn", day: 1, shift: 1, dutyId: 1, groupIds: [21] });
-    expect(ws[0].message).toBe("נ1 שובצה ב«מטבח» (יום שני · משמרת אחר צהריים), אבל המכינה שלה לא עוזרת בתורנויות");
-    expect(cellWarnings(ws, 1, 1, 1).map((w) => w.kind)).toEqual(["not_helping"]);
-    expect(groupWarnings(ws, { day: 1, shift: 1, group_id: 21 }).map((w) => w.kind)).toEqual(["not_helping"]);
+    expect(kinds(ws)).toEqual(["not_eligible"]);
+    expect(ws[0]).toMatchObject({ kind: "not_eligible", severity: "warn", day: 1, shift: 1, dutyId: 1, groupIds: [21] });
+    expect(ws[0].message).toBe("נ1 שובצה ב«מטבח» (יום שני · משמרת אחר צהריים), אבל מכינה לדוגמה נ לא עוזרת ב«מטבח»");
+    expect(cellWarnings(ws, 1, 1, 1).map((w) => w.kind)).toEqual(["not_eligible"]);
+    expect(groupWarnings(ws, { day: 1, shift: 1, group_id: 21 }).map((w) => w.kind)).toEqual(["not_eligible"]);
     // the assignment fills its duty: no «under»; a second one is a second warning
     at(d, 2, 0).group_id = 21;
-    expect(rotaWarnings(d, WEEK).filter((w) => w.kind === "not_helping").map((w) => w.day)).toEqual([1, 2]);
+    expect(rotaWarnings(d, WEEK).filter((w) => w.kind === "not_eligible").map((w) => w.day)).toEqual([1, 2]);
+  });
+
+  it("not_eligible is per duty: a cohort that helps in another duty only is warned about this one alone", () => {
+    const d = withNun();
+    d.duties.push({ id: 2, edition_id: 1, name: "נקיון", description: null, need_morning: 0, need_afternoon: 0, need_night: 0, min_people: null, sort: 2 });
+    d.cohortDuties.push({ cohort_id: 2, duty_id: 2 }); // «נ» helps in «נקיון» only
+    at(d, 1, 1).group_id = 21;
+    expect(rotaWarnings(d, WEEK).filter((w) => w.kind === "not_eligible").map((w) => [w.groupIds, w.dutyId])).toEqual([[[21], 1]]);
   });
 
   it("presence_unknown stays (its presence feeds the meal counts), without «ההצעה לא משבצת…»", () => {
@@ -277,15 +257,10 @@ describe("a cohort that does not help (v19)", () => {
     expect(kinds(ws)).toEqual(["presence_unknown"]);
     expect(ws[0]).toMatchObject({ severity: "warn", groupIds: [21], message: "לא סומן מתי מכינה לדוגמה נ בקמפוס" });
     // a cohort that helps keeps the whole sentence
-    d.cohorts[1].helps_rota = true;
+    d.cohortDuties.push({ cohort_id: 2, duty_id: 1 });
     expect(rotaWarnings(d, WEEK).find((w) => w.kind === "presence_unknown")!.message).toBe("לא סומן מתי מכינה לדוגמה נ בקמפוס — ההצעה לא משבצת את הקבוצות שלה");
   });
 
-  it("a cohort from before v19 (no flag) helps", () => {
-    const d = withNun();
-    delete d.cohorts[1].helps_rota;
-    expect(kinds(rotaWarnings(d, WEEK))).toEqual(["uneven"]);
-  });
 });
 
 describe("for the board", () => {

@@ -74,6 +74,9 @@ export interface StartPreview {
   rota_duties: number;
   rota_prep_tasks: number;
   rota_shifts: boolean;
+  /** v20: carry_from's cohorts (a letter, a name, «יכול להסיע», the order) and the duties they help in (counts). */
+  rota_cohorts: number;
+  rota_cohort_duties: number;
   /** v17: whether carry_from has its own title list (settings.titles, a non-empty array) — it carries over. */
   titles: boolean;
   deactivate: number;

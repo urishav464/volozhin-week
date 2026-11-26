@@ -63,12 +63,13 @@ describe("the logistics demo", () => {
     expect(await code(cmds.decidePayments([{ lesson_id: monday.id, version: monday.version }], "rejected", null))).toBe("stale");
   });
 
-  it("the rota has two more staff shifts: a typed name on Monday morning, the logistics member leading Wednesday", async () => {
+  it("the rota has two more staff shifts: a typed name on Monday morning, the logistics member's on Wednesday (v20: no kind)", async () => {
     const port = logisticsDemo();
     const staff = (await port.rota.load(1)).staff;
     expect(staff).toHaveLength(5);
-    expect(staff.find((s) => s.day === 1 && s.start_min === 390)).toMatchObject({ end_min: 720, member_id: null, name: "איש/אשת צוות לדוגמה ב׳", kind: "shift" });
-    expect(staff.find((s) => s.day === 3 && s.start_min === 510)).toMatchObject({ end_min: 870, member_id: 5, kind: "lead" });
+    expect(staff.find((s) => s.day === 1 && s.start_min === 390)).toMatchObject({ end_min: 720, member_id: null, name: "איש/אשת צוות לדוגמה ב׳" });
+    expect(staff.find((s) => s.day === 3 && s.start_min === 510)).toMatchObject({ end_min: 870, member_id: 5 });
+    expect(staff.every((s) => !("kind" in s))).toBe(true);
   });
 });
 
@@ -86,12 +87,18 @@ describe("the other demos keep no pickup times and the rota's own staff shifts",
 });
 
 describe("v19 (the reset, phase 4): the logistics home's demo", () => {
-  it("`?as=logistics`: a date three weeks ahead (a Sunday), the two flags, a shopping list — and every demo's guests' sample", async () => {
+  it("`?as=logistics`: a date three weeks ahead (a Sunday), «ב» can drive, «ד» helps in no duty and has no groups, a shopping list — and every demo's guests' sample", async () => {
     const port = new DemoPort(DEMO_LOGISTICS, { logistics: true, now: () => NOW });
     const week = await port.loadWeek(1);
     expect(week.edition.start_date).toBe(demoLogisticsStart(NOW));
     const rota = await port.rota.load(1);
-    expect(rota.cohorts.map((c) => [c.letter, c.helps_rota, c.can_drive])).toEqual([["א", true, false], ["ב", true, true], ["נ", false, false]]);
+    const helps = (id: number) => rota.cohortDuties.some((x) => x.cohort_id === id);
+    expect(rota.cohorts.map((c) => [c.letter, helps(c.id), c.can_drive])).toEqual([["א", true, false], ["ב", true, true], ["נ", true, false], ["ד", false, false]]);
+    // v20: the one that does not help has no groups, but is on campus (Wednesday and Thursday) with its trainees and diets
+    const dalet = rota.cohorts.find((c) => c.letter === "ד")!;
+    expect(rota.groups.filter((g) => g.cohort_id === dalet.id)).toEqual([]);
+    expect(new Set(rota.presence.filter((p) => p.cohort_id === dalet.id).map((p) => p.day))).toEqual(new Set([3, 4]));
+    expect(dalet).toMatchObject({ trainees: 30, diet_veg: 4, diet_gf: 2, diet_both: 1, contact_name: "איש/אשת קשר לדוגמה ד" });
     expect(rota.prep.filter((p) => p.kind === "item").map((p) => [p.text, p.qty, p.done])).toEqual([
       ["פריט לדוגמה 1", "2 (לדוגמה)", false],
       ["פריט לדוגמה 2", "2 (לדוגמה)", false],
@@ -103,12 +110,12 @@ describe("v19 (the reset, phase 4): the logistics home's demo", () => {
     expect(view.people.map((p) => [p.bio, p.photo != null])).toEqual([["תיאור לדוגמה", true], ["תיאור לדוגמה ב׳", false]]);
   });
 
-  it("the default demo and `?as=trainee` stay as they were: no date, no flags set, no items", async () => {
+  it("the default demo and `?as=trainee` stay as they were: no date, every cohort helping, none driving, no items", async () => {
     for (const port of [new DemoPort(), new DemoPort(DEMO_TRAINEE, { trainee: true })]) {
       const week = await port.loadWeek(1);
       expect(week.edition.start_date).toBeNull();
       const rota = await port.rota.load(1);
-      expect(rota.cohorts.every((c) => c.helps_rota === true && c.can_drive === false)).toBe(true);
+      expect(rota.cohorts.every((c) => rota.cohortDuties.some((x) => x.cohort_id === c.id) && c.can_drive === false)).toBe(true);
       expect(rota.prep.every((p) => p.kind === "task" && p.qty === null)).toBe(true);
     }
   });

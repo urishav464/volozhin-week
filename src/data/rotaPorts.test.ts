@@ -8,7 +8,7 @@ import { addDays, israelDate } from "../domain/israelTime";
 import { rotaSlots } from "../domain/rota";
 import { suggestRota } from "../domain/rotaSuggest";
 import { assertWeekOnly, PERSONAL_KEYS } from "../offline/snapshot";
-import { ROTA_ADMIN_CASES, ROTA_CASES, ROTA_FIXTURE, type RotaCase } from "../testing/rotaCases";
+import { MISSING_ID, ROTA_ADMIN_CASES, ROTA_CASES, ROTA_FIXTURE, type RotaCase } from "../testing/rotaCases";
 import { CommandError } from "./commands";
 import { DemoPort } from "./demoPort";
 import type { Actor } from "./engine";
@@ -37,20 +37,26 @@ async function edition(actor: Actor): Promise<{ port: DemoPort; e: number }> {
   return { port, e };
 }
 
-/** ROTA_FIXTURE written through the port; its refs → ids. */
+/** ROTA_FIXTURE written through the port; its refs → ids (and «MISSING», an id nothing has). */
 async function fixture(r: RotaPort, e: number): Promise<Map<string, number>> {
-  const refs = new Map<string, number>();
-  for (const c of ROTA_FIXTURE.cohorts) await r.addCohort(e, { letter: c.letter, name: c.name, diets: [...c.diets], sort: c.sort });
-  let d = await r.load(e);
-  for (const c of ROTA_FIXTURE.cohorts) refs.set(c.ref, d.cohorts.find((x) => x.letter === c.letter)!.id);
-  for (const g of ROTA_FIXTURE.groups) await r.addGroup(e, { cohort_id: refs.get(g.cohort)!, number: g.number, size: g.size, head_name: g.head_name });
+  const refs = new Map<string, number>([["MISSING", MISSING_ID]]);
+  for (const c of ROTA_FIXTURE.cohorts) {
+    const { ref, ...fields } = c;
+    refs.set(ref, await r.addCohort(e, fields));
+  }
   for (const x of ROTA_FIXTURE.duties) {
     const { ref: _ref, ...fields } = x;
     await r.addDuty(e, fields);
   }
+  let d = await r.load(e);
+  for (const x of ROTA_FIXTURE.duties) refs.set(x.ref, d.duties.find((y) => y.name === x.name)!.id);
+  // v20: the duties each cohort helps in, before its groups (a group needs a cohort that helps)
+  for (const c of ROTA_FIXTURE.cohorts) {
+    await r.setCohortDuties(e, refs.get(c.ref)!, ROTA_FIXTURE.cohortDuties.filter((x) => x.cohort === c.ref).map((x) => refs.get(x.duty)!));
+  }
+  for (const g of ROTA_FIXTURE.groups) await r.addGroup(e, { cohort_id: refs.get(g.cohort)!, number: g.number, size: g.size, head_name: g.head_name });
   d = await r.load(e);
   for (const g of ROTA_FIXTURE.groups) refs.set(g.ref, d.groups.find((x) => x.cohort_id === refs.get(g.cohort) && x.number === g.number)!.id);
-  for (const x of ROTA_FIXTURE.duties) refs.set(x.ref, d.duties.find((y) => y.name === x.name)!.id);
   for (const a of ROTA_FIXTURE.assignments) await r.assign(e, { day: a.day, shift: a.shift, duty_id: refs.get(a.duty)!, group_id: refs.get(a.group)! });
   return refs;
 }
@@ -88,7 +94,13 @@ function run(r: RotaPort, e: number, refs: Map<string, number>, c: RotaCase): Pr
     case "setShifts":
       return r.setShifts(e, c.args);
     case "setContact":
-      return r.setContact(ref(c.ref), c.args);
+      return r.setContact({ group: ref(c.ref) }, c.args);
+    case "setCohortDuties":
+      return r.setCohortDuties(e, ref(c.ref), c.duties.map(ref));
+    case "splitCohort":
+      return r.splitCohort(e, ref(c.ref), c.args);
+    case "setCohortContact":
+      return r.setContact({ cohort: ref(c.ref) }, c.args);
   }
 }
 
@@ -104,6 +116,16 @@ describe("the shared cases (src/testing/rotaCases.ts) on the demo", () => {
       if (c.expect !== "ok") expect(await port.rota.load(e)).toEqual(before);
       // v19: what the guard wrote of the rows
       if ((c.op === "addPrepRows" || c.op === "updatePrep") && c.prep) expect((await port.rota.load(e)).prep.map(({ text, kind, qty }) => ({ text, kind, qty }))).toEqual(c.prep);
+      // v20: the cohort's duties, or its groups, afterwards
+      if (c.op === "setCohortDuties" && c.after) {
+        const after = (await port.rota.load(e)).cohortDuties.filter((x) => x.cohort_id === refs.get(c.ref)).map((x) => x.duty_id);
+        expect(after).toEqual(c.after.map((x) => refs.get(x)!).sort((a, b) => a - b));
+      }
+      if (c.op === "splitCohort" && c.groups) {
+        const d = await port.rota.load(e);
+        expect(d.groups.filter((g) => g.cohort_id === refs.get(c.ref)).map((g) => [g.number, g.size])).toEqual(c.groups);
+        expect(d.groups.filter((g) => g.cohort_id === refs.get(c.ref)).every((g) => g.head_name == null)).toBe(true);
+      }
     });
   }
   for (const c of ROTA_ADMIN_CASES) {
@@ -157,7 +179,7 @@ describe("who reads and who writes", () => {
     expect(await code(port.rota.unassign(d.assignments[0].id))).toBe("forbidden");
     expect(await code(port.rota.updateDuty(d.duties[0].id, { need_night: 2 }))).toBe("forbidden");
     expect(await code(port.rota.clearSuggested(e))).toBe("forbidden"); // SupabaseRota: 0, as for content above
-    expect(d.cohorts).toHaveLength(2); // still read
+    expect(d.cohorts).toHaveLength(3); // still read
     const a = await edition(EDITION_ADMIN);
     a.port.engine(a.e).week.edition.status = "archived";
     expect(await code(a.port.rota.addCohort(a.e, { letter: "ב", name: "מכינה לדוגמה ב" }))).toBe("ok");
@@ -168,43 +190,61 @@ describe("who reads and who writes", () => {
   });
 });
 
-describe("the heads' phones (app.may_see_rota_contacts)", () => {
+describe("the heads' phones (app.may_see_rota_contacts) and (v20) the cohorts' contacts' (app.may_see_cohort_contacts)", () => {
   it("logistics and the edition's admins of a real, live edition — the phone by itself, never in load()", async () => {
     for (const actor of [LOGISTICS, EDITION_ADMIN]) {
       const { port, e } = await edition(actor);
       const refs = await fixture(port.rota, e);
-      await port.rota.setContact(refs.get("G1")!, " 000-000-0001 ");
-      expect(await port.rota.contacts(e)).toEqual([{ group_id: refs.get("G1"), head_phone: "000-000-0001" }]);
-      expect(JSON.stringify(await port.rota.load(e))).not.toContain("000-000-0001");
+      await port.rota.setContact({ group: refs.get("G1")! }, " 000-000-0001 ");
+      await port.rota.setContact({ cohort: refs.get("A")! }, " 000-000-0002 ");
+      expect(await port.rota.contacts(e)).toEqual([{ group_id: refs.get("G1"), head_phone: "000-000-0001" }, { cohort_id: refs.get("A"), phone: "000-000-0002" }]);
+      expect(JSON.stringify(await port.rota.load(e))).not.toMatch(/000-000-000[12]/);
+      // the contact's NAME is the team's: in load(), on its cohort
+      expect((await port.rota.load(e)).cohorts.find((c) => c.id === refs.get("A"))!.contact_name).toBe("איש/אשת קשר לדוגמה");
       // archived: none — and not set either
       port.engine(e).week.edition.status = "archived";
       expect(await port.rota.contacts(e)).toEqual([]);
-      expect(await code(port.rota.setContact(refs.get("G1")!, "000-000-0003"))).toBe("rota_contact_hidden");
+      expect(await code(port.rota.setContact({ group: refs.get("G1")! }, "000-000-0003"))).toBe("rota_contact_hidden");
+      expect(await code(port.rota.setContact({ cohort: refs.get("A")! }, "000-000-0003"))).toBe("rota_contact_hidden");
     }
+  });
+
+  it("v20: a cohort's contact phone — blank removes, a bad one refused, a cohort gone stale; deleting the cohort takes it", async () => {
+    const { port, e } = await edition(LOGISTICS);
+    const refs = await fixture(port.rota, e);
+    await port.rota.setContact({ cohort: refs.get("N")! }, "000-000-0002");
+    await port.rota.setContact({ cohort: refs.get("Z")! }, "000-000-0003");
+    await port.rota.setContact({ cohort: refs.get("N")! }, "  ");
+    expect(await port.rota.contacts(e)).toEqual([{ cohort_id: refs.get("Z"), phone: "000-000-0003" }]);
+    expect(await code(port.rota.setContact({ cohort: refs.get("N")! }, "12345"))).toBe("bad_phone");
+    expect(await code(port.rota.setContact({ cohort: 9999 }, "000-000-0001"))).toBe("stale");
+    await port.rota.deleteCohort(refs.get("Z")!);
+    expect(await port.rota.contacts(e)).toEqual([]);
+    expect(port.shared.rotaCohortContacts[refs.get("Z")!]).toBeUndefined();
   });
 
   it("a practice or demo week gives none — but to a global admin; content none anywhere", async () => {
     const logistics = new DemoPort(LOGISTICS);
     const g = (await logistics.rota.load(1)).groups[0].id; // the demo's own week: kind «demo»
     expect(await logistics.rota.contacts(1)).toEqual([]);
-    expect(await code(logistics.rota.setContact(g, "000-000-0001"))).toBe("rota_contact_hidden");
+    expect(await code(logistics.rota.setContact({ group: g }, "000-000-0001"))).toBe("rota_contact_hidden");
     const global = new DemoPort();
     const all = await global.rota.contacts(1);
-    expect(all).toHaveLength(17);
-    expect(new Set(all.map((c) => c.head_phone))).toEqual(new Set(["טלפון לדוגמה"]));
+    expect(all).toHaveLength(17 + 3); // the heads' and (v20) the three cohorts' contacts'
+    expect(new Set(all.map((c) => ("head_phone" in c ? c.head_phone : c.phone)))).toEqual(new Set(["טלפון לדוגמה"]));
     const content = await edition(CONTENT);
     expect(await content.port.rota.contacts(content.e)).toEqual([]);
-    expect(await code(content.port.rota.setContact(1, "000-000-0001"))).toBe("rota_contact_hidden");
+    expect(await code(content.port.rota.setContact({ group: 1 }, "000-000-0001"))).toBe("rota_contact_hidden");
   });
 
   it("blank removes; a bad phone and a group gone are refused", async () => {
     const { port, e } = await edition(LOGISTICS);
     const refs = await fixture(port.rota, e);
-    await port.rota.setContact(refs.get("G1")!, "000-000-0001");
-    await port.rota.setContact(refs.get("G1")!, "   ");
+    await port.rota.setContact({ group: refs.get("G1")! }, "000-000-0001");
+    await port.rota.setContact({ group: refs.get("G1")! }, "   ");
     expect(await port.rota.contacts(e)).toEqual([]);
-    expect(await code(port.rota.setContact(refs.get("G1")!, "12345"))).toBe("bad_phone");
-    expect(await code(port.rota.setContact(9999, "000-000-0001"))).toBe("stale");
+    expect(await code(port.rota.setContact({ group: refs.get("G1")! }, "12345"))).toBe("bad_phone");
+    expect(await code(port.rota.setContact({ group: 9999 }, "000-000-0001"))).toBe("stale");
   });
 
   it("a head's phone is personal data: PERSONAL_KEYS has it, and a Week carrying one is never written to the device", async () => {
@@ -221,8 +261,18 @@ describe("the heads' phones (app.may_see_rota_contacts)", () => {
       if (Array.isArray(v)) v.forEach(walk);
       else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) (keys.add(k), walk(x));
     };
-    walk(await port.rota.load(1));
-    expect(PERSONAL_KEYS.filter((k) => keys.has(k))).toEqual([]);
+    const rota = await port.rota.load(1);
+    walk(rota);
+    // v20: but a cohort's `contact_name` — its staff contact's NAME, the team's to read (a bereaved family's contact
+    // person shares the key in PERSONAL_KEYS: the rota is never in a Week, so the offline copy never meets it)
+    expect(PERSONAL_KEYS.filter((k) => keys.has(k))).toEqual(["contact_name"]);
+    const where = new Set<string>();
+    const find = (v: unknown, path: string): void => {
+      if (Array.isArray(v)) v.forEach((x) => find(x, `${path}[]`));
+      else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) (k === "contact_name" && where.add(path), find(x, `${path}.${k}`));
+    };
+    find(rota, "rota");
+    expect([...where]).toEqual(["rota.cohorts[]"]);
   });
 });
 
@@ -231,7 +281,7 @@ describe("the cascades and the rules between tables", () => {
     const { port, e } = await edition(EDITION_ADMIN);
     const refs = await fixture(port.rota, e);
     const g2 = refs.get("G2")!;
-    await port.rota.setContact(g2, "000-000-0001");
+    await port.rota.setContact({ group: g2 }, "000-000-0001");
     await port.rota.addPrepTasks(e, ["משימה לדוגמה"]);
     const task = (await port.rota.load(e)).prep[0];
     await port.rota.updatePrepTask(task.id, { group_id: g2, done: true });
@@ -243,17 +293,57 @@ describe("the cascades and the rules between tables", () => {
     expect(port.shared.rotaContacts[g2]).toBeUndefined();
   });
 
-  it("a duty's delete takes its assignments; a cohort's — once it has no groups — its presence and its staff shift", async () => {
+  it("a duty's delete takes its assignments (and v20 its rows of the cohorts' duties); a cohort's — once it has no groups — its presence, its staff shift and its duties", async () => {
     const { port, e } = await edition(LOGISTICS);
     const refs = await fixture(port.rota, e);
     await port.rota.deleteDuty(refs.get("D2")!);
-    expect((await port.rota.load(e)).assignments).toEqual([]);
+    let d = await port.rota.load(e);
+    expect(d.assignments).toEqual([]);
+    expect(d.cohortDuties).toEqual([{ cohort_id: refs.get("A"), duty_id: refs.get("D1") }, { cohort_id: refs.get("N"), duty_id: refs.get("D1") }]);
     const n = refs.get("N")!;
     await port.rota.setPresence(e, n, { day: 1 }, true);
-    await port.rota.addStaffShift(e, { day: 1, start_min: 510, end_min: 780, member_id: null, name: null, cohort_id: n, kind: "shift", note: null });
+    await port.rota.addStaffShift(e, { day: 1, start_min: 510, end_min: 780, member_id: null, name: null, cohort_id: n, note: null });
     await port.rota.deleteCohort(n);
+    d = await port.rota.load(e);
+    expect([d.presence, d.staff, d.cohorts.map((c) => c.letter), d.cohortDuties.map((x) => x.cohort_id)]).toEqual([[], [], ["א", "ז"], [refs.get("A")]]);
+  });
+
+  it("v20: a cohort with groups keeps a duty — its last one stays (in_use), deleting the duty included; without groups it may help in none", async () => {
+    const { port, e } = await edition(LOGISTICS);
+    const refs = await fixture(port.rota, e);
+    const [a, d1, d2] = [refs.get("A")!, refs.get("D1")!, refs.get("D2")!];
+    await port.rota.setCohortDuties(e, a, [d2]);
+    expect(await code(port.rota.deleteDuty(d2))).toBe("in_use"); // «א»'s last, and «א» has groups
+    expect(await code(port.rota.setCohortDuties(e, a, []))).toBe("in_use");
+    expect((await port.rota.load(e)).cohortDuties.filter((x) => x.cohort_id === a).map((x) => x.duty_id)).toEqual([d2]);
+    // its groups deleted (the screen asks first), it may help in none
+    for (const g of ["G1", "G2"]) await port.rota.deleteGroup(refs.get(g)!);
+    expect(await code(port.rota.setCohortDuties(e, a, []))).toBe("ok");
+    expect(await code(port.rota.addGroup(e, { cohort_id: a, number: 1 }))).toBe("cohort_not_helping");
+    await port.rota.setCohortDuties(e, a, [d1]);
+    expect(await code(port.rota.addGroup(e, { cohort_id: a, number: 1 }))).toBe("ok");
+    // a duty that is no cohort's last goes, its rows with it
+    expect(await code(port.rota.deleteDuty(d2))).toBe("ok");
+  });
+
+  it("v20: «חלוקה לקבוצות» replaces the cohort's groups — their assignments and heads' phones go, their tasks stay without a group", async () => {
+    const { port, e } = await edition(LOGISTICS);
+    const refs = await fixture(port.rota, e);
+    const [a, g1] = [refs.get("A")!, refs.get("G1")!];
+    await port.rota.setContact({ group: g1 }, "000-000-0001");
+    await port.rota.addPrepTasks(e, ["משימה לדוגמה"]);
+    await port.rota.updatePrepTask((await port.rota.load(e)).prep[0].id, { group_id: g1 });
+    const made = await port.rota.splitCohort(e, a, [8, 8, 7]);
+    expect(made.map((g) => [g.number, g.size, g.head_name])).toEqual([[1, 8, null], [2, 8, null], [3, 7, null]]);
     const d = await port.rota.load(e);
-    expect([d.presence, d.staff, d.cohorts.map((c) => c.letter)]).toEqual([[], [], ["א"]]);
+    expect(d.groups.filter((g) => g.cohort_id === a)).toEqual(made);
+    expect(made.some((g) => g.id === g1 || g.id === refs.get("G2"))).toBe(false); // new rows, new ids
+    expect(d.assignments).toEqual([]);
+    expect(await port.rota.contacts(e)).toEqual([]);
+    expect(d.prep[0].group_id).toBeNull();
+    // a writer only: content may not
+    const c = await edition(CONTENT);
+    expect(await code(c.port.rota.splitCohort(c.e, 1, [5]))).toBe("forbidden");
   });
 
   it("a group, a prep task or a staff shift pointing at a row gone (or another edition's) is stale", async () => {
@@ -262,7 +352,7 @@ describe("the cascades and the rules between tables", () => {
     expect(await code(port.rota.addGroup(e, { cohort_id: 9999, number: 1 }))).toBe("stale");
     expect(await code(port.rota.assign(e, { day: 2, shift: 0, duty_id: 9999, group_id: refs.get("G1")! }))).toBe("stale");
     expect(await code(port.rota.moveAssignment((await port.rota.load(e)).assignments[0].id, 9999))).toBe("stale");
-    expect(await code(port.rota.addStaffShift(e, { day: 1, start_min: 510, end_min: 780, member_id: null, name: null, cohort_id: 9999, kind: "shift", note: null }))).toBe("stale");
+    expect(await code(port.rota.addStaffShift(e, { day: 1, start_min: 510, end_min: 780, member_id: null, name: null, cohort_id: 9999, note: null }))).toBe("stale");
     await port.rota.addPrepTasks(e, ["משימה"]);
     expect(await code(port.rota.updatePrepTask((await port.rota.load(e)).prep[0].id, { group_id: 9999 }))).toBe("stale");
     // the demo's own week's group from this edition
@@ -281,12 +371,12 @@ describe("the cascades and the rules between tables", () => {
     expect(await code(port.rota.updateDuty(refs.get("D1")!, { name: " מטבח ", need_night: null }))).toBe("ok");
     expect(await code(port.rota.updateCohort(9999, { name: "x" }))).toBe("forbidden");
     const d = await port.rota.load(e);
-    expect(d.cohorts.map((c) => [c.letter, c.name])).toEqual([["א", "מכינה לדוגמה א"], ["ב", "מכינה לדוגמה ב"]]);
+    expect(d.cohorts.map((c) => [c.letter, c.name])).toEqual([["א", "מכינה לדוגמה א"], ["ב", "מכינה לדוגמה ב"], ["ז", "מכינה לדוגמה ז"]]);
   });
 
   it("a staff shift's member: an active member of the edition or of every edition", async () => {
     const { port, e } = await edition(LOGISTICS);
-    const s = { day: 1 as const, start_min: 510, end_min: 780, name: "חבר/ת צוות", cohort_id: null, kind: "lead" as const, note: null };
+    const s = { day: 1 as const, start_min: 510, end_min: 780, name: "חבר/ת צוות", cohort_id: null, note: null };
     expect(await code(port.rota.addStaffShift(e, { ...s, member_id: 1 }))).toBe("ok"); // the global admin
     expect(await code(port.rota.addStaffShift(e, { ...s, member_id: 5 }))).toBe("bad_value"); // the demo week's logistics member
     expect(await code(port.rota.addStaffShift(e, { ...s, member_id: 9999 }))).toBe("bad_value");
@@ -294,7 +384,8 @@ describe("the cascades and the rules between tables", () => {
     expect(await code(port.rota.updateStaffShift(id, { note: "הקפצת מרצה" }))).toBe("ok");
     expect(await code(port.rota.updateStaffShift(id, { start_min: 900 }))).toBe("bad_value"); // after its end
     expect(await code(port.rota.updateStaffShift(id, { name: null }))).toBe("name_required");
-    expect((await port.rota.load(e)).staff[0]).toMatchObject({ member_id: 1, name: "חבר/ת צוות", kind: "lead", note: "הקפצת מרצה" });
+    expect((await port.rota.load(e)).staff[0]).toEqual(expect.objectContaining({ member_id: 1, name: "חבר/ת צוות", note: "הקפצת מרצה" }));
+    expect("kind" in (await port.rota.load(e)).staff[0]).toBe(false); // v20: no kind
   });
 });
 
@@ -389,7 +480,7 @@ describe("the preparations and the shifts", () => {
 });
 
 describe("the demo's seed", () => {
-  it("three cohorts «לדוגמה», 6/6/5 groups with heads and a placeholder phone, «נ» on Monday and Tuesday, last year's duties, no assignments", async () => {
+  it("three cohorts «לדוגמה» with their numbers and contacts, 6/6/5 groups with heads and a placeholder phone, «נ» on Monday and Tuesday helping in «בית מדרש» alone, last year's duties, no assignments", async () => {
     const port = new DemoPort();
     const d: RotaData = await port.rota.load(1);
     expect(d.cohorts.map((c) => [c.letter, c.name])).toEqual([["א", "מכינה לדוגמה א"], ["ב", "מכינה לדוגמה ב"], ["נ", "מכינה לדוגמה נ"]]);
@@ -400,14 +491,27 @@ describe("the demo's seed", () => {
     expect(d.presence.filter((p) => p.cohort_id === d.cohorts[0].id)).toHaveLength(14);
     expect(d.duties.map((x) => x.name)).toEqual(LAST_YEAR_DUTIES.map((x) => x.name));
     expect(d.assignments).toEqual([]);
-    expect(d.staff.filter((s) => s.kind === "lead")).toHaveLength(1);
+    // v20: each cohort's trainees are its groups' sizes added up, its diets within them, a staff contact by name; «נ» helps in «בית מדרש» alone
+    for (const c of d.cohorts) {
+      expect(c.trainees).toBe(d.groups.filter((g) => g.cohort_id === c.id).reduce((a, g) => a + (g.size ?? 0), 0));
+      expect([c.diet_veg, c.diet_gf, c.diet_both].every((x) => x != null)).toBe(true);
+      expect(c.contact_name).toMatch(/^איש\/אשת קשר לדוגמה /);
+    }
+    const dutyName = new Map(d.duties.map((x) => [x.id, x.name]));
+    expect(d.cohorts.map((c) => d.cohortDuties.filter((x) => x.cohort_id === c.id).map((x) => dutyName.get(x.duty_id)))).toEqual([
+      LAST_YEAR_DUTIES.map((x) => x.name), LAST_YEAR_DUTIES.map((x) => x.name), ["בית מדרש"],
+    ]);
+    expect(d.staff.every((s) => !("kind" in s))).toBe(true); // v20: no «אחראי/ת משמרת»
     expect(d.staff.map((s) => (s.cohort_id != null ? "cohort" : s.member_id != null ? "member" : "typed")).sort()).toEqual(["cohort", "member", "typed"]);
     expect(d.prep.map((t) => t.text)).toEqual([1, 2, 3, 4].map((i) => `משימת הכנה לדוגמה ${i}`));
     // no digit in a seeded phone (scripts/pii-scan.mjs reads git): «טלפון לדוגמה»
     expect(Object.values(port.shared.rotaContacts).every((p) => p === "טלפון לדוגמה")).toBe(true);
-    // the demo opens on «הצעה הוגנת»: it fills the whole week
+    expect(Object.values(port.shared.rotaCohortContacts)).toEqual(["טלפון לדוגמה", "טלפון לדוגמה", "טלפון לדוגמה"]);
+    // the demo opens on «הצעה הוגנת»: it fills the whole week — «נ»'s groups on «בית מדרש» only
     const r = suggestRota({ data: d, edition: port.engine(1).week.edition });
     expect([r.add.length, r.unfilled.length]).toEqual([14 * 7, 0]);
+    const nunGroups = new Set(d.groups.filter((g) => g.cohort_id === nun).map((g) => g.id));
+    expect(r.add.filter((a) => nunGroups.has(a.group_id)).every((a) => dutyName.get(a.duty_id) === "בית מדרש")).toBe(true);
     // and applies, as one statement
     await port.rota.applySuggestion(1, r.add);
     expect((await port.rota.load(1)).assignments).toHaveLength(98);
@@ -417,26 +521,27 @@ describe("the demo's seed", () => {
 describe("after the week and the next year", () => {
   const today = () => israelDate(new Date().toISOString());
 
-  it("the purge deletes the edition's heads' phones (counted and logged), never another edition's, and keeps the rest", async () => {
+  it("the purge deletes the edition's heads' phones and (v20) its cohorts' contacts' phones (counted together and logged), never another edition's, and keeps the rest", async () => {
     const port = new DemoPort();
     const s = port.settings;
     const real = await s.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: 510 });
     const refs = await fixture(port.rota, real);
-    await port.rota.setContact(refs.get("G1")!, "000-000-0001");
-    await port.rota.setContact(refs.get("G2")!, "000-000-0002");
+    await port.rota.setContact({ group: refs.get("G1")! }, "000-000-0001");
+    await port.rota.setContact({ group: refs.get("G2")! }, "000-000-0002");
+    await port.rota.setContact({ cohort: refs.get("A")! }, "000-000-0003");
     port.engine(real).week.edition.start_date = addDays(today(), -5);
     const before = await port.rota.load(real);
     const report = await s.purgeEdition(real, "מחזור לדוגמה");
-    expect(report).toMatchObject({ rota_contacts: 2 });
+    expect(report).toMatchObject({ rota_contacts: 3 });
     expect(await port.rota.contacts(real)).toEqual([]);
-    expect(await port.rota.load(real)).toEqual(before); // the groups, heads' names, assignments stay
-    expect(await port.rota.contacts(1)).toHaveLength(17); // the demo week's untouched
+    expect(await port.rota.load(real)).toEqual(before); // the groups, heads' names, contacts' names, assignments stay
+    expect(await port.rota.contacts(1)).toHaveLength(17 + 3); // the demo week's untouched
     const log = port.shared.log.filter((x) => x.kind === "purge");
-    expect(log.at(-1)?.detail).toMatchObject({ rota_contacts: 2 });
+    expect(log.at(-1)?.detail).toMatchObject({ rota_contacts: 3 });
     expect((await s.purgeEdition(real, "מחזור לדוגמה")).rota_contacts).toBe(0);
   });
 
-  it("start_edition carries the duties, the preparations (no group, not done) and the shifts — never cohorts, groups, assignments or staff", async () => {
+  it("start_edition carries the duties, the preparations (no group, not done), the shifts and (v20) the cohorts with their duties — never their numbers, contacts, groups, presence, assignments or staff", async () => {
     const port = new DemoPort();
     const s = port.settings;
     const first = await s.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: 510 });
@@ -445,16 +550,28 @@ describe("after the week and the next year", () => {
     await port.rota.addPrepTasks(first, ["משימה לדוגמה 1", "משימה לדוגמה 2"]);
     const task = (await port.rota.load(first)).prep[0];
     await port.rota.updatePrepTask(task.id, { group_id: refs.get("G1")!, done: true });
-    await port.rota.addStaffShift(first, { day: 1, start_min: 510, end_min: 780, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, kind: "shift", note: null });
+    await port.rota.addStaffShift(first, { day: 1, start_min: 510, end_min: 780, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: null });
     await port.rota.setShifts(first, { cuts: [840, 1320], labels: ["בוקר", "צהריים", "לילה"] });
-    expect(await s.previewStart(true)).toMatchObject({ carry_from: { id: first }, rota_duties: 2, rota_prep_tasks: 2, rota_shifts: true });
+    await port.rota.updateCohort(refs.get("N")!, { can_drive: true });
+    await port.rota.setContact({ cohort: refs.get("A")! }, "000-000-0002");
+    expect(await s.previewStart(true)).toMatchObject({ carry_from: { id: first }, rota_duties: 2, rota_prep_tasks: 2, rota_shifts: true, rota_cohorts: 3, rota_cohort_duties: 3 });
     const next = await s.startEdition({ label: "מחזור לדוגמה הבא", start_date: null, first_day_from: 510 });
     const d = await port.rota.load(next);
     const was = await port.rota.load(first);
     expect(d.duties.map(({ id: _i, edition_id: _e, ...x }) => x)).toEqual(was.duties.map(({ id: _i, edition_id: _e, ...x }) => x));
     expect(d.duties.every((x) => x.edition_id === next && !was.duties.some((y) => y.id === x.id))).toBe(true);
     expect(d.prep.map((t) => [t.text, t.group_id, t.done, t.sort])).toEqual([["משימה לדוגמה 1", null, false, 1], ["משימה לדוגמה 2", null, false, 2]]);
-    expect([d.cohorts, d.presence, d.groups, d.assignments, d.staff]).toEqual([[], [], [], [], []]);
+    expect([d.presence, d.groups, d.assignments, d.staff]).toEqual([[], [], [], []]);
+    // v20: the cohorts — letter, name, «יכול להסיע», order; every number TBD and no contact — and the duties each helps in, on the new duties
+    expect(d.cohorts.map(({ letter, name, sort, can_drive, trainees, diet_veg, diet_gf, diet_both, contact_name }) => ({ letter, name, sort, can_drive, trainees, diet_veg, diet_gf, diet_both, contact_name }))).toEqual([
+      { letter: "א", name: "מכינה לדוגמה א", sort: 1, can_drive: false, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null },
+      { letter: "נ", name: "מכינה לדוגמה נ", sort: 2, can_drive: true, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null },
+      { letter: "ז", name: "מכינה לדוגמה ז", sort: 3, can_drive: false, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null },
+    ]);
+    const named = (r: RotaData) => r.cohortDuties.map((x) => `${r.cohorts.find((c) => c.id === x.cohort_id)!.letter}:${r.duties.find((y) => y.id === x.duty_id)!.name}`).sort();
+    expect(named(d)).toEqual(named(was));
+    expect(d.cohortDuties.every((x) => d.cohorts.some((c) => c.id === x.cohort_id) && d.duties.some((y) => y.id === x.duty_id))).toBe(true);
+    expect(await port.rota.contacts(next)).toEqual([]); // no phone carried
     expect(port.engine(next).week.edition.settings.rota_shifts).toEqual({ cuts: [840, 1320], labels: ["בוקר", "צהריים", "לילה"] });
     // the first is archived now: what it had stays as it was
     expect(was.groups).toHaveLength(2);
@@ -462,8 +579,8 @@ describe("after the week and the next year", () => {
 
   it("the dry run counts nothing to carry when there is nothing", async () => {
     const port = new DemoPort();
-    expect(await port.settings.previewStart(true)).toMatchObject({ carry_from: null, rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false });
+    expect(await port.settings.previewStart(true)).toMatchObject({ carry_from: null, rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false, rota_cohorts: 0, rota_cohort_duties: 0 });
     await port.settings.startEdition({ label: "מחזור לדוגמה", start_date: null, first_day_from: 510 });
-    expect(await port.settings.previewStart(true)).toMatchObject({ rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false });
+    expect(await port.settings.previewStart(true)).toMatchObject({ rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false, rota_cohorts: 0, rota_cohort_duties: 0 });
   });
 });

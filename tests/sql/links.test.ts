@@ -417,14 +417,47 @@ describe("links without an account", () => {
         expect(v.escort).toEqual({ full_name: "חניכה לבדיקה", gender: "f" });
         expect(v.lessons.map((l: { lesson_id: number }) => l.lesson_id)).toEqual([lesson.L1, lesson.L2]);
         for (const l of v.lessons) {
+          // v20: and `presentation` — a state, never a file's name, a path or a link
           expect(Object.keys(l).sort()).toEqual([
-            "date", "day", "driver", "duty_notes", "end_min", "escort_note", "kind", "lesson_id", "phone", "room", "self_intro", "speaker", "start_min", "ticks", "title", "transport",
+            "date", "day", "driver", "duty_notes", "end_min", "escort_note", "kind", "lesson_id", "phone", "presentation", "room", "self_intro", "speaker", "start_min", "ticks", "title",
+            "transport",
           ]);
         }
         expect(v.lessons[0]).toMatchObject({ day: 1, date: null, start_min: 510, end_min: 585, room: "בית מדרש", escort_note: "הערה למלווה", self_intro: false });
         expect(v.lessons[1].speaker).toEqual({ name: "ד״ר מרצה לבדיקה 2", gender: "f" });
         const v2 = await view(run, token.e2);
         expect(v2.lessons.map((l: { lesson_id: number }) => l.lesson_id)).toEqual([lesson.L3]);
+      });
+    });
+
+    it("v20: says what presentation each lesson has — the current lead's file, else a link, else one expected, else none — and never the file's name, path or link", async () => {
+      await inTx(async (run) => {
+        const states = async () => (await view(run)).lessons.map((l: { lesson_id: number; presentation: string }) => [l.lesson_id, l.presentation]);
+        // the version read as the owner: `set local role` (anon's view) outlives its savepoint
+        const ver = async (id: number) => Number((await run("owner", "select version from public.lessons where id = $1", [id])).rows[0].version);
+        // L1 sources «sheet», L2 nothing yet: none
+        expect(await states()).toEqual([[lesson.L1, "none"], [lesson.L2, "none"]]);
+        // a presentation expected (sheet + presentation): missing — and a previous speaker's file does not change that
+        await run(A, "select public.set_sources($1, $2, 'sheet_presentation', 'before', null, null, true)", [lesson.L1, await ver(lesson.L1)]);
+        expect(await states()).toEqual([[lesson.L1, "missing"], [lesson.L2, "none"]]);
+        const file = async (lessonId: number, speaker: string, name: string) =>
+          run("owner", `insert into public.source_files (edition_id, lesson_id, storage_path, display_name, mime, size_bytes, kind, speaker_id)
+                        values ($1, $2, $3, $4, 'application/pdf', 100, 'presentation', ${speaker})`, [ed, lessonId, `${ed}/${lessonId}/00000000-0000-4000-8000-0000000000${name.length}-${name}.pdf`, `${name}.pdf`]);
+        await file(lesson.L1, "null", "previous-deck");
+        expect(await states()).toEqual([[lesson.L1, "missing"], [lesson.L2, "none"]]);
+        // the current lead's: file
+        await file(lesson.L1, "(select speaker_id from public.lesson_speakers where lesson_id = $2 and role = 'lead')", "lead-deck");
+        // a link alone: link
+        await run(A, "select public.set_sources($1, $2, 'presentation', 'none', null, 'https://example.org/slides-for-the-test', false)", [lesson.L2, await ver(lesson.L2)]);
+        expect(await states()).toEqual([[lesson.L1, "file"], [lesson.L2, "link"]]);
+        // a source file (not a presentation) is no presentation
+        const text = JSON.stringify(await view(run));
+        for (const s of ["lead-deck", "previous-deck", "slides-for-the-test", `${ed}/`]) expect(text, s).not.toContain(s);
+        // a memorial slot: always none
+        const room = Number((await run("owner", "select id from public.rooms where edition_id = $1 and is_default", [ed])).rows[0].id);
+        await run("owner", "insert into public.lessons (edition_id, kind, day, start_min, end_min, room_id, title, escort_roster_id, sources_kind) values ($1, 'memorial', 0, 780, 795, $2, 'זמן זיכרון', $3, 'presentation')",
+          [ed, room, roster.r1]);
+        expect((await view(run)).lessons.find((l: { kind: string }) => l.kind === "memorial").presentation).toBe("none");
       });
     });
 

@@ -1,15 +1,14 @@
 // «משמרות צוות» — who of the staff is on when, a list per day: a person (a team member of the site, or a name as
 // typed) or a whole cohort's staff («צוות מכינה לדוגמה נ» — the cohorts that came for part of the week wrote their
-// cohort, not names); a shift or the shift's lead («אחראי/ת משמרת»: the board warns about a shift without one); a note
-// («הקפצת מרצה»). The times are typed («08:30»; before 06:30 is the night after the day, «06:30» as an end is the next
+// cohort, not names); a note («הקפצת מרצה»). v20: no «אחראי/ת משמרת» — every staff shift is a shift (stream B turns
+// this list into the day × grid-rows schedule). The times are typed («08:30»; before 06:30 is the night after the day, «06:30» as an end is the next
 // morning). No phone: only the group heads' phones are kept, apart.
-import { type FormEvent, useId, useMemo, useState } from "react";
-import type { NewStaffShift, RotaStaffShift, StaffKind } from "../../../data/rota";
-import { ROTA_DAYS, rotaShiftsOf } from "../../../domain/rota";
-import { rotaWarnings } from "../../../domain/rotaWarnings";
+import { type FormEvent, useId, useState } from "react";
+import type { NewStaffShift, RotaStaffShift } from "../../../data/rota";
+import { ROTA_DAYS } from "../../../domain/rota";
 import { DAY_END, DAY_NAMES, DAY_START, type Day, fmt, fmtRange, parseClock } from "../../../domain/time";
-import { cohortsInOrder, STAFF_KIND_LABEL, staffWho } from "../../../exports/rota";
-import { Badge, Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, Field, INPUT, useFocusBack } from "../../settings/kit";
+import { cohortsInOrder, staffWho } from "../../../exports/rota";
+import { Button, CHOICE, CHOICE_OFF, CHOICE_ON, Confirm, Field, INPUT, useFocusBack } from "../../settings/kit";
 import { CARD, formRefusal, Problem, type RotaCtx } from "./parts";
 
 type Who = "member" | "name" | "cohort";
@@ -27,31 +26,18 @@ export function StaffShifts({ ctx }: { ctx: RotaCtx }) {
   const focus = useFocusBack();
   const [editing, setEditing] = useState<number | { day: Day } | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
-  const noLead = useMemo(() => rotaWarnings(data, e).filter((w) => w.kind === "no_lead"), [data, e]);
   const staff = [...data.staff].sort((a, b) => a.day - b.day || a.start_min - b.start_min || a.id - b.id);
-  const labels = (d: Day) =>
-    noLead
-      .filter((w) => w.day === d)
-      .map((w) => w.shift)
-      .filter((s) => s != null);
-  const shiftNames = rotaShiftsOf(e).labels;
   return (
     <div className="space-y-3">
-      <p className="text-sm text-ink-soft">מי מהצוות בתורנות בכל יום. «אחראי/ת משמרת» — מי שאחראי/ת על המשמרת כולה; משמרת בלי אחראי/ת מקבלת אזהרה בלוח. בלי טלפונים.</p>
+      <p className="text-sm text-ink-soft">מי מהצוות בתורנות בכל יום. בלי טלפונים.</p>
       {ROTA_DAYS.map((d) => {
         const mine = staff.filter((s) => s.day === d);
-        const missing = labels(d);
         return (
           <section key={d} aria-label={`יום ${DAY_NAMES[d]}`} className={`${CARD} space-y-2 sm:p-4`}>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <h3 className="font-display text-lg font-bold text-navy">יום {DAY_NAMES[d]}</h3>
               <span className="text-sm text-ink-soft">{mine.length || ""}</span>
             </div>
-            {missing.length > 0 && (
-              <p data-no-lead className="text-sm text-amber-900">
-                בלי אחראי/ת משמרת: {missing.map((s) => shiftNames[s!]).join(", ")}
-              </p>
-            )}
             {mine.length > 0 && (
               <ul aria-label={`משמרות הצוות ביום ${DAY_NAMES[d]}`} className="divide-y divide-sage/60">
                 {mine.map((s) =>
@@ -77,7 +63,6 @@ export function StaffShifts({ ctx }: { ctx: RotaCtx }) {
                             {fmtRange(s.start_min, s.end_min)}
                           </bdi>
                           <span className="min-w-0 font-bold break-words">{staffWho(data, s)}</span>
-                          {s.kind === "lead" && <Badge tone="accent">{STAFF_KIND_LABEL.lead}</Badge>}
                         </p>
                         {s.note && <p className="text-sm break-words text-ink-soft">{s.note}</p>}
                       </div>
@@ -167,7 +152,6 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
   const [member, setMember] = useState(initial?.member_id != null ? String(initial.member_id) : "");
   const [name, setName] = useState(initial?.member_id == null ? (initial?.name ?? "") : "");
   const [cohort, setCohort] = useState(initial?.cohort_id != null ? String(initial.cohort_id) : String(cohorts[0]?.id ?? ""));
-  const [kind, setKind] = useState<StaffKind>(initial?.kind ?? "shift");
   const [note, setNote] = useState(initial?.note ?? "");
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
@@ -185,7 +169,6 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
       member_id: who === "member" ? picked!.id : null,
       name: who === "member" ? picked!.display_name : who === "name" ? name : null,
       cohort_id: who === "cohort" ? Number(cohort) || null : null,
-      kind,
       note,
     };
     void onSave(
@@ -248,17 +231,6 @@ function StaffForm({ ctx, title, initial, day: day0, busy, onSave, onCancel }: {
               ))}
             </select>
           )}
-        </div>
-      </fieldset>
-      <fieldset className="min-w-0">
-        <legend className="mb-1 text-sm font-bold text-ink">סוג</legend>
-        <div className="flex flex-wrap gap-1.5">
-          {(["shift", "lead"] as StaffKind[]).map((k) => (
-            <label key={k} className={`${CHOICE} ${kind === k ? CHOICE_ON : CHOICE_OFF}`}>
-              <input type="radio" name={`${id}-kind`} checked={kind === k} onChange={() => setKind(k)} className="accent-navy" />
-              {STAFF_KIND_LABEL[k]}
-            </label>
-          ))}
         </div>
       </fieldset>
       <Field id={`${id}-note`} label="הערה (לא חובה)" hint="למשל «הקפצת מרצה». בלי טלפונים.">

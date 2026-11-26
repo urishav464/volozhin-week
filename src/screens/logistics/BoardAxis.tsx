@@ -1,7 +1,7 @@
 // The transport board's time axis (the reset, phase 3): one day, 06:30 → 06:30 the next morning, time running with the
 // page (insetInlineStart: right to left). A lane per transport — the lesson a faint block, the outbound leg a bar from
 // the pickup to the start (or a hollow marker at the start when the pickup time is unknown), the return of «הלוך ושוב»
-// a marker at the teaching's end with no length — then a lane per staff shift, its lead marked. Drawn for the eye only
+// a marker at the teaching's end with no length — then a lane per staff shift (v20: no lead). Drawn for the eye only
 // (aria-hidden) from a tablet up: its text twin is the list below it, the accessible version and the phone's whole
 // board. A click on a lane focuses its row in the list.
 import { fmt } from "../../domain/time";
@@ -116,12 +116,9 @@ function ShiftTrack({ lane: s }: { lane: ShiftLane }) {
         <Ticks />
         <span
           data-shift-lane={s.shift.id}
-          data-lead={s.lead || undefined}
-          className={`absolute inset-y-1.5 overflow-hidden rounded ${s.lead ? "border-2 border-navy bg-gold-soft" : "border border-navy/40 bg-accent-soft"}`}
+          className="absolute inset-y-1.5 overflow-hidden rounded border border-navy/40 bg-accent-soft"
           style={pos(s.shift.start_min, s.shift.end_min)}
-        >
-          {s.lead && <span className="absolute inset-y-0 start-1 flex items-center text-[10px] font-bold text-navy">אחראי/ת</span>}
-        </span>
+        />
       </div>
     </>
   );

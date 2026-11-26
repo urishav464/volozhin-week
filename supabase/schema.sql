@@ -52,10 +52,17 @@ create schema if not exists app;
 -- Saturday night's shopping list, «נשלח לדפוס», presentations beside the sources,
 -- a speaker's public words and small photo, a lesson's note for guests, the
 -- approval to appear (approaches.public_ok) and the schedule link's new shape.
+-- v20: the owner's logistics and presentations feedback — a cohort's trainees,
+-- its three diet numbers and its staff contact (the name for the team; the phone
+-- in a table of its own, the heads' phones' rule), the duties each cohort helps
+-- in (rota_cohort_duties — a cohort that helps in none has no groups), a
+-- cohort split into groups in one call (rota_split_cohort), no «אחראי/ת
+-- משמרת» (rota_staff_shifts.kind dropped), start_edition carrying the cohorts
+-- and their duties, and the escort's page saying what presentation a lesson has.
 -- -----------------------------------------------------------------------------
 create or replace function public.schema_version() returns integer
   language sql immutable set search_path = ''
-  as $$ select 19 $$;
+  as $$ select 20 $$;
 
 -- -----------------------------------------------------------------------------
 -- Editions — one per year's week (and practice/demo sandboxes, and archived
@@ -1321,6 +1328,11 @@ create or replace function public.start_edition(
     -- v19: each preparation keeps its kind (a task, or an item of the shopping
     -- list with its quantity); never «נשלח לדפוס» (settings.reader_sent) and never
     -- an approach — so no speaker starts the year approved for the guests' site.
+    -- v20: and the cohorts — a letter, a name, «הצוות שלה יכול להסיע», their
+    -- place in the list — with the duties each helps in (the new duties by their
+    -- name key, the new cohorts by their letter: each one per edition); never a
+    -- cohort's trainees, diets, staff contact or its phone, its groups or when it
+    -- is on campus.
     select id, settings into v_from, v_prev from public.editions where kind = 'real' order by (status <> 'archived') desc, id desc limit 1;
     if coalesce(p_deactivate_team, false) then
       update public.members set active = false
@@ -1345,6 +1357,17 @@ create or replace function public.start_edition(
       from public.rota_duties d where d.edition_id = v_from order by d.sort, d.id;
     insert into public.rota_prep_tasks (edition_id, text, sort, kind, qty)
     select v, t.text, t.sort, t.kind, t.qty from public.rota_prep_tasks t where t.edition_id = v_from order by t.sort, t.id;
+    insert into public.rota_cohorts (edition_id, letter, name, can_drive, sort)
+    select v, c.letter, c.name, c.can_drive, c.sort from public.rota_cohorts c where c.edition_id = v_from order by c.sort, c.letter collate "C", c.id;
+    insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id)
+    select v, nc.id, nd.id
+      from public.rota_cohort_duties cd
+      join public.rota_cohorts oc on oc.id = cd.cohort_id
+      join public.rota_duties od on od.id = cd.duty_id
+      join public.rota_cohorts nc on nc.edition_id = v and nc.letter = oc.letter
+      join public.rota_duties nd on nd.edition_id = v and nd.name_key = od.name_key
+     where cd.edition_id = v_from
+     order by nc.id, nd.id;
     return v;
   end
   $$;
@@ -3947,6 +3970,13 @@ create or replace function app.kk_write_leaders(p_group bigint, p_leaders jsonb)
 -- the lesson's note to the escort, the four ticks — and, only from W−7 (Israel
 -- time) of a real edition whose week has a date, the lead speaker's phone; the
 -- driver's name and phone only once the transport was approved and arranged.
+-- v20: and what presentation the lesson has (`presentation`, the state
+-- src/domain/presentations.ts presentationRows gives its row): 'file' — the
+-- current lead speaker uploaded one (a previous speaker's never counts); else
+-- 'link' — a presentation link; else 'missing' — the sources say one is
+-- expected; else 'none' — and a memorial slot always 'none'. The state alone:
+-- never a file's name, a storage path or a link (the page computes where the
+-- file is from the day, the time and the room, as the week's zip names it).
 -- Never an amount, an approval, an e-mail, the pickup address, another
 -- escort's lesson or anyone else's note.
 create or replace function public.escort_view(p_token text) returns jsonb
@@ -3984,7 +4014,15 @@ create or replace function public.escort_view(p_token text) returns jsonb
                  'transport', l.transport <> 'none' and l.approval = 'approved',
                  'driver', case when v_ed.kind = 'real' and l.transport <> 'none' and l.approval = 'approved' and t.arranged
                                 then jsonb_build_object('name', t.driver_name, 'phone', t.driver_phone) end,
-                 'ticks', app.ticks_of(l.id))
+                 'ticks', app.ticks_of(l.id),
+                 'presentation', case
+                                   when l.kind = 'memorial' then 'none'
+                                   when exists (select 1 from public.source_files f
+                                                 where f.lesson_id = l.id and f.kind = 'presentation' and f.speaker_id = x.speaker_id) then 'file'
+                                   when l.presentation_url is not null then 'link'
+                                   when l.sources_kind in ('presentation', 'sheet_presentation') then 'missing'
+                                   else 'none'
+                                 end)
                order by l.day, l.start_min, rm.sort, l.id)
           from public.lessons l
           join public.rooms rm on rm.id = l.room_id
@@ -6417,8 +6455,10 @@ create trigger editions_purged_guard before insert or update on public.editions
 -- details), its links revoked
 -- (the anon functions answer `link_invalid` from now on) and their rate-limit
 -- counts deleted, and (v16) its group heads' phones deleted (rota_group_contacts —
--- the groups, the heads' names and the whole rota stay). Returns the counts; logs
--- them (and nothing else) in the edition's activity.
+-- the groups, the heads' names and the whole rota stay) — v20: and its cohorts'
+-- staff contacts' phones (rota_cohort_contacts — the names stay), counted with the
+-- heads' in `rota_contacts`. Returns the counts; logs them (and nothing else) in
+-- the edition's activity.
 create or replace function public.purge_edition_private(p_edition bigint, p_confirm text) returns jsonb
   language plpgsql security definer set search_path = ''
   as $$
@@ -6429,6 +6469,7 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     v_h   integer;
     v_n   integer;
     v_r   integer;
+    v_c   integer;
     v_at  timestamptz;
   begin
     if not app.is_global_admin() then perform app.refuse('forbidden'); end if;
@@ -6449,6 +6490,9 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
     get diagnostics v_l = row_count;
     delete from public.rota_group_contacts c using public.rota_groups g where g.id = c.group_id and g.edition_id = p_edition;
     get diagnostics v_r = row_count;
+    delete from public.rota_cohort_contacts where edition_id = p_edition;
+    get diagnostics v_c = row_count;
+    v_r := v_r + v_c;
     v_at := coalesce(v_ed.purged_at, now());
     perform set_config('app.purging', 'on', true);
     update public.editions set purged_at = v_at where id = p_edition and purged_at is null;
@@ -6468,7 +6512,8 @@ create or replace function public.purge_edition_private(p_edition bigint, p_conf
 -- deactivate (with p_deactivate_team) and how many of their admins stay — and
 -- what stays across the years as it is. v16: how many duties and preparations
 -- of «תורנויות» it would copy, and whether the shifts' own cuts and names come
--- too. v17: whether the edition's own title list comes too. Counts and labels;
+-- too. v17: whether the edition's own title list comes too. v20: how many
+-- cohorts it would copy, and how many of their duties. Counts and labels;
 -- never an address.
 -- STABLE: PL/pgSQL runs it read-only, so it cannot write.
 create or replace function public.start_edition_preview(p_deactivate_team boolean default true) returns jsonb
@@ -6491,6 +6536,8 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
       'rota_duties', (select count(*) from public.rota_duties d where d.edition_id = v_from.id)::integer,           -- v16
       'rota_prep_tasks', (select count(*) from public.rota_prep_tasks t where t.edition_id = v_from.id)::integer,
       'rota_shifts', coalesce(v_from.settings ? 'rota_shifts', false),
+      'rota_cohorts', (select count(*) from public.rota_cohorts c where c.edition_id = v_from.id)::integer,          -- v20
+      'rota_cohort_duties', (select count(*) from public.rota_cohort_duties x where x.edition_id = v_from.id)::integer,
       'titles', coalesce(jsonb_typeof(v_from.settings -> 'titles') = 'array' and jsonb_array_length(v_from.settings -> 'titles') > 0, false),   -- v17
       'deactivate', case when coalesce(p_deactivate_team, false) then
                       (select count(*) from public.members m
@@ -6518,9 +6565,17 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
 -- phrases, «roster» the trainees).
 --
 --   rota_cohorts         the cohorts on campus that week («מכינות»): a letter (it
---                        starts its groups' codes: א → א1, א2…), a name, the diets
---                        the food orders count (≤ 6 labels as typed, each with a
---                        number of people).
+--                        starts its groups' codes: א → א1, א2…), a name; v20 its
+--                        trainees and three diet numbers for the meals (NULL = TBD:
+--                        «צמחוני/טבעוני», «ללא גלוטן» and «מהם גם וגם» — how many
+--                        are both), its staff contact's name («איש/אשת קשר מהצוות»,
+--                        the team's to read).
+--   rota_cohort_duties   v20: the duties a cohort helps in — a cohort «helps» when
+--                        it has one; a group only in a cohort that helps
+--                        (`cohort_not_helping`), and a cohort with groups keeps one
+--                        (deleting its last is `in_use`).
+--   rota_cohort_contacts v20: the staff contact's phone — personal data, the heads'
+--                        phones' rule (below), its own table.
 --   rota_presence        one row per cohort, day and shift it is on campus; no row
 --                        = not marked (never assumed present: the fair suggestion
 --                        places nobody there).
@@ -6543,8 +6598,8 @@ create or replace function public.start_edition_preview(p_deactivate_team boolea
 --                        shift (rota_assignments_one_duty); `suggested` until
 --                        anyone edits it (the guard makes an edited row `hand`).
 --   rota_staff_shifts    the staff's shifts: a team member (by name), a name as
---                        typed, or a cohort's whole staff; «משמרת» or «אחראי/ת
---                        משמרת», a note. No phone.
+--                        typed, or a cohort's whole staff; a note. No phone. (v20:
+--                        no «אחראי/ת משמרת» — the kind went.)
 --   rota_prep_tasks      the Saturday-night preparations («מוצ"ש–ראשון»), in order;
 --                        a task's number is its place in the list.
 -- Writes are direct under RLS, the knowledge notes' way: column grants (never an
@@ -6568,16 +6623,28 @@ create table if not exists public.rota_cohorts (
   edition_id bigint not null references public.editions (id) on delete cascade,
   letter     text not null check (char_length(letter) between 1 and 3),
   name       text not null check (btrim(name) <> '' and char_length(name) <= 80),
-  diets      jsonb not null default '[]'::jsonb check (jsonb_typeof(diets) = 'array' and jsonb_array_length(diets) <= 6),
   sort       integer not null default 0,
   unique (id, edition_id),
   unique (edition_id, letter)
 );
--- v19: «עוזרת בתורנויות» (off: the fair suggestion leaves its groups out; its
--- presence still counts for the meals) and «הצוות שלה יכול להסיע» (the transport
--- board lists such cohorts beside the staff's shifts — names only).
-alter table public.rota_cohorts add column if not exists helps_rota boolean not null default true;
+-- v19: «הצוות שלה יכול להסיע» (the transport board lists such cohorts beside the
+-- staff's shifts — names only). v19's «עוזרת בתורנויות» (helps_rota) went in v20:
+-- the duties a cohort helps in are rota_cohort_duties (below, where the old flag
+-- is converted and dropped).
 alter table public.rota_cohorts add column if not exists can_drive boolean not null default false;
+-- v20: the meals' numbers — trainees, and of them «צמחוני/טבעוני» (one dish),
+-- «ללא גלוטן» and «מהם גם וגם» (both; so veg-only = veg − both, gf-only = gf −
+-- both, regular = trainees − veg − gf + both); NULL = TBD. The guard holds both ≤
+-- veg and ≤ gf, and veg + gf − both ≤ trainees, when they are known
+-- (`rota_diets_exceed`). And the cohort's staff contact («איש/אשת קשר מהצוות
+-- (משבץ/ת)»): a name the team reads; its phone is rota_cohort_contacts'.
+alter table public.rota_cohorts add column if not exists trainees integer check (trainees between 0 and 1000);
+alter table public.rota_cohorts add column if not exists diet_veg integer check (diet_veg between 0 and 1000);
+alter table public.rota_cohorts add column if not exists diet_gf integer check (diet_gf between 0 and 1000);
+alter table public.rota_cohorts add column if not exists diet_both integer check (diet_both between 0 and 1000);
+alter table public.rota_cohorts add column if not exists contact_name text check (btrim(contact_name) <> '' and char_length(contact_name) <= 80);
+-- (v16–v19's free-typed diets go below, once the duties a cohort helps in are
+-- converted: their column tells a v16–v18 database apart.)
 alter table public.rota_cohorts enable row level security;
 
 create table if not exists public.rota_presence (
@@ -6659,7 +6726,6 @@ create table if not exists public.rota_staff_shifts (
   member_id  bigint references public.members (id) on delete set null,   -- a team member picked; `name` is their name
   name       text check (btrim(name) <> '' and char_length(name) <= 80),
   cohort_id  bigint,                                                      -- a cohort's whole staff («צוות מכינת נ»)
-  kind       text not null default 'shift' check (kind in ('shift', 'lead')),
   note       text check (char_length(note) <= 200),
   check (start_min < end_min),
   check ((name is null) <> (cohort_id is null)),
@@ -6669,6 +6735,9 @@ create table if not exists public.rota_staff_shifts (
 create index if not exists rota_staff_shifts_edition on public.rota_staff_shifts (edition_id, day);
 create index if not exists rota_staff_shifts_member on public.rota_staff_shifts (member_id);
 create index if not exists rota_staff_shifts_cohort on public.rota_staff_shifts (cohort_id);
+-- v20: no «אחראי/ת משמרת» — every staff shift is a shift (the kind, its check and
+-- its grants go with the column).
+alter table public.rota_staff_shifts drop column if exists kind;
 alter table public.rota_staff_shifts enable row level security;
 
 -- A task's group is optional; a group deleted leaves the task, without a group.
@@ -6688,6 +6757,60 @@ alter table public.rota_prep_tasks add column if not exists qty text check (char
 create index if not exists rota_prep_tasks_edition on public.rota_prep_tasks (edition_id);
 create index if not exists rota_prep_tasks_group on public.rota_prep_tasks (group_id);
 alter table public.rota_prep_tasks enable row level security;
+
+-- v20: the duties a cohort helps in. A row stays in its edition (both composite
+-- keys); deleting the cohort or the duty takes it. The fair suggestion places a
+-- group only on a duty its cohort helps in; a cohort with no row «does not help»
+-- and has no groups (app.rota_groups_guard); a cohort with groups keeps one
+-- (app.rota_cohort_duties_guard).
+create table if not exists public.rota_cohort_duties (
+  edition_id bigint not null,
+  cohort_id  bigint not null,
+  duty_id    bigint not null,
+  primary key (cohort_id, duty_id),
+  foreign key (cohort_id, edition_id) references public.rota_cohorts (id, edition_id) on delete cascade,
+  foreign key (duty_id, edition_id) references public.rota_duties (id, edition_id) on delete cascade
+);
+create index if not exists rota_cohort_duties_edition on public.rota_cohort_duties (edition_id);
+create index if not exists rota_cohort_duties_duty on public.rota_cohort_duties (duty_id);
+alter table public.rota_cohort_duties enable row level security;
+
+-- v20: a cohort's staff contact's phone — personal data, as a group head's: its own
+-- table, so no read of the rota (load_rota, a select on rota_cohorts) can ever carry
+-- it; read under app.may_see_cohort_contacts, written only by set_rota_contact.
+create table if not exists public.rota_cohort_contacts (
+  cohort_id  bigint primary key,
+  edition_id bigint not null,
+  phone      text not null check (char_length(phone) <= 40 and char_length(regexp_replace(phone, '[^0-9]', '', 'g')) >= 6),
+  foreign key (cohort_id, edition_id) references public.rota_cohorts (id, edition_id) on delete cascade
+);
+create index if not exists rota_cohort_contacts_edition on public.rota_cohort_contacts (edition_id);
+alter table public.rota_cohort_contacts enable row level security;
+
+-- v19 → v20: «עוזרת בתורנויות» becomes the duties a cohort helps in — a cohort that
+-- helped helps in every duty of its edition, one that did not in none — and the
+-- flag goes; on a v16–v18 database (no flag yet, its diets column still there)
+-- every cohort helped, so every cohort helps in every duty. Once: a v20 database
+-- has neither column and nothing to convert. Dynamic, so a fresh install never
+-- parses a word about the old columns. Then v16–v19's free-typed diets (≤ 6 labels
+-- and counts) go: no edition held a cohort (production checked 24.11), and a label
+-- as typed has no place among the three numbers.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'rota_cohorts' and column_name = 'helps_rota') then
+    execute 'insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id)
+             select c.edition_id, c.id, d.id from public.rota_cohorts c join public.rota_duties d on d.edition_id = c.edition_id
+              where c.helps_rota on conflict do nothing';
+    execute 'alter table public.rota_cohorts drop column helps_rota';
+  elsif exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'rota_cohorts' and column_name = 'diets') then
+    insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id)
+    select c.edition_id, c.id, d.id from public.rota_cohorts c join public.rota_duties d on d.edition_id = c.edition_id
+    on conflict do nothing;
+  end if;
+end $$;
+alter table public.rota_cohorts drop column if exists diets;
 
 -- ------------------------------------------------------------- who
 
@@ -6716,6 +6839,21 @@ create or replace function app.may_see_rota_contacts(p_group bigint) returns boo
       select 1 from public.rota_groups g join public.editions e on e.id = g.edition_id
        where g.id = p_group and e.kind = 'real' and e.status <> 'archived'
          and app.my_role(g.edition_id) in ('admin', 'logistics'))
+  $$;
+
+-- v20: the same rule for a cohort's staff contact's phone (rota_cohort_contacts):
+-- a global admin; or an admin or a logistics member of the cohort's edition when
+-- it is a real edition that is not archived. Invoker: it reads the cohort and its
+-- edition as the caller may (the policy of rota_cohort_contacts runs it as the
+-- browser's role; set_rota_contact, a definer, as the owner) — a caller who may
+-- see the phone may read both rows, and app.my_role is the caller's either way.
+create or replace function app.may_see_cohort_contacts(p_cohort bigint) returns boolean
+  language sql stable security invoker set search_path = ''
+  as $$
+    select app.is_global_admin() or exists (
+      select 1 from public.rota_cohorts c join public.editions e on e.id = c.edition_id
+       where c.id = p_cohort and e.kind = 'real' and e.status <> 'archived'
+         and app.my_role(c.edition_id) in ('admin', 'logistics'))
   $$;
 
 -- Is this shift part of the week (src/domain/rota.ts rotaShiftActive —
@@ -6755,31 +6893,9 @@ create or replace function app.rota_no_contact(p text) returns text
   end
   $$;
 
--- A cohort's diets (src/data/rota.ts cleanDiets): an array of at most six
--- {label: one line ≤ 40, required, no contact; count: a whole number 0–1000},
--- stored as cleaned with those two keys only. NULL → none.
-create or replace function app.rota_clean_diets(p jsonb) returns jsonb
-  language plpgsql immutable set search_path = ''
-  as $$
-  declare
-    v_out   jsonb := '[]'::jsonb;
-    v_d     jsonb;
-    v_label text;
-    v_count integer;
-  begin
-    if p is null or jsonb_typeof(p) = 'null' then return v_out; end if;
-    if jsonb_typeof(p) <> 'array' or jsonb_array_length(p) > 6 then perform app.refuse('bad_value'); end if;
-    for v_d in select x from jsonb_array_elements(p) with ordinality as t(x, o) order by o loop
-      if jsonb_typeof(v_d) <> 'object' or jsonb_typeof(v_d -> 'label') is distinct from 'string' then perform app.refuse('bad_value'); end if;
-      v_label := app.rota_no_contact(app.clean_line(v_d ->> 'label', 40));
-      if v_label is null then perform app.refuse('bad_value'); end if;
-      v_count := app.json_int(v_d -> 'count', 0, 1000);
-      if v_count is null then perform app.refuse('bad_value'); end if;
-      v_out := v_out || jsonb_build_array(jsonb_build_object('label', v_label, 'count', v_count));
-    end loop;
-    return v_out;
-  end
-  $$;
+-- v16–v19 cleaned the free-typed diets here (app.rota_clean_diets); v20 counts
+-- three numbers instead (the cohorts' guard), and the helper goes.
+drop function if exists app.rota_clean_diets(jsonb);
 
 -- Every guard: the row stays in its edition; its text cleaned (app.clean_line /
 -- app.clean_block — too long `bad_value`) with no phone or e-mail in it; the
@@ -6787,7 +6903,13 @@ create or replace function app.rota_clean_diets(p jsonb) returns jsonb
 -- them (the CHECKs above are the same rules, never reached through a guard).
 
 -- A letter: one line of 1–3 characters, no digit (it would run into the group's
--- number) and no white space; a name, required.
+-- number) and no white space; a name, required. v20, in this order (src/data/rota.ts
+-- cleanCohortFields): the staff contact's name — one line ≤ 80, no phone or e-mail
+-- (its phone has its own table); the four numbers, each NULL (TBD) or a whole
+-- number 0–1000 (`bad_value`); then between them, where both sides are known, «מהם
+-- גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», and (all four known) «צמחוני/טבעוני» +
+-- «ללא גלוטן» − «גם וגם» ≤ the trainees (`rota_diets_exceed`); the sort; «יכול
+-- להסיע» true or false.
 create or replace function app.rota_cohorts_guard() returns trigger
   language plpgsql security definer set search_path = ''
   as $$
@@ -6799,10 +6921,21 @@ create or replace function app.rota_cohorts_guard() returns trigger
     if new.letter ~ '[0-9\t\n\v\f\r    -     　﻿]' then perform app.refuse('bad_value'); end if;
     new.name := app.rota_no_contact(app.clean_line(new.name, 80));
     if new.name is null then perform app.refuse('name_required'); end if;
-    new.diets := app.rota_clean_diets(new.diets);
+    new.contact_name := app.rota_no_contact(app.clean_line(new.contact_name, 80));
+    if (new.trainees is not null and new.trainees not between 0 and 1000)
+       or (new.diet_veg is not null and new.diet_veg not between 0 and 1000)
+       or (new.diet_gf is not null and new.diet_gf not between 0 and 1000)
+       or (new.diet_both is not null and new.diet_both not between 0 and 1000) then
+      perform app.refuse('bad_value');
+    end if;
+    -- a comparison with a NULL (TBD) side is NULL: not refused (the sum only when all four are known)
+    if new.diet_both > new.diet_veg or new.diet_both > new.diet_gf
+       or new.diet_veg + new.diet_gf - new.diet_both > new.trainees then
+      perform app.refuse('rota_diets_exceed');
+    end if;
     new.sort := coalesce(new.sort, 0);
-    -- v19: the two flags, each true or false (a null is bad_value, before the NOT NULL)
-    if new.helps_rota is null or new.can_drive is null then perform app.refuse('bad_value'); end if;
+    -- v19: «יכול להסיע» true or false (a null is bad_value, before the NOT NULL)
+    if new.can_drive is null then perform app.refuse('bad_value'); end if;
     return new;
   end
   $$;
@@ -6810,6 +6943,10 @@ drop trigger if exists rota_cohorts_guard on public.rota_cohorts;
 create trigger rota_cohorts_guard before insert or update on public.rota_cohorts
   for each row execute function app.rota_cohorts_guard();
 
+-- v20: after the values, a group goes only into a cohort that helps in a duty
+-- (rota_cohort_duties) — inserted, or moved there — else `cohort_not_helping`; a
+-- cohort that is not the edition's is left to the foreign key (`stale`). A group
+-- already in a cohort is never refused for staying there.
 create or replace function app.rota_groups_guard() returns trigger
   language plpgsql security definer set search_path = ''
   as $$
@@ -6818,12 +6955,42 @@ create or replace function app.rota_groups_guard() returns trigger
     if new.number is null or new.number not between 1 and 99 then perform app.refuse('bad_value'); end if;
     if new.size is not null and new.size not between 0 and 200 then perform app.refuse('bad_value'); end if;
     new.head_name := app.rota_no_contact(app.clean_line(new.head_name, 80));
+    if (tg_op = 'INSERT' or new.cohort_id is distinct from old.cohort_id)
+       and exists (select 1 from public.rota_cohorts c where c.id = new.cohort_id and c.edition_id = new.edition_id)
+       and not exists (select 1 from public.rota_cohort_duties x where x.cohort_id = new.cohort_id) then
+      perform app.refuse('cohort_not_helping');
+    end if;
     return new;
   end
   $$;
 drop trigger if exists rota_groups_guard on public.rota_groups;
 create trigger rota_groups_guard before insert or update on public.rota_groups
   for each row execute function app.rota_groups_guard();
+
+-- v20: a cohort with groups keeps a duty — deleting its last row is `in_use`
+-- (whether the row itself is deleted, or the duty is, taking it). Deleting the
+-- cohort (it has no groups: their key is «no action») or the whole edition takes
+-- its rows: either is gone by the time the cascade reaches them, and nothing is
+-- checked. Rows of one statement are checked one after another, so deleting a
+-- cohort's every row stops at its last. Invoker: whoever may delete the row may
+-- read its cohort, groups and edition (a cascade runs as the tables' owner); it
+-- raises the refusal itself, as app.refuse does — no browser role may run that.
+create or replace function app.rota_cohort_duties_guard() returns trigger
+  language plpgsql security invoker set search_path = ''
+  as $$
+  begin
+    if exists (select 1 from public.editions e where e.id = old.edition_id)
+       and exists (select 1 from public.rota_cohorts c where c.id = old.cohort_id)
+       and exists (select 1 from public.rota_groups g where g.cohort_id = old.cohort_id)
+       and not exists (select 1 from public.rota_cohort_duties x where x.cohort_id = old.cohort_id and x.duty_id <> old.duty_id) then
+      raise exception using message = 'in_use', errcode = 'P0001';
+    end if;
+    return old;
+  end
+  $$;
+drop trigger if exists rota_cohort_duties_guard on public.rota_cohort_duties;
+create trigger rota_cohort_duties_guard before delete on public.rota_cohort_duties
+  for each row execute function app.rota_cohort_duties_guard();
 
 create or replace function app.rota_duties_guard() returns trigger
   language plpgsql security definer set search_path = ''
@@ -6874,7 +7041,7 @@ create trigger rota_assignments_guard before insert or update on public.rota_ass
 -- multiples of 5), exactly one of a name (a person) and a cohort (its whole
 -- staff) — neither `name_required`, both `bad_value` — a member only with a name,
 -- and a member picked (or changed) must be an active member of the edition or
--- of every edition; a kind; a note.
+-- of every edition; a note (v20: no kind).
 create or replace function app.rota_staff_guard() returns trigger
   language plpgsql security definer set search_path = ''
   as $$
@@ -6895,7 +7062,6 @@ create or replace function app.rota_staff_guard() returns trigger
                         where m.id = new.member_id and m.active and (m.edition_id is null or m.edition_id = new.edition_id)) then
       perform app.refuse('bad_value');
     end if;
-    if new.kind is null or new.kind not in ('shift', 'lead') then perform app.refuse('bad_value'); end if;
     new.note := app.rota_no_contact(app.clean_line(new.note, 200));
     return new;
   end
@@ -6927,8 +7093,10 @@ create trigger rota_prep_tasks_guard before insert or update on public.rota_prep
 
 -- ------------------------------------------------------------- policies
 
--- The seven: the edition's team reads, app.may_write_rota writes. The heads'
--- phones: read under app.may_see_rota_contacts only, written by no policy at all.
+-- The seven (v20: and the duties a cohort helps in — read, inserted and deleted,
+-- never updated): the edition's team reads, app.may_write_rota writes. The heads'
+-- phones: read under app.may_see_rota_contacts only, and (v20) the cohorts' staff
+-- contacts' under app.may_see_cohort_contacts — written by no policy at all.
 drop policy if exists rota_cohorts_read on public.rota_cohorts;
 create policy rota_cohorts_read on public.rota_cohorts for select to authenticated using (app.can_see_edition(edition_id));
 drop policy if exists rota_cohorts_insert on public.rota_cohorts;
@@ -6995,12 +7163,22 @@ create policy rota_prep_tasks_delete on public.rota_prep_tasks for delete to aut
 drop policy if exists rota_group_contacts_read on public.rota_group_contacts;
 create policy rota_group_contacts_read on public.rota_group_contacts for select to authenticated
   using (app.may_see_rota_contacts(rota_group_contacts.group_id));
+drop policy if exists rota_cohort_duties_read on public.rota_cohort_duties;
+create policy rota_cohort_duties_read on public.rota_cohort_duties for select to authenticated using (app.can_see_edition(edition_id));
+drop policy if exists rota_cohort_duties_insert on public.rota_cohort_duties;
+create policy rota_cohort_duties_insert on public.rota_cohort_duties for insert to authenticated with check (app.may_write_rota(edition_id));
+drop policy if exists rota_cohort_duties_delete on public.rota_cohort_duties;
+create policy rota_cohort_duties_delete on public.rota_cohort_duties for delete to authenticated using (app.may_write_rota(edition_id));
+drop policy if exists rota_cohort_contacts_read on public.rota_cohort_contacts;
+create policy rota_cohort_contacts_read on public.rota_cohort_contacts for select to authenticated
+  using (app.may_see_cohort_contacts(rota_cohort_contacts.cohort_id));
 
 -- ------------------------------------------------------------- reads
 
 -- Everything the «תורנויות» screens and pages read, in one round trip, as the
--- caller's RLS allows (invoker, like load_kk) — never a phone (its own table,
--- not read here). NULL for an edition the caller cannot see. The orders are the
+-- caller's RLS allows (invoker, like load_kk) — never a phone (their own tables,
+-- not read here). v20: a cohort's trainees, diet numbers and staff contact's
+-- name; `cohortDuties`, the duties each cohort helps in; a staff shift's kind gone. NULL for an edition the caller cannot see. The orders are the
 -- contract's (cohorts by sort and letter, compared by code point as JavaScript
 -- compares strings; groups by cohort and number; …), so DemoRota gives the same.
 create or replace function public.load_rota(p_edition bigint) returns jsonb
@@ -7008,9 +7186,12 @@ create or replace function public.load_rota(p_edition bigint) returns jsonb
   as $$
     select jsonb_build_object(
       'cohorts', coalesce((select jsonb_agg(jsonb_build_object('id', c.id, 'edition_id', c.edition_id, 'letter', c.letter, 'name', c.name,
-                                                               'diets', c.diets, 'sort', c.sort, 'helps_rota', c.helps_rota, 'can_drive', c.can_drive)
+                                                               'trainees', c.trainees, 'diet_veg', c.diet_veg, 'diet_gf', c.diet_gf, 'diet_both', c.diet_both,
+                                                               'contact_name', c.contact_name, 'sort', c.sort, 'can_drive', c.can_drive)
                                                 order by c.sort, c.letter collate "C", c.id)
                              from public.rota_cohorts c where c.edition_id = p_edition), '[]'::jsonb),
+      'cohortDuties', coalesce((select jsonb_agg(jsonb_build_object('cohort_id', x.cohort_id, 'duty_id', x.duty_id) order by x.cohort_id, x.duty_id)
+                                  from public.rota_cohort_duties x where x.edition_id = p_edition), '[]'::jsonb),
       'presence', coalesce((select jsonb_agg(jsonb_build_object('cohort_id', p.cohort_id, 'day', p.day, 'shift', p.shift) order by p.cohort_id, p.day, p.shift)
                               from public.rota_presence p where p.edition_id = p_edition), '[]'::jsonb),
       'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'edition_id', g.edition_id, 'cohort_id', g.cohort_id, 'number', g.number,
@@ -7026,7 +7207,7 @@ create or replace function public.load_rota(p_edition bigint) returns jsonb
                                  from public.rota_assignments a where a.edition_id = p_edition), '[]'::jsonb),
       'staff', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'edition_id', s.edition_id, 'day', s.day, 'start_min', s.start_min,
                                                              'end_min', s.end_min, 'member_id', s.member_id, 'name', s.name, 'cohort_id', s.cohort_id,
-                                                             'kind', s.kind, 'note', s.note) order by s.day, s.start_min, s.id)
+                                                             'note', s.note) order by s.day, s.start_min, s.id)
                            from public.rota_staff_shifts s where s.edition_id = p_edition), '[]'::jsonb),
       'prep', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'edition_id', t.edition_id, 'text', t.text, 'group_id', t.group_id,
                                                             'done', t.done, 'sort', t.sort, 'kind', t.kind, 'qty', t.qty) order by t.sort, t.id)
@@ -7039,26 +7220,38 @@ create or replace function public.load_rota(p_edition bigint) returns jsonb
 -- in one call, by group. Invoker — rota_groups and rota_group_contacts are read
 -- through their policies, and each row also passes app.may_see_rota_contacts,
 -- the very predicate of set_rota_contact: never wider than the rule, group by
--- group. None (not the caller's to see, or none written) → [].
+-- group. v20: then the cohorts' staff contacts' phones, {cohort_id, phone} by
+-- cohort, each row passing app.may_see_cohort_contacts — the heads' first. None
+-- (not the caller's to see, or none written) → [].
 create or replace function public.get_rota_contacts(p_edition bigint) returns jsonb
   language sql stable security invoker set search_path = ''
   as $$
-    select coalesce(jsonb_agg(jsonb_build_object('group_id', c.group_id, 'head_phone', c.head_phone) order by c.group_id), '[]'::jsonb)
-      from public.rota_group_contacts c
-      join public.rota_groups g on g.id = c.group_id
-     where g.edition_id = p_edition
-       and app.may_see_rota_contacts(c.group_id)
+    select coalesce((select jsonb_agg(jsonb_build_object('group_id', c.group_id, 'head_phone', c.head_phone) order by c.group_id)
+                       from public.rota_group_contacts c
+                       join public.rota_groups g on g.id = c.group_id
+                      where g.edition_id = p_edition
+                        and app.may_see_rota_contacts(c.group_id)), '[]'::jsonb)
+        || coalesce((select jsonb_agg(jsonb_build_object('cohort_id', k.cohort_id, 'phone', k.phone) order by k.cohort_id)
+                       from public.rota_cohort_contacts k
+                      where k.edition_id = p_edition
+                        and app.may_see_cohort_contacts(k.cohort_id)), '[]'::jsonb)
   $$;
 
 -- ------------------------------------------------------------- writes through functions
 
--- A group head's phone, for the people app.may_see_rota_contacts names (the
--- same who read it). The group is locked (FOR KEY SHARE — the lock its foreign
--- key takes anyway) before the checks: a delete on another connection either
--- finishes first (`stale`) or waits for this write and takes the phone with
--- the group. Blank or NULL deletes it; else one line ≤ 40 with at least six
--- digits (`bad_phone`). Never logged: not even that it changed.
-create or replace function public.set_rota_contact(p_group bigint, p_phone text) returns void
+-- A group head's phone (p_kind 'group'), or (v20) a cohort's staff contact's
+-- ('cohort') — still the one function, its old signature dropped — for the
+-- people app.may_see_rota_contacts / app.may_see_cohort_contacts name (the same
+-- who read it). In this order: not a member `not_member`; another kind
+-- `bad_value`; the group or cohort is locked (FOR KEY SHARE — the lock its
+-- foreign key takes anyway) before the other checks: a delete on another
+-- connection either finishes first (`stale`) or waits for this write and takes
+-- the phone with the row; not of an edition the caller sees `not_member`; not
+-- the caller's to see `rota_contact_hidden`. Blank or NULL deletes it; else one
+-- line ≤ 40 with at least six digits (`bad_phone`). Never logged: not even that
+-- it changed.
+drop function if exists public.set_rota_contact(bigint, text);   -- v16–v19's signature: a group's phone alone
+create or replace function public.set_rota_contact(p_kind text, p_id bigint, p_phone text) returns void
   language plpgsql security definer set search_path = ''
   as $$
   declare
@@ -7066,18 +7259,71 @@ create or replace function public.set_rota_contact(p_group bigint, p_phone text)
     v_phone text;
   begin
     if not app.is_member() then perform app.refuse('not_member'); end if;
-    select g.edition_id into v_ed from public.rota_groups g where g.id = p_group for key share;
+    if p_kind is null or p_kind not in ('group', 'cohort') then perform app.refuse('bad_value'); end if;
+    if p_kind = 'group' then
+      select g.edition_id into v_ed from public.rota_groups g where g.id = p_id for key share;
+    else
+      select c.edition_id into v_ed from public.rota_cohorts c where c.id = p_id for key share;
+    end if;
     if v_ed is null then perform app.refuse('stale'); end if;
     if not app.can_see_edition(v_ed) then perform app.refuse('not_member'); end if;
-    if not app.may_see_rota_contacts(p_group) then perform app.refuse('rota_contact_hidden'); end if;
-    v_phone := app.clean_line(p_phone, 40);
-    if v_phone is null then
-      delete from public.rota_group_contacts where group_id = p_group;
-      return;
+    if not (case when p_kind = 'group' then app.may_see_rota_contacts(p_id) else app.may_see_cohort_contacts(p_id) end) then
+      perform app.refuse('rota_contact_hidden');
     end if;
-    if char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
-    insert into public.rota_group_contacts (group_id, head_phone) values (p_group, v_phone)
-    on conflict (group_id) do update set head_phone = excluded.head_phone;
+    v_phone := app.clean_line(p_phone, 40);
+    if v_phone is not null and char_length(regexp_replace(v_phone, '[^0-9]', '', 'g')) < 6 then perform app.refuse('bad_phone'); end if;
+    if p_kind = 'group' then
+      if v_phone is null then
+        delete from public.rota_group_contacts where group_id = p_id;
+      else
+        insert into public.rota_group_contacts (group_id, head_phone) values (p_id, v_phone)
+        on conflict (group_id) do update set head_phone = excluded.head_phone;
+      end if;
+    elsif v_phone is null then
+      delete from public.rota_cohort_contacts where cohort_id = p_id;
+    else
+      insert into public.rota_cohort_contacts (cohort_id, edition_id, phone) values (p_id, v_ed, v_phone)
+      on conflict (cohort_id) do update set phone = excluded.phone;
+    end if;
+  end
+  $$;
+
+-- v20: «חלוקה לקבוצות» — a cohort's groups replaced by new ones, numbered 1…n with
+-- these sizes (the screen's «הצעה»: as equal as possible, src/domain/rota.ts
+-- splitSizes), in ONE call and one transaction: the cohort's groups are deleted
+-- first (their assignments and heads' phones with them; their Saturday-night
+-- tasks keep their text, without a group — as deleting a group does). Invoker:
+-- every row goes through the caller's RLS and the tables' guards, as a direct
+-- write would — so no Advisor warning, and the refusals are the guards' own. In
+-- this order: no sizes, more than 99, a size missing or outside 0–200 `bad_value`;
+-- not the caller's to write (app.may_write_rota) `forbidden`; the cohort not this
+-- edition's `stale`; the cohort helps in no duty `cohort_not_helping` (the
+-- groups' guard). Answers the new groups as load_rota has them, by number. It
+-- raises its own refusals (an invoker cannot run app.refuse).
+create or replace function public.rota_split_cohort(p_edition bigint, p_cohort bigint, p_sizes integer[]) returns jsonb
+  language plpgsql volatile security invoker set search_path = ''
+  as $$
+  declare
+    v_out jsonb;
+  begin
+    if p_sizes is null or cardinality(p_sizes) = 0 or cardinality(p_sizes) > 99 or array_ndims(p_sizes) > 1
+       or array_position(p_sizes, null) is not null
+       or exists (select 1 from unnest(p_sizes) t(size) where t.size not between 0 and 200) then
+      raise exception using message = 'bad_value', errcode = 'P0001';
+    end if;
+    if not coalesce(app.may_write_rota(p_edition), false) then raise exception using message = 'forbidden', errcode = 'P0001'; end if;
+    if not exists (select 1 from public.rota_cohorts c where c.id = p_cohort and c.edition_id = p_edition) then
+      raise exception using message = 'stale', errcode = 'P0001';
+    end if;
+    delete from public.rota_groups where cohort_id = p_cohort and edition_id = p_edition;
+    with ins as (
+      insert into public.rota_groups (edition_id, cohort_id, number, size)
+      select p_edition, p_cohort, t.o::integer, t.size from unnest(p_sizes) with ordinality as t(size, o)
+      returning id, edition_id, cohort_id, number, size, head_name)
+    select jsonb_agg(jsonb_build_object('id', i.id, 'edition_id', i.edition_id, 'cohort_id', i.cohort_id, 'number', i.number,
+                                        'size', i.size, 'head_name', i.head_name) order by i.number)
+      into v_out from ins i;
+    return v_out;
   end
   $$;
 
@@ -7329,27 +7575,34 @@ grant execute on function public.start_edition_preview(boolean) to authenticated
 -- row's edition once written. rota_group_contacts is read through its policy
 -- (app.may_see_rota_contacts) and written only by set_rota_contact; load_rota
 -- and get_rota_contacts are invoker. app.rota_shift_active and the guards' own
--- helpers run inside the definer guards only.
+-- helpers run inside the definer guards only. v20: the duties a cohort helps in
+-- (inserted and deleted, never updated), the cohorts' staff contacts' phones
+-- (read through app.may_see_cohort_contacts — invoker —, written only by
+-- set_rota_contact), and rota_split_cohort (invoker: the caller's RLS and the
+-- guards, as a direct write).
 grant select, delete on public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_duties,
                         public.rota_assignments, public.rota_staff_shifts, public.rota_prep_tasks to authenticated;
-grant insert (edition_id, letter, name, diets, sort, helps_rota, can_drive),
-      update (letter, name, diets, sort, helps_rota, can_drive) on public.rota_cohorts to authenticated;   -- v19: the two flags
+grant insert (edition_id, letter, name, trainees, diet_veg, diet_gf, diet_both, contact_name, sort, can_drive),
+      update (letter, name, trainees, diet_veg, diet_gf, diet_both, contact_name, sort, can_drive) on public.rota_cohorts to authenticated;   -- v20: the numbers, the contact's name
+grant select, insert (edition_id, cohort_id, duty_id), delete on public.rota_cohort_duties to authenticated;                   -- v20: never updated
 grant insert (edition_id, cohort_id, day, shift) on public.rota_presence to authenticated;
 grant insert (edition_id, cohort_id, number, size, head_name), update (cohort_id, number, size, head_name) on public.rota_groups to authenticated;
 grant insert (edition_id, name, description, need_morning, need_afternoon, need_night, min_people, sort),
       update (name, description, need_morning, need_afternoon, need_night, min_people, sort) on public.rota_duties to authenticated;
 grant insert (edition_id, day, shift, duty_id, group_id, source), update (day, shift, duty_id, group_id) on public.rota_assignments to authenticated;
-grant insert (edition_id, day, start_min, end_min, member_id, name, cohort_id, kind, note),
-      update (day, start_min, end_min, member_id, name, cohort_id, kind, note) on public.rota_staff_shifts to authenticated;
+grant insert (edition_id, day, start_min, end_min, member_id, name, cohort_id, note),
+      update (day, start_min, end_min, member_id, name, cohort_id, note) on public.rota_staff_shifts to authenticated;   -- v20: no kind
 grant insert (edition_id, text, group_id, done, sort, kind, qty),
       update (text, group_id, done, sort, kind, qty) on public.rota_prep_tasks to authenticated;               -- v19: tasks and items
-grant select on public.rota_group_contacts to authenticated;
+grant select on public.rota_group_contacts, public.rota_cohort_contacts to authenticated;
 grant execute on function app.may_write_rota(bigint) to authenticated;
 grant execute on function app.may_see_rota_contacts(bigint) to authenticated;
+grant execute on function app.may_see_cohort_contacts(bigint) to authenticated;   -- v20: invoker, the cohorts' contacts' policy
 grant execute on function public.load_rota(bigint) to authenticated;
 grant execute on function public.get_rota_contacts(bigint) to authenticated;
-grant execute on function public.set_rota_contact(bigint, text) to authenticated;
+grant execute on function public.set_rota_contact(text, bigint, text) to authenticated;   -- v20: a group's or a cohort's
 grant execute on function public.set_rota_shifts(bigint, jsonb) to authenticated;
+grant execute on function public.rota_split_cohort(bigint, bigint, integer[]) to authenticated;   -- v20: invoker
 
 -- Day owners (v18): read under RLS (the edition's team — load_week is invoker),
 -- written only by the two functions. No new app.* function is a browser's to run.
@@ -7389,7 +7642,9 @@ grant execute on function public.set_public_ok(bigint, integer, boolean) to auth
 -- at a time); v16 every table of «תורנויות» (the group heads' phones among them;
 -- the screens reload after each write); v18 the days' owners (the week reloads
 -- after the write; nobody needs «ראיתי» live); v19 the speakers' photos (bytes a
--- guest may see only through the schedule link, and only with public_ok).
+-- guest may see only through the schedule link, and only with public_ok); v20 the
+-- duties a cohort helps in and the cohorts' staff contacts' phones (the screens
+-- reload after each write).
 -- speakers and approaches stay published: their new columns (public_bio, public_ok)
 -- are the team's to read anyway.
 -- -----------------------------------------------------------------------------
@@ -7411,7 +7666,7 @@ begin
                            'share_links', 'share_link_hits', 'escort_ticks', 'kk_groups', 'kk_leaders', 'kk_signups', 'book_orders',
                            'source_files', 'fallen', 'fallen_contacts', 'memorial_plans', 'lesson_reviews', 'lesson_import_notes',
                            'rota_cohorts', 'rota_presence', 'rota_groups', 'rota_group_contacts', 'rota_duties', 'rota_assignments',
-                           'rota_staff_shifts', 'rota_prep_tasks', 'day_owners', 'speaker_photos'] loop
+                           'rota_staff_shifts', 'rota_prep_tasks', 'day_owners', 'speaker_photos', 'rota_cohort_duties', 'rota_cohort_contacts'] loop
     if exists (select 1 from pg_publication_tables
                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime drop table public.%I', t);

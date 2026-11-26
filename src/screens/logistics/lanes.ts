@@ -53,10 +53,8 @@ export interface TransportLane {
 
 export interface ShiftLane {
   shift: RotaStaffShift;
-  /** The team member's name, the name as typed, or «צוות <מכינה>». */
+  /** The team member's name, the name as typed, or «צוות <מכינה>». (v20: no «אחראי/ת משמרת».) */
   who: string;
-  /** «אחראי/ת משמרת». */
-  lead: boolean;
 }
 
 /** v19: a cohort whose staff can drive («הצוות שלה יכול להסיע») — its name only — and whether it is on campus that day. */
@@ -152,7 +150,7 @@ export function transportLanes(
     shifts: (rota?.staff ?? [])
       .filter((s) => s.day === day)
       .sort((a, b) => a.start_min - b.start_min || a.id - b.id)
-      .map((s) => ({ shift: s, who: (s.member_id != null ? team.get(s.member_id) : undefined) ?? staffWho(rota!, s), lead: s.kind === "lead" })),
+      .map((s) => ({ shift: s, who: (s.member_id != null ? team.get(s.member_id) : undefined) ?? staffWho(rota!, s) })),
     drivers: driveCohorts(rota, day),
   };
 }

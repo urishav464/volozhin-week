@@ -1,13 +1,14 @@
 // «קבוצות ומכינות» — what the board is made of: the cohorts on campus (a letter that starts its groups' codes, a name,
-// the diets the food orders count, and v19's two flags — «עוזרת בתורנויות», «הצוות שלה יכול להסיע»), when each is on campus (cohort × day × shift; no mark = not marked, never assumed —
+// v20's trainees, three diet numbers, staff contact and the duties it helps in — stream A rebuilds this form: the
+// foundation's is the minimal one —, and v19's «הצוות שלה יכול להסיע»), when each is on campus (cohort × day × shift; no mark = not marked, never assumed —
 // «כל השבוע», «כל היום»), the groups (the next number suggested, a size — TBD until known — and the head's name; the
 // head's phone only behind «כולל טלפונים של ראשי הקבוצות», for those who may see it, saved through set_rota_contact
 // alone), the duties (how many groups each shift needs — empty is «not set», and the suggestion leaves it — and a
 // minimum of people), with last year's four when the list is empty («הצעה»), and the shifts' hours — the edition's
 // admins'. A head's phone is personal data: no column, no line and no field for it while the switch is off.
 import { type FormEvent, type ReactNode, useId, useState } from "react";
-import { cleanHeadPhone, type Diet, LAST_YEAR_DUTIES, type NewDuty, type PresenceScope, type RotaCohort, type RotaDuty, type RotaGroup } from "../../../data/rota";
-import { canDrive, DEFAULT_ROTA_SHIFTS, groupCode, helpsRota, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS } from "../../../domain/rota";
+import { cleanHeadPhone, LAST_YEAR_DUTIES, type NewDuty, type PresenceScope, type RotaCohort, type RotaDuty, type RotaGroup } from "../../../data/rota";
+import { canDrive, cohortDutyIds, cohortHelps, DEFAULT_ROTA_SHIFTS, groupCode, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS } from "../../../domain/rota";
 import { DAY_NAMES, fmt, parseClock } from "../../../domain/time";
 import { cohortsInOrder, dutiesInOrder, groupsInOrder, shiftText } from "../../../exports/rota";
 import { GroupChip, HeadPhonesToggle, useHeadPhones } from "../../rota/shared";
@@ -94,8 +95,14 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                   setEditing(null);
                   focus.back(`edit-${c.id}`);
                 }}
-                onSave={async (v, refused) => {
-                  if (!(await act(`cohort-${c.id}`, () => port.rota.updateCohort(c.id, v), "המכינה נשמרה", refused))) return;
+                duties={dutiesInOrder(data)}
+                dutyIds={cohortDutyIds(data, c.id)}
+                onSave={async ({ duties, ...v }, refused) => {
+                  const save = async () => {
+                    await port.rota.updateCohort(c.id, v);
+                    await port.rota.setCohortDuties(week.edition.id, c.id, duties);
+                  };
+                  if (!(await act(`cohort-${c.id}`, save, "המכינה נשמרה", refused))) return;
                   setEditing(null);
                   focus.back(`edit-${c.id}`);
                 }}
@@ -105,7 +112,7 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
             <li
               key={c.id}
               data-rota-cohort={c.letter}
-              data-helps-rota={helpsRota(c) ? "y" : "-"}
+              data-helps-rota={cohortHelps(data, c.id) ? "y" : "-"}
               data-can-drive={canDrive(c) ? "y" : "-"}
               className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
             >
@@ -114,12 +121,13 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                   <span>
                     <bdi>{c.letter}</bdi> · {c.name}
                   </span>
-                  {!helpsRota(c) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
+                  {!cohortHelps(data, c.id) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
                   {canDrive(c) && <Badge tone="accent">הצוות יכול להסיע</Badge>}
                 </p>
                 <p className="text-sm text-ink-soft">
-                  {groupsOf(c) === 1 ? "קבוצה אחת" : `${groupsOf(c)} קבוצות`} ·{" "}
-                  {c.diets.length === 0 ? "בלי דיאטות" : `דיאטות: ${c.diets.map((d) => `${d.label} ${d.count}`).join(", ")}`}
+                  {c.trainees == null ? "חניכים: TBD" : `${c.trainees} חניכים`} · {groupsOf(c) === 1 ? "קבוצה אחת" : `${groupsOf(c)} קבוצות`} · צמחוני/טבעוני{" "}
+                  {c.diet_veg ?? "TBD"} · ללא גלוטן {c.diet_gf ?? "TBD"} · מהם גם וגם {c.diet_both ?? "TBD"}
+                  {c.contact_name ? ` · איש/אשת קשר: ${c.contact_name}` : ""}
                 </p>
               </div>
               {mayWrite && (
@@ -167,13 +175,19 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
           <CohortForm
             title="מכינה חדשה"
             busy={busy === "cohort-new"}
+            duties={dutiesInOrder(data)}
+            dutyIds={data.duties.map((d) => d.id)}
             onCancel={() => {
               setEditing(null);
               focus.back("new");
             }}
-            onSave={async (v, refused) => {
+            onSave={async ({ duties, ...v }, refused) => {
               const sort = cohorts.reduce((m, c) => Math.max(m, c.sort), 0) + 1;
-              if (!(await act("cohort-new", () => port.rota.addCohort(week.edition.id, { ...v, sort }), "המכינה נוספה", refused))) return;
+              const save = async () => {
+                const id = await port.rota.addCohort(week.edition.id, { ...v, sort });
+                if (duties.length > 0) await port.rota.setCohortDuties(week.edition.id, id, duties);
+              };
+              if (!(await act("cohort-new", save, "המכינה נוספה", refused))) return;
               setEditing(null);
               focus.back("new");
             }}
@@ -189,33 +203,64 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
 
 type Refused = (code: string | null) => boolean;
 
-/** What the cohort form saves: v19's two flags always sent (a new cohort's: helps, cannot drive — the columns' defaults). */
+/** What the cohort form saves (v20): its fields, the four numbers (null = TBD), the contact's name, and the duties it helps in. */
 interface CohortValues {
   letter: string;
   name: string;
-  diets: Diet[];
-  helps_rota: boolean;
+  trainees: number | null;
+  diet_veg: number | null;
+  diet_gf: number | null;
+  diet_both: number | null;
+  contact_name: string | null;
   can_drive: boolean;
+  duties: number[];
 }
 
-function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string; initial?: RotaCohort; busy: boolean; onSave: (v: CohortValues, refused: Refused) => Promise<void>; onCancel: () => void }) {
+/** A number field's text as a count: blank = null (TBD), else a whole number (NaN refused by the port as bad_value). */
+const countOf = (t: string): number | null => intOrNull(t);
+
+function CohortForm({ title, initial, busy, duties, dutyIds, onSave, onCancel }: {
+  title: string;
+  initial?: RotaCohort;
+  busy: boolean;
+  duties: readonly RotaDuty[];
+  /** The duties ticked to begin with: the cohort's own; a new cohort's every duty. */
+  dutyIds: readonly number[];
+  onSave: (v: CohortValues, refused: Refused) => Promise<void>;
+  onCancel: () => void;
+}) {
   const id = useId();
   const [letter, setLetter] = useState(initial?.letter ?? "");
   const [name, setName] = useState(initial?.name ?? "");
-  const [helps, setHelps] = useState(initial ? helpsRota(initial) : true);
   const [drives, setDrives] = useState(initial ? canDrive(initial) : false);
-  const [diets, setDiets] = useState<{ label: string; count: string }[]>(initial?.diets.map((d) => ({ label: d.label, count: String(d.count) })) ?? []);
+  const text = (n: number | null | undefined) => (n == null ? "" : String(n));
+  const [counts, setCounts] = useState({
+    trainees: text(initial?.trainees), diet_veg: text(initial?.diet_veg), diet_gf: text(initial?.diet_gf), diet_both: text(initial?.diet_both),
+  });
+  const [contact, setContact] = useState(initial?.contact_name ?? "");
+  const [helpsIn, setHelpsIn] = useState<number[]>([...dutyIds]);
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
     setProblem(null);
     if (!letter.trim()) return setProblem("צריך אות למכינה (למשל א, ב, נ).");
-    const list = diets.filter((d) => d.label.trim() || d.count.trim()).map((d) => ({ label: d.label, count: intOrNull(d.count) ?? Number.NaN }));
     void onSave(
-      { letter, name, diets: list, helps_rota: helps, can_drive: drives },
-      formRefusal(setProblem, { bad_value: "אחד הערכים לא תקין: אות בלי ספרות ורווחים, ולכל דיאטה שם ומספר שלם (עד 1000).", name_required: "צריך שם למכינה." }),
+      {
+        letter, name, trainees: countOf(counts.trainees), diet_veg: countOf(counts.diet_veg), diet_gf: countOf(counts.diet_gf), diet_both: countOf(counts.diet_both),
+        contact_name: contact.trim() || null, can_drive: drives, duties: duties.map((d) => d.id).filter((d) => helpsIn.includes(d)),
+      },
+      formRefusal(setProblem, {
+        bad_value: "אחד הערכים לא תקין: אות בלי ספרות ורווחים, ומספרים שלמים עד 1000.",
+        name_required: "צריך שם למכינה.",
+        in_use: "יש למכינה קבוצות, ולכן היא צריכה לעזור בתורנות אחת לפחות. קודם מוחקים את הקבוצות שלה.",
+      }),
     );
   };
+  const numberField = (key: keyof typeof counts, label: string) => (
+    <Field id={`${id}-${key}`} label={label} hint="ריק = TBD">
+      <input id={`${id}-${key}`} inputMode="numeric" value={counts[key]} onChange={(e) => setCounts({ ...counts, [key]: e.target.value })} className={INPUT} />
+    </Field>
+  );
   return (
     <form aria-label={title} onSubmit={submit} className="space-y-3 rounded-lg bg-sand-soft p-3">
       <p className="font-bold text-navy">{title}</p>
@@ -227,42 +272,33 @@ function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string;
           <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={INPUT} />
         </Field>
       </div>
-      <div className="space-y-1">
-        <label className="flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={helps} onChange={(e) => setHelps(e.target.checked)} aria-describedby={`${id}-helps-hint`} />
-          <span>עוזרת בתורנויות</span>
-        </label>
-        <p id={`${id}-helps-hint`} className="text-xs text-ink-soft">
-          מכינה שלא עוזרת: ההצעה לא משבצת את הקבוצות שלה. הנוכחות שלה עדיין נספרת לארוחות.
-        </p>
+      <div className="grid gap-3 sm:grid-cols-4">
+        {numberField("trainees", "חניכים")}
+        {numberField("diet_veg", "צמחוני/טבעוני")}
+        {numberField("diet_gf", "ללא גלוטן")}
+        {numberField("diet_both", "מהם גם וגם")}
+      </div>
+      <Field id={`${id}-contact`} label="איש/אשת קשר מהצוות (משבץ/ת)" hint="שם בלבד. הטלפון נשמר בנפרד.">
+        <input id={`${id}-contact`} value={contact} onChange={(e) => setContact(e.target.value)} maxLength={80} className={INPUT} />
+      </Field>
+      <fieldset className="min-w-0 space-y-1">
+        <legend className="mb-1 text-sm font-bold text-ink">באילו תורנויות היא עוזרת</legend>
+        {duties.length === 0 && <p className="text-xs text-ink-soft">עוד אין תורנויות.</p>}
+        {duties.map((d) => (
+          <label key={d.id} className="flex min-h-11 cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-5 shrink-0 accent-navy"
+              checked={helpsIn.includes(d.id)}
+              onChange={(e) => setHelpsIn(e.target.checked ? [...helpsIn, d.id] : helpsIn.filter((x) => x !== d.id))}
+            />
+            <span>{d.name}</span>
+          </label>
+        ))}
         <label className="flex min-h-11 cursor-pointer items-center gap-2">
           <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={drives} onChange={(e) => setDrives(e.target.checked)} />
           <span>הצוות שלה יכול להסיע</span>
         </label>
-      </div>
-      <fieldset className="min-w-0 space-y-2">
-        <legend className="mb-1 text-sm font-bold text-ink">דיאטות (לכמויות האוכל)</legend>
-        {diets.length === 0 && <p className="text-xs text-ink-soft">בלי דיאטות. את השמות כותבים ביד, למשל «צמחוני».</p>}
-        {diets.map((d, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-2">
-            <input aria-label={`דיאטה ${i + 1}`} value={d.label} onChange={(e) => setDiets(diets.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} maxLength={40} className={`${INPUT} min-w-0 flex-1 basis-36`} />
-            <input
-              aria-label={`כמה אנשים: דיאטה ${i + 1}`}
-              inputMode="numeric"
-              value={d.count}
-              onChange={(e) => setDiets(diets.map((x, j) => (j === i ? { ...x, count: e.target.value } : x)))}
-              className={`${INPUT} w-20 shrink-0`}
-            />
-            <Button kind="quiet" onClick={() => setDiets(diets.filter((_, j) => j !== i))} aria-label={`הסרת דיאטה ${i + 1}`}>
-              הסרה
-            </Button>
-          </div>
-        ))}
-        {diets.length < 6 && (
-          <Button kind="quiet" onClick={() => setDiets([...diets, { label: "", count: "" }])}>
-            + דיאטה
-          </Button>
-        )}
       </fieldset>
       <Problem>{problem}</Problem>
       <div className="flex flex-wrap gap-2">
@@ -424,7 +460,7 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
                             async () => {
                               const p = changed ? cleanHeadPhone(phone) : undefined; // a bad phone refused before anything is written
                               await port.rota.updateGroup(g.id, v);
-                              if (changed) await port.rota.setContact(g.id, p ?? null);
+                              if (changed) await port.rota.setContact({ group: g.id }, p ?? null);
                             },
                             "הקבוצה נשמרה",
                             refused,

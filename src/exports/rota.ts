@@ -16,16 +16,20 @@
 //                   the trainees on campus, their diets, the meals of the shift
 //   headsTable · staffTable · prepTable (the tasks) · shoppingTable (v19: the shopping list, its quantities) ·
 //   foodTable (per cohort, «חניכים בלבד») · campusTable · loadsTable
-//   rotaWorkbook    all of them, a sheet each, for «הורדת xlsx (כל הגיליונות)»
+//   rotaWorkbook    all of them, a sheet each, for «הורדת xlsx (כל הגיליונות)» (v20: the staff's schedule is
+//                   src/exports/staffSchedule.ts's — the day × grid rows sheet, never a transport)
 //
-// Nothing here fills in a number nobody entered: a group without a size is TBD, and so is every sum it is part of.
-import { type Diet, type PrepKind, prepKindOf, type RotaAssignment, type RotaCohort, type RotaContact, type RotaData, type RotaDuty, type RotaGroup, type RotaPrepTask, type RotaStaffShift, type ShiftIndex } from "../data/rota";
+// Nothing here fills in a number nobody entered: a cohort whose trainees are TBD is TBD, and so is every sum it is part
+// of. v20: a cohort's trainees are its own field (never the groups' sizes), its diets three numbers (dietSplit:
+// «צמחוני/טבעוני» only, «ללא גלוטן» only, both, the regular rest); a staff shift has no kind.
+import { isHeadContact, type PrepKind, prepKindOf, type RotaAssignment, type RotaCohort, type RotaContactRow, type RotaData, type RotaDuty, type RotaGroup, type RotaPrepTask, type RotaStaffShift, type ShiftIndex } from "../data/rota";
 import { nameKey } from "../domain/nameKey";
-import { groupCode, leadsOf, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, type RotaSlot } from "../domain/rota";
+import { type DietSplit, dietSplit, groupCode, loadsOf, presentAt, ROTA_DAYS, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, SHIFTS, shiftBounds, staffOn, type RotaSlot } from "../domain/rota";
 import { DAY_NAMES, type Day, dateOf, fmtRange, LRM, overlaps, shortDate } from "../domain/time";
 import type { Edition, GridRow, Week } from "../domain/types";
 import { rowActive } from "../grid/layout";
 import { type ScheduleEntry, scheduleEntries } from "./designer";
+import { staffScheduleTable } from "./staffSchedule";
 import type { Table } from "./table";
 import { phoneCell } from "./tracking";
 
@@ -35,8 +39,8 @@ export type RotaEdition = Pick<Edition, "first_day_from" | "last_day_until" | "s
 /** The heads' phones the caller was given (port.rota.contacts), by group id; null: «כולל טלפונים» is off. */
 export type HeadPhones = ReadonlyMap<number, string> | null;
 
-export function phonesOf(contacts: readonly RotaContact[]): Map<number, string> {
-  return new Map(contacts.map((c) => [c.group_id, c.head_phone]));
+export function phonesOf(contacts: readonly RotaContactRow[]): Map<number, string> {
+  return new Map(contacts.filter(isHeadContact).map((c) => [c.group_id, c.head_phone]));
 }
 
 /** A band's fill in the xlsx: the brand's sage, soft (index.css --color-sage-soft). */
@@ -57,7 +61,8 @@ export const SHEET = {
   loads: "עומס",
 } as const;
 
-export const STAFF_KIND_LABEL: Record<RotaStaffShift["kind"], string> = { shift: "משמרת", lead: "אחראי/ת משמרת" };
+/** v20: a staff row's word on a day sheet (there is no «אחראי/ת משמרת»: every staff shift is the team's). */
+export const STAFF_LABEL = "צוות";
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -78,7 +83,7 @@ export function dutiesInOrder(data: Pick<RotaData, "duties">): RotaDuty[] {
   return [...data.duties].sort((a, b) => a.sort - b.sort || a.id - b.id);
 }
 
-function staffInOrder(data: Pick<RotaData, "staff">): RotaStaffShift[] {
+export function staffInOrder(data: Pick<RotaData, "staff">): RotaStaffShift[] {
   return [...data.staff].sort((a, b) => a.day - b.day || a.start_min - b.start_min || a.id - b.id);
 }
 
@@ -139,39 +144,32 @@ function sumOrTbd(xs: readonly (number | null)[]): number | null {
 
 const num = (n: number | null): string => (n == null ? "TBD" : String(n));
 
-/** A cohort's trainees: Σ of its groups' sizes; TBD when a size is unknown or it has no groups yet. */
-export function cohortTotal(data: Pick<RotaData, "groups">, cohortId: number): number | null {
-  const sizes = data.groups.filter((g) => g.cohort_id === cohortId).map((g) => g.size);
-  return sizes.length === 0 ? null : sumOrTbd(sizes);
+/** v20: a cohort's trainees — its own field («חניכים»), never the groups' sizes; TBD (null) until it is typed. */
+export function cohortTotal(data: Pick<RotaData, "cohorts">, cohortId: number): number | null {
+  return data.cohorts.find((c) => c.id === cohortId)?.trainees ?? null;
 }
 
 /** The trainees on campus in a shift (the cohorts marked present there); TBD when one of them is. */
-export function presentTotal(data: Pick<RotaData, "cohorts" | "groups" | "presence">, day: number, shift: number): number | null {
+export function presentTotal(data: Pick<RotaData, "cohorts" | "presence">, day: number, shift: number): number | null {
   return sumOrTbd(data.cohorts.filter((c) => presentAt(data, c.id, day, shift)).map((c) => cohortTotal(data, c.id)));
 }
 
-/** The diets of the given cohorts, added up by label as typed, in the order they first appear. */
-function dietsOf(cohorts: readonly RotaCohort[]): Diet[] {
-  const out: Diet[] = [];
-  for (const c of cohorts) {
-    for (const d of c.diets ?? []) {
-      const x = out.find((o) => o.label === d.label);
-      if (x) x.count += d.count;
-      else out.push({ label: d.label, count: d.count });
-    }
-  }
-  return out;
+/** v20: the given cohorts' meals by diet, added up (dietSplit of each) — a column TBD while one of them is. */
+export function dietsOf(cohorts: readonly Pick<RotaCohort, "trainees" | "diet_veg" | "diet_gf" | "diet_both">[]): DietSplit {
+  const parts = cohorts.map(dietSplit);
+  const add = (k: keyof DietSplit) => sumOrTbd(parts.map((p) => p[k]));
+  return { trainees: add("trainees"), veg_only: add("veg_only"), gf_only: add("gf_only"), both: add("both"), regular: add("regular") };
 }
 
-const dietsText = (ds: readonly Diet[]) => ds.map((d) => `${d.label} ${d.count}`).join("; ");
+/** v20: the four meal columns' headers, in the food pages' order. */
+export const DIET_HEADERS = ["צמחוני/טבעוני בלבד", "ללא גלוטן בלבד", "גם וגם", "רגיל"] as const;
 
-/** The regular meals: the trainees less the diets — TBD while the trainees are, a warning when the diets are more. */
-export function regularCell(total: number | null, diets: readonly Diet[]): string {
-  if (total == null) return "TBD";
-  const d = diets.reduce((a, x) => a + x.count, 0);
-  const regular = total - d;
-  return regular < 0 ? `לבדוק: הדיאטות (${d}) יותר מהחניכים (${total})` : String(regular);
+/** v20: a DietSplit's four meal cells (TBD where unknown), DIET_HEADERS' order. */
+export function dietCells(d: DietSplit): string[] {
+  return [num(d.veg_only), num(d.gf_only), num(d.both), num(d.regular)];
 }
+
+const dietsText = (d: DietSplit) => DIET_HEADERS.map((h, i) => `${h} ${dietCells(d)[i]}`).join("; ");
 
 // ------------------------------------------------------------------ לו"ז לכל קבוצה
 
@@ -395,33 +393,32 @@ export function staffWho(data: Pick<RotaData, "cohorts">, s: Pick<RotaStaffShift
 }
 
 /**
- * The staff of one shift: its leads as the board counts them (leadsOf — every shift a lead's hours overlap), then the
- * rest in the shift they start in (among them, first, a lead whose hours overlap none of the week's shifts that day).
+ * The staff of one shift (v20 — no «אחראי/ת»): every staff shift of the day whose hours overlap it as the week has it
+ * (staffOn), then one whose hours overlap none of the week's shifts that day in the shift it starts in — never lost.
  */
-function staffOfShift(data: RotaData, edition: RotaEdition, day: Day, shift: ShiftIndex): { leads: RotaStaffShift[]; others: RotaStaffShift[] } {
+function staffOfShift(data: RotaData, edition: RotaEdition, day: Day, shift: ShiftIndex): RotaStaffShift[] {
   const mine = staffInOrder(data).filter((s) => s.day === day);
-  const leading = new Set(SHIFTS.flatMap((sh) => leadsOf(edition, mine, day, sh)).map((s) => s.id));
-  const others = mine
-    .filter((s) => !leading.has(s.id) && shiftOfStart(edition, day, s.start_min) === shift)
-    .sort((a, b) => Number(a.kind !== "lead") - Number(b.kind !== "lead") || a.start_min - b.start_min || a.id - b.id);
-  return { leads: leadsOf(edition, mine, day, shift), others };
+  const placed = new Set(SHIFTS.flatMap((sh) => staffOn(edition, mine, day, sh)).map((s) => s.id));
+  const stray = mine.filter((s) => !placed.has(s.id) && shiftOfStart(edition, day, s.start_min) === shift);
+  return [...staffOn(edition, mine, day, shift), ...stray].sort((a, b) => a.start_min - b.start_min || a.id - b.id);
 }
 
 const staffCell = (data: RotaData, s: RotaStaffShift) => `${staffWho(data, s)} ${LRM}${fmtRange(s.start_min, s.end_min)}${s.note ? ` · ${s.note}` : ""}`;
 
+/** The staff's shifts as a list: day, hours, who, note (v20: no kind). The workbook's sheet is the schedule (staffSchedule.ts). */
 export function staffTable(data: RotaData): Table {
   return {
     name: SHEET.staff,
-    headers: ["יום", "שעות", "מי", "סוג", "הערה"],
-    widths: [10, 14, 28, 16, 36],
-    rows: staffInOrder(data).map((s) => [DAY_NAMES[s.day], `${LRM}${fmtRange(s.start_min, s.end_min)}`, staffWho(data, s), STAFF_KIND_LABEL[s.kind], s.note ?? ""]),
+    headers: ["יום", "שעות", "מי", "הערה"],
+    widths: [10, 14, 28, 36],
+    rows: staffInOrder(data).map((s) => [DAY_NAMES[s.day], `${LRM}${fmtRange(s.start_min, s.end_min)}`, staffWho(data, s), s.note ?? ""]),
   };
 }
 
 // ------------------------------------------------------------------ דף יום
 
 /**
- * One day: per shift its staff (its leads first — a lead in every shift its hours overlap, as the board counts them)
+ * One day: per shift its staff (everyone whose hours overlap it — v20: no «אחראי/ת משמרת», and no TBD row for one)
  * and each duty's groups with their size and head — and the head's phone only when `phones` is given (then a טלפון
  * column, filled only where a phone came back).
  */
@@ -438,10 +435,7 @@ export function daySheet(data: RotaData, edition: RotaEdition, day: Day, phones:
   };
   for (const shift of shiftsOfDay(edition, day, data.assignments)) {
     const st = shiftText(edition, shift, day);
-    const { leads, others } = staffOfShift(data, edition, day, shift);
-    // no lead yet in a shift of the week (the board's «no_lead»): said, not left out (TBD)
-    if (rotaShiftActive(edition, day, shift) && leads.length === 0) push([st, STAFF_KIND_LABEL.lead, "TBD", ...blank], BAND_FILL);
-    for (const s of [...leads, ...others]) push([st, STAFF_KIND_LABEL[s.kind], staffCell(data, s), ...blank], BAND_FILL);
+    for (const s of staffOfShift(data, edition, day, shift)) push([st, STAFF_LABEL, staffCell(data, s), ...blank], BAND_FILL);
     for (const d of dutiesInOrder(data)) {
       const on = new Set(data.assignments.filter((a) => a.day === day && a.shift === shift && a.duty_id === d.id).map((a) => a.group_id));
       const mine = groups.filter((g) => on.has(g.id));
@@ -484,8 +478,8 @@ export function kitchenSheet(data: RotaData, edition: RotaEdition, rows: readonl
   const meals = [...rows].filter(isMeal).sort((a, b) => a.start_min - b.start_min || a.id - b.id);
   return {
     name: duty && nameKey(duty.name) !== nameKey(KITCHEN) ? `לו״ז ${duty.name}` : SHEET.kitchen,
-    headers: ["יום", "משמרת", "קבוצה", "אנשים בקבוצה", "ראש/ת קבוצה", "חניכים בקמפוס", "דיאטות בקמפוס", "ארוחות"],
-    widths: [10, 22, 12, 12, 26, 12, 26, 36],
+    headers: ["יום", "משמרת", "קבוצה", "אנשים בקבוצה", "ראש/ת קבוצה", "חניכים בקמפוס", "תזונה בקמפוס", "ארוחות"],
+    widths: [10, 22, 12, 12, 26, 12, 40, 36],
     landscape: true,
     rows: slotsToList(edition, data.assignments.filter((a) => a.duty_id === dutyId)).map(({ day, shift }) => {
       const on = new Set(data.assignments.filter((a) => a.day === day && a.shift === shift && a.duty_id === dutyId).map((a) => a.group_id));
@@ -567,29 +561,25 @@ const slotLabel = (edition: RotaEdition, s: RotaSlot) => `${DAY_NAMES[s.day]} ${
 
 /**
  * The food quantities, trainees only («חניכים בלבד» — the staff and guests are not counted): per cohort its trainees
- * (Σ of its groups' sizes; TBD while one is unknown), its diets, the regular meals (the rest — a warning when the
- * diets are more), and in each shift of the week its trainees if it is marked on campus; a last row adds them up.
+ * (v20: its own field; TBD while unknown), its meals by diet (dietSplit — «צמחוני/טבעוני» only, «ללא גלוטן» only,
+ * both, regular), and in each shift of the week its trainees if it is marked on campus; a last row adds them up.
+ * (Stream A's per-day per-meal builder replaces it on /print/rota.)
  */
 export function foodTable(data: RotaData, edition: RotaEdition): Table {
   const cohorts = cohortsInOrder(data);
-  const labels = dietsOf(cohorts).map((d) => d.label);
   const slots = rotaSlots(edition);
-  // a cohort's cell is empty where it has no such diet; the last row adds every one up
-  const dietCells = (ds: readonly Diet[], zero: string) => labels.map((l) => {
-    const n = ds.filter((d) => d.label === l).reduce((a, d) => a + d.count, 0);
-    return n === 0 && !ds.some((d) => d.label === l) ? zero : String(n);
-  });
   const rows = cohorts.map((c) => {
     const total = cohortTotal(data, c.id);
-    return [c.name, num(total), ...dietCells(c.diets ?? [], ""), regularCell(total, c.diets ?? []), ...slots.map((s) => (presentAt(data, c.id, s.day, s.shift) ? num(total) : ""))];
+    return [c.name, num(total), ...dietCells(dietSplit(c)), ...slots.map((s) => (presentAt(data, c.id, s.day, s.shift) ? num(total) : ""))];
   });
-  const total = sumOrTbd(cohorts.map((c) => cohortTotal(data, c.id)));
-  const all = dietsOf(cohorts);
-  if (cohorts.length) rows.push(["סה״כ", num(total), ...dietCells(all, "0"), regularCell(total, all), ...slots.map((s) => num(presentTotal(data, s.day, s.shift)))]);
+  if (cohorts.length) {
+    const all = dietsOf(cohorts);
+    rows.push(["סה״כ", num(all.trainees), ...dietCells(all), ...slots.map((s) => num(presentTotal(data, s.day, s.shift)))]);
+  }
   return {
     name: SHEET.food,
-    headers: ["מכינה (חניכים בלבד)", "חניכים", ...labels, "רגיל", ...slots.map((s) => slotLabel(edition, s))],
-    widths: [24, 9, ...labels.map(() => 12), 16, ...slots.map(() => 11)],
+    headers: ["מכינה (חניכים בלבד)", "חניכים", ...DIET_HEADERS, ...slots.map((s) => slotLabel(edition, s))],
+    widths: [24, 9, 14, 14, 10, 10, ...slots.map(() => 11)],
     landscape: true,
     rows,
   };
@@ -655,7 +645,7 @@ export function rotaWorkbook({ week, data, phones, kitchenDuty }: RotaWorkbookIn
     ...ROTA_DAYS.map((d) => daySheet(data, e, d, phones)),
     ...(kitchen != null && data.duties.some((d) => d.id === kitchen) ? [kitchenSheet(data, e, week.rows, kitchen)] : []),
     headsTable(data, phones),
-    staffTable(data),
+    staffScheduleTable(week, data),
     prepTable(data),
     shoppingTable(data),
     foodTable(data, e),

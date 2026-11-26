@@ -7,7 +7,7 @@
 // Every act is a direct write (port.rota) and the rota read again; the focus goes to where the group went.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RotaAssignment, RotaGroup, ShiftIndex } from "../../../data/rota";
-import { helpsRota, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, slotIndex } from "../../../domain/rota";
+import { groupHelpsIn, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, slotIndex } from "../../../domain/rota";
 import { rotaWarnings, cellWarnings, groupWarnings } from "../../../domain/rotaWarnings";
 import { DAY_NAMES, type Day } from "../../../domain/time";
 import { groupsInOrder } from "../../../exports/rota";
@@ -29,7 +29,7 @@ export function cellTitle(dutyName: string, day: Day, shiftLabel: string): strin
 }
 
 /** The marks a group's chip carries on the board: what is about that group in that shift (not the cell's counts). */
-export const GROUP_MARKS = new Set(["absent", "outside_week", "back_to_back", "not_helping"]);
+export const GROUP_MARKS = new Set(["absent", "outside_week", "back_to_back", "not_eligible"]);
 
 /**
  * Where the focus goes after an act: the group's button where the group went — a closed «לא בקמפוס» opened for it. When
@@ -131,8 +131,8 @@ export function CellPicker({ ctx, cell, onClose }: { ctx: RotaCtx; cell: RotaCel
           {l.present > 0 ? ` מתוך ${l.present} בקמפוס` : ""}
         </span>
         {nextTo(g) && <Badge tone="muted">משמרת צמודה</Badge>}
-        {/* v19: placing it by hand is allowed — and warned about (not_helping) */}
-        {!helpsRota(data.cohorts.find((c) => c.id === g.cohort_id) ?? {}) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
+        {/* v20: placing it by hand on a duty its cohort does not help in is allowed — and warned about (not_eligible) */}
+        {!groupHelpsIn(data, g, dutyId) && <Badge tone="muted">המכינה לא עוזרת בתורנות הזו</Badge>}
         <Button className="ms-auto" ref={focus.ref(`assign-${g.id}`)} busy={busy === `assign-${g.id}`} onClick={() => void assign(g)} aria-label={`שיבוץ: ${code}`}>
           שיבוץ
         </Button>

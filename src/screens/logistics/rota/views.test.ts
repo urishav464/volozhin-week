@@ -1,4 +1,4 @@
-// The rota views as markup (no browser): v19's cohort flags on the cohorts' list, and «מוצ״ש» as two lists — each its
+// The rota views as markup (no browser): the cohorts' flags on their list (v20: «עוזרת» = helps in some duty), and «מוצ״ש» as two lists — each its
 // own count, the shopping list's quantities, and (writing) a paste of its own.
 import { createElement, type FunctionComponent } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -15,9 +15,15 @@ function rota(): RotaData {
   return {
     ...EMPTY_ROTA,
     cohorts: [
-      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1 },
-      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, helps_rota: true, can_drive: true },
-      { id: 3, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 3, helps_rota: false, can_drive: false },
+      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 },
+      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2, can_drive: true },
+      { id: 3, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: 30, diet_veg: 4, diet_gf: 2, diet_both: 1, contact_name: "איש/אשת קשר לדוגמה", sort: 3, can_drive: false },
+    ],
+    // v20: «א» and «ב» help in the one duty; «נ» in none
+    duties: [{ id: 7, edition_id: 1, name: "מטבח", description: null, need_morning: 1, need_afternoon: 1, need_night: 1, min_people: null, sort: 1 }],
+    cohortDuties: [
+      { cohort_id: 1, duty_id: 7 },
+      { cohort_id: 2, duty_id: 7 },
     ],
     prep: [
       { id: 1, edition_id: 1, text: "משימה לדוגמה א", group_id: null, done: true, sort: 1 },
@@ -53,6 +59,10 @@ describe("the cohorts' flags", () => {
     expect(out).toMatch(/data-rota-cohort="נ" data-helps-rota="-" data-can-drive="-"/);
     expect(out.match(/לא עוזרת בתורנויות/g)).toHaveLength(1);
     expect(out.match(/הצוות יכול להסיע/g)).toHaveLength(1);
+    // v20: a cohort's trainees, diets and contact on its line (TBD where not typed)
+    expect(out).toContain("30 חניכים");
+    expect(out).toContain("איש/אשת קשר: איש/אשת קשר לדוגמה");
+    expect(out).toContain("חניכים: TBD");
   });
 });
 

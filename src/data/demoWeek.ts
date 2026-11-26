@@ -18,6 +18,7 @@
 // roster), a family's contact made of placeholder words — and no memorial
 // policy: that is the staff meeting's.
 import { TEMPLATE_2026 } from "../domain/template2026";
+import { rotaSlots } from "../domain/rota";
 import type { Day } from "../domain/time";
 import {
   type Approach, type Category, type DayOwner, type Gender, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Pitch, type RosterMember, type SlotAvailability, type SourceFile,
@@ -300,14 +301,15 @@ export function demoLogisticsStart(nowIso: string): string {
  * own three staff shifts): what the transport board draws, synthetic — the demo's three transports get pickup times
  * (Sunday's 08:30, approved and arranged: 07:15; Monday's 08:30, the round trip that waits for the decision: 06:10, before
  * the board's 06:30; Wednesday's 10:00, approved, not arranged: a pickup row of its own at 08:45, no driver yet), and two
- * more staff shifts — Monday morning a name as typed, Wednesday the logistics member as the shift's lead. Placeholder
- * words only («כתובת לדוגמה»), never a number or an address that could be someone's.
- * Phase 4 (v19) adds: cohort «ב»'s staff can drive and «נ» does not help with the duties; and two items to buy («פריט
- * לדוגמה 1/2», «2 (לדוגמה)» each) after the tasks. (Its guests' sample — Sunday's 08:30 lead approved, with a
- * description and the photo — is every demo's since phase 5: seedDemoGuests.)
+ * more staff shifts — Monday morning a name as typed, Wednesday the logistics member's. Placeholder words only («כתובת
+ * לדוגמה»), never a number or an address that could be someone's.
+ * Phase 4 (v19) adds: cohort «ב»'s staff can drive; and two items to buy («פריט לדוגמה 1/2», «2 (לדוגמה)» each) after
+ * the tasks. v20: a fourth cohort, «ד», that helps in no duty — so it has no groups — but is on campus Wednesday and
+ * Thursday for the meals (its trainees, diets and staff contact synthetic). (Its guests' sample — Sunday's 08:30 lead
+ * approved, with a description and the photo — is every demo's since phase 5: seedDemoGuests.)
  */
 export function seedDemoLogistics(
-  shared: Pick<PoolShared, "transport" | "rota">,
+  shared: Pick<PoolShared, "transport" | "rota" | "rotaCohortContacts">,
   week: Pick<Week, "edition" | "lessons">,
   logistics: Pick<MemberRow, "id" | "display_name"> | null,
 ): void {
@@ -323,16 +325,21 @@ export function seedDemoLogistics(
   pickup(1, 510, { pickup_time: "06:10", pickup_min: 370 });
   pickup(3, 600, { pickup_address: "כתובת לדוגמה", pickup_time: "08:45", pickup_min: 525 });
   const t = shared.rota;
-  const staff = (day: Day, start: number, end: number, who: Pick<RotaStaffShift, "member_id" | "name">, kind: RotaStaffShift["kind"]) =>
-    t.staff.push({ id: t.staff.reduce((m, s) => Math.max(m, s.id), 0) + 1, edition_id: week.edition.id, day, start_min: start, end_min: end, ...who, cohort_id: null, kind, note: null });
-  staff(1, 390, 720, { member_id: null, name: "איש/אשת צוות לדוגמה ב׳" }, "shift");
-  if (logistics) staff(3, 510, 870, { member_id: logistics.id, name: logistics.display_name }, "lead");
-  // v19: the cohorts' two flags, and a shopping list beside the tasks
+  const staff = (day: Day, start: number, end: number, who: Pick<RotaStaffShift, "member_id" | "name">) =>
+    t.staff.push({ id: t.staff.reduce((m, s) => Math.max(m, s.id), 0) + 1, edition_id: week.edition.id, day, start_min: start, end_min: end, ...who, cohort_id: null, note: null });
+  staff(1, 390, 720, { member_id: null, name: "איש/אשת צוות לדוגמה ב׳" });
+  if (logistics) staff(3, 510, 870, { member_id: logistics.id, name: logistics.display_name });
+  // v19: «ב»'s staff can drive; a shopping list beside the tasks
   const mine = t.cohorts.filter((c) => c.edition_id === week.edition.id);
-  for (const c of mine) {
-    if (c.letter === "ב") c.can_drive = true;
-    if (c.letter === "נ") c.helps_rota = false;
-  }
+  for (const c of mine) if (c.letter === "ב") c.can_drive = true;
+  // v20: «ד» helps in no duty — no groups, no row in cohortDuties — and is on campus Wednesday and Thursday (the meals)
+  const dalet = {
+    id: t.cohorts.reduce((m, c) => Math.max(m, c.id), 0) + 1, edition_id: week.edition.id, letter: "ד", name: "מכינה לדוגמה ד", trainees: 30,
+    diet_veg: 4, diet_gf: 2, diet_both: 1, contact_name: "איש/אשת קשר לדוגמה ד", sort: mine.reduce((m, c) => Math.max(m, c.sort), 0) + 1, can_drive: false,
+  };
+  t.cohorts.push(dalet);
+  shared.rotaCohortContacts[dalet.id] = "טלפון לדוגמה";
+  for (const s of rotaSlots(week.edition).filter((x) => x.day === 3 || x.day === 4)) t.presence.push({ edition_id: week.edition.id, cohort_id: dalet.id, day: s.day, shift: s.shift });
   const last = t.prep.filter((p) => p.edition_id === week.edition.id).reduce((m, p) => Math.max(m, p.sort), 0);
   for (const i of [1, 2]) {
     t.prep.push({

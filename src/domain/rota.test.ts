@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import type { RotaAssignment, RotaData } from "../data/rota";
 import {
-  adjacent, canDrive, codeOf, DEFAULT_ROTA_SHIFTS, groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds,
-  slotIndex, slotKey,
+  adjacent, canDrive, codeOf, cohortDutyIds, cohortHelps, DEFAULT_ROTA_SHIFTS, dietSplit, groupCode, groupHelpsIn, helpingGroups, loadsOf, needOf, presentAt, rotaShiftActive,
+  rotaShiftRange, rotaShiftsOf, rotaSlots, shiftBounds, slotIndex, slotKey, splitSizes, staffOn,
 } from "./rota";
 
 const week = (first_day_from: number | null = 510, last_day_until = 1140, rota_shifts?: { cuts: [number, number]; labels: [string, string, string] }) => ({
@@ -43,11 +43,11 @@ describe("the shifts", () => {
     expect(rotaShiftRange(week(870), 0, 0)).toBeNull();
   });
 
-  it("a shift's leads: every lead of that day whose hours overlap the shift as the week has it", () => {
-    const lead = (id: number, day: 0 | 1 | 2 | 3 | 4, start_min: number, end_min: number, kind: "lead" | "shift" = "lead") => ({ id, day, start_min, end_min, kind });
-    const staff = [lead(1, 1, 840, 1350), lead(2, 1, 390, 870), lead(3, 1, 1350, 1830, "shift"), lead(4, 2, 390, 1830), lead(5, 0, 390, 500)];
-    const ids = (day: 0 | 1 | 2 | 3 | 4, shift: 0 | 1 | 2, e = week()) => leadsOf(e, staff, day, shift).map((x) => x.id);
-    expect([0, 1, 2].map((s) => ids(1, s as 0 | 1 | 2))).toEqual([[1, 2], [1], []]); // 14:00–22:30 crosses the cut; 22:30 is the night's start, not theirs; a staff shift is not a lead
+  it("a shift's staff (v20, no lead): every staff shift of that day whose hours overlap the shift as the week has it", () => {
+    const on = (id: number, day: 0 | 1 | 2 | 3 | 4, start_min: number, end_min: number) => ({ id, day, start_min, end_min });
+    const staff = [on(1, 1, 840, 1350), on(2, 1, 390, 870), on(3, 1, 1350, 1830), on(4, 2, 390, 1830), on(5, 0, 390, 500)];
+    const ids = (day: 0 | 1 | 2 | 3 | 4, shift: 0 | 1 | 2, e = week()) => staffOn(e, staff, day, shift).map((x) => x.id);
+    expect([0, 1, 2].map((s) => ids(1, s as 0 | 1 | 2))).toEqual([[1, 2], [1], [3]]); // 14:00–22:30 crosses the cut; 22:30 is the night's start, not theirs
     expect([0, 1, 2].map((s) => ids(2, s as 0 | 1 | 2))).toEqual([[4], [4], [4]]); // a whole day
     expect(ids(0, 0)).toEqual([]); // 06:30–08:20 ends before Sunday's opening (08:30)
     expect(ids(0, 0, week(null))).toEqual([5]); // the opening not known: the whole morning
@@ -102,8 +102,8 @@ describe("neighbours", () => {
 
 const data: Pick<RotaData, "cohorts" | "groups" | "presence"> = {
   cohorts: [
-    { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1 },
-    { id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2 },
+    { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 },
+    { id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 },
   ],
   groups: [
     { id: 11, edition_id: 1, cohort_id: 1, number: 1, size: 8, head_name: null },
@@ -163,22 +163,51 @@ describe("loadsOf", () => {
   });
 });
 
-describe("a cohort's two flags (v19)", () => {
-  it("«עוזרת בתורנויות» is on unless set off; «הצוות שלה יכול להסיע» is off unless set on — a cohort from before v19 has neither", () => {
-    expect(helpsRota({})).toBe(true);
-    expect(helpsRota({ helps_rota: true })).toBe(true);
-    expect(helpsRota({ helps_rota: false })).toBe(false);
+describe("a cohort's flag (v19) and the duties it helps in (v20)", () => {
+  it("«הצוות שלה יכול להסיע» is off unless set on — a cohort from before v19 has none", () => {
     expect(canDrive({})).toBe(false);
     expect(canDrive({ can_drive: false })).toBe(false);
     expect(canDrive({ can_drive: true })).toBe(true);
   });
 
-  it("helpingGroups: the groups of the cohorts that help, in their order — a group whose cohort is gone stays", () => {
+  it("v20: a cohort helps when it has a duty; a group may take a duty its cohort helps in; helpingGroups keeps their order — a group whose cohort is gone helps in nothing", () => {
     const data = {
-      cohorts: [{ id: 1 }, { id: 2, helps_rota: false }, { id: 3, helps_rota: true }],
+      cohortDuties: [{ cohort_id: 1, duty_id: 7 }, { cohort_id: 1, duty_id: 8 }, { cohort_id: 3, duty_id: 8 }],
       groups: [{ id: 11, cohort_id: 1 }, { id: 21, cohort_id: 2 }, { id: 31, cohort_id: 3 }, { id: 22, cohort_id: 2 }, { id: 91, cohort_id: 9 }],
     };
-    expect(helpingGroups(data).map((g) => g.id)).toEqual([11, 31, 91]);
-    expect(helpingGroups({ cohorts: [], groups: [] })).toEqual([]);
+    expect([1, 2, 3, 9].map((c) => cohortHelps(data, c))).toEqual([true, false, true, false]);
+    expect(cohortDutyIds(data, 1)).toEqual([7, 8]);
+    expect(cohortDutyIds(data, 2)).toEqual([]);
+    expect([groupHelpsIn(data, { cohort_id: 1 }, 7), groupHelpsIn(data, { cohort_id: 3 }, 7), groupHelpsIn(data, { cohort_id: 3 }, 8)]).toEqual([true, false, true]);
+    expect(helpingGroups(data).map((g) => g.id)).toEqual([11, 31]);
+    expect(helpingGroups({ cohortDuties: [], groups: [] })).toEqual([]);
+  });
+});
+
+describe("v20: «חלוקה לקבוצות» and the meals by diet", () => {
+  it("splitSizes: ⌈trainees / per group⌉ groups, as equal as possible, the larger first, the sum the trainees", () => {
+    expect(splitSizes(23, 8)).toEqual([8, 8, 7]);
+    expect(splitSizes(24, 8)).toEqual([8, 8, 8]);
+    expect(splitSizes(25, 8)).toEqual([7, 6, 6, 6]); // four groups: as equal as possible, not 8, 8, 8, 1
+    expect(splitSizes(5, 8)).toEqual([5]);
+    expect(splitSizes(1, 1)).toEqual([1]);
+    for (const [t, p] of [[0, 8], [10, 0], [-3, 2], [10.5, 3], [10, 2.5]]) expect(splitSizes(t, p), `${t}/${p}`).toEqual([]);
+    for (let t = 1; t <= 120; t++) {
+      for (let p = 1; p <= 15; p++) {
+        const s = splitSizes(t, p);
+        expect(s.reduce((a, b) => a + b, 0), `${t}/${p}`).toBe(t);
+        expect(s.length, `${t}/${p}`).toBe(Math.ceil(t / p));
+        expect(Math.max(...s) - Math.min(...s), `${t}/${p}`).toBeLessThanOrEqual(1);
+        expect(Math.max(...s), `${t}/${p}`).toBeLessThanOrEqual(p);
+        expect([...s].sort((a, b) => b - a), `${t}/${p}`).toEqual(s);
+      }
+    }
+  });
+
+  it("dietSplit: «מהם גם וגם» counted once — veg only, gf only, both, the regular rest; TBD where a number it needs is", () => {
+    expect(dietSplit({ trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2 })).toEqual({ trainees: 23, veg_only: 2, gf_only: 1, both: 2, regular: 18 });
+    expect(dietSplit({ trainees: 10, diet_veg: 0, diet_gf: 0, diet_both: 0 })).toEqual({ trainees: 10, veg_only: 0, gf_only: 0, both: 0, regular: 10 });
+    expect(dietSplit({ trainees: null, diet_veg: 4, diet_gf: 3, diet_both: 2 })).toEqual({ trainees: null, veg_only: 2, gf_only: 1, both: 2, regular: null });
+    expect(dietSplit({ trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: null })).toEqual({ trainees: 23, veg_only: null, gf_only: null, both: null, regular: null });
   });
 });

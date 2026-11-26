@@ -1,7 +1,8 @@
 // «תוצרים ← תורנויות» (/print/rota, every member of the edition; milestone 7, schema v16): every page of the duty
 // roster, to print or download — the board, a schedule per group (all or one: one A4 landscape page each, GroupSheet),
 // a page per day, the kitchen's, the heads, the staff's shifts, מוצ"ש–ראשון (the tasks, and the shopping list on a page of
-// its own — v19), the food, who is on campus, the loads.
+// its own — v19), the food, who is on campus, the loads. v20: the food page is FoodSheet (stream A's) and the staff's
+// shifts StaffSheet (stream B's: the day × grid-rows schedule, never a transport) — src/screens/outputs/rota/.
 // Each is a builder of src/exports/rota.ts: the screen, the paper and the files are one list. «הורדת xlsx (כל
 // הגיליונות)» writes all of them, a sheet each; «הורדת CSV» the page on screen. Made in this browser, nothing uploaded.
 // The heads' phones are personal data: «כולל טלפונים של ראשי הקבוצות» only for an edition's logistics and admins in a
@@ -17,18 +18,21 @@ import type { Week } from "../../domain/types";
 import { csvBytes } from "../../exports/csv";
 import { CSV_MIME, download, fileName, israelDay } from "../../exports/download";
 import {
-  campusTable, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, type HeadPhones, headsTable, kitchenDutyId, kitchenSheet, loadsTable, prepTable,
-  rotaBoardTable, rotaWorkbook, shoppingTable, stackTables, staffTable,
+  campusTable, daySheet, groupSchedule, groupScheduleInputs, groupWeek, type HeadPhones, headsTable, kitchenDutyId, kitchenSheet, loadsTable, prepTable,
+  rotaBoardTable, rotaWorkbook, shoppingTable, stackTables,
 } from "../../exports/rota";
 import type { Table } from "../../exports/table";
 import { israelDate } from "../../exports/tracking";
 import { toXlsx, XLSX_MIME } from "../../exports/xlsx";
 import { ROTA_DAYS } from "../../domain/rota";
-import { Button, TABLE_HEAD, TABLE_KEY, TABLE_ROW, TABLE_TH } from "../settings/kit";
+import { Button } from "../settings/kit";
 import { EditionSelect, useToast } from "../speakers/parts";
 import { HeadPhonesToggle, isEmptyRota, maySeeRotaContacts, RotaLoadFailed, useHeadPhones, useRota } from "../rota/shared";
 import { actorIn, useWeekStore } from "../weekStore";
 import { GroupSheet } from "./GroupSheet";
+import { FoodSheet, foodTables } from "./rota/FoodSheet";
+import { StaffSheet, staffTables } from "./rota/StaffSheet";
+import { TableView } from "./rota/TableView";
 import { OutputsTabs, PrintSetup, SELECT } from "./parts";
 
 export type RotaView = "board" | "groups" | "day" | "kitchen" | "heads" | "staff" | "prep" | "food" | "campus" | "loads";
@@ -50,7 +54,7 @@ export const ROTA_VIEWS: readonly [RotaView, string][] = [
 const CARD_KEYS: Partial<Record<RotaView, number>> = { board: 2, day: 2, kitchen: 2, staff: 2, campus: 2 };
 
 /** Printed across the page: the wide ones. */
-const LANDSCAPE: Record<RotaView, boolean> = { board: true, groups: true, day: true, kitchen: true, heads: false, staff: false, prep: false, food: true, campus: true, loads: true };
+const LANDSCAPE: Record<RotaView, boolean> = { board: true, groups: true, day: true, kitchen: true, heads: false, staff: true, prep: false, food: true, campus: true, loads: true };
 
 /** The views a head's phone may appear in (with «כולל טלפונים» on). */
 const WITH_PHONES: ReadonlySet<RotaView> = new Set(["day", "heads"]);
@@ -223,14 +227,20 @@ export function RotaScreen({ port, me }: { port: DataPort; me: Me }) {
           {view === "kitchen" && duty == null && <p className="text-sm text-ink-soft print:hidden">עוד אין תורנויות.</p>}
 
           <div data-rota-view={view} className="space-y-4">
-            {view === "groups"
-              ? (oneGroup ? [oneGroup] : groups).map((g, i) => <GroupSheet key={g.groupId} week={groupWeek(g.input)} first={i === 0} printed={printed} />)
-              : tables.map((t, i) => (
+            {view === "groups" ? (
+              (oneGroup ? [oneGroup] : groups).map((g, i) => <GroupSheet key={g.groupId} week={groupWeek(g.input)} first={i === 0} printed={printed} />)
+            ) : view === "food" ? (
+              <FoodSheet week={week} data={data} />
+            ) : view === "staff" ? (
+              <StaffSheet week={week} data={data} />
+            ) : (
+              tables.map((t, i) => (
                   <section key={t.name} aria-label={t.name} className={i > 0 ? "print:break-before-page" : ""}>
                     {tables.length > 1 && <h3 className="mb-1 font-display text-lg font-bold text-navy print:break-after-avoid">{t.name}</h3>}
                     <TableView table={t} keys={CARD_KEYS[view] ?? 1} />
                   </section>
-                ))}
+                ))
+            )}
             {view === "groups" && groups.length === 0 && <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">עוד אין קבוצות.</p>}
           </div>
         </>
@@ -261,68 +271,14 @@ function tablesOf(
     case "heads":
       return [headsTable(data, phones)];
     case "staff":
-      return [staffTable(data)];
+      return staffTables(week, data);
     case "prep":
       return [prepTable(data), shoppingTable(data)];
     case "food":
-      return [foodTable(data, e)];
+      return foodTables(week, data);
     case "campus":
       return [campusTable(data, e)];
     case "loads":
       return [loadsTable(data, e)];
   }
-}
-
-/**
- * A table as the screen and the paper show it — the file's own cells. Wide screens and paper: a table (the kit's
- * sage header, the key column bold navy; a band row in sage); a phone: a card per row, its first cell the heading and
- * the others as labelled lines, so nothing scrolls sideways.
- */
-function TableView({ table: t, keys = 1 }: { table: Table; /** The leading cells a phone's card is headed by. */ keys?: number }) {
-  if (t.rows.length === 0) return <p className="rounded-xl border border-line bg-card p-4 text-ink-soft shadow-sm">אין עדיין מה להראות כאן.</p>;
-  return (
-    <div data-rota-table={t.name}>
-      <div className="hidden overflow-x-auto rounded-xl border border-line bg-card shadow-sm md:block print:block print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
-        <table aria-label={t.name} className="w-full border-collapse text-start text-sm print:text-[8pt]">
-          <thead>
-            <tr className={TABLE_HEAD}>
-              {t.headers.map((h, i) => (
-                <th key={i} scope="col" className={`${TABLE_TH} px-2 py-1.5 print:px-1 print:py-0.5`}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {t.rows.map((r, i) => (
-              <tr key={i} className={`${TABLE_ROW} align-top ${t.fills?.[i] ? "bg-sage-soft" : ""}`}>
-                {t.headers.map((_, j) => (
-                  <td key={j} className={`px-2 py-1.5 break-words print:px-1 print:py-0.5 ${j === 0 ? TABLE_KEY : ""}`}>
-                    {r[j] ?? ""}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <ul aria-label={t.name} className="grid items-start gap-2 md:hidden print:hidden">
-        {t.rows.map((r, i) => (
-          <li key={i} className={`min-w-0 rounded-xl border border-line p-3 shadow-sm ${t.fills?.[i] ? "bg-sage-soft" : "bg-card"}`}>
-            <p className="font-bold text-navy break-words">{r.slice(0, keys).filter(Boolean).join(" · ") || "—"}</p>
-            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-sm">
-              {t.headers.slice(keys).map((h, j) =>
-                r[j + keys] ? (
-                  <div key={j} className="contents">
-                    <dt className="text-ink-soft">{h}</dt>
-                    <dd className="min-w-0 break-words">{r[j + keys]}</dd>
-                  </div>
-                ) : null,
-              )}
-            </dl>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
 }
