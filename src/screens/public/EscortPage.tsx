@@ -4,8 +4,12 @@
 // W−7 (public.escort_view decides — the page shows what came); the driver once
 // the transport is arranged; the four ticks; and, for a lesson whose transport
 // was approved, a pickup address the escort may send — write-only, never shown
-// back. Phone first: one card per lesson.
-import { type FormEvent, useId, useState } from "react";
+// back. Phone first: one card per lesson. v20: the escort opens the lesson's
+// presentation in the hall — escort_view says its state alone (`presentation`),
+// and the card says where the file is on the hall's computer: the day's folder
+// and the name's start, from the day, the start and the room by `entryPrefix`,
+// the function the week's zip is named by (never a file's name, a path or a link).
+import { type FormEvent, Fragment, useId, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { EscortLesson, EscortView, PublicPort } from "../../data/publicPort";
 import { STAGE_LIMITS } from "../../data/stageRules";
@@ -13,6 +17,7 @@ import { telHref, waHref } from "../../domain/contactLinks";
 import { escortCount, liaisonLine, TICK_LABEL, ticksApply } from "../../domain/escorts";
 import { israelDate, israelMoment } from "../../domain/israelTime";
 import { fmtDate } from "../../domain/milestones";
+import { escortPresentationLine } from "../../domain/presentationNames";
 import { byGender } from "../../domain/names";
 import { dateOf } from "../../domain/time";
 import { TICK_ITEMS, type TickItem } from "../../domain/types";
@@ -122,6 +127,7 @@ function LessonCard({
   const title = l.title ?? (memorial ? "זמן זיכרון" : "כותרת TBD");
   // from W−7 the phones come; a lesson whose speaker has none on file says where it is, so it is not taken for a fault
   const phoneAtTeam = !memorial && l.speaker != null && !l.phone && view.phones_from != null && israelDate(new Date().toISOString()) >= view.phones_from;
+  const presentation = memorial ? null : escortPresentationLine(l.presentation, l.day, l.start_min, l.room);
   return (
     <article aria-labelledby={`${id}-h`} data-escort-lesson={l.lesson_id} className="space-y-3 rounded-xl border border-line bg-card p-4 shadow-sm">
       <div>
@@ -142,6 +148,11 @@ function LessonCard({
           </p>
         )}
       </div>
+      {presentation && (
+        <p data-escort-presentation={l.presentation} className={`break-words text-sm ${l.presentation === "missing" ? "rounded-lg bg-amber-50 px-3 py-2 text-amber-950" : ""}`}>
+          {presentation.map((s, i) => ("text" in s ? <Fragment key={i}>{s.text}</Fragment> : <bdi key={i}>{s.name}</bdi>))}
+        </p>
+      )}
       {(l.phone || l.driver || phoneAtTeam) && (
         <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-sm">
           {l.phone && (

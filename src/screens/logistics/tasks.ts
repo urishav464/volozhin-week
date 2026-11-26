@@ -16,7 +16,7 @@ import type { RotaData } from "../../data/rota";
 import { daysToWeek, israelMoment } from "../../domain/israelTime";
 import { kkWindowState } from "../../domain/kkWindow";
 import { pendingPayments } from "../../domain/mine";
-import { byCohortOrder, canDrive, helpsRota, presenceMarked } from "../../domain/rota";
+import { byCohortOrder, canDrive, cohortHelps, presenceMarked } from "../../domain/rota";
 import { rotaWarnings } from "../../domain/rotaWarnings";
 import type { Week } from "../../domain/types";
 import { paymentRows, printRows } from "../../exports/logistics";
@@ -90,7 +90,12 @@ const task = (base: Base, state: TaskState, line: string): Task => ({ ...base, s
 
 // ------------------------------------------------------------------ בהתחלה
 
-/** «נוכחות המכינות»: the cohorts entered, each marked on campus somewhere (rotaWarnings' presence_unknown), the two flags counted. */
+/**
+ * «נוכחות המכינות»: the cohorts entered, each marked on campus somewhere (rotaWarnings' presence_unknown) and (v20) with
+ * its trainees and its three diet numbers typed — the meals count them (mealsTable: a cohort marked nowhere, or whose
+ * trainees are TBD, makes them TBD; a diet TBD, its columns); done, the trainees added up and those that help (in some
+ * duty) and can drive counted.
+ */
 function presenceTask(rota: RotaData | null): Task {
   const base: Base = { key: "presence", title: "נוכחות המכינות", to: "/logistics/rota/setup" };
   if (!rota) return task(base, "unknown", NOT_LOADED);
@@ -98,15 +103,24 @@ function presenceTask(rota: RotaData | null): Task {
   if (cohorts.length === 0) return task(base, "empty", "עוד לא הוזנו מכינות");
   // presence_unknown's rule: no presence row at all for the cohort (never assumed)
   const unmarked = cohorts.filter((c) => !presenceMarked(rota, c.id));
-  if (unmarked.length > 0) return task(base, "open", `לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`);
+  const uncounted = cohorts.filter((c) => c.trainees == null);
+  // the review: the three diet numbers too — four of the meals' five columns are theirs (dietSplit: TBD while any is)
+  const undieted = cohorts.filter((c) => c.diet_veg == null || c.diet_gf == null || c.diet_both == null);
+  const open = [
+    ...(unmarked.length > 0 ? [`לא סומן מתי בקמפוס: ${unmarked.map((c) => c.name).join(", ")}`] : []),
+    ...(uncounted.length > 0 ? [`לא הוזן כמה חניכים: ${uncounted.map((c) => c.name).join(", ")}`] : []),
+    ...(undieted.length > 0 ? [`לא הוזנה תזונה: ${undieted.map((c) => c.name).join(", ")}`] : []),
+  ];
+  if (open.length > 0) return task(base, "open", open.join(" · "));
   const n = count(cohorts.length, "מכינה אחת", (k) => `${k} מכינות`);
-  return task(base, "done", `${n} · עוזרות בתורנויות: ${cohorts.filter(helpsRota).length} · יכולות להסיע: ${cohorts.filter(canDrive).length}`);
+  const trainees = cohorts.reduce((sum, c) => sum + (c.trainees ?? 0), 0);
+  return task(base, "done", `${n} · ${trainees} חניכים · עוזרות בתורנויות: ${cohorts.filter((c) => cohortHelps(rota, c.id)).length} · יכולות להסיע: ${cohorts.filter(canDrive).length}`);
 }
 
 /**
  * «שיבוץ התורנויות»: what the board warns about that someone has to fill in — groups without a size or a head, duties
- * without a target, shifts without a lead, shifts short of groups or with too many, and hand-made assignments to a
- * group whose cohort does not help (the `not_helping` warning's rule). None of these: every shift is placed.
+ * without a target, shifts short of groups or with too many, and hand-made assignments on a duty the group's cohort
+ * does not help in (v20: the `not_eligible` warning's rule). None of these: every shift is placed.
  */
 function assignTask(rota: RotaData | null, week: Week): Task {
   const base: Base = { key: "assign", title: "שיבוץ התורנויות", to: "/logistics/rota" };
@@ -120,18 +134,16 @@ function assignTask(rota: RotaData | null, week: Week): Task {
   const sizeless = rota.groups.filter((g) => g.size == null).length;
   const headless = of("no_head").reduce((n, w) => n + w.groupIds.length, 0);
   const noTarget = of("no_target").length;
-  const noLead = shifts("no_lead");
   const under = shifts("under");
   const over = shifts("over");
-  const byHand = of("not_helping").length; // one warning per assignment
+  const byHand = of("not_eligible").length; // one warning per assignment
   const parts = [
     sizeless && count(sizeless, "קבוצה אחת בלי גודל", (n) => `${n} קבוצות בלי גודל`),
     headless && count(headless, "קבוצה אחת בלי ראש/ת קבוצה", (n) => `${n} קבוצות בלי ראש/ת קבוצה`),
     noTarget && count(noTarget, "תורנות אחת בלי מספר קבוצות", (n) => `${n} תורנויות בלי מספר קבוצות`),
-    noLead && count(noLead, "משמרת אחת בלי אחראי/ת", (n) => `${n} משמרות בלי אחראי/ת`),
     under && count(under, "חסרות קבוצות במשמרת אחת", (n) => `חסרות קבוצות ב-${n} משמרות`),
     over && count(over, "יותר מדי קבוצות במשמרת אחת", (n) => `יותר מדי קבוצות ב-${n} משמרות`),
-    byHand && count(byHand, "שיבוץ אחד לקבוצה שלא עוזרת", (n) => `${n} שיבוצים לקבוצות שלא עוזרות`),
+    byHand && count(byHand, "שיבוץ אחד בתורנות שהמכינה לא עוזרת בה", (n) => `${n} שיבוצים בתורנויות שהמכינה לא עוזרת בהן`),
   ].filter((p): p is string => typeof p === "string");
   return parts.length > 0 ? task(base, "open", parts.join(" · ")) : task(base, "done", "כל המשמרות שובצו");
 }

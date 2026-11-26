@@ -25,7 +25,7 @@ import { loadRange, SuggestBar } from "./Suggest";
 type Shown = RotaAssignment & { preview?: boolean };
 
 /** The kinds a warning list sends elsewhere: the setup, the staff's shifts. */
-const SETUP_KINDS = new Set(["presence_unknown", "diets_exceed", "no_head", "no_target"]);
+const SETUP_KINDS = new Set(["presence_unknown", "no_head", "no_target"]);
 
 const cellId = (where: "d" | "p", day: number, shift: number, duty: number) => `rota-${where}-${day}-${shift}-${duty}`;
 const buttonId = (where: "d" | "p", day: number, shift: number, duty: number) => `rota-btn-${where}-${day}-${shift}-${duty}`;
@@ -259,11 +259,7 @@ function WarningItems({ warnings, onJump }: { warnings: RotaWarning[]; onJump: (
     <ul aria-label="אזהרות" className="max-h-96 space-y-1.5 overflow-y-auto pb-1">
       {warnings.map((w) => (
         <li key={w.key} data-warning={w.kind} className={`rounded-lg text-sm leading-snug ring-1 ring-inset ${tone(w)}`}>
-          {w.kind === "no_lead" ? (
-            <Link to="/logistics/rota/staff" className="flex min-h-11 items-start gap-2 px-3 py-2 hover:underline">
-              {line(w, <span className="text-xs"> · למשמרות הצוות</span>)}
-            </Link>
-          ) : SETUP_KINDS.has(w.kind) ? (
+          {SETUP_KINDS.has(w.kind) ? (
             <Link to="/logistics/rota/setup" className="flex min-h-11 items-start gap-2 px-3 py-2 hover:underline">
               {line(w, <span className="text-xs"> · לקבוצות ומכינות</span>)}
             </Link>

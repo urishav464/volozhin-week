@@ -6,7 +6,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { CommandError } from "../../data/commands";
 import type { DataPort } from "../../data/port";
-import type { RotaContact, RotaData, ShiftIndex } from "../../data/rota";
+import { isCohortContact, isHeadContact, type RotaContactRow, type RotaData, type ShiftIndex } from "../../data/rota";
 import { rotaShiftRange, rotaShiftsOf, shiftBounds } from "../../domain/rota";
 import { type Day, fmtRange } from "../../domain/time";
 import type { Edition } from "../../domain/types";
@@ -61,6 +61,8 @@ export interface HeadPhonesState {
   setOn: (v: boolean) => void;
   /** group id → phone, only while on and allowed (and once the answer came); null otherwise. */
   phones: Map<number, string> | null;
+  /** v20: cohort id → its staff contact's phone, by the same rule and the same one call; null otherwise. */
+  cohortPhones: Map<number, string> | null;
   failed: boolean;
   /** Asks again (after a phone was saved), while on. */
   reload: () => void;
@@ -77,7 +79,7 @@ export function useHeadPhones(port: DataPort, editionId: number | null, allowed:
   if (choice.edition !== editionId) setChoice({ edition: editionId, on: false });
   const on = allowed && editionId != null && choice.on && choice.edition === editionId;
   const setOn = useCallback((v: boolean) => setChoice({ edition: editionId, on: v }), [editionId]);
-  const [answer, setAnswer] = useState<{ edition: number; rows: RotaContact[] } | null>(null);
+  const [answer, setAnswer] = useState<{ edition: number; rows: RotaContactRow[] } | null>(null);
   const [failed, setFailed] = useState(false);
   const [asked, setAsked] = useState(0);
   const reload = useCallback(() => setAsked((n) => n + 1), []);
@@ -96,8 +98,10 @@ export function useHeadPhones(port: DataPort, editionId: number | null, allowed:
       live = false;
     };
   }, [port, editionId, on, asked]);
-  const phones = on && answer?.edition === editionId ? new Map(answer.rows.map((r) => [r.group_id, r.head_phone])) : null;
-  return { on, setOn, phones, failed, reload };
+  const rows = on && answer?.edition === editionId ? answer.rows : null;
+  const phones = rows ? new Map(rows.filter(isHeadContact).map((r) => [r.group_id, r.head_phone])) : null;
+  const cohortPhones = rows ? new Map(rows.filter(isCohortContact).map((r) => [r.cohort_id, r.phone])) : null;
+  return { on, setOn, phones, cohortPhones, failed, reload };
 }
 
 /** The toggle — only where the phones may be seen at all — with what it means, and a failed load said. */

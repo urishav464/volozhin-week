@@ -31,7 +31,11 @@ export interface RotaCtx {
 }
 
 /** The codes a rota form says beside itself (anything else is the screen's toast). */
-export const FORM_CODES = new Set(["name_required", "bad_value", "rota_letter_taken", "rota_group_taken", "rota_duty_exists", "rota_contact_in_text", "bad_phone", "in_use", "outside_week", "rota_group_busy"]);
+export const FORM_CODES = new Set([
+  "name_required", "bad_value", "rota_letter_taken", "rota_group_taken", "rota_duty_exists", "rota_contact_in_text", "bad_phone", "in_use", "outside_week", "rota_group_busy",
+  // v20
+  "rota_diets_exceed", "cohort_not_helping",
+]);
 
 /** onRefused for a form: its own codes into `set`, the rest left to the toast. */
 export function formRefusal(set: (text: string | null) => void, words: Partial<Record<string, string>> = {}) {

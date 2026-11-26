@@ -1,23 +1,42 @@
 // «קבוצות ומכינות» — what the board is made of: the cohorts on campus (a letter that starts its groups' codes, a name,
-// the diets the food orders count, and v19's two flags — «עוזרת בתורנויות», «הצוות שלה יכול להסיע»), when each is on campus (cohort × day × shift; no mark = not marked, never assumed —
-// «כל השבוע», «כל היום»), the groups (the next number suggested, a size — TBD until known — and the head's name; the
-// head's phone only behind «כולל טלפונים של ראשי הקבוצות», for those who may see it, saved through set_rota_contact
-// alone), the duties (how many groups each shift needs — empty is «not set», and the suggestion leaves it — and a
-// minimum of people), with last year's four when the list is empty («הצעה»), and the shifts' hours — the edition's
-// admins'. A head's phone is personal data: no column, no line and no field for it while the switch is off.
-import { type FormEvent, type ReactNode, useId, useState } from "react";
-import { cleanHeadPhone, type Diet, LAST_YEAR_DUTIES, type NewDuty, type PresenceScope, type RotaCohort, type RotaDuty, type RotaGroup } from "../../../data/rota";
-import { canDrive, DEFAULT_ROTA_SHIFTS, groupCode, helpsRota, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS } from "../../../domain/rota";
+// v20's trainees and three diet numbers — «מהם גם וגם» how many are both, checked here in the guard's words —, the staff
+// contact's name and, for those who may see it, its phone — read when the form opens and kept in the form alone —, the
+// duties it helps in — a new cohort every duty; none left while it has groups deletes them behind a Confirm —, and v19's
+// «הצוות שלה יכול להסיע»), the meals they make («כמויות אוכל»: a day × meal, the cohorts on campus then — mealsTable),
+// when each is on campus (cohort × day × shift; no mark = not marked, never assumed — «כל השבוע», «כל היום»), the groups
+// (a helping cohort split in one call — «חלוקה לקבוצות», the sizes a «הצעה», «חלוקה מחדש» behind a Confirm naming what
+// goes —, or one by one: the next number suggested, a size — TBD until known — and the head's name; the head's phone
+// only behind «כולל טלפונים של ראשי הקבוצות», for those who may see it, saved through set_rota_contact alone), the
+// duties in their order («למעלה» / «למטה»: the board's and the pages' order, and which fills first when groups are
+// short) with how many groups each shift needs — empty is «not set», and the suggestion leaves it — and a minimum of
+// people, last year's four when the list is empty («הצעה»), and the shifts' hours — the edition's admins'. A phone is
+// personal data: no column, no line and no field for it but those.
+import { type FormEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { Link } from "react-router";
+import { CommandError } from "../../../data/commands";
+import {
+  cleanCohortFields, cleanCohortName, cleanHeadPhone, cleanLetter, isCohortContact, LAST_YEAR_DUTIES, type NewDuty, type PresenceScope, type RotaCohort, type RotaDuty, type RotaGroup,
+} from "../../../data/rota";
+import { nameKey } from "../../../domain/nameKey";
+import { canDrive, cohortDutyIds, cohortHelps, DEFAULT_ROTA_SHIFTS, groupCode, ROTA_DAYS, rotaShiftActive, rotaShiftsOf, SHIFTS, splitSizes } from "../../../domain/rota";
 import { DAY_NAMES, fmt, parseClock } from "../../../domain/time";
-import { cohortsInOrder, dutiesInOrder, groupsInOrder, shiftText } from "../../../exports/rota";
+import { errorMessage } from "../../../errors";
+import { cohortsInOrder, dutiesInOrder, groupsInOrder, mealsTable, shiftText } from "../../../exports/rota";
+import { MEALS_HINT } from "../../outputs/rota/FoodSheet";
+import { TableView } from "../../outputs/rota/TableView";
 import { GroupChip, HeadPhonesToggle, useHeadPhones } from "../../rota/shared";
 import { Badge, Button, Confirm, Field, Fold, INPUT, TABLE_HEAD, TABLE_ROW, TABLE_TH, useFocusBack } from "../../settings/kit";
+import {
+  cohortDutyNames, cohortNumbersText, dietSplitText, DUTY_ORDER_HINT, dutyHelpers, groupsLossText, newDutyTargets, sameIds, sizesAgainstTrainees, splitPreviewText, splitProblem,
+} from "./cohorts";
 import { CARD, formRefusal, intOrNull, Problem, type RotaCtx } from "./parts";
+import { prepMoves } from "./prep";
 
 export function Setup({ ctx }: { ctx: RotaCtx }) {
   return (
     <div className="space-y-4">
       <Cohorts ctx={ctx} />
+      <Food ctx={ctx} />
       <Presence ctx={ctx} />
       <Groups ctx={ctx} />
       <Duties ctx={ctx} />
@@ -27,10 +46,10 @@ export function Setup({ ctx }: { ctx: RotaCtx }) {
 }
 
 /** A part of the setup: its heading and a muted aside, a region by its name. */
-function Part({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+function Part({ title, aside, children, ...rest }: { title: string; aside?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   const id = useId();
   return (
-    <section aria-labelledby={id} className={`${CARD} space-y-3 sm:p-4`}>
+    <section aria-labelledby={id} className={`${CARD} space-y-3 sm:p-4`} {...rest}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h3 id={id} className="font-display text-lg font-bold text-navy">
           {title}
@@ -43,10 +62,11 @@ function Part({ title, aside, children }: { title: string; aside?: ReactNode; ch
 }
 
 /**
- * «עריכה» / «מחיקה» of a line, the delete behind a Confirm whose «ביטול» gives the button the focus back; the edit form
- * stands in for the line, so its save and its «ביטול» give «עריכה» the focus back (`editKey`).
+ * «עריכה» / «מחיקה» of a line (and, before them, `extra` — the duties' «למעלה» / «למטה»), the delete behind a Confirm
+ * whose «ביטול» gives the button the focus back; the edit form stands in for the line, so its save and its «ביטול» give
+ * «עריכה» the focus back (`editKey`).
  */
-function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, editKey, focus }: {
+function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, editKey, focus, extra }: {
   name: string;
   deleting: boolean;
   onEdit: () => void;
@@ -55,10 +75,12 @@ function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, edit
   focusKey: string;
   editKey: string;
   focus: ReturnType<typeof useFocusBack>;
+  extra?: ReactNode;
 }) {
   if (deleting) return <div className="basis-full">{confirm}</div>;
   return (
     <div className="flex shrink-0 flex-wrap gap-1 sm:ms-auto">
+      {extra}
       <Button kind="quiet" ref={focus.ref(editKey)} onClick={onEdit} aria-label={`עריכה: ${name}`}>
         עריכה
       </Button>
@@ -69,58 +91,98 @@ function LineActions({ name, deleting, onEdit, onDelete, confirm, focusKey, edit
   );
 }
 
+type Refused = (code: string | null) => boolean;
+
+/** A refusal a form says before anything is sent — the port's own cleaners, so the words are the guard's (null: none). */
+function refusalOf(check: () => unknown): string | null {
+  try {
+    check();
+    return null;
+  } catch (e) {
+    if (e instanceof CommandError) return e.code;
+    throw e;
+  }
+}
+
 // ------------------------------------------------------------------ המכינות
 
 function Cohorts({ ctx }: { ctx: RotaCtx }) {
-  const { port, week, data, busy, act, mayWrite } = ctx;
+  const { port, week, data, busy, act, mayWrite, phonesAllowed } = ctx;
+  const e = week.edition;
   const focus = useFocusBack();
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const cohorts = cohortsInOrder(data);
-  const groupsOf = (c: RotaCohort) => data.groups.filter((g) => g.cohort_id === c.id).length;
+  const groupsOf = (c: RotaCohort) => data.groups.filter((g) => g.cohort_id === c.id);
+  const duties = dutiesInOrder(data);
+  /** The contact's phone, asked when a form opens (only for those who may see it) — kept in that form alone. */
+  const phoneOf = (cohortId: number) => async () => (await port.rota.contacts(e.id)).filter(isCohortContact).find((r) => r.cohort_id === cohortId)?.phone ?? null;
   return (
     <Part title="המכינות" aside={cohorts.length || undefined}>
       {cohorts.length === 0 && <p className="text-sm text-ink-soft">עוד אין מכינות. לכל מכינה אות משלה (למשל א, ב, נ): ממנה מתחילים הקודים של הקבוצות שלה.</p>}
       <ul aria-label="המכינות" className="divide-y divide-sage/60">
-        {cohorts.map((c) =>
-          editing === c.id ? (
-            <li key={c.id} className="py-2">
-              <CohortForm
-                title={`עריכת המכינה: ${c.name}`}
-                initial={c}
-                busy={busy === `cohort-${c.id}`}
-                onCancel={() => {
-                  setEditing(null);
-                  focus.back(`edit-${c.id}`);
-                }}
-                onSave={async (v, refused) => {
-                  if (!(await act(`cohort-${c.id}`, () => port.rota.updateCohort(c.id, v), "המכינה נשמרה", refused))) return;
-                  setEditing(null);
-                  focus.back(`edit-${c.id}`);
-                }}
-              />
-            </li>
-          ) : (
+        {cohorts.map((c) => {
+          const mine = groupsOf(c);
+          if (editing === c.id) {
+            return (
+              <li key={c.id} className="py-2">
+                <CohortForm
+                  title={`עריכת המכינה: ${c.name}`}
+                  initial={c}
+                  busy={busy === `cohort-${c.id}`}
+                  onCancel={() => {
+                    setEditing(null);
+                    focus.back(`edit-${c.id}`);
+                  }}
+                  duties={duties}
+                  dutyIds={cohortDutyIds(data, c.id)}
+                  loss={mine.length > 0 ? groupsLossText(data, c.id) : null}
+                  phone={phonesAllowed ? phoneOf(c.id) : null}
+                  onSave={async ({ duties: helps, ...v }, phone, drop, refused) => {
+                    const save = async () => {
+                      const p = phone === undefined ? undefined : cleanHeadPhone(phone); // a bad phone refused before anything is written
+                      await port.rota.updateCohort(c.id, v);
+                      // none left while it has groups: its groups go first (the Confirm said so), then the duties
+                      if (drop) for (const g of mine) await port.rota.deleteGroup(g.id);
+                      if (!sameIds(helps, cohortDutyIds(data, c.id))) await port.rota.setCohortDuties(e.id, c.id, helps);
+                      if (p !== undefined) await port.rota.setContact({ cohort: c.id }, p);
+                    };
+                    const ok = drop ? `המכינה נשמרה, ו${mine.length === 1 ? "הקבוצה שלה נמחקה" : `-${mine.length} הקבוצות שלה נמחקו`}.` : "המכינה נשמרה";
+                    if (!(await act(`cohort-${c.id}`, save, ok, refused))) return;
+                    setEditing(null);
+                    focus.back(`edit-${c.id}`);
+                  }}
+                />
+              </li>
+            );
+          }
+          const helpsIn = cohortDutyNames(data, c.id);
+          return (
             <li
               key={c.id}
               data-rota-cohort={c.letter}
-              data-helps-rota={helpsRota(c) ? "y" : "-"}
+              data-helps-rota={cohortHelps(data, c.id) ? "y" : "-"}
               data-can-drive={canDrive(c) ? "y" : "-"}
               className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
             >
-              <div className="min-w-0 flex-1 basis-48">
+              <div className="min-w-0 flex-1 basis-48 space-y-0.5">
                 <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-bold text-navy">
                   <span>
                     <bdi>{c.letter}</bdi> · {c.name}
                   </span>
-                  {!helpsRota(c) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
+                  {helpsIn.length === 0 && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
                   {canDrive(c) && <Badge tone="accent">הצוות יכול להסיע</Badge>}
                 </p>
-                <p className="text-sm text-ink-soft">
-                  {groupsOf(c) === 1 ? "קבוצה אחת" : `${groupsOf(c)} קבוצות`} ·{" "}
-                  {c.diets.length === 0 ? "בלי דיאטות" : `דיאטות: ${c.diets.map((d) => `${d.label} ${d.count}`).join(", ")}`}
+                <p data-cohort-numbers className="text-sm">
+                  {cohortNumbersText(c)} · {mine.length === 1 ? "קבוצה אחת" : mine.length === 0 ? "בלי קבוצות" : `${mine.length} קבוצות`}
                 </p>
+                {helpsIn.length > 0 && (
+                  <p data-cohort-duties className="text-sm text-ink-soft">
+                    עוזרת ב: {helpsIn.join(", ")}
+                  </p>
+                )}
+                <p className="text-sm text-ink-soft">{c.contact_name ? `איש/אשת קשר: ${c.contact_name}` : "איש/אשת קשר מהצוות: עוד לא נקבע/ה"}</p>
               </div>
               {mayWrite && (
                 <LineActions
@@ -138,7 +200,7 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                     <Confirm
                       text={
                         <>
-                          למחוק את המכינה <b>{c.name}</b>? {groupsOf(c) > 0 ? "יש לה קבוצות: קודם מוחקים אותן." : "גם מתי היא בקמפוס יימחק."}
+                          למחוק את המכינה <b>{c.name}</b>? {mine.length > 0 ? "יש לה קבוצות: קודם מוחקים אותן." : "גם מתי היא בקמפוס, באילו תורנויות היא עוזרת והטלפון של איש/אשת הקשר יימחקו."}
                         </>
                       }
                       confirm="מחיקה"
@@ -158,8 +220,8 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
                 />
               )}
             </li>
-          ),
-        )}
+          );
+        })}
       </ul>
       <Problem>{problem}</Problem>
       {mayWrite &&
@@ -167,13 +229,23 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
           <CohortForm
             title="מכינה חדשה"
             busy={busy === "cohort-new"}
+            duties={duties}
+            dutyIds={duties.map((d) => d.id)}
+            loss={null}
+            phone={phonesAllowed ? async () => null : null}
             onCancel={() => {
               setEditing(null);
               focus.back("new");
             }}
-            onSave={async (v, refused) => {
+            onSave={async ({ duties: helps, ...v }, phone, _drop, refused) => {
               const sort = cohorts.reduce((m, c) => Math.max(m, c.sort), 0) + 1;
-              if (!(await act("cohort-new", () => port.rota.addCohort(week.edition.id, { ...v, sort }), "המכינה נוספה", refused))) return;
+              const save = async () => {
+                const p = phone === undefined ? undefined : cleanHeadPhone(phone);
+                const id = await port.rota.addCohort(e.id, { ...v, sort });
+                if (helps.length > 0) await port.rota.setCohortDuties(e.id, id, helps);
+                if (p != null) await port.rota.setContact({ cohort: id }, p);
+              };
+              if (!(await act("cohort-new", save, "המכינה נוספה", refused))) return;
               setEditing(null);
               focus.back("new");
             }}
@@ -187,35 +259,109 @@ function Cohorts({ ctx }: { ctx: RotaCtx }) {
   );
 }
 
-type Refused = (code: string | null) => boolean;
-
-/** What the cohort form saves: v19's two flags always sent (a new cohort's: helps, cannot drive — the columns' defaults). */
+/** What the cohort form saves (v20): its fields, the four numbers (null = TBD), the contact's name, and the duties it helps in. */
 interface CohortValues {
   letter: string;
   name: string;
-  diets: Diet[];
-  helps_rota: boolean;
+  trainees: number | null;
+  diet_veg: number | null;
+  diet_gf: number | null;
+  diet_both: number | null;
+  contact_name: string | null;
   can_drive: boolean;
+  duties: number[];
 }
 
-function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string; initial?: RotaCohort; busy: boolean; onSave: (v: CohortValues, refused: Refused) => Promise<void>; onCancel: () => void }) {
+const COHORT_WORDS = {
+  bad_value: "אחד הערכים לא תקין: אות בלי ספרות ורווחים, ומספרים שלמים מ-0 עד 1000 (או ריק, אם עוד לא ידוע).",
+  name_required: "צריך שם למכינה.",
+  in_use: "יש למכינה קבוצות, ולכן היא צריכה לעזור בתורנות אחת לפחות. קודם מוחקים את הקבוצות שלה.",
+};
+
+function CohortForm({ title, initial, busy, duties, dutyIds, loss, phone: loadPhone, onSave, onCancel }: {
+  title: string;
+  initial?: RotaCohort;
+  busy: boolean;
+  duties: readonly RotaDuty[];
+  /** The duties ticked to begin with: the cohort's own; a new cohort's every duty. */
+  dutyIds: readonly number[];
+  /** What deleting its groups takes with it (groupsLossText); null — it has none. */
+  loss: string | null;
+  /** Reads the contact's phone (null: none saved) — only for those who may see it; null: no phone field at all. */
+  phone: (() => Promise<string | null>) | null;
+  /**
+   * `phone`: undefined — not changed (or no field); else what to save («» deletes). `drop`: its groups are deleted first
+   * (the Confirm said so) — no duty left while it had groups.
+   */
+  onSave: (v: CohortValues, phone: string | undefined, drop: boolean, refused: Refused) => Promise<void>;
+  onCancel: () => void;
+}) {
   const id = useId();
+  const focus = useFocusBack();
   const [letter, setLetter] = useState(initial?.letter ?? "");
   const [name, setName] = useState(initial?.name ?? "");
-  const [helps, setHelps] = useState(initial ? helpsRota(initial) : true);
   const [drives, setDrives] = useState(initial ? canDrive(initial) : false);
-  const [diets, setDiets] = useState<{ label: string; count: string }[]>(initial?.diets.map((d) => ({ label: d.label, count: String(d.count) })) ?? []);
+  const text = (n: number | null | undefined) => (n == null ? "" : String(n));
+  const [counts, setCounts] = useState({
+    trainees: text(initial?.trainees), diet_veg: text(initial?.diet_veg), diet_gf: text(initial?.diet_gf), diet_both: text(initial?.diet_both),
+  });
+  const [contact, setContact] = useState(initial?.contact_name ?? "");
+  const [helpsIn, setHelpsIn] = useState<number[]>([...dutyIds]);
   const [problem, setProblem] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
+  // the contact's phone: read once, when the form opens; it lives in this form alone (never in the page's state)
+  const [load] = useState(() => loadPhone);
+  const [phone, setPhone] = useState("");
+  /** The phone as read: undefined while it is read; null — none saved. */
+  const [base, setBase] = useState<string | null | undefined>(undefined);
+  const [phoneFailed, setPhoneFailed] = useState(false);
+  useEffect(() => {
+    if (!load) return;
+    let live = true;
+    load().then(
+      (p) => {
+        if (!live) return;
+        setBase(p);
+        setPhone(p ?? "");
+      },
+      () => live && setPhoneFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, [load]);
+  const phoneReady = load != null && base !== undefined && !phoneFailed;
+
+  const values = (): CohortValues => ({
+    letter, name, trainees: intOrNull(counts.trainees), diet_veg: intOrNull(counts.diet_veg), diet_gf: intOrNull(counts.diet_gf), diet_both: intOrNull(counts.diet_both),
+    contact_name: contact.trim() || null, can_drive: drives, duties: duties.map((d) => d.id).filter((d) => helpsIn.includes(d)),
+  });
+  const changedPhone = (): string | undefined => (phoneReady && phone.trim() !== (base ?? "") ? phone : undefined);
+  const refused = formRefusal(setProblem, COHORT_WORDS);
+  const send = (drop: boolean) => void onSave(values(), changedPhone(), drop, refused);
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
     setProblem(null);
     if (!letter.trim()) return setProblem("צריך אות למכינה (למשל א, ב, נ).");
-    const list = diets.filter((d) => d.label.trim() || d.count.trim()).map((d) => ({ label: d.label, count: intOrNull(d.count) ?? Number.NaN }));
-    void onSave(
-      { letter, name, diets: list, helps_rota: helps, can_drive: drives },
-      formRefusal(setProblem, { bad_value: "אחד הערכים לא תקין: אות בלי ספרות ורווחים, ולכל דיאטה שם ומספר שלם (עד 1000).", name_required: "צריך שם למכינה." }),
-    );
+    const v = values();
+    const p = changedPhone();
+    // the guard's rules, said before anything is written — the four numbers between them in its own words
+    const code = refusalOf(() => {
+      cleanLetter(v.letter);
+      cleanCohortName(v.name);
+      cleanCohortFields(v);
+      if (p !== undefined) cleanHeadPhone(p);
+    });
+    if (code != null) return void (refused(code) || setProblem(errorMessage(code)));
+    if (loss && v.duties.length === 0) return setDropping(true);
+    send(false);
   };
+  const live = dietSplitText({ trainees: intOrNull(counts.trainees), diet_veg: intOrNull(counts.diet_veg), diet_gf: intOrNull(counts.diet_gf), diet_both: intOrNull(counts.diet_both) });
+  const numberField = (key: keyof typeof counts, label: string) => (
+    <Field id={`${id}-${key}`} label={label}>
+      <input id={`${id}-${key}`} inputMode="numeric" value={counts[key]} onChange={(e) => setCounts({ ...counts, [key]: e.target.value })} maxLength={4} className={INPUT} />
+    </Field>
+  );
   return (
     <form aria-label={title} onSubmit={submit} className="space-y-3 rounded-lg bg-sand-soft p-3">
       <p className="font-bold text-navy">{title}</p>
@@ -227,51 +373,127 @@ function CohortForm({ title, initial, busy, onSave, onCancel }: { title: string;
           <input id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={INPUT} />
         </Field>
       </div>
-      <div className="space-y-1">
-        <label className="flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={helps} onChange={(e) => setHelps(e.target.checked)} aria-describedby={`${id}-helps-hint`} />
-          <span>עוזרת בתורנויות</span>
-        </label>
-        <p id={`${id}-helps-hint`} className="text-xs text-ink-soft">
-          מכינה שלא עוזרת: ההצעה לא משבצת את הקבוצות שלה. הנוכחות שלה עדיין נספרת לארוחות.
-        </p>
-        <label className="flex min-h-11 cursor-pointer items-center gap-2">
-          <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={drives} onChange={(e) => setDrives(e.target.checked)} />
-          <span>הצוות שלה יכול להסיע</span>
-        </label>
-      </div>
-      <fieldset className="min-w-0 space-y-2">
-        <legend className="mb-1 text-sm font-bold text-ink">דיאטות (לכמויות האוכל)</legend>
-        {diets.length === 0 && <p className="text-xs text-ink-soft">בלי דיאטות. את השמות כותבים ביד, למשל «צמחוני».</p>}
-        {diets.map((d, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-2">
-            <input aria-label={`דיאטה ${i + 1}`} value={d.label} onChange={(e) => setDiets(diets.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} maxLength={40} className={`${INPUT} min-w-0 flex-1 basis-36`} />
-            <input
-              aria-label={`כמה אנשים: דיאטה ${i + 1}`}
-              inputMode="numeric"
-              value={d.count}
-              onChange={(e) => setDiets(diets.map((x, j) => (j === i ? { ...x, count: e.target.value } : x)))}
-              className={`${INPUT} w-20 shrink-0`}
-            />
-            <Button kind="quiet" onClick={() => setDiets(diets.filter((_, j) => j !== i))} aria-label={`הסרת דיאטה ${i + 1}`}>
-              הסרה
-            </Button>
-          </div>
-        ))}
-        {diets.length < 6 && (
-          <Button kind="quiet" onClick={() => setDiets([...diets, { label: "", count: "" }])}>
-            + דיאטה
-          </Button>
+      <fieldset className="min-w-0 space-y-1">
+        <legend className="mb-1 text-sm font-bold text-ink">חניכים ותזונה (לכמויות האוכל)</legend>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {numberField("trainees", "חניכים")}
+          {numberField("diet_veg", "צמחוני/טבעוני")}
+          {numberField("diet_gf", "ללא גלוטן")}
+          {numberField("diet_both", "מהם גם וגם")}
+        </div>
+        <p className="text-xs text-ink-soft">ריק = עוד לא ידוע (TBD). «מהם גם וגם» — כמה מהם גם צמחוני/טבעוני וגם ללא גלוטן: הם נספרים פעם אחת.</p>
+        {live && (
+          <p data-diet-split className="text-sm">
+            {live}
+          </p>
         )}
       </fieldset>
-      <Problem>{problem}</Problem>
-      <div className="flex flex-wrap gap-2">
-        <Button kind="primary" type="submit" busy={busy}>
-          שמירה
-        </Button>
-        <Button onClick={onCancel}>ביטול</Button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field id={`${id}-contact`} label="איש/אשת קשר מהצוות (משבץ/ת)" hint="שם בלבד — כל הצוות רואה אותו.">
+          <input id={`${id}-contact`} value={contact} onChange={(e) => setContact(e.target.value)} maxLength={80} className={INPUT} />
+        </Field>
+        {load && (
+          <Field
+            id={`${id}-phone`}
+            label="הטלפון של איש/אשת הקשר"
+            hint={
+              phoneFailed
+                ? "לא הצלחנו לטעון את הטלפון, ולכן אי אפשר לשנות אותו עכשיו. שאר השדות יישמרו."
+                : base === undefined
+                  ? "טוען…"
+                  : "מידע אישי: נשמר רק במסד, ורואים אותו רק הלוגיסטיקה והמדריך/ה. ריק — נמחק."
+            }
+          >
+            <input id={`${id}-phone`} dir="ltr" inputMode="tel" value={phone} disabled={!phoneReady} onChange={(e) => setPhone(e.target.value)} maxLength={40} className={INPUT} data-cohort-phone />
+          </Field>
+        )}
       </div>
+      <fieldset className="min-w-0 space-y-1">
+        <legend className="mb-1 text-sm font-bold text-ink">באילו תורנויות היא עוזרת</legend>
+        {duties.length === 0 ? (
+          <p className="text-xs text-ink-soft">עוד אין תורנויות. כשמוסיפים תורנויות (ב«התורנויות» למטה), מסמנים כאן באילו המכינה עוזרת.</p>
+        ) : (
+          <p className="text-xs text-ink-soft">מכינה שלא עוזרת באף תורנות — אין לה קבוצות, והיא נספרת רק בכמויות האוכל.</p>
+        )}
+        {duties.map((d) => (
+          <label key={d.id} className="flex min-h-11 cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-5 shrink-0 accent-navy"
+              checked={helpsIn.includes(d.id)}
+              onChange={(e) => setHelpsIn(e.target.checked ? [...helpsIn, d.id] : helpsIn.filter((x) => x !== d.id))}
+            />
+            <span>{d.name}</span>
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex min-h-11 cursor-pointer items-center gap-2">
+        <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={drives} onChange={(e) => setDrives(e.target.checked)} />
+        <span>הצוות שלה יכול להסיע</span>
+      </label>
+      <Problem>{problem}</Problem>
+      {dropping ? (
+        <Confirm
+          text={
+            <>
+              בלי אף תורנות אין ל<b>{name || initial?.name}</b> קבוצות: {loss}. לשמור כך?
+            </>
+          }
+          confirm="שמירה ומחיקת הקבוצות"
+          busy={busy}
+          onConfirm={() => {
+            setDropping(false);
+            send(true);
+            focus.back("save");
+          }}
+          onCancel={() => {
+            setDropping(false);
+            focus.back("save");
+          }}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button kind="primary" type="submit" busy={busy} ref={focus.ref("save")}>
+            שמירה
+          </Button>
+          <Button onClick={onCancel}>ביטול</Button>
+        </div>
+      )}
     </form>
+  );
+}
+
+// ------------------------------------------------------------------ כמויות אוכל
+
+/** v20 «כמויות אוכל» under the cohorts: a day × meal, the cohorts on campus then, their trainees by diet (mealsTable). */
+function Food({ ctx }: { ctx: RotaCtx }) {
+  const { week, data } = ctx;
+  if (data.cohorts.length === 0) return null;
+  const t = mealsTable(data, week.edition, week.rows);
+  return (
+    <Part title="כמויות אוכל" aside="חניכים בלבד" data-rota-food="">
+      <p className="text-sm text-ink-soft">
+        {MEALS_HINT}{" "}
+        <Link to="/print/rota?view=food" className="font-bold text-navy underline">
+          להדפסה
+        </Link>
+      </p>
+      {t.rows.length === 0 ? (
+        <p className="text-sm text-ink-soft">בלו״ז אין שורות ארוחה (שורות קבועות ששמן «ארוחת…»).</p>
+      ) : (
+        <>
+          {/* a phone: a card per meal makes a long page — folded, the count beside it; wider, the table itself */}
+          <div className="md:hidden">
+            <Fold title="לכל ארוחה" hint={`${t.rows.length} ארוחות`} size="sm">
+              <TableView table={t} keys={2} />
+            </Fold>
+          </div>
+          <div className="hidden md:block">
+            <TableView table={t} keys={2} />
+          </div>
+        </>
+      )}
+    </Part>
   );
 }
 
@@ -383,116 +605,143 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
   const heads = useHeadPhones(port, week.edition.id, phonesAllowed);
   const focus = useFocusBack();
   const cohorts = cohortsInOrder(data);
+  // v20: only a cohort that helps in some duty has groups (cohort_not_helping) — the new group's cohorts are those
+  const helping = cohorts.filter((c) => cohortHelps(data, c.id));
   const groups = groupsInOrder(data);
   const [editing, setEditing] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [cohort, setCohort] = useState<number | null>(null);
-  const chosen = cohorts.find((c) => c.id === cohort) ?? cohorts[0] ?? null;
+  const chosen = helping.find((c) => c.id === cohort) ?? helping[0] ?? null;
   const phones = heads.phones; // only while «כולל טלפונים» is on, here, and answered
   return (
     <Part title="הקבוצות" aside={groups.length || undefined}>
       <HeadPhonesToggle allowed={phonesAllowed} on={heads.on} setOn={heads.setOn} failed={heads.failed} />
-      {phonesAllowed && !heads.on && mayWrite && <p className="text-xs text-ink-soft">כדי להוסיף או לשנות טלפון של ראש/ת קבוצה, מסמנים «כולל טלפונים של ראשי הקבוצות».</p>}
+      {phonesAllowed && !heads.on && mayWrite && groups.length > 0 && <p className="text-xs text-ink-soft">כדי להוסיף או לשנות טלפון של ראש/ת קבוצה, מסמנים «כולל טלפונים של ראשי הקבוצות».</p>}
       {cohorts.length === 0 && <p className="text-sm text-ink-soft">קודם מוסיפים מכינה: הקוד של קבוצה הוא האות של המכינה והמספר שלה (א1, א2…).</p>}
+      {cohorts.length > 0 && helping.length === 0 && (
+        <p className="text-sm text-ink-soft">אף מכינה עוד לא עוזרת בתורנות: קבוצות יש רק למכינה שעוזרת. מסמנים לה תורנויות ב«המכינות» («עריכה»).</p>
+      )}
       {cohorts.map((c) => {
         const mine = groups.filter((g) => g.cohort_id === c.id);
-        if (mine.length === 0) return null;
+        const helps = cohortHelps(data, c.id);
+        if (!helps && mine.length === 0) {
+          return (
+            <p key={c.id} data-cohort-groups={c.letter} className="text-sm text-ink-soft">
+              {c.name} לא עוזרת באף תורנות, ולכן אין לה קבוצות.
+            </p>
+          );
+        }
+        const against = sizesAgainstTrainees(c, mine.map((g) => g.size));
         return (
-          <div key={c.id} className="min-w-0">
-            <h4 className="font-bold text-navy">{c.name}</h4>
-            <ul aria-label={`הקבוצות של ${c.name}`} className="divide-y divide-sage/60">
-              {mine.map((g) => {
-                const code = groupCode(c.letter, g.number);
-                if (editing === g.id) {
+          <div key={c.id} data-cohort-groups={c.letter} className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <h4 className="font-bold text-navy">{c.name}</h4>
+              <span className="text-sm text-ink-soft">
+                {mine.length === 0 ? "עוד אין קבוצות" : mine.length === 1 ? "קבוצה אחת" : `${mine.length} קבוצות`}
+                {c.trainees != null ? ` · ${c.trainees} חניכים` : " · חניכים: TBD"}
+              </span>
+              {against && (
+                <span data-sizes-against className="text-sm text-amber-900">
+                  {against}
+                </span>
+              )}
+            </div>
+            {mine.length > 0 && (
+              <ul aria-label={`הקבוצות של ${c.name}`} className="divide-y divide-sage/60">
+                {mine.map((g) => {
+                  const code = groupCode(c.letter, g.number);
+                  if (editing === g.id) {
+                    return (
+                      <li key={g.id} className="py-2">
+                        <GroupForm
+                          title={`עריכת הקבוצה ${code}`}
+                          initial={g}
+                          phone={phones ? (phones.get(g.id) ?? "") : null}
+                          busy={busy === `group-${g.id}`}
+                          onCancel={() => {
+                            setEditing(null);
+                            focus.back(`edit-${g.id}`);
+                          }}
+                          onSave={async (v, phone, refused) => {
+                            // the form sends a phone only when it differs from the one its field was filled with — never
+                            // compared with the phones as they are now (a later answer would read as a change: a deletion)
+                            const changed = phone != null;
+                            const ok = await act(
+                              `group-${g.id}`,
+                              async () => {
+                                const p = changed ? cleanHeadPhone(phone) : undefined; // a bad phone refused before anything is written
+                                await port.rota.updateGroup(g.id, v);
+                                if (changed) await port.rota.setContact({ group: g.id }, p ?? null);
+                              },
+                              "הקבוצה נשמרה",
+                              refused,
+                            );
+                            if (changed) heads.reload();
+                            if (!ok) return;
+                            setEditing(null);
+                            focus.back(`edit-${g.id}`);
+                          }}
+                        />
+                      </li>
+                    );
+                  }
                   return (
-                    <li key={g.id} className="py-2">
-                      <GroupForm
-                        title={`עריכת הקבוצה ${code}`}
-                        initial={g}
-                        phone={phones ? (phones.get(g.id) ?? "") : null}
-                        busy={busy === `group-${g.id}`}
-                        onCancel={() => {
-                          setEditing(null);
-                          focus.back(`edit-${g.id}`);
-                        }}
-                        onSave={async (v, phone, refused) => {
-                          // the form sends a phone only when it differs from the one its field was filled with — never
-                          // compared with the phones as they are now (a later answer would read as a change: a deletion)
-                          const changed = phone != null;
-                          const ok = await act(
-                            `group-${g.id}`,
-                            async () => {
-                              const p = changed ? cleanHeadPhone(phone) : undefined; // a bad phone refused before anything is written
-                              await port.rota.updateGroup(g.id, v);
-                              if (changed) await port.rota.setContact(g.id, p ?? null);
-                            },
-                            "הקבוצה נשמרה",
-                            refused,
-                          );
-                          if (changed) heads.reload();
-                          if (!ok) return;
-                          setEditing(null);
-                          focus.back(`edit-${g.id}`);
-                        }}
-                      />
+                    <li key={g.id} data-rota-group={code} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                      <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <GroupChip code={code} />
+                        <span className="text-sm">{g.size == null ? "גודל: TBD" : `${g.size} חניכים`}</span>
+                        <span className="min-w-0 text-sm break-words text-ink-soft">{g.head_name ? `ראש/ת קבוצה: ${g.head_name}` : "אין עדיין ראש/ת קבוצה"}</span>
+                        {phones && (
+                          <span data-head-phone className="text-sm text-ink-soft">
+                            טלפון: <bdi>{phones.get(g.id) ?? "—"}</bdi>
+                          </span>
+                        )}
+                      </div>
+                      {mayWrite && (
+                        <LineActions
+                          name={code}
+                          focus={focus}
+                          focusKey={`delete-${g.id}`}
+                          editKey={`edit-${g.id}`}
+                          deleting={deleting === g.id}
+                          onEdit={() => setEditing(g.id)}
+                          onDelete={() => setDeleting(g.id)}
+                          confirm={
+                            <Confirm
+                              text={
+                                <>
+                                  למחוק את הקבוצה <b>{code}</b>? גם השיבוצים שלה והטלפון של ראש/ת הקבוצה יימחקו; משימות מוצ״ש שלה נשארות בלי קבוצה.
+                                </>
+                              }
+                              confirm="מחיקה"
+                              busy={busy === `delete-group-${g.id}`}
+                              onConfirm={() =>
+                                void act(`delete-group-${g.id}`, () => port.rota.deleteGroup(g.id), `הקבוצה ${code} נמחקה`).then((ok) => {
+                                  setDeleting(null);
+                                  if (!ok) focus.back(`delete-${g.id}`);
+                                })
+                              }
+                              onCancel={() => {
+                                setDeleting(null);
+                                focus.back(`delete-${g.id}`);
+                              }}
+                            />
+                          }
+                        />
+                      )}
                     </li>
                   );
-                }
-                return (
-                  <li key={g.id} data-rota-group={code} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                    <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <GroupChip code={code} />
-                      <span className="text-sm">{g.size == null ? "גודל: TBD" : `${g.size} חניכים`}</span>
-                      <span className="min-w-0 text-sm break-words text-ink-soft">{g.head_name ? `ראש/ת קבוצה: ${g.head_name}` : "אין עדיין ראש/ת קבוצה"}</span>
-                      {phones && (
-                        <span data-head-phone className="text-sm text-ink-soft">
-                          טלפון: <bdi>{phones.get(g.id) ?? "—"}</bdi>
-                        </span>
-                      )}
-                    </div>
-                    {mayWrite && (
-                      <LineActions
-                        name={code}
-                        focus={focus}
-                        focusKey={`delete-${g.id}`}
-                        editKey={`edit-${g.id}`}
-                        deleting={deleting === g.id}
-                        onEdit={() => setEditing(g.id)}
-                        onDelete={() => setDeleting(g.id)}
-                        confirm={
-                          <Confirm
-                            text={
-                              <>
-                                למחוק את הקבוצה <b>{code}</b>? גם השיבוצים שלה והטלפון של ראש/ת הקבוצה יימחקו; משימות מוצ״ש שלה נשארות בלי קבוצה.
-                              </>
-                            }
-                            confirm="מחיקה"
-                            busy={busy === `delete-group-${g.id}`}
-                            onConfirm={() =>
-                              void act(`delete-group-${g.id}`, () => port.rota.deleteGroup(g.id), `הקבוצה ${code} נמחקה`).then((ok) => {
-                                setDeleting(null);
-                                if (!ok) focus.back(`delete-${g.id}`);
-                              })
-                            }
-                            onCancel={() => {
-                              setDeleting(null);
-                              focus.back(`delete-${g.id}`);
-                            }}
-                          />
-                        }
-                      />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                })}
+              </ul>
+            )}
+            {mayWrite && helps && <SplitCohort ctx={ctx} cohort={c} />}
           </div>
         );
       })}
       {mayWrite && chosen && (
         // never remounted (no key): the focus stays on the field or the button it was on after an add or a cohort chosen
         <NewGroup
-          cohorts={cohorts}
+          cohorts={helping}
           cohort={chosen}
           next={data.groups.filter((g) => g.cohort_id === chosen.id).reduce((m, g) => Math.max(m, g.number), 0) + 1}
           onCohort={setCohort}
@@ -501,6 +750,92 @@ function Groups({ ctx }: { ctx: RotaCtx }) {
         />
       )}
     </Part>
+  );
+}
+
+/**
+ * v20 «חלוקה לקבוצות» of one helping cohort: the size of a group typed, the split as equal as possible from the cohort's
+ * own trainees (splitSizes — a «הצעה»: every size can be changed by hand afterwards), applied in ONE call
+ * (rota_split_cohort: the cohort's groups replaced, in one transaction). A cohort that has groups splits again only
+ * behind a Confirm that names what goes with them (groupsLossText); its «ביטול» gives the button the focus back.
+ */
+function SplitCohort({ ctx, cohort: c }: { ctx: RotaCtx; cohort: RotaCohort }) {
+  const { port, week, data, busy, act } = ctx;
+  const id = useId();
+  const focus = useFocusBack();
+  const [per, setPer] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const again = data.groups.some((g) => g.cohort_id === c.id);
+  // where the fold starts, once (the review): <details open> follows its prop, so the first split — `again` turning true —
+  // would close the fold the focus is in, and the focus fall to the page; it stays open, «חלוקה מחדש» focused
+  const [startOpen] = useState(!again);
+  const perGroup = intOrNull(per);
+  const sizes = c.trainees != null && perGroup != null && Number.isInteger(perGroup) ? splitSizes(c.trainees, perGroup) : [];
+  const preview = splitPreviewText(c.letter, sizes);
+  const key = `split-${c.id}`;
+  const label = again ? "חלוקה מחדש" : "חלוקה לקבוצות";
+  const run = () =>
+    void act(
+      key,
+      () => port.rota.splitCohort(week.edition.id, c.id, sizes),
+      `${c.name} חולקה ל${sizes.length === 1 ? "קבוצה אחת" : `-${sizes.length} קבוצות`}. הגדלים הם הצעה: אפשר לשנות כל אחד ביד.`,
+      formRefusal(setProblem, { bad_value: splitProblem(sizes) ?? "אחד הגדלים לא תקין." }),
+    ).then((ok) => {
+      setConfirming(false);
+      if (ok) setPer("");
+      focus.back("split");
+    });
+  const submit = (ev: FormEvent) => {
+    ev.preventDefault();
+    setProblem(null);
+    const why = per.trim() === "" || perGroup == null || !Number.isInteger(perGroup) || perGroup < 1 ? "כמה חניכים בקבוצה — מספר שלם מ-1 ומעלה." : splitProblem(sizes);
+    if (why) return setProblem(why);
+    if (again) return setConfirming(true);
+    run();
+  };
+  return (
+    <Fold title={label} hint={again ? "מחליפה את הקבוצות שיש" : undefined} defaultOpen={startOpen} size="sm">
+      {c.trainees == null ? (
+        <p className="text-sm text-ink-soft">כדי לחלק, קודם כותבים כמה חניכים יש ב{c.name} («עריכה» ב«המכינות»).</p>
+      ) : c.trainees === 0 ? (
+        <p className="text-sm text-ink-soft">ב{c.name} 0 חניכים: אין מה לחלק.</p>
+      ) : (
+        <form aria-label={`${label}: ${c.name}`} data-split={c.letter} onSubmit={submit} className="space-y-2 rounded-lg border border-line p-3">
+          <div className="sm:max-w-xs">
+            <Field id={`${id}-per`} label="כמה חניכים בקבוצה" hint={`${c.trainees} חניכים ב${c.name}. החלוקה כמה שיותר שווה.`}>
+              <input id={`${id}-per`} inputMode="numeric" value={per} onChange={(e) => setPer(e.target.value)} maxLength={3} className={INPUT} />
+            </Field>
+          </div>
+          {preview && (
+            <p data-split-preview className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+              <span>{preview}</span> <Badge tone="accent">הצעה</Badge>
+            </p>
+          )}
+          <Problem>{problem}</Problem>
+          {confirming ? (
+            <Confirm
+              text={
+                <>
+                  לחלק מחדש את <b>{c.name}</b>? {groupsLossText(data, c.id)}. במקומן: {preview}.
+                </>
+              }
+              confirm="חלוקה מחדש"
+              busy={busy === key}
+              onConfirm={run}
+              onCancel={() => {
+                setConfirming(false);
+                focus.back("split");
+              }}
+            />
+          ) : (
+            <Button kind={again ? "secondary" : "primary"} type="submit" ref={focus.ref("split")} busy={busy === key} busyLabel="מחלק…">
+              {label}
+            </Button>
+          )}
+        </form>
+      )}
+    </Fold>
   );
 }
 
@@ -583,7 +918,8 @@ function GroupForm({ title, initial, phone: phone0, busy, onSave, onCancel }: {
 
 /**
  * «קבוצה חדשה», one form for every group added: after an add it empties itself in place (and the number follows the
- * list again), so the focus stays where it was — never a remount (DECISIONS «המיקוד»).
+ * list again), so the focus stays where it was — never a remount (DECISIONS «המיקוד»). v20: its cohorts are those that
+ * help in some duty (a group of one that helps in none is refused: cohort_not_helping).
  */
 function NewGroup({ cohorts, cohort, next, onCohort, busy, onSave }: { cohorts: RotaCohort[]; cohort: RotaCohort; next: number; onCohort: (id: number) => void; busy: boolean; onSave: (v: GroupValues, refused: Refused) => Promise<boolean> }) {
   const id = useId();
@@ -642,19 +978,40 @@ function needsText(d: RotaDuty, labels: readonly string[]): string {
 
 function Duties({ ctx }: { ctx: RotaCtx }) {
   const { port, week, data, busy, act, mayWrite } = ctx;
+  const e = week.edition;
   const focus = useFocusBack();
-  const labels = rotaShiftsOf(week.edition).labels;
+  const labels = rotaShiftsOf(e).labels;
   const duties = dutiesInOrder(data);
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const targets = newDutyTargets(data);
+  // last year's four on an empty list: every cohort already entered helps in them (none could choose a duty before)
   const lastYear = () =>
     void act(
       "last-year",
       async () => {
-        for (const d of LAST_YEAR_DUTIES) await port.rota.addDuty(week.edition.id, d);
+        for (const d of LAST_YEAR_DUTIES) await port.rota.addDuty(e.id, d);
+        if (targets.length === 0) return;
+        const fresh = await port.rota.load(e.id);
+        const ids = dutiesInOrder(fresh).map((d) => d.id);
+        for (const c of fresh.cohorts) if (targets.some((t) => t.id === c.id) && cohortDutyIds(fresh, c.id).length === 0) await port.rota.setCohortDuties(e.id, c.id, ids);
       },
-      "התורנויות של אשתקד נוספו. כמה קבוצות צריך בכל משמרת — הצעה, אפשר לשנות.",
+      `התורנויות של אשתקד נוספו${targets.length > 0 ? ", וכל המכינות עוזרות בהן" : ""}. כמה קבוצות צריך בכל משמרת — הצעה, אפשר לשנות.`,
     );
+  /** «למעלה» / «למטה»: the moved duty and its neighbour change places — only the rows whose number changed are written (prepMoves). */
+  const move = async (d: RotaDuty, by: -1 | 1, key: string) => {
+    const changes = prepMoves(duties, d.id, by);
+    if (changes.length === 0) return;
+    await act(
+      key,
+      async () => {
+        for (const c of changes) await port.rota.updateDuty(c.id, { sort: c.sort });
+      },
+      null,
+    );
+    focus.back(key);
+  };
   return (
     <Part title="התורנויות" aside={duties.length || undefined}>
       {duties.length === 0 && (
@@ -663,6 +1020,7 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
             עוד אין תורנויות. אפשר להתחיל מארבע התורנויות של אשתקד — {LAST_YEAR_DUTIES.map((d) => d.name).join(", ")} — עם התיאורים של המדריך/ה. כמה קבוצות בכל משמרת, כמו בגיליון של אשתקד: בית מדרש 4, וכל אחת מהשאר
             1, גם בלילה. <Badge tone="accent">הצעה</Badge>
           </p>
+          {targets.length > 0 && <p>המכינות שכבר הוזנו יעזרו בכולן — אפשר לשנות בעריכת המכינה.</p>}
           {mayWrite && (
             <Button kind="primary" busy={busy === "last-year"} busyLabel="מוסיף…" onClick={lastYear}>
               התורנויות של אשתקד
@@ -670,27 +1028,38 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
           )}
         </div>
       )}
-      <ul aria-label="התורנויות" className="divide-y divide-sage/60">
-        {duties.map((d) =>
-          editing === d.id ? (
-            <li key={d.id} className="py-2">
-              <DutyForm
-                title={`עריכת התורנות: ${d.name}`}
-                initial={d}
-                labels={labels}
-                busy={busy === `duty-${d.id}`}
-                onCancel={() => {
-                  setEditing(null);
-                  focus.back(`edit-${d.id}`);
-                }}
-                onSave={async (v, refused) => {
-                  if (!(await act(`duty-${d.id}`, () => port.rota.updateDuty(d.id, v), "התורנות נשמרה", refused))) return;
-                  setEditing(null);
-                  focus.back(`edit-${d.id}`);
-                }}
-              />
-            </li>
-          ) : (
+      {duties.length > 1 && (
+        <p data-duty-order className="text-sm text-ink-soft">
+          {DUTY_ORDER_HINT}
+        </p>
+      )}
+      <ol aria-label="התורנויות" className="divide-y divide-sage/60">
+        {duties.map((d, i) => {
+          if (editing === d.id) {
+            return (
+              <li key={d.id} className="py-2">
+                <DutyForm
+                  title={`עריכת התורנות: ${d.name}`}
+                  initial={d}
+                  labels={labels}
+                  busy={busy === `duty-${d.id}`}
+                  onCancel={() => {
+                    setEditing(null);
+                    focus.back(`edit-${d.id}`);
+                  }}
+                  onSave={async (v, _all, refused) => {
+                    if (!(await act(`duty-${d.id}`, () => port.rota.updateDuty(d.id, v), "התורנות נשמרה", refused))) return;
+                    setEditing(null);
+                    focus.back(`edit-${d.id}`);
+                  }}
+                />
+              </li>
+            );
+          }
+          const helpers = dutyHelpers(data, d.id);
+          // a cohort with groups that helps in this duty alone keeps it (in_use): the Confirm says so before
+          const only = helpers.filter((c) => data.groups.some((g) => g.cohort_id === c.id) && cohortDutyIds(data, c.id).length === 1);
+          return (
             <li key={d.id} data-rota-duty={d.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
               <div className="min-w-0 flex-1 basis-56">
                 <p className="font-bold text-navy">{d.name}</p>
@@ -698,6 +1067,9 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
                 <p className="text-sm text-ink-soft">
                   כמה קבוצות: {needsText(d, labels)}
                   {d.min_people != null ? ` · לפחות ${d.min_people} אנשים` : ""}
+                </p>
+                <p data-duty-helpers className={`text-sm ${helpers.length === 0 && data.cohorts.length > 0 ? "text-amber-900" : "text-ink-soft"}`}>
+                  {helpers.length > 0 ? `מכינות שעוזרות בה: ${helpers.map((c) => c.letter).join(", ")}` : data.cohorts.length > 0 ? "אף מכינה לא עוזרת בה: ההצעה לא תמלא אותה." : "עוד אין מכינות."}
                 </p>
               </div>
               {mayWrite && (
@@ -708,18 +1080,39 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
                   editKey={`edit-${d.id}`}
                   deleting={deleting === d.id}
                   onEdit={() => setEditing(d.id)}
-                  onDelete={() => setDeleting(d.id)}
+                  onDelete={() => {
+                    setProblem(null);
+                    setDeleting(d.id);
+                  }}
+                  extra={
+                    duties.length > 1 && (
+                      <>
+                        <Button kind="quiet" keepFocus disabled={i === 0} ref={focus.ref(`up-${d.id}`)} busy={busy === `up-${d.id}`} onClick={() => void move(d, -1, `up-${d.id}`)} aria-label={`הזזה למעלה: ${d.name}`}>
+                          למעלה
+                        </Button>
+                        <Button kind="quiet" keepFocus disabled={i === duties.length - 1} ref={focus.ref(`down-${d.id}`)} busy={busy === `down-${d.id}`} onClick={() => void move(d, 1, `down-${d.id}`)} aria-label={`הזזה למטה: ${d.name}`}>
+                          למטה
+                        </Button>
+                      </>
+                    )
+                  }
                   confirm={
                     <Confirm
                       text={
                         <>
                           למחוק את התורנות <b>{d.name}</b>? גם כל השיבוצים שלה יימחקו.
+                          {only.length > 0 && ` ${only.map((c) => c.name).join(", ")} ${only.length === 1 ? "עוזרת" : "עוזרות"} רק בה ויש ${only.length === 1 ? "לה" : "להן"} קבוצות: קודם מסמנים ${only.length === 1 ? "לה" : "להן"} תורנות אחרת, או מוחקים את הקבוצות.`}
                         </>
                       }
                       confirm="מחיקה"
                       busy={busy === `delete-duty-${d.id}`}
                       onConfirm={() =>
-                        void act(`delete-duty-${d.id}`, () => port.rota.deleteDuty(d.id), "התורנות נמחקה").then((ok) => {
+                        void act(
+                          `delete-duty-${d.id}`,
+                          () => port.rota.deleteDuty(d.id),
+                          "התורנות נמחקה",
+                          formRefusal(setProblem, { in_use: "מכינה שיש לה קבוצות עוזרת רק בתורנות הזו, ולכן אי אפשר למחוק אותה. קודם מסמנים לה תורנות אחרת, או מוחקים את הקבוצות שלה." }),
+                        ).then((ok) => {
                           setDeleting(null);
                           if (!ok) focus.back(`delete-${d.id}`);
                         })
@@ -733,22 +1126,34 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
                 />
               )}
             </li>
-          ),
-        )}
-      </ul>
+          );
+        })}
+      </ol>
+      <Problem>{problem}</Problem>
       {mayWrite &&
         (editing === "new" ? (
           <DutyForm
             title="תורנות חדשה"
             labels={labels}
-            sort={duties.reduce((m, d) => Math.max(m, d.sort), 0) + 1}
+            everyHelping={targets.length > 0 ? { label: data.duties.length === 0 ? "כל המכינות עוזרות בה" : "כל המכינות העוזרות עוזרות בה", cohorts: targets } : null}
             busy={busy === "duty-new"}
             onCancel={() => {
               setEditing(null);
               focus.back("new");
             }}
-            onSave={async (v, refused) => {
-              if (!(await act("duty-new", () => port.rota.addDuty(week.edition.id, v as NewDuty), "התורנות נוספה", refused))) return;
+            onSave={async (v, all, refused) => {
+              const sort = duties.reduce((m, d) => Math.max(m, d.sort), 0) + 1;
+              const add = async () => {
+                await port.rota.addDuty(e.id, { ...v, sort } as NewDuty);
+                if (!all || targets.length === 0) return;
+                // the new duty's id: its name is unique in the edition as names are compared (rota_duty_exists)
+                const fresh = await port.rota.load(e.id);
+                const duty = fresh.duties.find((x) => nameKey(x.name) === nameKey(v.name ?? ""));
+                if (!duty) return;
+                for (const c of fresh.cohorts) if (targets.some((t) => t.id === c.id)) await port.rota.setCohortDuties(e.id, c.id, [...cohortDutyIds(fresh, c.id), duty.id]);
+              };
+              const ok = all && targets.length > 0 ? `התורנות נוספה, ו${targets.length === 1 ? `${targets[0].name} עוזרת בה` : `-${targets.length} מכינות עוזרות בה`}` : "התורנות נוספה";
+              if (!(await act("duty-new", add, ok, refused))) return;
               setEditing(null);
               focus.back("new");
             }}
@@ -762,13 +1167,17 @@ function Duties({ ctx }: { ctx: RotaCtx }) {
   );
 }
 
-function DutyForm({ title, initial, sort: sort0, labels, busy, onSave, onCancel }: {
+type DutyValues = Omit<RotaDuty, "id" | "edition_id" | "sort">;
+
+function DutyForm({ title, initial, labels, everyHelping, busy, onSave, onCancel }: {
   title: string;
   initial?: RotaDuty;
-  sort?: number;
   labels: readonly string[];
+  /** A new duty: «כל המכינות העוזרות עוזרות בה» (ticked to begin with) and the cohorts it adds the duty to; null — no such box. */
+  everyHelping?: { label: string; cohorts: readonly RotaCohort[] } | null;
   busy: boolean;
-  onSave: (v: Omit<RotaDuty, "id" | "edition_id">, refused: Refused) => Promise<void>;
+  /** `all`: add it to everyHelping's cohorts. The order is not the form's: a new duty goes last, and «למעלה» / «למטה» move it. */
+  onSave: (v: DutyValues, all: boolean, refused: Refused) => Promise<void>;
   onCancel: () => void;
 }) {
   const id = useId();
@@ -776,7 +1185,7 @@ function DutyForm({ title, initial, sort: sort0, labels, busy, onSave, onCancel 
   const [description, setDescription] = useState(initial?.description ?? "");
   const [needs, setNeeds] = useState<[string, string, string]>(() => NEEDS.map((k) => (initial?.[k] == null ? "" : String(initial[k]))) as [string, string, string]);
   const [min, setMin] = useState(initial?.min_people == null ? "" : String(initial.min_people));
-  const [sort, setSort] = useState(String(initial?.sort ?? sort0 ?? 0));
+  const [all, setAll] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
   const submit = (ev: FormEvent) => {
     ev.preventDefault();
@@ -789,8 +1198,8 @@ function DutyForm({ title, initial, sort: sort0, labels, busy, onSave, onCancel 
         need_afternoon: intOrNull(needs[1]),
         need_night: intOrNull(needs[2]),
         min_people: intOrNull(min),
-        sort: intOrNull(sort) ?? 0,
       },
+      everyHelping != null && all,
       formRefusal(setProblem, { bad_value: "אחד הערכים לא תקין: כמה קבוצות — מספר שלם עד 20 (או ריק), מינימום אנשים — 1 עד 500 (או ריק).", name_required: "צריך שם לתורנות." }),
     );
   };
@@ -820,14 +1229,23 @@ function DutyForm({ title, initial, sort: sort0, labels, busy, onSave, onCancel 
         </div>
         <p className="mt-1 text-xs text-ink-soft">ריק = עוד לא נקבע: ההצעה לא ממלאת את המשמרת הזו, ובלוח יש על זה אזהרה.</p>
       </fieldset>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="sm:max-w-sm">
         <Field id={`${id}-min`} label="מינימום אנשים (לא חובה)" hint="כשיש מינימום, ההצעה מוסיפה עוד קבוצות עד שמגיעים אליו (עד 2 נוספות).">
           <input id={`${id}-min`} inputMode="numeric" value={min} onChange={(e) => setMin(e.target.value)} className={INPUT} />
         </Field>
-        <Field id={`${id}-sort`} label="סדר">
-          <input id={`${id}-sort`} inputMode="numeric" value={sort} onChange={(e) => setSort(e.target.value)} className={INPUT} />
-        </Field>
       </div>
+      {everyHelping && (
+        <div>
+          <label className="flex min-h-11 cursor-pointer items-center gap-2">
+            <input type="checkbox" className="size-5 shrink-0 accent-navy" checked={all} onChange={(e) => setAll(e.target.checked)} data-every-helping />
+            <span>{everyHelping.label}</span>
+          </label>
+          <p className="text-xs text-ink-soft">
+            {everyHelping.cohorts.map((c) => c.name).join(", ")}. אפשר לשנות אחר כך בעריכת המכינה. התורנות החדשה נכנסת בסוף הרשימה.
+          </p>
+        </div>
+      )}
+      {!initial && !everyHelping && <p className="text-xs text-ink-soft">התורנות החדשה נכנסת בסוף הרשימה.</p>}
       <Problem>{problem}</Problem>
       <div className="flex flex-wrap gap-2">
         <Button kind="primary" type="submit" busy={busy}>

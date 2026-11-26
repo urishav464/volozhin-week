@@ -213,7 +213,8 @@ test.describe("demo build", () => {
     await expect(report).toContainText("נמחק המידע האישי של הדגמה");
     await expect(report).toContainText(/פרטי הסעה של [1-9]\d* שיעורים נמחקו/);
     await expect(report).toContainText(/[1-9]\d* קישורים בוטלו/);
-    await expect(report).toContainText("17 טלפונים של ראשי קבוצות נמחקו"); // v16: the demo's group heads
+    // v16: the demo's 17 group heads; v20: and its three cohorts' staff contacts (purge_edition_private deletes rota_cohort_contacts)
+    await expect(report).toContainText("20 טלפונים בתורנויות נמחקו (ראשי קבוצות ואנשי קשר של מכינות).");
     await expect(purge.locator("[data-purged]")).toContainText("נמחק ב-");
     await expect(purge.locator("[data-export-first]")).toHaveCount(0); // the «export first» warning is for before — not over the report
     // the checklist's third step is done
@@ -223,7 +224,7 @@ test.describe("demo build", () => {
     await button.click();
     await expect(report).toContainText("פרטי הסעה של 0 שיעורים נמחקו");
     await expect(report).toContainText("0 קישורים בוטלו");
-    await expect(report).toContainText("0 טלפונים של ראשי קבוצות נמחקו");
+    await expect(report).toContainText("0 טלפונים בתורנויות נמחקו");
 
     // «קישורים»: every link of the edition revoked
     await page.getByRole("tab", { name: "קישורים" }).click();

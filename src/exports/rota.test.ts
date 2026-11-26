@@ -1,21 +1,21 @@
 // «תורנויות»'s pages (src/exports/rota.ts), on a synthetic rota beside a week on the 2026 grid: a group's schedule —
 // the bands, Sunday cut by the opening, Thursday without a night, a lesson at a shift's edge, side by side lessons,
 // «זמן זיכרון» only where a memorial time is —, the board, the day sheet and the heads with and without phones (never a
-// phone when they are off), the kitchen, the food sums (TBD, a negative «רגיל»), on campus, the loads, the preparations,
+// phone when they are off), the kitchen, the food sums (v20: a cohort's own trainees and its three diet numbers — «מהם גם
+// וגם» counted once; TBD where unknown), on campus, the loads, the preparations,
 // the workbook's sheet names, the formula guard on every cell of the files, and the same answer whatever the order.
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { RotaData, RotaStaffShift } from "../data/rota";
 import { SHIFTS } from "../domain/rota";
-import { rotaWarnings } from "../domain/rotaWarnings";
 import { type Day, LRM } from "../domain/time";
 import type { Week } from "../domain/types";
 import { addLesson, addSpeaker, closeWith, emptyWeek } from "../testing/week";
 import { toCsv } from "./csv";
 import { scheduleEntries } from "./designer";
 import {
-  BAND_FILL, campusTable, cohortTotal, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, headsTable, kitchenDutyId, kitchenSheet, loadsTable,
-  phonesOf, prepCounts, prepInOrder, prepTable, regularCell, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, shiftText, shoppingTable, stackTables, STAFF_KIND_LABEL, staffTable,
+  BAND_FILL, campusTable, cohortTotal, DIET_HEADERS, dietsOf, daySheet, foodTable, groupSchedule, groupScheduleInputs, groupWeek, headsTable, kitchenDutyId, kitchenSheet,
+  loadsTable, MEAL_HEADERS, mealCounts, mealDay, mealsTable, phonesOf, prepCounts, prepInOrder, prepTable, rotaBoardTable, rotaWorkbook, SHEET, shiftOfStart, shiftText, shoppingTable, stackTables, STAFF_LABEL, staffTable,
 } from "./rota";
 import type { Table } from "./table";
 import { toXlsx, xlsxParts } from "./xlsx";
@@ -23,15 +23,19 @@ import { toXlsx, xlsxParts } from "./xlsx";
 const PHONE_1 = "טלפון לדוגמה 1";
 const PHONE_3 = "טלפון לדוגמה 3";
 
-/** Cohorts א (two groups, all week), ב (one group of unknown size, never marked), נ (one group, Monday and Tuesday). */
+/**
+ * Cohorts א (two groups, all week; 15 trainees, 2 «צמחוני/טבעוני»), ב (one group of unknown size, never marked; every
+ * number TBD), נ (one group, Monday and Tuesday; 5 trainees, 2 vegetarian, 1 gluten-free, 1 of them both).
+ */
 function rota(): RotaData {
   const all = [0, 1, 2, 3, 4].flatMap((day) => [0, 1, 2].map((shift) => ({ cohort_id: 1, day, shift })));
   return {
     cohorts: [
-      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }], sort: 1 },
-      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2 },
-      { id: 3, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [{ label: "טבעוני", count: 9 }], sort: 3 },
+      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: 15, diet_veg: 2, diet_gf: 0, diet_both: 0, contact_name: null, sort: 1 },
+      { id: 2, edition_id: 1, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 },
+      { id: 3, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: 5, diet_veg: 2, diet_gf: 1, diet_both: 1, contact_name: null, sort: 3 },
     ],
+    cohortDuties: [1, 2, 3].flatMap((cohort_id) => [1, 2].map((duty_id) => ({ cohort_id, duty_id }))),
     presence: [...all, ...[1, 2].flatMap((day) => [0, 1, 2].map((shift) => ({ cohort_id: 3, day, shift })))].filter((p) => !(p.day === 4 && p.shift === 2)) as RotaData["presence"],
     groups: [
       { id: 11, edition_id: 1, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" },
@@ -54,9 +58,9 @@ function rota(): RotaData {
       { id: 7, edition_id: 1, day: 4, shift: 2, duty_id: 2, group_id: 12, source: "hand" },
     ],
     staff: [
-      { id: 1, edition_id: 1, day: 0, start_min: 510, end_min: 870, member_id: 5, name: "איש/אשת צוות לדוגמה", cohort_id: null, kind: "lead", note: null },
-      { id: 2, edition_id: 1, day: 0, start_min: 870, end_min: 1350, member_id: null, name: "שם לדוגמה", cohort_id: null, kind: "shift", note: "הקפצת מרצה (לדוגמה)" },
-      { id: 3, edition_id: 1, day: 1, start_min: 1350, end_min: 1830, member_id: null, name: null, cohort_id: 3, kind: "shift", note: null },
+      { id: 1, edition_id: 1, day: 0, start_min: 510, end_min: 870, member_id: 5, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: null },
+      { id: 2, edition_id: 1, day: 0, start_min: 870, end_min: 1350, member_id: null, name: "שם לדוגמה", cohort_id: null, note: "הקפצת מרצה (לדוגמה)" },
+      { id: 3, edition_id: 1, day: 1, start_min: 1350, end_min: 1830, member_id: null, name: null, cohort_id: 3, note: null },
     ],
     prep: [
       { id: 2, edition_id: 1, text: "משימת הכנה לדוגמה ב", group_id: 11, done: true, sort: 2 },
@@ -191,16 +195,16 @@ describe("the board, the day and the heads", () => {
     expect(t.name).toBe("יום ראשון");
     expect(t.headers).toEqual(["משמרת", "תורנות / צוות", "קבוצה / מי", "גודל", "ראש/ת קבוצה"]);
     expect(t.rows.slice(0, 3)).toEqual([
-      [`בוקר ${LRM}08:30–14:30`, "אחראי/ת משמרת", `איש/אשת צוות לדוגמה ${LRM}08:30–14:30`, "", ""],
+      [`בוקר ${LRM}08:30–14:30`, STAFF_LABEL, `איש/אשת צוות לדוגמה ${LRM}08:30–14:30`, "", ""],
       [`בוקר ${LRM}08:30–14:30`, "מטבח", "א1", "8", "ראש/ת קבוצה לדוגמה 1"],
       [`בוקר ${LRM}08:30–14:30`, "נקיון", "א2", "7", ""],
     ]);
     expect(t.fills!.slice(0, 3)).toEqual([BAND_FILL, null, null]);
-    // the afternoon has a shift and no lead: the lead is TBD, said
-    expect(t.rows.filter((r) => r[0].startsWith("אחר צהריים")).slice(0, 2)).toEqual([
-      [`אחר צהריים ${LRM}14:30–22:30`, "אחראי/ת משמרת", "TBD", "", ""],
-      [`אחר צהריים ${LRM}14:30–22:30`, "משמרת", `שם לדוגמה ${LRM}14:30–22:30 · הקפצת מרצה (לדוגמה)`, "", ""],
+    // v20: no «אחראי/ת משמרת» — the afternoon's staff as they are, and no TBD row for a lead
+    expect(t.rows.filter((r) => r[0].startsWith("אחר צהריים")).slice(0, 1)).toEqual([
+      [`אחר צהריים ${LRM}14:30–22:30`, STAFF_LABEL, `שם לדוגמה ${LRM}14:30–22:30 · הקפצת מרצה (לדוגמה)`, "", ""],
     ]);
+    expect(t.rows.some((r) => r[2] === "TBD")).toBe(false);
     const thursday = daySheet(data, w.edition, 4, null);
     expect(thursday.rows.filter((r) => r[0] === "לילה (מחוץ לשבוע)").map((r) => r.slice(1, 3))).toContainEqual(["נקיון", "א2"]);
     for (const off of [t, thursday, headsTable(data, null)]) {
@@ -209,25 +213,21 @@ describe("the board, the day and the heads", () => {
     }
   });
 
-  it("lists a lead in every shift their hours overlap, and TBD exactly where the board warns «no_lead»", () => {
+  it("v20: lists every staff member in every shift their hours overlap (no «אחראי/ת», no TBD row) — one outside every shift in the shift it starts in", () => {
     const d = rota();
-    const lead = (id: number, day: Day, start_min: number, end_min: number, name: string): RotaStaffShift => ({ id, edition_id: 1, day, start_min, end_min, member_id: null, name, cohort_id: null, kind: "lead", note: null });
+    const on = (id: number, day: Day, start_min: number, end_min: number, name: string): RotaStaffShift => ({ id, edition_id: 1, day, start_min, end_min, member_id: null, name, cohort_id: null, note: null });
     d.staff = [
-      ...d.staff,
-      lead(11, 1, 390, 860, "אחראי/ת בוקר לדוגמה"), // Monday 06:30–14:20
-      lead(12, 1, 840, 1350, "אחראי/ת ערב לדוגמה"), // Monday 14:00–22:30: the morning's end and the whole afternoon
-      lead(13, 2, 390, 1830, "אחראי/ת יום לדוגמה"), // Tuesday, the whole day
+      on(11, 1, 390, 860, "צוות בוקר לדוגמה"), // Monday 06:30–14:20
+      on(12, 1, 840, 1350, "צוות ערב לדוגמה"), // Monday 14:00–22:30: the morning's end and the whole afternoon
+      on(13, 2, 390, 1830, "צוות יום לדוגמה"), // Tuesday, the whole day
+      on(14, 0, 390, 500, "צוות לפני הפתיחה לדוגמה"), // Sunday 06:30–08:20: before the 08:30 opening, overlapping no shift of the week
     ];
-    const leadRows = (day: Day, shift: 0 | 1 | 2) => daySheet(d, w.edition, day, null).rows.filter((r) => r[0] === shiftText(w.edition, shift, day) && r[1] === STAFF_KIND_LABEL.lead).map((r) => r[2]);
-    expect(leadRows(1, 0)).toEqual([`אחראי/ת בוקר לדוגמה ${LRM}06:30–14:20`, `אחראי/ת ערב לדוגמה ${LRM}14:00–22:30`]);
-    expect(leadRows(1, 1)).toEqual([`אחראי/ת ערב לדוגמה ${LRM}14:00–22:30`]);
-    expect(leadRows(1, 2)).toEqual(["TBD"]);
-    for (const shift of SHIFTS) expect(leadRows(2, shift)).toEqual([`אחראי/ת יום לדוגמה ${LRM}06:30–06:30`]);
-    // one rule with the board: a shift's TBD on the page is its «no_lead» there, day by day
-    const warned = rotaWarnings(d, w.edition).filter((x) => x.kind === "no_lead").map((x) => `${x.day}:${x.shift}`);
-    const tbd = ([0, 1, 2, 3, 4] as Day[]).flatMap((day) => SHIFTS.filter((shift) => leadRows(day, shift).includes("TBD")).map((shift) => `${day}:${shift}`));
-    expect(tbd).toEqual(warned);
-    expect(tbd).toContain("1:2");
+    const staffRows = (day: Day, shift: 0 | 1 | 2) => daySheet(d, w.edition, day, null).rows.filter((r) => r[0] === shiftText(w.edition, shift, day) && r[1] === STAFF_LABEL).map((r) => r[2]);
+    expect(staffRows(1, 0)).toEqual([`צוות בוקר לדוגמה ${LRM}06:30–14:20`, `צוות ערב לדוגמה ${LRM}14:00–22:30`]);
+    expect(staffRows(1, 1)).toEqual([`צוות ערב לדוגמה ${LRM}14:00–22:30`]);
+    expect(staffRows(1, 2)).toEqual([]);
+    for (const shift of SHIFTS) expect(staffRows(2, shift)).toEqual([`צוות יום לדוגמה ${LRM}06:30–06:30`]);
+    expect(staffRows(0, 0)).toEqual([`צוות לפני הפתיחה לדוגמה ${LRM}06:30–08:20`]); // never lost
   });
 
   it("adds a טלפון column with the phones given, and only those — a left-to-right mark first", () => {
@@ -270,32 +270,117 @@ describe("the kitchen, the food and the campus", () => {
     const t = kitchenSheet(data, w.edition, w.rows, 1);
     expect(t.name).toBe("מטבח");
     expect(t.rows).toHaveLength(14); // five days × three shifts, Thursday without its night
-    expect(t.rows[0]).toEqual(["ראשון", `בוקר ${LRM}08:30–14:30`, "א1", "8", "ראש/ת קבוצה לדוגמה 1", "15", "צמחוני 2", `${LRM}13:15–14:15 ארוחת צהריים / חבורות`]);
-    // two groups: their people added up; נ on campus on Monday — its trainees and its diet too
-    expect(t.rows[3].slice(2, 7)).toEqual(["א2, נ1", "12", "TBD, ראש/ת קבוצה לדוגמה 4", "20", "צמחוני 2; טבעוני 9"]);
+    expect(t.headers[6]).toBe("תזונה בקמפוס");
+    expect(t.rows[0]).toEqual([
+      "ראשון", `בוקר ${LRM}08:30–14:30`, "א1", "8", "ראש/ת קבוצה לדוגמה 1", "15", "צמחוני/טבעוני בלבד 2; ללא גלוטן בלבד 0; גם וגם 0; רגיל 13",
+      `${LRM}13:15–14:15 ארוחת צהריים / חבורות`,
+    ]);
+    // two groups: their people added up; נ on campus on Monday — its trainees and its diets too (v20: both counted once)
+    expect(t.rows[3].slice(2, 7)).toEqual(["א2, נ1", "12", "TBD, ראש/ת קבוצה לדוגמה 4", "20", "צמחוני/טבעוני בלבד 3; ללא גלוטן בלבד 0; גם וגם 1; רגיל 16"]);
     expect(t.rows[3][7]).toBe(`${LRM}07:00–08:00 ארוחת בוקר / חבורות; ${LRM}13:15–14:15 ארוחת צהריים / חבורות`);
     expect(t.rows[1].slice(2, 4)).toEqual(["—", ""]); // nobody yet
     expect(kitchenSheet(data, w.edition, w.rows, 2).name).toBe("לו״ז נקיון");
   });
 
-  it("counts the food for trainees only: Σ sizes, TBD when one is unknown, the diets, the rest — and warns when the diets are more", () => {
+  it("v20: counts the food for trainees only — a cohort's own trainees (never its groups' sizes), its meals by diet, TBD where unknown", () => {
     expect(cohortTotal(data, 1)).toBe(15);
     expect(cohortTotal(data, 2)).toBeNull();
-    expect(regularCell(5, [{ label: "טבעוני", count: 9 }])).toBe("לבדוק: הדיאטות (9) יותר מהחניכים (5)");
-    expect(regularCell(null, [])).toBe("TBD");
-    const t = foodTable(data, w.edition);
-    expect(t.headers.slice(0, 5)).toEqual(["מכינה (חניכים בלבד)", "חניכים", "צמחוני", "טבעוני", "רגיל"]);
-    expect(t.headers.slice(5, 8)).toEqual(["ראשון בוקר", "ראשון אחר צהריים", "ראשון לילה"]);
-    expect(t.headers).toHaveLength(5 + 14);
-    const [a, b, n, total] = t.rows;
-    expect(a.slice(0, 5)).toEqual(["מכינה לדוגמה א", "15", "2", "", "13"]);
-    expect(b.slice(0, 5)).toEqual(["מכינה לדוגמה ב", "TBD", "", "", "TBD"]);
-    expect(n.slice(0, 5)).toEqual(["מכינה לדוגמה נ", "5", "", "9", "לבדוק: הדיאטות (9) יותר מהחניכים (5)"]);
-    expect(total.slice(0, 5)).toEqual(["סה״כ", "TBD", "2", "9", "TBD"]);
-    // per shift: א all week, נ on Monday and Tuesday, ב never marked
-    expect(a.slice(5, 8)).toEqual(["15", "15", "15"]);
-    expect(n.slice(5, 11)).toEqual(["", "", "", "5", "5", "5"]);
-    expect(total.slice(5, 11)).toEqual(["15", "15", "15", "20", "20", "20"]);
+    expect(cohortTotal({ cohorts: [{ ...data.cohorts[0], trainees: 40 }] }, 1)).toBe(40); // its own field, not 8 + 7
+    expect(dietsOf([data.cohorts[0], data.cohorts[2]])).toEqual({ trainees: 20, veg_only: 3, gf_only: 0, both: 1, regular: 16 });
+    expect(dietsOf(data.cohorts).regular).toBeNull(); // ב is TBD: so is every sum it is part of
+    const t = foodTable(data);
+    expect(t.name).toBe("תזונה לפי מכינה");
+    expect(t.headers).toEqual(["מכינה (חניכים בלבד)", "חניכים", ...DIET_HEADERS]);
+    expect(DIET_HEADERS).toEqual(["צמחוני/טבעוני בלבד", "ללא גלוטן בלבד", "גם וגם", "רגיל"]);
+    expect(t.rows).toEqual([
+      ["מכינה לדוגמה א", "15", "2", "0", "0", "13"],
+      ["מכינה לדוגמה ב", "TBD", "TBD", "TBD", "TBD", "TBD"],
+      ["מכינה לדוגמה נ", "5", "1", "0", "1", "3"],
+      ["סה״כ", "TBD", "TBD", "TBD", "TBD", "TBD"],
+    ]);
+  });
+
+  it("v20: the meals of each day — the grid's meal rows the week has, each in the shift it starts in, the cohorts on campus then", () => {
+    // ב marked on Wednesday only (its numbers still TBD): every cohort is marked somewhere
+    const d = { ...data, presence: [...data.presence, ...[0, 1, 2].map((shift) => ({ cohort_id: 2, day: 3, shift }) as RotaData["presence"][number])] };
+    const meals = mealCounts(d, w.edition, w.rows);
+    // Sunday opens 08:30 (no breakfast), Thursday closes 19:00 (no dinner, no midnight meal)
+    expect(meals.map((m) => `${m.day}:${m.start}`)).toEqual([
+      "0:795", "0:1140", "0:1440", ...[1, 2, 3].flatMap((day) => [420, 795, 1140, 1440].map((s) => `${day}:${s}`)), "4:420", "4:795",
+    ]);
+    expect(meals.map((m) => m.shift).slice(0, 7)).toEqual([0, 1, 2, 0, 0, 1, 2]);
+    const at = (day: number, start: number) => meals.find((m) => m.day === day && m.start === start)!;
+    expect(at(0, 795).cohorts.map((c) => c.letter)).toEqual(["א"]);
+    expect(at(0, 795).counts).toEqual({ trainees: 15, veg_only: 2, gf_only: 0, both: 0, regular: 13 });
+    // Monday: א and נ — «מהם גם וגם» counted once
+    expect(at(1, 420).cohorts.map((c) => c.letter)).toEqual(["א", "נ"]);
+    expect(at(1, 420).counts).toEqual({ trainees: 20, veg_only: 3, gf_only: 0, both: 1, regular: 16 });
+    // Wednesday: ב is there and its numbers are TBD — so is every sum it is part of
+    expect(at(3, 795).counts).toEqual({ trainees: null, veg_only: null, gf_only: null, both: null, regular: null });
+    // Thursday's lunch: א only (נ is Monday and Tuesday)
+    expect(at(4, 795).counts.trainees).toBe(15);
+
+    const t = mealsTable(d, w.edition, w.rows);
+    expect(t.name).toBe(SHEET.food);
+    expect(t.headers).toEqual([...MEAL_HEADERS]);
+    expect(MEAL_HEADERS).toEqual(["יום", "ארוחה", "מכינות בקמפוס", "חניכים", ...DIET_HEADERS]);
+    expect(t.rows[0]).toEqual(["ראשון 14.2", `ארוחת צהריים / חבורות ${LRM}13:15–14:15`, "מכינה לדוגמה א", "15", "2", "0", "0", "13"]);
+    expect(t.rows[2].slice(0, 2)).toEqual(["ליל ראשון–שני", `ארוחת חצות וניגונים / חבורות ${LRM}00:00–00:30`]); // the night's, of the day before
+    expect(t.rows[3]).toEqual(["שני 15.2", `ארוחת בוקר / חבורות ${LRM}07:00–08:00`, "מכינה לדוגמה א, מכינה לדוגמה נ", "20", "3", "0", "1", "16"]);
+    expect(t.rows.find((r) => r[0] === "רביעי 17.2")!.slice(2)).toEqual(["מכינה לדוגמה א, מכינה לדוגמה ב", "TBD", "TBD", "TBD", "TBD", "TBD"]);
+    expect(mealDay({ start_date: null }, { day: 2, start: 795 })).toBe("שלישי"); // the week's date TBD: the day alone
+  });
+
+  // The last review: the default cuts (14:30, 22:30) cut through no meal row, and no fixture cohort is there at night but
+  // not the next morning — so «the shift the meal STARTS in» (plan §א) and «a midnight meal is the night of the day
+  // before» (DECISIONS v20, א–ד 2) were never pinned: counting by the shift a meal ends in, or a midnight meal by the
+  // next morning, passed.
+  describe("v20: the shift a meal starts in (the last review)", () => {
+    const cohort = (id: number, letter: string) =>
+      ({ id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: 10 * id, diet_veg: 0, diet_gf: 0, diet_both: 0, contact_name: null, sort: id }) as RotaData["cohorts"][number];
+    const at = (presence: [number, Day, number][]): Pick<RotaData, "cohorts" | "presence"> => ({
+      cohorts: [cohort(1, "א"), cohort(2, "ב")],
+      presence: presence.map(([cohort_id, day, shift]) => ({ edition_id: 1, cohort_id, day, shift }) as RotaData["presence"][number]),
+    });
+
+    it("lunch 13:15–14:15 with the afternoon from 14:00 (an admin's cut) is the morning's: its cohorts, not the afternoon's", () => {
+      const edition = { ...w.edition, settings: { ...w.edition.settings, rota_shifts: { cuts: [840, 1350] as [number, number], labels: ["בוקר", "אחר צהריים", "לילה"] as [string, string, string] } } };
+      const data = at([[1, 1, 0], [2, 1, 1]]); // א Monday morning only, ב Monday afternoon only
+      const lunch = mealCounts(data, edition, w.rows).find((m) => m.day === 1 && m.start === 795)!;
+      expect([lunch.end, lunch.shift, lunch.cohorts.map((c) => c.letter), lunch.counts.trainees]).toEqual([855, 0, ["א"], 10]);
+      // the same cut moved past the meal's end changes nothing; moved before its start, the afternoon's
+      const late = { ...edition, settings: { ...edition.settings, rota_shifts: { ...edition.settings.rota_shifts, cuts: [900, 1350] as [number, number] } } };
+      expect(mealCounts(data, late, w.rows).find((m) => m.day === 1 && m.start === 795)!.cohorts.map((c) => c.letter)).toEqual(["א"]);
+      const early = { ...edition, settings: { ...edition.settings, rota_shifts: { ...edition.settings.rota_shifts, cuts: [780, 1350] as [number, number] } } };
+      expect(mealCounts(data, early, w.rows).find((m) => m.day === 1 && m.start === 795)!.cohorts.map((c) => c.letter)).toEqual(["ב"]);
+    });
+
+    it("the midnight meal after Monday is Monday NIGHT's: a cohort there at night and gone by morning is fed, one that comes Tuesday morning is not", () => {
+      const data = at([[1, 1, 2], [2, 2, 0]]); // א Monday night only, ב Tuesday morning only
+      const meals = mealCounts(data, w.edition, w.rows);
+      const midnight = meals.find((m) => m.day === 1 && m.start === 1440)!;
+      expect([midnight.shift, midnight.cohorts.map((c) => c.letter), midnight.counts.trainees]).toEqual([2, ["א"], 10]);
+      expect(mealDay(w.edition, midnight)).toBe("ליל שני–שלישי");
+      // and Tuesday's breakfast is ב's
+      expect(meals.find((m) => m.day === 2 && m.start === 420)!.cohorts.map((c) => c.letter)).toEqual(["ב"]);
+    });
+  });
+
+  it("v20: a meal never assumes — a cohort marked nowhere makes every meal TBD and is named; none on campus is a known nought", () => {
+    const meals = mealCounts(data, w.edition, w.rows); // ב is not marked on campus anywhere
+    expect(meals.every((m) => m.unmarked.map((c) => c.letter).join() === "ב")).toBe(true);
+    expect(meals.every((m) => Object.values(m.counts).every((v) => v == null))).toBe(true);
+    const t = mealsTable(data, w.edition, w.rows);
+    expect(t.rows[0][2]).toBe("מכינה לדוגמה א · לא סומן מתי בקמפוס: מכינה לדוגמה ב");
+    expect(t.rows[0].slice(3)).toEqual(["TBD", "TBD", "TBD", "TBD", "TBD"]);
+    // every cohort marked, nobody on campus at that meal: «אין מכינות בקמפוס», and 0 — a fact, not a guess
+    const one = { cohorts: [data.cohorts[2]], presence: data.presence.filter((p) => p.cohort_id === 3) };
+    const sunday = mealsTable(one, w.edition, w.rows).rows[0];
+    expect(sunday.slice(2)).toEqual(["אין מכינות בקמפוס", "0", "0", "0", "0", "0"]);
+    // a cohort marked nowhere and nobody else: named alone
+    expect(mealsTable({ cohorts: [data.cohorts[1]], presence: [] }, w.edition, w.rows).rows[0][2]).toBe("לא סומן מתי בקמפוס: מכינה לדוגמה ב");
+    // a grid with no meal row: no row
+    expect(mealCounts(data, w.edition, w.rows.filter((r) => !/ארוח/.test(r.label)))).toEqual([]);
   });
 
   it("says who is on campus in each shift — the cohorts, their trainees, the staff whose shift overlaps it", () => {
@@ -312,10 +397,11 @@ describe("the kitchen, the food and the campus", () => {
     expect(loads.headers).toEqual(["קבוצה", "מכינה", "גודל", "משמרות", "לילות", "מטבח", "נקיון", "משמרות בקמפוס", "צמודות"]);
     expect(loads.rows[0]).toEqual(["א1", "מכינה לדוגמה א", "8", "3", "1", "2", "1", "14", "0"]);
     expect(loads.rows[3]).toEqual(["נ1", "מכינה לדוגמה נ", "5", "1", "0", "1", "0", "6", "0"]);
+    expect(staffTable(data).headers).toEqual(["יום", "שעות", "מי", "הערה"]); // v20: no «סוג»
     expect(staffTable(data).rows).toEqual([
-      ["ראשון", `${LRM}08:30–14:30`, "איש/אשת צוות לדוגמה", "אחראי/ת משמרת", ""],
-      ["ראשון", `${LRM}14:30–22:30`, "שם לדוגמה", "משמרת", "הקפצת מרצה (לדוגמה)"],
-      ["שני", `${LRM}22:30–06:30`, "צוות מכינה לדוגמה נ", "משמרת", ""],
+      ["ראשון", `${LRM}08:30–14:30`, "איש/אשת צוות לדוגמה", ""],
+      ["ראשון", `${LRM}14:30–22:30`, "שם לדוגמה", "הקפצת מרצה (לדוגמה)"],
+      ["שני", `${LRM}22:30–06:30`, "צוות מכינה לדוגמה נ", ""],
     ]);
     expect(prepTable(data)).toMatchObject({ name: "מוצ״ש", rows: [["1", "משימת הכנה לדוגמה א", "", ""], ["2", "משימת הכנה לדוגמה ב", "א1", "בוצע"]] });
   });
@@ -350,7 +436,7 @@ describe("the files", () => {
     const names = tables.map((t) => t.name);
     expect(names).toEqual([
       "לוח התורנויות", "לו״ז א1", "לו״ז א2", "לו״ז ב1", "לו״ז נ1", "יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "מטבח", "ראשי קבוצות", "משמרות צוות",
-      "מוצ״ש", "קניות מוצ״ש", "אוכל", "מי בקמפוס", "עומס",
+      "מוצ״ש", "קניות מוצ״ש", "אוכל", "תזונה לפי מכינה", "מי בקמפוס", "עומס",
     ]);
     expect(names.join("")).not.toContain('"');
     expect(names.find((n) => n.startsWith("מוצ"))).toBe("מוצ״ש");
@@ -379,7 +465,7 @@ describe("the files", () => {
 
   it("gives the same tables whatever order the rota and the week came in", () => {
     const shuffled = rota();
-    for (const k of ["cohorts", "presence", "groups", "duties", "assignments", "staff", "prep"] as const) (shuffled[k] as unknown[]).reverse();
+    for (const k of ["cohorts", "cohortDuties", "presence", "groups", "duties", "assignments", "staff", "prep"] as const) (shuffled[k] as unknown[]).reverse();
     const w2 = week();
     w2.rows = [...w2.rows].reverse();
     w2.lessons.reverse();

@@ -4,7 +4,7 @@
 // (src/grid/layout.ts rowActive). An edition's admin may move the two cuts and rename the shifts (settings.rota_shifts,
 // public.set_rota_shifts); the count stays three, so a moved cut never orphans an assignment's shift index.
 // `rotaShiftActive` ≡ app.rota_shift_active (tests/sql/rota.test.ts compares them value for value).
-import type { RotaAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
+import type { RotaAssignment, RotaCohort, RotaData, RotaDuty, RotaGroup, ShiftIndex } from "../data/rota";
 import { DAY_END, DAY_START, type Day } from "./time";
 import type { Edition, RotaShiftsSetting } from "./types";
 
@@ -49,14 +49,14 @@ export function rotaShiftRange(edition: WeekEdges, day: Day, shift: ShiftIndex):
 }
 
 /**
- * The «אחראי/ת משמרת» of a shift: the leads of that day whose hours overlap the shift as the week has it
- * (rotaShiftRange) — a lead from 14:00 to 22:30 leads the morning and the afternoon, a whole-day lead every shift;
- * none when the shift is not part of the week. One rule for the board's «no_lead» and the day sheet.
+ * The staff of a shift: the staff shifts of that day whose hours overlap the shift as the week has it (rotaShiftRange)
+ * — someone from 14:00 to 22:30 is on the morning and the afternoon, a whole day on every shift; none when the shift is
+ * not part of the week. v20: there is no «אחראי/ת משמרת» — every staff shift counts (the lens, the day sheet).
  */
-export function leadsOf<S extends Pick<RotaStaffShift, "kind" | "day" | "start_min" | "end_min">>(edition: WeekEdges, staff: readonly S[], day: Day, shift: ShiftIndex): S[] {
+export function staffOn<S extends { day: number; start_min: number; end_min: number }>(edition: WeekEdges, staff: readonly S[], day: Day, shift: ShiftIndex): S[] {
   const r = rotaShiftRange(edition, day, shift);
   if (!r) return [];
-  return staff.filter((x) => x.kind === "lead" && x.day === day && x.start_min < r.end && x.end_min > r.start);
+  return staff.filter((x) => x.day === day && x.start_min < r.end && x.end_min > r.start);
 }
 
 export interface RotaSlot {
@@ -90,20 +90,71 @@ export function codeOf(data: Pick<RotaData, "cohorts">, g: Pick<RotaGroup, "coho
   return c ? groupCode(c.letter, g.number) : `?${g.number}`;
 }
 
+/** v20: the duties the cohort helps in (rota_cohort_duties), by id in the rows' order. */
+export function cohortDutyIds(data: Pick<RotaData, "cohortDuties">, cohortId: number): number[] {
+  return (data.cohortDuties ?? []).filter((x) => x.cohort_id === cohortId).map((x) => x.duty_id);
+}
+
 /**
- * v19 «עוזרת בתורנויות» (absent = it helps, as every cohort did before v19): a cohort that does not help is still on
- * campus — its presence feeds the meal counts — but the suggestion never places its groups and the uneven-load check
- * leaves them out; a hand-made assignment to one of them is the `not_helping` warning.
+ * v20 «עוזרת בתורנויות»: the cohort helps in at least one duty. One that does not is still on campus — its presence
+ * and its trainees feed the meal counts — but it has no groups (`cohort_not_helping`), so the suggestion never meets it.
  */
-export const helpsRota = (c: Pick<RotaCohort, "helps_rota">): boolean => c.helps_rota !== false;
+export function cohortHelps(data: Pick<RotaData, "cohortDuties">, cohortId: number): boolean {
+  return (data.cohortDuties ?? []).some((x) => x.cohort_id === cohortId);
+}
+
+/**
+ * v20: may this group take this duty — its cohort helps in it. The fair suggestion places a group only there, at every
+ * step; a hand-made assignment elsewhere is the `not_eligible` warning. A group whose cohort is gone helps in nothing.
+ */
+export function groupHelpsIn(data: Pick<RotaData, "cohortDuties">, g: Pick<RotaGroup, "cohort_id">, dutyId: number): boolean {
+  return (data.cohortDuties ?? []).some((x) => x.cohort_id === g.cohort_id && x.duty_id === dutyId);
+}
+
+/** The groups the suggestion and the fairness look at: those of a cohort that helps in some duty. */
+export function helpingGroups<G extends Pick<RotaGroup, "cohort_id">>(data: Pick<RotaData, "cohortDuties"> & { groups: readonly G[] }): G[] {
+  return data.groups.filter((g) => cohortHelps(data, g.cohort_id));
+}
 
 /** v19 «הצוות שלה יכול להסיע» (absent = no): the transport board names such a cohort — never a phone or a driver. */
 export const canDrive = (c: Pick<RotaCohort, "can_drive">): boolean => c.can_drive === true;
 
-/** The groups the suggestion and the fairness look at: those of a cohort that helps (a group whose cohort is gone stays). */
-export function helpingGroups<G extends Pick<RotaGroup, "cohort_id">>(data: { cohorts: readonly Pick<RotaCohort, "id" | "helps_rota">[]; groups: readonly G[] }): G[] {
-  const notHelping = new Set(data.cohorts.filter((c) => !helpsRota(c)).map((c) => c.id));
-  return data.groups.filter((g) => !notHelping.has(g.cohort_id));
+/**
+ * v20 «חלוקה לקבוצות»: `trainees` split into groups of about `perGroup` — n = ⌈trainees / perGroup⌉ groups, as equal
+ * as possible, the larger first (23 by 8 → [8, 8, 7]; 24 by 8 → [8, 8, 8]). The sum is the trainees. Nothing to split
+ * (trainees or perGroup not a whole number above 0) → []. A proposal («הצעה»): the screen says so; the sizes are typed.
+ */
+export function splitSizes(trainees: number, perGroup: number): number[] {
+  if (!Number.isInteger(trainees) || !Number.isInteger(perGroup) || trainees <= 0 || perGroup <= 0) return [];
+  const n = Math.ceil(trainees / perGroup);
+  const base = Math.floor(trainees / n);
+  const extra = trainees - base * n;
+  return Array.from({ length: n }, (_, i) => base + (i < extra ? 1 : 0));
+}
+
+/** v20: what a cohort's meals are, from its four numbers — null where something it needs is TBD. */
+export interface DietSplit {
+  trainees: number | null;
+  /** «צמחוני/טבעוני» only: veg − both. */
+  veg_only: number | null;
+  /** «ללא גלוטן» only: gf − both. */
+  gf_only: number | null;
+  /** «גם וגם». */
+  both: number | null;
+  /** The rest: trainees − veg − gf + both. */
+  regular: number | null;
+}
+
+/** v20: a cohort's meals by diet (the owner's words: «מהם גם וגם» are counted once, as both). */
+export function dietSplit(c: Pick<RotaCohort, "trainees" | "diet_veg" | "diet_gf" | "diet_both">): DietSplit {
+  const { trainees: t, diet_veg: v, diet_gf: g, diet_both: b } = c;
+  return {
+    trainees: t,
+    veg_only: v != null && b != null ? v - b : null,
+    gf_only: g != null && b != null ? g - b : null,
+    both: b,
+    regular: t != null && v != null && g != null && b != null ? t - v - g + b : null,
+  };
 }
 
 /** The cohorts' order everywhere they are listed: their `sort`, then the letter, then the id. */

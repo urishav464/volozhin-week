@@ -240,6 +240,8 @@ type Command =
   | { coSpeaker: string; at: At }
   /** schedule_view, one part of it as lines (schedulePart): its keys, rows, people or fixed rows. */
   | { anon: "scheduleView"; token: string; from?: string; times?: number; part: SchedulePart }
+  /** v20: escort_view, one part of it as lines (escortPart): each lesson's presentation, or a lesson's keys. */
+  | { anon: "escortView"; token: string; from?: string; times?: number; part: EscortPart }
   /** The log's lines of these kinds, oldest first — read from outside, as the table's owner. */
   | { log: LogKind[] };
 
@@ -256,6 +258,16 @@ export function logKindOf(r: { entity: string; kind: string; detail: Record<stri
 }
 
 export type SchedulePart = "keys" | "rows" | "people" | "fixed";
+
+/** v20: what of escort_view a step compares — each lesson's `presentation` by its place, or the keys of a lesson. */
+export type EscortPart = "presentation" | "lessonKeys";
+
+/** One part of escort_view as lines (` ; `-joined, «none» when empty): «day|start-end|room:presentation», or a lesson's keys. */
+export function escortPart(part: EscortPart, v: unknown, lesson: (id: number) => string): string {
+  const x = v as { lessons: { lesson_id: number | string; presentation?: unknown }[] };
+  if (part === "lessonKeys") return x.lessons.length ? Object.keys(x.lessons[0]).sort().join(",") : "none";
+  return x.lessons.map((l) => `${lesson(Number(l.lesson_id))}:${String(l.presentation)}`).join(" ; ") || "none";
+}
 
 /**
  * A step, and optionally what it must answer on BOTH sides (`is`): parity alone proves the two agree, not that they
@@ -639,11 +651,12 @@ export function publicRead(
   kind: "escortView" | "escortTick" | "kkForm" | "scheduleView",
   v: unknown,
   names: { lesson: (id: number) => string; group: (id: number) => string; trainee: (id: number) => string },
-  part?: SchedulePart,
+  part?: SchedulePart | EscortPart,
 ): string {
   const ticks = (t: Record<string, string | null>) => Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x == null ? "-" : "y"]));
   if (kind === "escortTick") return stable(ticks(v as Record<string, string | null>));
-  if (kind === "scheduleView") return part ? schedulePart(part, v) : stable(v);
+  if (kind === "scheduleView") return part ? schedulePart(part as SchedulePart, v) : stable(v);
+  if (kind === "escortView" && part) return escortPart(part as EscortPart, v, names.lesson);
   if (kind === "escortView") {
     const x = structuredClone(v) as { lessons: { lesson_id: number | string; ticks: Record<string, string | null> }[] };
     for (const l of x.lessons) Object.assign(l, { lesson_id: names.lesson(Number(l.lesson_id)), ticks: ticks(l.ticks) });

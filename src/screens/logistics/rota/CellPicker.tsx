@@ -1,13 +1,15 @@
 // A cell of the board, opened («מטבח · שני · בוקר»): the grid's Sheet (a side panel on a wide screen, a bottom sheet on
-// a phone) with what the cell holds and what it could take — the groups on this duty («הסרה»); the free groups, the
-// least loaded first (against the shifts their cohort is on campus), each with its size and a mark when it is on a duty
-// right before or after this shift; the groups on another duty in this shift («העברה לכאן» — a group does one duty a
-// shift); and, folded, the groups whose cohort is not marked on campus then — allowed, and warned about on the board.
+// a phone) with what the cell holds and what it could take — the groups on this duty («הסרה»); the free groups — v20:
+// those whose cohort helps in this duty first, the others after them, marked «המכינה לא עוזרת בתורנות הזו» (allowed, and
+// warned about: not_eligible) —, the least loaded first (against the shifts their cohort is on campus), each with its
+// size and a mark when it is on a duty right before or after this shift; the groups on another duty in this shift
+// («העברה לכאן» — a group does one duty a shift; marked the same way); and, folded, the groups whose cohort is not marked
+// on campus then — allowed, and warned about on the board.
 // A shift the week no longer has (Sunday before the opening, Thursday after the close) only lets its groups go.
 // Every act is a direct write (port.rota) and the rota read again; the focus goes to where the group went.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RotaAssignment, RotaGroup, ShiftIndex } from "../../../data/rota";
-import { helpsRota, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, slotIndex } from "../../../domain/rota";
+import { groupHelpsIn, loadsOf, needOf, presentAt, rotaShiftActive, rotaShiftsOf, slotIndex } from "../../../domain/rota";
 import { rotaWarnings, cellWarnings, groupWarnings } from "../../../domain/rotaWarnings";
 import { DAY_NAMES, type Day } from "../../../domain/time";
 import { groupsInOrder } from "../../../exports/rota";
@@ -28,8 +30,11 @@ export function cellTitle(dutyName: string, day: Day, shiftLabel: string): strin
   return `${dutyName} · ${DAY_NAMES[day]} · ${shiftLabel}`;
 }
 
+/** v20: a group whose cohort does not help in the cell's duty — offered after the others, with this mark. */
+export const NOT_HERE = "המכינה לא עוזרת בתורנות הזו";
+
 /** The marks a group's chip carries on the board: what is about that group in that shift (not the cell's counts). */
-export const GROUP_MARKS = new Set(["absent", "outside_week", "back_to_back", "not_helping"]);
+export const GROUP_MARKS = new Set(["absent", "outside_week", "back_to_back", "not_eligible"]);
 
 /**
  * Where the focus goes after an act: the group's button where the group went — a closed «לא בקמפוס» opened for it. When
@@ -87,21 +92,33 @@ export function CellPicker({ ctx, cell, onClose }: { ctx: RotaCtx; cell: RotaCel
   const rank = new Map(order.map((g, i) => [g.id, i]));
   const byGroup = (a: RotaAssignment, b: RotaAssignment) => (rank.get(a.group_id) ?? 0) - (rank.get(b.group_id) ?? 0);
   const here = inShift.filter((a) => a.duty_id === dutyId).sort(byGroup);
-  const elsewhere = inShift.filter((a) => a.duty_id !== dutyId).sort(byGroup);
+  const groupOf = (id: number) => data.groups.find((g) => g.id === id);
+  /** v20: its cohort helps in this duty (a group of one that does not: offered after the others, and marked). */
+  const helps = (g: Pick<RotaGroup, "cohort_id">) => groupHelpsIn(data, g, dutyId);
+  const helpsById = (id: number) => {
+    const g = groupOf(id);
+    return g != null && helps(g);
+  };
+  const elsewhere = inShift.filter((a) => a.duty_id !== dutyId).sort((a, b) => Number(!helpsById(a.group_id)) - Number(!helpsById(b.group_id)) || byGroup(a, b));
   const taken = new Set(inShift.map((a) => a.group_id));
   const at = slotIndex(day, shift);
   const nextTo = (g: RotaGroup) => data.assignments.some((a) => a.group_id === g.id && Math.abs(slotIndex(a.day, a.shift) - at) === 1);
   const free = order.filter((g) => !taken.has(g.id));
-  // the least loaded first, against the shifts its cohort is on campus (compared exactly); one next to this shift last
+  // those that may take this duty first; then the least loaded, against the shifts its cohort is on campus (compared
+  // exactly); one next to this shift last
   const byLoad = (a: RotaGroup, b: RotaGroup) => {
     const la = loads.get(a.id)!;
     const lb = loads.get(b.id)!;
-    return Number(nextTo(a)) - Number(nextTo(b)) || la.shifts * Math.max(lb.present, 1) - lb.shifts * Math.max(la.present, 1) || (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0);
+    return (
+      Number(!helps(a)) - Number(!helps(b)) ||
+      Number(nextTo(a)) - Number(nextTo(b)) ||
+      la.shifts * Math.max(lb.present, 1) - lb.shifts * Math.max(la.present, 1) ||
+      (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)
+    );
   };
   const onCampus = free.filter((g) => presentAt(data, g.cohort_id, day, shift)).sort(byLoad);
   const away = free.filter((g) => !presentAt(data, g.cohort_id, day, shift)).sort(byLoad);
   const people = here.reduce((s, a) => s + (data.groups.find((g) => g.id === a.group_id)?.size ?? 0), 0);
-  const groupOf = (id: number) => data.groups.find((g) => g.id === id);
   const dutyName = (id: number) => data.duties.find((d) => d.id === id)?.name ?? "?";
 
   const assign = async (g: RotaGroup) => {
@@ -124,15 +141,15 @@ export function CellPicker({ ctx, cell, onClose }: { ctx: RotaCtx; cell: RotaCel
     const l = loads.get(g.id)!;
     const code = codeById(data, g.id);
     return (
-      <li key={g.id} data-candidate={code} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5">
+      <li key={g.id} data-candidate={code} data-helps-here={helps(g) ? "y" : "-"} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5">
         <GroupChip code={code} size={g.size} />
         <span className="text-sm text-ink-soft">
           {l.shifts === 1 ? "משמרת אחת" : `${l.shifts} משמרות`}
           {l.present > 0 ? ` מתוך ${l.present} בקמפוס` : ""}
         </span>
         {nextTo(g) && <Badge tone="muted">משמרת צמודה</Badge>}
-        {/* v19: placing it by hand is allowed — and warned about (not_helping) */}
-        {!helpsRota(data.cohorts.find((c) => c.id === g.cohort_id) ?? {}) && <Badge tone="muted">לא עוזרת בתורנויות</Badge>}
+        {/* v20: placing it by hand on a duty its cohort does not help in is allowed — and warned about (not_eligible) */}
+        {!helps(g) && <Badge tone="muted">{NOT_HERE}</Badge>}
         <Button className="ms-auto" ref={focus.ref(`assign-${g.id}`)} busy={busy === `assign-${g.id}`} onClick={() => void assign(g)} aria-label={`שיבוץ: ${code}`}>
           שיבוץ
         </Button>
@@ -199,10 +216,12 @@ export function CellPicker({ ctx, cell, onClose }: { ctx: RotaCtx; cell: RotaCel
               <ul aria-label="בתורנות אחרת במשמרת הזו" className="divide-y divide-sage/60">
                 {elsewhere.map((a) => {
                   const code = codeById(data, a.group_id);
+                  const g = groupOf(a.group_id);
                   return (
                     <li key={a.id} data-elsewhere={code} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5">
-                      <GroupChip code={code} size={groupOf(a.group_id)?.size ?? null} suggested={a.source === "suggested"} />
+                      <GroupChip code={code} size={g?.size ?? null} suggested={a.source === "suggested"} />
                       <span className="text-sm text-ink-soft">ב«{dutyName(a.duty_id)}»</span>
+                      {!helpsById(a.group_id) && <Badge tone="muted">{NOT_HERE}</Badge>}
                       <Button className="ms-auto" busy={busy === `move-${a.id}`} onClick={() => void move(a)} aria-label={`העברה לכאן: ${code}`}>
                         העברה לכאן
                       </Button>

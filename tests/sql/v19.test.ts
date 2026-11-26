@@ -238,7 +238,7 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
 
   describe("the catalog", () => {
     it("is v19: four new functions — three definer, the photo's read invoker — and register_source_file with p_kind, one signature", async () => {
-      expect(await owner("select public.schema_version()")).toBe(19);
+      expect(await owner("select public.schema_version()")).toBe(20); // v19's functions, on the file that is v20 now
       const fns = (await db.query(
         `select p.proname || '(' || pg_get_function_arguments(p.oid) || ') ' || pg_get_function_result(p.oid) || ' ' || p.prosecdef || ' ' || p.provolatile::text as f
            from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -282,8 +282,7 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
       expect(cols).toEqual([
         "approaches.public_ok boolean NO false",
         "lessons.public_note text YES -",
-        "rota_cohorts.can_drive boolean NO false",
-        "rota_cohorts.helps_rota boolean NO true",
+        "rota_cohorts.can_drive boolean NO false", // v20: helps_rota dropped (the duties a cohort helps in: tests/sql/v20.test.ts)
         "rota_prep_tasks.kind text NO 'task'::text",
         "rota_prep_tasks.qty text YES -",
         "source_files.kind text NO 'source'::text",
@@ -1054,18 +1053,19 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
 
   // ---------------------------------------------------------------- the rota
 
-  describe("the cohorts' two flags and Saturday night's shopping list", () => {
-    it("gives a cohort helps_rota and can_drive (true and false by default), refuses a null, and load_rota carries them", async () => {
+  describe("the cohorts' flag and Saturday night's shopping list", () => {
+    it("gives a cohort can_drive (false by default), refuses a null, and load_rota carries it (v20: helps_rota went — the duties a cohort helps in)", async () => {
       await inTx(async (run) => {
         const c = Number(await val(run, L, "insert into public.rota_cohorts (edition_id, letter, name) values ($1, 'א', 'מכינה לדוגמה') returning id", [ed]));
-        expect((await run("owner", "select helps_rota, can_drive from public.rota_cohorts where id = $1", [c])).rows[0]).toEqual({ helps_rota: true, can_drive: false });
-        expect(await code(run(L, "insert into public.rota_cohorts (edition_id, letter, name, helps_rota) values ($1, 'ב', 'מכינה לדוגמה ב', null)", [ed]))).toBe("bad_value");
+        expect((await run("owner", "select can_drive from public.rota_cohorts where id = $1", [c])).rows[0]).toEqual({ can_drive: false });
         expect(await code(run(L, "insert into public.rota_cohorts (edition_id, letter, name, can_drive) values ($1, 'ב', 'מכינה לדוגמה ב', null)", [ed]))).toBe("bad_value");
         expect(await code(run(L, "update public.rota_cohorts set can_drive = null where id = $1", [c]))).toBe("bad_value");
-        expect(await code(run(L, "update public.rota_cohorts set helps_rota = false, can_drive = true where id = $1", [c]))).toBe("ok");
-        expect((await run(A, "update public.rota_cohorts set helps_rota = true where id = $1 returning id", [c])).rowCount).toBe(0); // content: the policy's no
+        expect(await code(run(L, "update public.rota_cohorts set can_drive = true where id = $1", [c]))).toBe("ok");
+        expect((await run(A, "update public.rota_cohorts set can_drive = false where id = $1 returning id", [c])).rowCount).toBe(0); // content: the policy's no
         const rota = (await val(run, B, "select public.load_rota($1)", [ed])) as { cohorts: Record<string, unknown>[] };
-        expect(rota.cohorts).toEqual([{ id: c, edition_id: ed, letter: "א", name: "מכינה לדוגמה", diets: [], sort: 0, helps_rota: false, can_drive: true }]);
+        expect(rota.cohorts).toEqual([
+          { id: c, edition_id: ed, letter: "א", name: "מכינה לדוגמה", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 0, can_drive: true },
+        ]);
       });
     });
 
@@ -1099,13 +1099,13 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
   // ---------------------------------------------------------------- the file again
 
   describe("the file run again", () => {
-    it("keeps what v19 wrote — a photo, an approval, «נשלח לדפוס», a presentation, an item, the flags — and still answers", async () => {
+    it("keeps what v19 wrote — a photo, an approval, «נשלח לדפוס», a presentation, an item, the flag — and still answers", async () => {
       await commitAs(A, "select public.set_speaker_photo($1, $2, $3)", [ed, sp.alpha, photoBase64("clean")]);
       await commitAs(A, "select public.set_public_ok($1, (select version from public.approaches where id = $1), true)", [appr.alpha]);
       await commitAs(L, "select public.set_reader_sent($1, true)", [ed]);
       await commitAs(A, "select public.update_speaker($1, $2, (select version from public.speakers where id = $2), $3::jsonb)", [ed, sp.alpha, JSON.stringify({ public_bio: BIO })]);
       await commitAs(A, "select public.update_lesson($1, (select version from public.lessons where id = $1), $2::jsonb)", [lesson.a1, JSON.stringify({ public_note: "שיעור לדוגמה" })]);
-      await commitAs(L, "insert into public.rota_cohorts (edition_id, letter, name, helps_rota, can_drive) values ($1, 'א', 'מכינה לדוגמה', false, true)", [ed]);
+      await commitAs(L, "insert into public.rota_cohorts (edition_id, letter, name, can_drive) values ($1, 'א', 'מכינה לדוגמה', true)", [ed]);
       await commitAs(L, "insert into public.rota_prep_tasks (edition_id, text, kind, qty) values ($1, 'פריט לדוגמה', 'item', '2 (לדוגמה)')", [ed]);
       await db.query("insert into public.source_files (edition_id, lesson_id, storage_path, display_name, mime, size_bytes, kind) values ($1, $2, $3, 'מצגת.pptx', $4, 1, 'presentation')",
         [ed, lesson.b, `${ed}/${lesson.b}/${randomUUID()}-deck.pptx`, PPTX]);
@@ -1115,7 +1115,7 @@ describe("schema v19 — the logistics home, and what the guests' site reads", (
         settings: (await db.query("select settings from public.editions where id = $1", [ed])).rows,
         speakers: (await db.query("select id, public_bio from public.speakers order by id")).rows,
         lessons: (await db.query("select id, public_note from public.lessons order by id")).rows,
-        cohorts: (await db.query("select helps_rota, can_drive from public.rota_cohorts")).rows,
+        cohorts: (await db.query("select can_drive from public.rota_cohorts")).rows,
         prep: (await db.query("select kind, qty from public.rota_prep_tasks")).rows,
         files: (await db.query("select storage_path, kind from public.source_files order by id")).rows,
         bucket: (await db.query("select allowed_mime_types from storage.buckets")).rows,

@@ -11,7 +11,7 @@ import { actorIn } from "./weekStore";
 /** The logistics team's home (the reset, phase 4): «לוגיסטיקה ← בית», what is left to do. */
 export const LOGISTICS_HOME = "/logistics";
 
-/** «מצגות» (the reset, phase 5): the day's presentations — uploaded, checked and downloaded for the hall each morning. */
+/** «מצגות» (the reset, phase 5; v20 the week's): the presentations — the week's zip for the hall's computer, and each morning what came since. */
 export const PRESENTATIONS = "/presentations";
 
 /**
@@ -56,7 +56,7 @@ export function navFor(me: Me, persona: Persona, week: Week | null, nowIso: stri
   // logistics' fourth in the row, behind «עוד» for staff (below 1024px)
   const outputs: NavItem = { to: "/tracking", label: "תוצרים", match: ["/tracking", "/print/", "/export/", "/reader"] };
   items.push(persona === "logistics" ? outputs : { ...outputs, more: true });
-  // the day's presentations (phase 5): staff and logistics; every member may open the page
+  // the presentations (phase 5; v20 the week's zip): staff and logistics; every member may open the page
   items.push({ to: PRESENTATIONS, label: "מצגות", more: true });
   // memorial times (5ב-2): every member reads them; admins plan and place
   items.push({ to: "/memorial", label: "זמני זיכרון", more: true });

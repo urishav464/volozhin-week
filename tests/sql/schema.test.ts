@@ -67,6 +67,11 @@ const PEER_ADMIN = "peer.admin@example.org";
 // took p_kind, its old signature dropped (still one function). No app.* function
 // (app.photo_ok runs inside set_speaker_photo only); anon's surface is as it was —
 // the guests read through schedule_view alone (tests/sql/v19.test.ts).
+// v20 (the owner's logistics and presentations feedback) replaced set_rota_contact's signature — (p_kind, p_id,
+// p_phone): a group head's phone or a cohort's staff contact's, still the one definer function, the old one dropped
+// with its grant — and added rota_split_cohort (INVOKER: the caller's RLS and the guards, so no Advisor warning) and
+// app.may_see_cohort_contacts (INVOKER: the cohorts' contacts' policy, run as the browser's role). No new definer
+// function for any role; anon's surface is as it was — escort_view gained a key, not a door (tests/sql/v20.test.ts).
 const ANON_FUNCTIONS = ["escort_pickup", "escort_tick", "escort_view", "kk_form", "kk_signup", "ping", "schedule_view"];
 const AUTH_PUBLIC_FUNCTIONS = [
   "add_memorial_plan", "add_memorial_slot", "answer_handover", "claim_speaker", "close_lesson", "create_speaker", "decide_payments", "delete_fallen",
@@ -74,7 +79,7 @@ const AUTH_PUBLIC_FUNCTIONS = [
   "import_commit", "import_lookup", "issue_link", "kk_add_group", "kk_delete_group", "kk_place", "kk_set_window", "kk_unplace",
   "kk_update_group", "load_kk", "load_reviews", "load_rota", "load_week", "mark_confirm_sent", "mark_day_seen", "move_lesson", "ping", "place_memorial_plan", "propose", "purge_edition_private",
   "register_source_file",
-  "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
+  "remove_memorial_slot", "remove_source_file", "reopen_lesson", "reshape", "revoke_link", "rota_split_cohort", "save_fallen", "save_lesson_review", "schema_version", "set_approach_status",
   "set_availability_ranges",
   "set_book_order", "set_call_template", "set_confirm_template", "set_day_owners", "set_default_room", "set_duty_phrases", "set_escort", "set_fallen_contacts",
   "set_grid_rules", "set_memorial_policy", "set_my_profile", "set_paid", "set_payment", "set_pitch", "set_public_ok", "set_reader_cover", "set_reader_headers", "set_reader_sent",
@@ -83,7 +88,7 @@ const AUTH_PUBLIC_FUNCTIONS = [
   "speaker_matches", "speaker_reviews", "start_edition", "start_edition_preview", "team", "unpropose", "update_lesson", "update_memorial_plan", "update_speaker", "vet_speakers", "whoami",
 ];
 const AUTH_APP_FUNCTIONS = [
-  "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_contacts", "may_see_fallen", "may_see_fallen_contacts",
+  "can_see_edition", "is_global_admin", "is_member", "may_delete_source", "may_read_source", "may_see_cohort_contacts", "may_see_contacts", "may_see_fallen", "may_see_fallen_contacts",
   "may_see_rota_contacts", "may_see_transport", "may_upload_source", "may_write_rota", "my_email", "my_member_id", "my_role", "name_key",
 ];
 
@@ -165,8 +170,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
           "public.fallen, public.fallen_contacts, public.memorial_plans, public.lesson_reviews, public.lesson_import_notes, " +
           // v16: every table of «תורנויות» — the group heads' phones among them
           "public.rota_cohorts, public.rota_presence, public.rota_groups, public.rota_group_contacts, public.rota_duties, public.rota_assignments, " +
-          // v18: the days' owners; v19: the speakers' photos
-          "public.rota_staff_shifts, public.rota_prep_tasks, public.day_owners, public.speaker_photos",
+          // v18: the days' owners; v19: the speakers' photos; v20: the cohorts' duties and their contacts' phones
+          "public.rota_staff_shifts, public.rota_prep_tasks, public.day_owners, public.speaker_photos, public.rota_cohort_duties, public.rota_cohort_contacts",
       );
       await db.query(SCHEMA);
       const rows = (
@@ -198,12 +203,18 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       expect((await db.query("select prosecdef from pg_proc where oid = 'public.ping()'::regprocedure")).rows[0].prosecdef).toBe(false);
     });
 
-    it("reads «תורנויות» as the caller (load_rota, get_rota_contacts: invoker, stable) — only the two writes are definer", async () => {
+    it("reads «תורנויות» as the caller (load_rota, get_rota_contacts: invoker, stable) — only the two writes are definer; v20's split and the cohorts' contacts' rule are invoker", async () => {
       const fn = async (sig: string) => (await db.query("select prosecdef, provolatile from pg_proc where oid = $1::regprocedure", [sig])).rows[0];
       expect(await fn("public.load_rota(bigint)")).toEqual({ prosecdef: false, provolatile: "s" });
       expect(await fn("public.get_rota_contacts(bigint)")).toEqual({ prosecdef: false, provolatile: "s" });
-      expect((await fn("public.set_rota_contact(bigint, text)")).prosecdef).toBe(true);
+      expect((await fn("public.set_rota_contact(text, bigint, text)")).prosecdef).toBe(true);
       expect((await fn("public.set_rota_shifts(bigint, jsonb)")).prosecdef).toBe(true);
+      // v20: the one signature of set_rota_contact (the old (bigint, text) dropped), the split as the caller, volatile
+      expect((await db.query("select pg_get_function_identity_arguments(p.oid) as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'set_rota_contact'")).rows)
+        .toEqual([{ a: "p_kind text, p_id bigint, p_phone text" }]);
+      expect(await fn("public.rota_split_cohort(bigint, bigint, integer[])")).toEqual({ prosecdef: false, provolatile: "v" });
+      expect(await fn("app.may_see_cohort_contacts(bigint)")).toEqual({ prosecdef: false, provolatile: "s" });
+      expect((await fn("app.rota_cohort_duties_guard()")).prosecdef).toBe(false);
     });
 
     it("v18: the five new functions are definer, each one signature; the transports' read stays the caller's; day_owners has one policy — SELECT, for the edition's team", async () => {
@@ -249,6 +260,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(await sqlstate(q("select app.add_admin('x@example.org')"))).toBe("42501");
         for (const t of ["share_links", "share_link_hits", "escort_ticks", "kk_groups", "kk_leaders", "kk_signups", "book_orders", "roster", "lessons", "fallen", "fallen_contacts", "memorial_plans", "lesson_reviews", "lesson_import_notes", "slot_availability",
                          "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks",
+                         "rota_cohort_duties", "rota_cohort_contacts",
                          "day_owners", "transport_details", "speaker_photos"]) {
           expect(await sqlstate(q(`select * from public.${t}`)), t).toBe("42501");
         }
@@ -259,7 +271,9 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         for (const f of ["public.load_reviews(1)", "public.speaker_reviews(1)", "public.edition_returning(1)", "public.purge_edition_private(1, 'x')", "public.start_edition_preview()",
                          "public.save_lesson_review(1, 0, 'x', null, null, false, null)", "public.set_slot_availability(1, 1, 0, 1, 'can')", "public.set_call_template(1, 'x')",
                          // v16: nothing of «תורנויות»
-                         "public.load_rota(1)", "public.get_rota_contacts(1)", "public.set_rota_contact(1, 'x')", "public.set_rota_shifts(1, null)",
+                         "public.load_rota(1)", "public.get_rota_contacts(1)", "public.set_rota_contact('group', 1, 'x')", "public.set_rota_shifts(1, null)",
+                         // v20: nothing of a cohort's split or its contact
+                         "public.rota_split_cohort(1, 1, array[8])", "app.may_see_cohort_contacts(1)",
                          "app.may_write_rota(1)", "app.may_see_rota_contacts(1)", "app.rota_shift_active(1, 0, 0)",
                          // v18: nothing of the days' owners, the ranges or the transport's two parts
                          "public.set_day_owners(1, 0, null)", "public.mark_day_seen(1, 0)", "public.set_availability_ranges(1, 1, array[0], null)",
@@ -302,7 +316,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
         expect(w.status).toBe("ok");
         expect(w.global_admin).toBe(true);
         expect(w.email).toBe(ADMIN.toLowerCase());
-        expect(w.schema_version).toBe(19);
+        expect(w.schema_version).toBe(20);
         expect((await q("select email from public.members order by email")).rows.map((r) => r.email)).toEqual(
           [ADMIN.toLowerCase(), CONTENT, EDITION_ADMIN, OTHER_YEAR, PEER_ADMIN].sort(),
         );
@@ -387,7 +401,8 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
     // v16: the seven tables of «תורנויות» likewise (DELETE on the row, INSERT and
     // UPDATE by column — never an id, a row's edition once written, a presence
     // row's update or an assignment's source on an update); the group heads'
-    // phones SELECT only (set_rota_contact writes them).
+    // phones SELECT only (set_rota_contact writes them). v20: the cohorts' duties read, inserted and deleted — never
+    // updated — and the cohorts' contacts' phones SELECT only (set_rota_contact writes them too).
     const TABLE_WRITES: Record<string, string> = {
       editions: "DELETE,INSERT,SELECT,UPDATE",
       members: "DELETE,SELECT",
@@ -403,6 +418,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       rota_assignments: "DELETE,SELECT",
       rota_staff_shifts: "DELETE,SELECT",
       rota_prep_tasks: "DELETE,SELECT",
+      rota_cohort_duties: "DELETE,SELECT",
     };
     const COLUMN_WRITES = [
       "categories.active:INSERT,UPDATE", "categories.color:INSERT,UPDATE", "categories.name:INSERT,UPDATE", "categories.sort:INSERT,UPDATE",
@@ -415,8 +431,10 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       "roster.edition_id:INSERT", "roster.full_name:INSERT,UPDATE", "roster.gender:INSERT,UPDATE",
       "rota_assignments.day:INSERT,UPDATE", "rota_assignments.duty_id:INSERT,UPDATE", "rota_assignments.edition_id:INSERT",
       "rota_assignments.group_id:INSERT,UPDATE", "rota_assignments.shift:INSERT,UPDATE", "rota_assignments.source:INSERT",
-      "rota_cohorts.can_drive:INSERT,UPDATE", "rota_cohorts.diets:INSERT,UPDATE", "rota_cohorts.edition_id:INSERT", "rota_cohorts.helps_rota:INSERT,UPDATE",
-      "rota_cohorts.letter:INSERT,UPDATE", "rota_cohorts.name:INSERT,UPDATE", "rota_cohorts.sort:INSERT,UPDATE",
+      "rota_cohort_duties.cohort_id:INSERT", "rota_cohort_duties.duty_id:INSERT", "rota_cohort_duties.edition_id:INSERT",
+      "rota_cohorts.can_drive:INSERT,UPDATE", "rota_cohorts.contact_name:INSERT,UPDATE", "rota_cohorts.diet_both:INSERT,UPDATE", "rota_cohorts.diet_gf:INSERT,UPDATE",
+      "rota_cohorts.diet_veg:INSERT,UPDATE", "rota_cohorts.edition_id:INSERT", "rota_cohorts.letter:INSERT,UPDATE", "rota_cohorts.name:INSERT,UPDATE", "rota_cohorts.sort:INSERT,UPDATE",
+      "rota_cohorts.trainees:INSERT,UPDATE",
       "rota_duties.description:INSERT,UPDATE", "rota_duties.edition_id:INSERT", "rota_duties.min_people:INSERT,UPDATE", "rota_duties.name:INSERT,UPDATE",
       "rota_duties.need_afternoon:INSERT,UPDATE", "rota_duties.need_morning:INSERT,UPDATE", "rota_duties.need_night:INSERT,UPDATE", "rota_duties.sort:INSERT,UPDATE",
       "rota_groups.cohort_id:INSERT,UPDATE", "rota_groups.edition_id:INSERT", "rota_groups.head_name:INSERT,UPDATE", "rota_groups.number:INSERT,UPDATE",
@@ -425,7 +443,7 @@ describe.each<Regime>(["old", "new"])("schema under %s Supabase defaults", (regi
       "rota_prep_tasks.qty:INSERT,UPDATE", "rota_prep_tasks.sort:INSERT,UPDATE", "rota_prep_tasks.text:INSERT,UPDATE",
       "rota_presence.cohort_id:INSERT", "rota_presence.day:INSERT", "rota_presence.edition_id:INSERT", "rota_presence.shift:INSERT",
       "rota_staff_shifts.cohort_id:INSERT,UPDATE", "rota_staff_shifts.day:INSERT,UPDATE", "rota_staff_shifts.edition_id:INSERT",
-      "rota_staff_shifts.end_min:INSERT,UPDATE", "rota_staff_shifts.kind:INSERT,UPDATE", "rota_staff_shifts.member_id:INSERT,UPDATE",
+      "rota_staff_shifts.end_min:INSERT,UPDATE", "rota_staff_shifts.member_id:INSERT,UPDATE",
       "rota_staff_shifts.name:INSERT,UPDATE", "rota_staff_shifts.note:INSERT,UPDATE", "rota_staff_shifts.start_min:INSERT,UPDATE",
     ];
 

@@ -157,7 +157,7 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
 
   it("gives the three transports synthetic pickup times — placeholder words, a 06:10 before the board's 06:30 — and two staff shifts", () => {
     const week = demoWeek();
-    const shared = { transport: demoTransport(week), rota: emptyRota(), photos: {} };
+    const shared = { transport: demoTransport(week), rota: emptyRota(), rotaCohortContacts: {} as Record<number, string>, photos: {} };
     const before = structuredClone(shared.transport);
     seedDemoLogistics(shared, week, { id: 5, display_name: "לוגיסטיקה (הדגמה)" });
     const row = (day: number, start: number) => shared.transport[`1:${at(week, day, start).id}`];
@@ -166,18 +166,22 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
     expect(row(3, 600)).toEqual({ pickup_address: "כתובת לדוגמה", pickup_time: "08:45", pickup_min: 525, driver_name: null, driver_phone: null, arranged: false });
     expect(Object.keys(shared.transport)).toHaveLength(3);
     expect(shared.rota.staff).toEqual([
-      { id: 1, edition_id: 1, day: 1, start_min: 390, end_min: 720, member_id: null, name: "איש/אשת צוות לדוגמה ב׳", cohort_id: null, kind: "shift", note: null },
-      { id: 2, edition_id: 1, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, kind: "lead", note: null },
+      { id: 1, edition_id: 1, day: 1, start_min: 390, end_min: 720, member_id: null, name: "איש/אשת צוות לדוגמה ב׳", cohort_id: null, note: null },
+      { id: 2, edition_id: 1, day: 3, start_min: 510, end_min: 870, member_id: 5, name: "לוגיסטיקה (הדגמה)", cohort_id: null, note: null },
     ]);
-    // no logistics member to lead: the typed shift alone
-    const bare = { transport: demoTransport(week), rota: emptyRota(), photos: {} };
+    // v20: cohort «ד» — no duties, no groups — and its staff contact's placeholder phone (no digits: synthetic)
+    expect(shared.rota.cohorts.map((c) => c.letter)).toEqual(["ד"]);
+    expect(shared.rota.cohortDuties).toEqual([]);
+    expect(Object.values(shared.rotaCohortContacts)).toEqual(["טלפון לדוגמה"]);
+    // no logistics member: the typed shift alone
+    const bare = { transport: demoTransport(week), rota: emptyRota(), rotaCohortContacts: {} as Record<number, string>, photos: {} };
     seedDemoLogistics(bare, week, null);
     expect(bare.rota.staff.map((s) => s.name)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
     // synthetic only: no digits in a pickup address, and the times are what the board needs
     expect(Object.values(shared.transport).every((t) => !/\d/.test(t.pickup_address ?? ""))).toBe(true);
   });
 
-  it("on the board, as the logistics demo reads it: Sunday arranged, Monday's round trip waiting and clamped, Wednesday approved and led", async () => {
+  it("on the board, as the logistics demo reads it: Sunday arranged, Monday's round trip waiting and clamped, Wednesday approved with a staff shift", async () => {
     const port = new DemoPort(DEMO_LOGISTICS, { logistics: true });
     const week = await port.loadWeek(1);
     const read = await port.commands(1).transports();
@@ -187,11 +191,8 @@ describe("the logistics demo's seed (`?as=logistics` only): what the transport b
     // the return from the teaching's end, 09:45 (08:30 + 75) — the escort's page and the speaker's message say the same
     expect(day(1).transports.map((t) => [t.state, t.outbound, t.returnAt])).toEqual([["pending", { kind: "bar", from: 390, to: 510, clamped: true }, 585]]);
     expect(day(3).transports.map((t) => [t.state, t.outbound, t.returnAt])).toEqual([["approved", { kind: "bar", from: 525, to: 600, clamped: false }, null]]);
-    expect(day(3).shifts.map((s) => [s.who, s.lead])).toEqual([["לוגיסטיקה (הדגמה)", true]]);
-    expect(day(1).shifts.map((s) => [s.who, s.lead])).toEqual([
-      ["איש/אשת צוות לדוגמה ב׳", false],
-      ["צוות מכינה לדוגמה נ", false],
-    ]);
+    expect(day(3).shifts.map((s) => s.who)).toEqual(["לוגיסטיקה (הדגמה)"]);
+    expect(day(1).shifts.map((s) => s.who)).toEqual(["איש/אשת צוות לדוגמה ב׳", "צוות מכינה לדוגמה נ"]);
     // v19: cohort «ב» alone has staff who can drive (the logistics demo's flag), marked on campus that day
     expect(day(2)).toEqual({ day: 2, transports: [], shifts: [], drivers: [{ cohort: expect.objectContaining({ letter: "ב", can_drive: true }), present: true }] });
     expect(boardCounts(week, read)).toEqual({ pending: 1, approved: 2, arranged: 1 });

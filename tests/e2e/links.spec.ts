@@ -23,12 +23,19 @@
 // note and people, the approved speakers and the grid's fixed rows — drawn since phase 5 (a photo only when it is a
 // JPEG inside the answer: an https one is neither drawn nor fetched), while an answer from before v19 is the plain
 // schedule; /kk's book order says «הצעה: N», and «למלא» fills the field only — set_book_order goes out on «שמירה».
+// v20: each lesson card of the escort's page says where the lesson's presentation is on the hall's computer — the week
+// zip's folder and the start of its file's name (the zip's own entry, downloaded and unzipped here; an upload reaching
+// the page), a link in that day's links.txt, one not uploaded yet, nothing for none — escort_view giving the state alone
+// (the page works out the rest; a night lesson in the day before's folder), never a file's name, a path or an address.
 // Synthetic data only.
+import { readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
+import { unzipSync } from "fflate";
 import { DEMO_GUEST_BIOS, DEMO_GUEST_NOTE, demoWeek } from "../../src/data/demoWeek";
 import type { KkData } from "../../src/data/kk";
-import type { EscortView, KkForm, ScheduleView } from "../../src/data/publicPort";
+import type { EscortLesson, EscortView, KkForm, ScheduleView } from "../../src/data/publicPort";
 import { addDays, israelDate } from "../../src/domain/israelTime";
+import { entryPrefix, escortPresentationLine, segmentsText } from "../../src/domain/presentationNames";
 import { photoDataUrl } from "../../src/domain/photo";
 import { scheduleEntries } from "../../src/exports/designer";
 import { fixedRows } from "../../src/exports/publicSchedule";
@@ -134,6 +141,87 @@ test.describe("demo build", () => {
     await expect(page.getByText("כתובת חדשה לדוגמה")).toHaveCount(0);
     await expect(page.getByText("כתובת לדוגמה")).toHaveCount(0);
     await expect(page.getByText("נהג/ת")).toHaveCount(0); // a demo week shows no driver
+    await noSidewaysScroll(page);
+  });
+
+  test("v20: each lesson card says where its presentation is on the hall's computer — the week zip's folder and the start of its file's name, the zip's own entry; a link, one still missing; nothing for none; never a file's name, a path or an address", async ({ page }) => {
+    // the week's zip first (this demo's data): the paths the hall's computer has
+    await page.goto(`${demoUrl()}/presentations`);
+    const [d] = await Promise.all([page.waitForEvent("download"), page.locator("[data-week-zip]").getByRole("button", { name: "הורדת כל המצגות של השבוע" }).click()]);
+    const zipped = Object.keys(unzipSync(new Uint8Array(await readFile((await d.path())!))));
+
+    // מלווה א׳ escorts Sunday 08:30, whose speaker's deck was uploaded: «file» — the folder and the name's start
+    await page.goto(`${demoUrl()}/e#${SEEDED.escort(1)}`);
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה א׳" })).toBeVisible();
+    const opening = escortLessons(page).first();
+    await expect(opening).toContainText("פתיחת השבוע (לדוגמה)");
+    const file = opening.locator("[data-escort-presentation]");
+    await expect(file).toHaveAttribute("data-escort-presentation", "file");
+    await expect(file).toHaveText("מצגת: במחשב של האולם, בתיקייה «1-ראשון», הקובץ שמתחיל ב-«0830_בית מדרש_»");
+    // computed in the browser by the function the zip is named by (src/domain/presentationNames.ts) — the same words
+    const l = demoWeek().lessons.find((x) => x.kind === "lesson" && x.day === 0 && x.start_min === 510)!;
+    await expect(file).toHaveText(segmentsText(escortPresentationLine("file", 0, l.start_min, "בית מדרש")!));
+    // the folder and the start each isolated, and together the start of that lesson's file in the zip — its only one
+    const [folder, start] = await file.locator("bdi").allTextContents();
+    expect([folder, start]).toEqual(["1-ראשון", "0830_בית מדרש_"]);
+    expect(entryPrefix(0, l.start_min, "בית מדרש")).toBe(`${folder}/${start}`);
+    expect(zipped.filter((n) => n.startsWith(`${folder}/${start}`))).toEqual(["1-ראשון/0830_בית מדרש_מצגת לדוגמה.pdf"]);
+    // never the file's own name, a path or an address
+    const html = await page.locator("main").innerHTML();
+    for (const v of ["מצגת לדוגמה.pdf", ".pdf", "sources", "blob:", "http"]) expect(html, v).not.toContain(v);
+    await noSidewaysScroll(page);
+
+    // מלווה ב׳: Sunday 10:00 has a link only — in that day's folder's links.txt (the zip has it there); 11:30 none: no line
+    await page.goto(`${demoUrl()}/e#${SEEDED.escort(2)}`);
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה ב׳" })).toBeVisible();
+    const [link, none] = [escortLessons(page).nth(0), escortLessons(page).nth(1)];
+    await expect(link.locator("[data-escort-presentation]")).toHaveAttribute("data-escort-presentation", "link");
+    await expect(link.locator("[data-escort-presentation]")).toHaveText("המצגת בקישור — בקובץ links.txt בתיקייה של היום, «1-ראשון»");
+    expect(zipped).toContain("1-ראשון/links.txt");
+    await expect(none).toContainText("שיעור לדוגמה 3");
+    await expect(none.locator("[data-escort-presentation]")).toHaveCount(0);
+    await expect(page.getByText("slides.example")).toHaveCount(0); // the link itself is not on the page
+    expect(await page.locator("main").innerHTML()).not.toContain("http");
+
+    // מלווה ג׳: Tuesday 16:00 in the בית מדרש, «מצגת» marked and nothing uploaded — said, in its own box
+    await page.goto(`${demoUrl()}/e#${SEEDED.escort(3)}`);
+    const expected = escortLessons(page).first();
+    await expect(expected.locator('[data-escort-presentation="missing"]')).toHaveText("המצגת עוד לא הועלתה — בודקים עם הצוות");
+    // מלווה ד׳: a lesson without one and a memorial time — no line at all
+    await page.goto(`${demoUrl()}/e#${SEEDED.escort(4)}`);
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה ד׳" })).toBeVisible();
+    await expect(escortLessons(page)).toHaveCount(2);
+    await expect(page.locator("[data-escort-presentation]")).toHaveCount(0);
+    await noSidewaysScroll(page);
+  });
+
+  test("v20: a presentation uploaded to an escort's lesson reaches their page — the folder and the start of the name its new zip entry has", async ({ page }) => {
+    // Tuesday 16:00 in the בית מדרש: expected, nothing uploaded — מלווה ג׳'s lesson; the upload on its lesson page
+    const lesson = demoWeek().lessons.find((x) => x.kind === "lesson" && x.day === 2 && x.start_min === 960 && x.room_id === 1)!;
+    await page.goto(`${demoUrl()}/lesson/${lesson.id}?step=sources#presentations`);
+    const part = page.locator("[data-lesson-presentations]");
+    await expect(part).toBeFocused();
+    await part.locator("input[type=file]").setInputFiles({ name: "מצגת לדוגמה למלווה.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n% synthetic, never opened\n") });
+    await expect(toast(page, "המצגת הועלתה")).toBeVisible();
+    await expect(part.locator("[data-hall-path]")).toHaveAttribute("data-hall-path", "3-שלישי/1600_בית מדרש_מצגת לדוגמה למלווה.pdf");
+
+    // the escort's page from «קישורים», within this tab (the demo keeps the upload in memory)
+    await goSection(page, "הגדרות");
+    await page.getByRole("tab", { name: "קישורים" }).click();
+    await page.getByRole("link", { name: "הדף של מלווה לדוגמה ג׳" }).click();
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה ג׳" })).toBeVisible();
+    const line = escortLessons(page).first().locator("[data-escort-presentation]");
+    await expect(line).toHaveAttribute("data-escort-presentation", "file");
+    await expect(line).toHaveText("מצגת: במחשב של האולם, בתיקייה «3-שלישי», הקובץ שמתחיל ב-«1600_בית מדרש_»");
+    await expect(page.getByText("מצגת לדוגמה למלווה")).toHaveCount(0);
+    const [folder, start] = await line.locator("bdi").allTextContents();
+
+    // the week's zip, downloaded now: that lesson's file starts so — the only entry that does
+    await page.goBack();
+    await goSection(page, "מצגות");
+    const [d] = await Promise.all([page.waitForEvent("download"), page.locator("[data-week-zip]").getByRole("button", { name: "הורדת כל המצגות של השבוע" }).click()]);
+    const zipped = Object.keys(unzipSync(new Uint8Array(await readFile((await d.path())!))));
+    expect(zipped.filter((n) => n.startsWith(`${folder}/${start}`))).toEqual(["3-שלישי/1600_בית מדרש_מצגת לדוגמה למלווה.pdf"]);
     await noSidewaysScroll(page);
   });
 
@@ -738,17 +826,17 @@ test.describe("mock build", () => {
         lesson_id: 41, kind: "lesson", day: 1, date: addDays(start, 1), start_min: 1200, end_min: 1275, room: "חדר לדוגמה",
         speaker: { name: "ד״ר מרצה לדוגמה", gender: "f" }, title: "כותרת לדוגמה", self_intro: false, duty_notes: ["ניסוח לדוגמה"],
         escort_note: "הערה לדוגמה", phone: "טלפון לדוגמה מהשרת", transport: true, driver: { name: "נהג/ת לדוגמה", phone: "טלפון נהג/ת לדוגמה" },
-        ticks: { reminded: null, met: null, introduced: null, gift: null },
+        ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
       {
         lesson_id: 42, kind: "lesson", day: 2, date: addDays(start, 2), start_min: 510, end_min: 585, room: "חדר לדוגמה",
         speaker: { name: "מרצה בלי טלפון לדוגמה", gender: "m" }, title: "כותרת שנייה לדוגמה", self_intro: true, duty_notes: [],
-        escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null },
+        escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
       {
         lesson_id: 43, kind: "memorial", day: 2, date: addDays(start, 2), start_min: 780, end_min: 795, room: "חדר לדוגמה",
         speaker: null, title: null, self_intro: false, duty_notes: [], escort_note: null, phone: null, transport: false, driver: null,
-        ticks: { reminded: null, met: null, introduced: null, gift: null },
+        ticks: { reminded: null, met: null, introduced: null, gift: null }, presentation: "none",
       },
     ],
   };
@@ -911,6 +999,56 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("schedule_view")).toEqual([{ p_token: TOKEN }, { p_token: TOKEN }]);
 
     anonOnly(sb); // no whoami, no /auth/v1, no table, no session
+  });
+
+  test("v20 on the wire: escort_view says each lesson's presentation as a state alone — the page works out the folder and the name's start (a night lesson in the day before's folder, a room in Latin letters isolated); «none» and an answer without the key say nothing; still the publishable key alone, to the anon functions only", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const blank = { self_intro: false, duty_notes: [], escort_note: null, phone: null, transport: false, driver: null, ticks: { reminded: null, met: null, introduced: null, gift: null } };
+    const at = (lesson_id: number, day: 0 | 1 | 2 | 3 | 4, start_min: number, room: string, presentation: EscortLesson["presentation"]): EscortLesson => ({
+      lesson_id, kind: "lesson", day, date: addDays(start, day), start_min, end_min: start_min + 75, room, speaker: { name: `מרצה לדוגמה ${lesson_id}`, gender: null }, title: `כותרת לדוגמה ${lesson_id}`,
+      ...blank, presentation,
+    });
+    const { presentation: _gone, ...before20 } = at(57, 4, 900, "חדר לדוגמה", "file"); // an answer of before v20: no key
+    const view: EscortView = {
+      ...escortView,
+      lessons: [
+        at(51, 1, 600, "Hall B", "file"),
+        at(52, 0, 1470, "חדר לדוגמה", "file"), // 00:30 after Sunday: Sunday's column, the night's hour 24
+        at(53, 2, 510, "חדר לדוגמה", "link"),
+        at(54, 3, 690, "חדר לדוגמה", "missing"),
+        at(55, 4, 600, "חדר לדוגמה", "none"),
+        before20 as EscortLesson,
+        { ...escortView.lessons[2], lesson_id: 58, presentation: "none" }, // a memorial time
+      ],
+    };
+    const sb = new FakeSupabase();
+    sb.answers.set("escort_view", view);
+    await sb.attach(page);
+    await signIn(page); // a team member's session sits in this browser's storage
+    const answered = page.waitForResponse((r) => r.url().endsWith("/rest/v1/rpc/escort_view"));
+    await page.goto(`${mockUrl()}/e#${TOKEN}`);
+    await expect(page.getByRole("heading", { name: "שלום, מלווה לדוגמה" })).toBeVisible();
+    // what came is a state per lesson — no file's name, storage path or address in the answer
+    const body = (await (await answered).json()) as EscortView;
+    expect(body.lessons.map((l) => l.presentation)).toEqual(["file", "file", "link", "missing", "none", undefined, "none"]);
+    const raw = JSON.stringify(body);
+    for (const v of [".pdf", ".pptx", "storage", "sources/", "http", "display_name", "presentation_url"]) expect(raw, v).not.toContain(v);
+
+    const lineOf = (id: number) => page.locator(`[data-escort-lesson="${id}"] [data-escort-presentation]`);
+    await expect(lineOf(51)).toHaveText("מצגת: במחשב של האולם, בתיקייה «2-שני», הקובץ שמתחיל ב-«1000_Hall B_»");
+    expect(await lineOf(51).locator("bdi").allTextContents()).toEqual(["2-שני", "1000_Hall B_"]);
+    expect(entryPrefix(1, 600, "Hall B")).toBe("2-שני/1000_Hall B_");
+    await expect(lineOf(52)).toHaveText("מצגת: במחשב של האולם, בתיקייה «1-ראשון», הקובץ שמתחיל ב-«2430_חדר לדוגמה_»");
+    expect(entryPrefix(0, 1470, "חדר לדוגמה")).toBe("1-ראשון/2430_חדר לדוגמה_");
+    await expect(lineOf(53)).toHaveText("המצגת בקישור — בקובץ links.txt בתיקייה של היום, «3-שלישי»");
+    await expect(lineOf(54)).toHaveText("המצגת עוד לא הועלתה — בודקים עם הצוות");
+    for (const id of [55, 57, 58]) await expect(lineOf(id), String(id)).toHaveCount(0); // none, no key, a memorial time
+    await expect(page.locator("[data-escort-presentation]")).toHaveCount(4);
+    await noSidewaysScroll(page);
+
+    expect(sb.rpc.get("escort_view")).toEqual([{ p_token: TOKEN }]);
+    anonOnly(sb); // the publishable key alone; no whoami, no table, no Storage, no session
+    expect(sb.calls.some((c) => c.path.startsWith("/storage/"))).toBe(false);
   });
 
   test("whatever the reason — expired, revoked, replaced, wrong — the server's one refusal is one page", async ({ page }, info) => {

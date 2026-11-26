@@ -1,7 +1,7 @@
 // The owner re-runs the whole of supabase/schema.sql in the SQL Editor on a
 // database that already holds an older version and its data. This runs exactly
-// that, from six bases read from git history — v13 (PR #6), v14 (PR #8), v15
-// (PR #9), v16 (PR #11), v17 (PR #14) and v18 (PR #15, what production runs) — under both default-privilege regimes the
+// that, from seven bases read from git history — v13 (PR #6), v14 (PR #8), v15
+// (PR #9), v16 (PR #11), v17 (PR #14), v18 (PR #15) and v19 (PR #19, what production runs) — under both default-privilege regimes the
 // other tests model: the old file with some data in it — last year's week with
 // its transport details, links, a member, availability (v13's by part of a day,
 // in every shape the conversion meets; v14's and v15's per slot) and מכריכה
@@ -17,7 +17,10 @@
 // after the second. v19 adds its columns to the old rows with their defaults (no speaker approved for the
 // guests' site, every file a source, every preparation a task, every cohort helping and none driving), a fifth
 // type to the bucket's list, and keeps what it writes after the first run — a photo, an approval to appear,
-// «נשלח לדפוס», an item of the shopping list. And the catalog — every table, column, constraint, index, trigger, policy,
+// «נשלח לדפוס», an item of the shopping list. v20 converts the cohorts' help into the duties they help in (v19's flag:
+// a helping cohort every duty, one that did not none; v16–v18, before the flag: every cohort every duty), drops the
+// free-typed diets, the flag and a staff shift's kind (a lead's row stays, as a shift), leaves the new numbers TBD, and
+// keeps what it writes after the first run — a cohort's numbers and staff contact, its phone, a set of duties. And the catalog — every table, column, constraint, index, trigger, policy,
 // function body, privilege and the Realtime publication — is exactly a fresh
 // install's, so nothing a fresh database is tested for can differ on the owner's.
 import { execFileSync } from "node:child_process";
@@ -39,13 +42,16 @@ const BASES: Base[] = [
   { commit: "baf3cbe", version: 15 }, // PR #9, as merged: מכריכה לכריכה by the week
   { commit: "bcab571", version: 16 }, // PR #11: «תורנויות»
   { commit: "035f6fa", version: 17 }, // PR #14: titles
-  { commit: "512ae35", version: 18 }, // PR #15 — what production runs: the reset's data foundation
+  { commit: "512ae35", version: 18 }, // PR #15: the reset's data foundation
+  { commit: "9952be4", version: 19 }, // PR #19 — what production runs: the logistics home, the guests' site, presentations
 ];
 
 const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
-/** «תורנויות» (v16): every table, empty after the run. */
-const ROTA_TABLES = ["rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks"];
+/** «תורנויות» (v16; v20's two tables): every table, empty after the run but for what the test wrote. */
+const ROTA_TABLES = [
+  "rota_cohorts", "rota_presence", "rota_groups", "rota_group_contacts", "rota_duties", "rota_assignments", "rota_staff_shifts", "rota_prep_tasks", "rota_cohort_duties", "rota_cohort_contacts",
+];
 
 function schemaAt(base: Base): string {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -192,9 +198,17 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     await db.query("insert into public.share_links (edition_id, scope, token_hash, expires_at) values ($1, 'schedule', extensions.digest('a-token-for-the-upgrade', 'sha256'), now() + interval '1 day')", [ed]);
     await db.query("insert into public.transport_details (lesson_id, pickup_address, driver_name) select id, 'כתובת לדוגמה', 'נהג/ת לדוגמה' from public.lessons where edition_id = $1", [ed]);
     if (version >= 16) {
-      // «תורנויות» as v16–v18 kept it: a cohort and a preparation, which v19 gives their defaults
-      await db.query("insert into public.rota_cohorts (edition_id, letter, name) values ($1, 'א', 'מכינה לבדיקה')", [ed]);
+      // «תורנויות» as v16–v18 kept it: a cohort and a preparation, which v19 gives their defaults; v20: a duty (the cohort
+      // helped: it helps in it), a group, diets as typed and a lead's staff shift — which v20 drops (the shift stays)
+      await db.query("insert into public.rota_cohorts (edition_id, letter, name, diets) values ($1, 'א', 'מכינה לבדיקה', '[{\"label\": \"צמחוני\", \"count\": 2}]')", [ed]);
       await db.query("insert into public.rota_prep_tasks (edition_id, text) values ($1, 'הכנה לבדיקה')", [ed]);
+      await db.query("insert into public.rota_duties (edition_id, name) values ($1, 'מטבח לבדיקה')", [ed]);
+      await db.query("insert into public.rota_groups (edition_id, cohort_id, number, size) select $1, id, 1, 8 from public.rota_cohorts where edition_id = $1", [ed]);
+      await db.query("insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name, kind) values ($1, 1, 510, 870, 'צוות לבדיקה', 'lead')", [ed]);
+    }
+    if (version === 19) {
+      // v19's flag: a cohort that did not help — v20 gives it no duty (and it has no groups)
+      await db.query("insert into public.rota_cohorts (edition_id, letter, name, helps_rota) values ($1, 'נ', 'מכינה שלא עוזרת', false)", [ed]);
     }
     for (const [i, run] of notices.entries()) {
       const heard = (n: { message?: string }) => run.push(n.message ?? "");
@@ -219,6 +233,12 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
           await db.query("select public.set_reader_sent($1, true)", [ed]);
         });
         await db.query("insert into public.rota_prep_tasks (edition_id, text, kind, qty) values ($1, 'פריט לבדיקה', 'item', '3 (לבדיקה)')", [ed]);
+        // what v20 itself writes, between the two runs: a cohort with its numbers and staff contact, its phone, the duty it
+        // helps in — the second run must leave every one as it is (and convert nothing again)
+        const c = Number((await db.query("insert into public.rota_cohorts (edition_id, letter, name, trainees, diet_veg, diet_gf, diet_both, contact_name) values ($1, 'ש', 'מכינה חדשה לבדיקה', 20, 3, 2, 1, 'איש/אשת קשר לבדיקה') returning id", [ed])).rows[0].id);
+        const d = Number((await db.query("insert into public.rota_duties (edition_id, name) values ($1, 'נקיון לבדיקה') returning id", [ed])).rows[0].id);
+        await db.query("insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3)", [ed, c, d]);
+        await db.query("insert into public.rota_cohort_contacts (cohort_id, edition_id, phone) values ($1, $2, '555 0100 91')", [c, ed]);
       }
     }
     ref = await freshDatabase(fresh, regime);
@@ -231,10 +251,14 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     if (ref) await dropDatabase(ref, fresh);
   });
 
-  it("is v19, with «תורנויות»'s tables there — empty but for the rows written into them", async () => {
-    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(19);
-    // the old version's cohort and preparation (v16–v18), and v19's item written between the two runs
-    const written: Record<string, number> = { rota_cohorts: version >= 16 ? 1 : 0, rota_prep_tasks: version >= 16 ? 2 : 1 };
+  it("is v20, with «תורנויות»'s tables there — empty but for the rows written into them", async () => {
+    expect((await db.query("select public.schema_version() as v")).rows[0].v).toBe(20);
+    // the old version's rota (v16 on; v19 its cohort that did not help), v19's item and v20's own written between the two runs
+    const old = version >= 16 ? 1 : 0;
+    const written: Record<string, number> = {
+      rota_cohorts: old + (version === 19 ? 1 : 0) + 1, rota_prep_tasks: old + 1, rota_duties: old + 1, rota_groups: old, rota_staff_shifts: old,
+      rota_cohort_duties: old + 1, rota_cohort_contacts: 1,
+    };
     for (const t of ROTA_TABLES) {
       expect((await db.query(`select count(*)::int as n from public.${t}`)).rows[0].n, t).toBe(written[t] ?? 0);
     }
@@ -363,7 +387,7 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect((await db.query("select public_note from public.lessons where edition_id = $1", [ed])).rows).toEqual([{ public_note: null }]);
     expect((await db.query("select kind from public.source_files")).rows).toEqual([{ kind: "source" }]);
     if (version >= 16) {
-      expect((await db.query("select helps_rota, can_drive from public.rota_cohorts")).rows).toEqual([{ helps_rota: true, can_drive: false }]);
+      expect((await db.query("select can_drive from public.rota_cohorts where letter = 'א'")).rows).toEqual([{ can_drive: false }]);
     }
     expect((await db.query("select text, kind, qty from public.rota_prep_tasks order by id")).rows).toEqual([
       ...(version >= 16 ? [{ text: "הכנה לבדיקה", kind: "task", qty: null }] : []),
@@ -395,6 +419,32 @@ describe.each(CASES)("re-running schema.sql on a v$version database ($commit), u
     expect((await db.query("select pg_get_function_identity_arguments('public.register_source_file'::regproc) as a")).rows[0].a).toBe(
       "p_edition bigint, p_lesson bigint, p_path text, p_display_name text, p_pages integer, p_kind text",
     );
+  });
+
+  it("adds v20's own: the cohorts' help converted to the duties they help in, the diets, the flag and the staff's kind gone, the numbers TBD — and a second run keeps what v20 wrote", async () => {
+    const cols = (await db.query("select table_name || '.' || column_name as c from information_schema.columns where table_schema = 'public' and table_name in ('rota_cohorts', 'rota_staff_shifts')")).rows.map((r) => r.c);
+    for (const gone of ["rota_cohorts.diets", "rota_cohorts.helps_rota", "rota_staff_shifts.kind"]) expect(cols, gone).not.toContain(gone);
+    const helps = (await db.query(
+      "select c.letter || ':' || d.name as x from public.rota_cohort_duties x join public.rota_cohorts c on c.id = x.cohort_id join public.rota_duties d on d.id = x.duty_id order by 1",
+    )).rows.map((r) => r.x);
+    // v16–v19's helping cohort: every duty of its edition; v19's that did not: none; v20's own, written between the runs: as written
+    expect(helps).toEqual([...(version >= 16 ? ["א:מטבח לבדיקה"] : []), "ש:נקיון לבדיקה"]);
+    if (version >= 16) {
+      expect((await db.query("select trainees, diet_veg, diet_gf, diet_both, contact_name from public.rota_cohorts where letter = 'א'")).rows).toEqual([
+        { trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null },
+      ]);
+      expect((await db.query("select name, start_min, end_min from public.rota_staff_shifts")).rows).toEqual([{ name: "צוות לבדיקה", start_min: 510, end_min: 870 }]); // the lead's row, a shift now
+      expect((await db.query("select number, size from public.rota_groups")).rows).toEqual([{ number: 1, size: 8 }]);
+    }
+    expect((await db.query("select trainees, diet_veg, diet_gf, diet_both, contact_name from public.rota_cohorts where letter = 'ש'")).rows).toEqual([
+      { trainees: 20, diet_veg: 3, diet_gf: 2, diet_both: 1, contact_name: "איש/אשת קשר לבדיקה" },
+    ]);
+    expect((await db.query("select phone from public.rota_cohort_contacts")).rows).toEqual([{ phone: "555 0100 91" }]);
+    // the new functions there, each once; set_rota_contact's one signature
+    const sigs = async (fn: string) => (await db.query("select pg_get_function_identity_arguments(p.oid) as a from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1", [fn])).rows.map((r) => r.a);
+    expect(await sigs("set_rota_contact")).toEqual(["p_kind text, p_id bigint, p_phone text"]);
+    expect(await sigs("rota_split_cohort")).toEqual(["p_edition bigint, p_cohort bigint, p_sizes integer[]"]);
+    expect((await db.query("select count(*)::int as n from pg_proc where proname = 'rota_clean_diets'")).rows[0].n).toBe(0);
   });
 
   it("keeps every other row it held, and seeds nothing — «נקודות לשיחה» stay the code's own text until edited", async () => {

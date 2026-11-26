@@ -1,6 +1,6 @@
 // The week's «תורנויות» lens (rotaLens.ts), on a synthetic rota: five days of three shifts, Thursday's night not part of
 // the week (and a stale row on it still shown), Sunday cut by the opening, the duties in their order with the groups in
-// theirs, a duty with no group left out, «מוצע» kept per group, the leads by name or by a cohort's staff, the words a
+// theirs, a duty with no group left out, «מוצע» kept per group, (v20) the whole staff by name or by a cohort's staff, the words a
 // screen reader hears — and the same answer whatever order the rows came in.
 import { describe, expect, it } from "vitest";
 import type { RotaData } from "../data/rota";
@@ -11,9 +11,10 @@ const EDITION = { first_day_from: 510, last_day_until: 1140, settings: {} };
 function rota(): RotaData {
   return {
     cohorts: [
-      { id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 2 },
-      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1 },
+      { id: 2, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2 },
+      { id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 },
     ],
+    cohortDuties: [],
     presence: [],
     groups: [
       { id: 21, edition_id: 1, cohort_id: 2, number: 1, size: null, head_name: null },
@@ -34,9 +35,9 @@ function rota(): RotaData {
       { id: 5, edition_id: 1, day: 4, shift: 2, duty_id: 3, group_id: 12, source: "hand" },
     ],
     staff: [
-      { id: 1, edition_id: 1, day: 0, start_min: 390, end_min: 870, member_id: null, name: "שם לדוגמה", cohort_id: null, kind: "lead", note: null },
-      { id: 2, edition_id: 1, day: 0, start_min: 870, end_min: 1350, member_id: null, name: "שם לדוגמה 2", cohort_id: null, kind: "shift", note: null },
-      { id: 3, edition_id: 1, day: 2, start_min: 1350, end_min: 1830, member_id: null, name: null, cohort_id: 2, kind: "lead", note: null },
+      { id: 1, edition_id: 1, day: 0, start_min: 390, end_min: 870, member_id: null, name: "שם לדוגמה", cohort_id: null, note: null },
+      { id: 2, edition_id: 1, day: 0, start_min: 870, end_min: 1350, member_id: null, name: "שם לדוגמה 2", cohort_id: null, note: null },
+      { id: 3, edition_id: 1, day: 2, start_min: 1350, end_min: 1830, member_id: null, name: null, cohort_id: 2, note: null },
     ],
     prep: [],
   };
@@ -68,19 +69,33 @@ describe("rotaLens", () => {
     const night = rotaLens(EDITION, rota())[4][2];
     expect(night.range).toBeNull();
     expect(night.duties.map((d) => `${d.name}:${d.groups.map((g) => g.code)}`)).toEqual(["נקיון:א2"]);
-    expect(night.leads).toEqual([]);
+    expect(night.staff).toEqual([]);
   });
 
-  it("the leads by name or by a cohort's staff — a plain staff shift is not one", () => {
+  it("v20: the whole staff of a shift — every staff shift whose hours overlap it — by name or by a cohort's staff", () => {
     const cells = rotaLens(EDITION, rota());
-    expect(cells[0][0].leads).toEqual(["שם לדוגמה"]);
-    expect(cells[0][1].leads).toEqual([]);
-    expect(cells[2][2].leads).toEqual(["צוות מכינה לדוגמה נ"]);
+    expect(cells[0][0].staff).toEqual(["שם לדוגמה"]);
+    expect(cells[0][1].staff).toEqual(["שם לדוגמה 2"]);
+    expect(cells[2][2].staff).toEqual(["צוות מכינה לדוגמה נ"]);
+    expect(cells[1][0].staff).toEqual([]);
   });
 
-  it("said in words: the duties, then the leads; «אין שיבוצים» when empty", () => {
+  it("v20: someone on from 14:00 to 22:30 is on two shifts; two shifts of one person in a shift name them once", () => {
+    const data = rota();
+    data.staff = [
+      { id: 1, edition_id: 1, day: 1, start_min: 840, end_min: 1350, member_id: null, name: "שם לדוגמה", cohort_id: null, note: null },
+      { id: 2, edition_id: 1, day: 1, start_min: 960, end_min: 1050, member_id: null, name: "שם לדוגמה", cohort_id: null, note: null },
+      { id: 3, edition_id: 1, day: 1, start_min: 900, end_min: 1000, member_id: null, name: "שם לדוגמה 2", cohort_id: null, note: null },
+    ];
+    const monday = rotaLens(EDITION, data)[1];
+    expect(monday[0].staff).toEqual(["שם לדוגמה"]); // 14:00–14:30 of the morning
+    expect(monday[1].staff).toEqual(["שם לדוגמה", "שם לדוגמה 2"]);
+    expect(monday[2].staff).toEqual([]); // ends as the night begins
+  });
+
+  it("said in words: the duties, then the staff; «אין שיבוצים» when empty", () => {
     const cells = rotaLens(EDITION, rota());
-    expect(lensShiftText(cells[0][0])).toBe("בית מדרש: א1 א2 · מטבח: נ1 · אחראי/ת: שם לדוגמה");
+    expect(lensShiftText(cells[0][0])).toBe("בית מדרש: א1 א2 · מטבח: נ1 · צוות: שם לדוגמה");
     expect(lensShiftText(cells[1][1])).toBe("אין שיבוצים");
   });
 

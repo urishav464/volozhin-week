@@ -6,11 +6,18 @@
 // whole-details write (set_transport_details): it sets a driver on a request that still waits, and rewrites the pickup
 // while leaving its minute behind. Since the reset's phase 5 no screen calls it (the grid's panel lost its stages, and
 // an archive's lesson reads its details: TransportReadOnly, below); the SQL function stays for the schema and parity.
+// v20: the form's two suggestion lists are the board's (DriverForm, lanes.ts driverSuggestions) — the rota is read only
+// once the form opens (load_rota: no phone), the cohort's contact's phone only for whom maySeeRotaContacts, on the click.
 import { useRef, useState } from "react";
 import type { TransportDriverPatch } from "../../data/commands";
+import type { DataPort } from "../../data/port";
 import { mayLogisticsWrite } from "../../domain/approvals";
+import { typedPickupMin } from "../../domain/pickup";
+import type { TransportDetails } from "../../domain/types";
 import { Chip } from "../../grid/bits";
-import { DriverForm } from "../logistics/DriverForm";
+import { DriverForm, useCohortPhone } from "../logistics/DriverForm";
+import { driverSuggestions } from "../logistics/lanes";
+import { maySeeRotaContacts, useRota } from "../rota/shared";
 import { Button, useFocusBack, useFocusRescue } from "../settings/kit";
 import { transportHiddenText, TransportView } from "../stages/PaymentStage";
 import { LINK_BUTTON, type StageCtx } from "../stages/parts";
@@ -60,7 +67,24 @@ export function TransportReadOnly({ lesson: l, actor, cmds }: StageCtx) {
   );
 }
 
-export function StaffTransport({ week, lesson: l, actor, cmds, busy, act }: StageCtx) {
+/** The driver's form on the lesson page, with the board's suggestions: the edition's rota read once it opens. */
+function LessonDriverForm({ port, week, lesson: l, actor, d, busy, onSave, onClose }: Pick<StageCtx, "week" | "lesson" | "actor"> & {
+  port: DataPort;
+  d: TransportDetails;
+  busy: boolean;
+  onSave: (patch: TransportDriverPatch, onRefused: (code: string | null) => boolean) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const rota = useRota(port, week.edition.id);
+  const phoneFor = useCohortPhone(port, week.edition.id, maySeeRotaContacts(actor, week.edition));
+  // the one lesson's read has no pickup_min: the time typed, nearer the lesson's start (as the request form computes it)
+  const pickup = typedPickupMin(l.start_min, { pickup_time: d.pickup_time, pickup_min: null });
+  const lists = rota.data ? driverSuggestions(week, rota.data, l, pickup) : null;
+  return <DriverForm label={l.title ?? "השיעור"} d={d} busy={busy} onSave={onSave} onClose={onClose} suggest={{ lists, failed: rota.data == null && rota.failed != null, phoneFor }} />;
+}
+
+export function StaffTransport({ port, ...ctx }: StageCtx & { /** v20: for the driver's suggestions (the rota); without it, the form alone. */ port?: DataPort }) {
+  const { week, lesson: l, actor, cmds, busy, act } = ctx;
   const t = useTransportDetails(cmds, l);
   const [editing, setEditing] = useState(false);
   const focus = useFocusBack();
@@ -102,16 +126,32 @@ export function StaffTransport({ week, lesson: l, actor, cmds, busy, act }: Stag
         <p className="text-sm text-ink-soft">{transportHiddenText(actor, l)}</p>
       ) : editing && driver ? (
         <div className="rounded-lg border border-line bg-paper-light p-3">
-          <DriverForm
-            label={l.title ?? "השיעור"}
-            d={d}
-            busy={busy === "driver"}
-            onSave={save}
-            onClose={() => {
-              setEditing(false);
-              focus.back("driver");
-            }}
-          />
+          {port ? (
+            <LessonDriverForm
+              port={port}
+              week={week}
+              lesson={l}
+              actor={actor}
+              d={d}
+              busy={busy === "driver"}
+              onSave={save}
+              onClose={() => {
+                setEditing(false);
+                focus.back("driver");
+              }}
+            />
+          ) : (
+            <DriverForm
+              label={l.title ?? "השיעור"}
+              d={d}
+              busy={busy === "driver"}
+              onSave={save}
+              onClose={() => {
+                setEditing(false);
+                focus.back("driver");
+              }}
+            />
+          )}
         </div>
       ) : (
         <>

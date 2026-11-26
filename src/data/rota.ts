@@ -2,13 +2,19 @@
 // each is there, their groups (a code, a size, a group head), the duties, who does which duty in each shift, the staff's
 // shifts and the Saturday-night preparations («מוצ"ש–ראשון»). docs/CONTRACT.md «תורנויות» is the contract.
 //
+// v20: a cohort's trainees and its three diet numbers (the meals), its staff contact (a name the team reads; the phone
+// is personal data, the heads' phones' rule), the duties each cohort helps in (`cohortDuties` — a cohort that helps in
+// none has no groups: `cohort_not_helping`), a cohort split into groups in one call (`splitCohort`), and no «אחראי/ת
+// משמרת» (a staff shift has no kind).
+//
 // Two implementations, as every port: SupabaseRota (src/data/supabaseRota.ts — direct writes under RLS with guard
 // triggers, the knowledge notes' way; the heads' phones through two functions) and DemoRota (src/data/demoRota.ts — in
 // memory, the same refusals). The edition's logistics team and its admins write; every member of the edition reads.
 //
-// A group head's phone is personal data — the drivers' rule: its own table, read only by the edition's logistics and
-// admins (a global admin, or of a real edition not archived), one call at a time, never in load_rota, a Week,
-// Realtime, the offline copy or a file but behind «כולל טלפונים»; purge_edition_private deletes it after the week.
+// A group head's phone — and (v20) a cohort's staff contact's — is personal data, the drivers' rule: its own table,
+// read only by the edition's logistics and admins (a global admin, or of a real edition not archived), one call at a
+// time, never in load_rota, a Week, Realtime, the offline copy or a file but behind «כולל טלפונים»;
+// purge_edition_private deletes it after the week.
 import { hasContact } from "../import/phone";
 import type { Day } from "../domain/time";
 import type { RotaShiftsSetting } from "../domain/types";
@@ -20,27 +26,33 @@ export type { RotaShiftsSetting };
 /** 0 = morning, 1 = afternoon, 2 = night (the edition's cuts: settings.rota_shifts; last year's by default). */
 export type ShiftIndex = 0 | 1 | 2;
 
-/** A diet counted for the food orders («צמחוני», …) — the label as typed, a count of people. */
-export interface Diet {
-  label: string;
-  count: number;
-}
-
 /** A cohort on campus that week («מכינה»): its letter starts its groups' codes («א» → א1, א2…). */
 export interface RotaCohort {
   id: number;
   edition_id: number;
   letter: string;
   name: string;
-  diets: Diet[];
-  sort: number;
+  /** v20 «חניכים»: how many trainees the cohort brings (the meals count it — never the groups' sizes); null = TBD. */
+  trainees: number | null;
   /**
-   * v19 «עוזרת בתורנויות»: absent = true. A cohort that does not help still counts for meals (its presence), but the
-   * suggestion never places its groups and the uneven-load check leaves them out (src/domain/rota.ts `helpsRota`).
+   * v20 the diets, of the trainees: «צמחוני/טבעוני» (one dish), «ללא גלוטן», and «מהם גם וגם» — how many are both. So
+   * veg-only = veg − both, gf-only = gf − both, regular = trainees − veg − gf + both (src/domain/rota.ts `dietSplit`).
+   * null = TBD. both ≤ veg, both ≤ gf, veg + gf − both ≤ trainees (`rota_diets_exceed`).
    */
-  helps_rota?: boolean;
+  diet_veg: number | null;
+  diet_gf: number | null;
+  diet_both: number | null;
+  /** v20 «איש/אשת קשר מהצוות (משבץ/ת)»: a name the whole team reads; null = not yet. Its phone is a RotaCohortContact. */
+  contact_name: string | null;
+  sort: number;
   /** v19 «הצוות שלה יכול להסיע»: absent = false — the transport board names it (no phone, no driver). */
   can_drive?: boolean;
+}
+
+/** v20: a duty the cohort helps in (rota_cohort_duties). A cohort «helps» when it has one (src/domain/rota.ts `cohortHelps`). */
+export interface RotaCohortDuty {
+  cohort_id: number;
+  duty_id: number;
 }
 
 /** The cohort is on campus in this shift (no row: not marked — never assumed). */
@@ -88,11 +100,10 @@ export interface RotaAssignment {
   source: "hand" | "suggested";
 }
 
-export type StaffKind = "shift" | "lead";
-
 /**
  * A staff shift («משמרות צוות»): a person — a team member (member_id, and `name` their name when picked) or a name as
- * typed — or a whole cohort's staff (cohort_id: «צוות מכינת נ»); exactly one of `name` and `cohort_id`. No phone.
+ * typed — or a whole cohort's staff (cohort_id: «צוות מכינת נ»); exactly one of `name` and `cohort_id`. No phone. (v20:
+ * no kind — there is no «אחראי/ת משמרת».)
  */
 export interface RotaStaffShift {
   id: number;
@@ -103,7 +114,6 @@ export interface RotaStaffShift {
   member_id: number | null;
   name: string | null;
   cohort_id: number | null;
-  kind: StaffKind;
   note: string | null;
 }
 
@@ -131,6 +141,8 @@ export type NewPrepRow = string | { text: string; qty?: string | null };
 /** Everything the rota screens read (public.load_rota) — never a phone. */
 export interface RotaData {
   cohorts: RotaCohort[];
+  /** v20: the duties each cohort helps in, by cohort and duty. */
+  cohortDuties: RotaCohortDuty[];
   presence: RotaPresence[];
   groups: RotaGroup[];
   duties: RotaDuty[];
@@ -139,7 +151,7 @@ export interface RotaData {
   prep: RotaPrepTask[];
 }
 
-export const EMPTY_ROTA: RotaData = { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] };
+export const EMPTY_ROTA: RotaData = { cohorts: [], cohortDuties: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] };
 
 /** A group head's phone (public.get_rota_contacts) — only for those who may see it. */
 export interface RotaContact {
@@ -147,8 +159,25 @@ export interface RotaContact {
   head_phone: string;
 }
 
-export type NewCohort = Pick<RotaCohort, "letter" | "name"> & Partial<Pick<RotaCohort, "diets" | "sort" | "helps_rota" | "can_drive">>;
-export type CohortPatch = Partial<Pick<RotaCohort, "letter" | "name" | "diets" | "sort" | "helps_rota" | "can_drive">>;
+/** v20: a cohort's staff contact's phone (public.get_rota_contacts, after the heads') — only for those who may see it. */
+export interface RotaCohortContact {
+  cohort_id: number;
+  phone: string;
+}
+
+/** One row of public.get_rota_contacts: a head's phone, or a cohort's contact's (`isHeadContact` / `isCohortContact`). */
+export type RotaContactRow = RotaContact | RotaCohortContact;
+
+export const isHeadContact = (c: RotaContactRow): c is RotaContact => "group_id" in c;
+export const isCohortContact = (c: RotaContactRow): c is RotaCohortContact => "cohort_id" in c;
+
+/** Whose phone `setContact` writes: a group's head, or a cohort's staff contact. */
+export type RotaContactTarget = { group: number } | { cohort: number };
+
+/** The cohort's own fields a form writes (v20: the numbers and the contact's name). */
+type CohortFields = "trainees" | "diet_veg" | "diet_gf" | "diet_both" | "contact_name" | "sort" | "can_drive";
+export type NewCohort = Pick<RotaCohort, "letter" | "name"> & Partial<Pick<RotaCohort, CohortFields>>;
+export type CohortPatch = Partial<Pick<RotaCohort, "letter" | "name" | CohortFields>>;
 export type NewGroup = Pick<RotaGroup, "cohort_id" | "number"> & Partial<Pick<RotaGroup, "size" | "head_name">>;
 export type GroupPatch = Partial<Pick<RotaGroup, "number" | "size" | "head_name">>;
 export type NewDuty = Pick<RotaDuty, "name"> & Partial<Omit<RotaDuty, "id" | "edition_id" | "name">>;
@@ -167,16 +196,31 @@ export interface RotaPort {
   /** One edition's rota (public.load_rota); an edition the member cannot see → not_member. */
   load(editionId: number): Promise<RotaData>;
 
-  addCohort(editionId: number, c: NewCohort): Promise<void>;
+  /** v20: answers the new cohort's id (for its duties: setCohortDuties). */
+  addCohort(editionId: number, c: NewCohort): Promise<number>;
   updateCohort(id: number, patch: CohortPatch): Promise<void>;
   /** A cohort with groups → in_use. */
   deleteCohort(id: number): Promise<void>;
+  /**
+   * v20: the duties the cohort helps in, replaced by this set (duplicates ignored) — the missing rows inserted first,
+   * then the others deleted, so a cohort with groups never passes through none. An empty set while it has groups →
+   * in_use (delete its groups first: the screen asks); a duty or cohort not the edition's → stale.
+   */
+  setCohortDuties(editionId: number, cohortId: number, dutyIds: number[]): Promise<void>;
+  /**
+   * v20 «חלוקה לקבוצות» (public.rota_split_cohort): the cohort's groups replaced — in one transaction — by groups 1…n
+   * of these sizes (their assignments and heads' phones go with the old ones; their tasks keep their text). The new
+   * groups, by number. No sizes, more than 99 or one outside 0–200 → bad_value; a cohort that helps in no duty →
+   * cohort_not_helping.
+   */
+  splitCohort(editionId: number, cohortId: number, sizes: number[]): Promise<RotaGroup[]>;
   /**
    * Marks the cohort on campus (or not) in every shift of the scope that the week has (rotaSlots): one statement —
    * present inserts the missing rows, absent deletes the scope's rows.
    */
   setPresence(editionId: number, cohortId: number, scope: PresenceScope, present: boolean): Promise<void>;
 
+  /** v20: a cohort that helps in no duty → cohort_not_helping (also when a group is moved into one). */
   addGroup(editionId: number, g: NewGroup): Promise<void>;
   updateGroup(id: number, patch: GroupPatch): Promise<void>;
   /** Its assignments and its head's phone go with it; its preparations keep their text, without a group. */
@@ -212,19 +256,22 @@ export interface RotaPort {
   /** The shifts' cuts and names (an edition's admin; public.set_rota_shifts); null → last year's. */
   setShifts(editionId: number, s: RotaShiftsSetting | null): Promise<void>;
 
-  /** The heads' phones the member may see (public.get_rota_contacts) — none for the others, never a refusal. */
-  contacts(editionId: number): Promise<RotaContact[]>;
-  /** A head's phone (public.set_rota_contact); null or blank removes it. Not allowed → rota_contact_hidden. */
-  setContact(groupId: number, phone: string | null): Promise<void>;
+  /**
+   * The phones the member may see (public.get_rota_contacts): the heads', by group, then (v20) the cohorts' staff
+   * contacts', by cohort — none for the others, never a refusal.
+   */
+  contacts(editionId: number): Promise<RotaContactRow[]>;
+  /** A head's phone, or (v20) a cohort's contact's (public.set_rota_contact); null or blank removes it. Not allowed → rota_contact_hidden. */
+  setContact(target: RotaContactTarget, phone: string | null): Promise<void>;
 }
 
 /** Characters and ranges, as the database's CHECKs and guard triggers count them (schema.sql «תורנויות»). */
 export const ROTA_LIMITS = {
   letter: 3,
   cohortName: 80,
-  diets: 6,
-  dietLabel: 40,
-  dietCount: 1000,
+  /** v20: a cohort's trainees and each of its diet numbers. */
+  count: 1000,
+  contactName: 80,
   groupNumber: 99,
   groupSize: 200,
   headName: 80,
@@ -264,13 +311,63 @@ export function cleanCohortName(v: string | null | undefined): string {
   return noContact(cleanLine(v, ROTA_LIMITS.cohortName)) ?? fail("name_required");
 }
 
-export function cleanDiets(v: unknown): Diet[] {
-  if (!Array.isArray(v) || v.length > ROTA_LIMITS.diets) return fail("bad_value");
-  return v.map((d) => {
-    if (!d || typeof d !== "object") return fail("bad_value");
-    const label = noContact(cleanLine((d as Diet).label, ROTA_LIMITS.dietLabel)) ?? fail("bad_value");
-    return { label, count: intIn((d as Diet).count, 0, ROTA_LIMITS.dietCount) };
-  });
+/** v20: a cohort's trainees or one of its diet numbers — a whole number 0–1000, or null (TBD). */
+export const cleanCount = (v: unknown): number | null => intOrNull(v, 0, ROTA_LIMITS.count);
+
+/** v20: the cohort's staff contact's name — one line ≤ 80, no phone or e-mail (its phone has its own table); blank → null. */
+export function cleanContactName(v: string | null | undefined): string | null {
+  return noContact(cleanLine(v, ROTA_LIMITS.contactName));
+}
+
+/** v20: the four numbers of a cohort, together (the guard's rule between them): each side known, else nothing to hold. */
+export interface CohortCounts {
+  trainees: number | null;
+  diet_veg: number | null;
+  diet_gf: number | null;
+  diet_both: number | null;
+}
+
+/**
+ * v20 (app.rota_cohorts_guard): «מהם גם וגם» ≤ «צמחוני/טבעוני» and ≤ «ללא גלוטן», each of those two ≤ the trainees, and —
+ * all four known — «צמחוני/טבעוני» + «ללא גלוטן» − «גם וגם» ≤ the trainees; else rota_diets_exceed. A comparison with a
+ * side TBD (null) holds nothing. The review: one diet number above the trainees can never fit, whatever is typed later
+ * (both ≤ each, so veg + gf − both ≥ either) — refused at once, not on the last number typed.
+ */
+export function checkCohortCounts(c: CohortCounts): CohortCounts {
+  const { trainees: t, diet_veg: v, diet_gf: g, diet_both: b } = c;
+  if (b != null && ((v != null && b > v) || (g != null && b > g))) return fail("rota_diets_exceed");
+  if (t != null && ((v != null && v > t) || (g != null && g > t))) return fail("rota_diets_exceed");
+  if (t != null && v != null && g != null && b != null && v + g - b > t) return fail("rota_diets_exceed");
+  return c;
+}
+
+/**
+ * v20: a new cohort's or a whole row's own fields, cleaned in the guard's order — the contact's name, the four numbers
+ * (each 0–1000 or null), the rule between them; absent numbers are null (TBD).
+ */
+export function cleanCohortFields(c: Partial<Pick<RotaCohort, "trainees" | "diet_veg" | "diet_gf" | "diet_both" | "contact_name">>): CohortCounts & { contact_name: string | null } {
+  const contact_name = cleanContactName(c.contact_name ?? null);
+  const counts = {
+    trainees: cleanCount(c.trainees ?? null), diet_veg: cleanCount(c.diet_veg ?? null), diet_gf: cleanCount(c.diet_gf ?? null), diet_both: cleanCount(c.diet_both ?? null),
+  };
+  return { contact_name, ...checkCohortCounts(counts) };
+}
+
+/** v20: the duties a cohort helps in, as a set — whole numbers, each once (in the order first given); not an array → bad_value. */
+export function cleanDutyIds(v: unknown): number[] {
+  if (!Array.isArray(v)) return fail("bad_value");
+  const out: number[] = [];
+  for (const x of v) {
+    if (typeof x !== "number" || !Number.isSafeInteger(x) || x < 1) return fail("bad_value");
+    if (!out.includes(x)) out.push(x);
+  }
+  return out;
+}
+
+/** v20 «חלוקה לקבוצות»'s sizes (public.rota_split_cohort): 1–99 groups, each a size 0–200; else bad_value. */
+export function cleanSplitSizes(v: unknown): number[] {
+  if (!Array.isArray(v) || v.length === 0 || v.length > ROTA_LIMITS.groupNumber) return fail("bad_value");
+  return v.map((x) => intIn(x, 0, ROTA_LIMITS.groupSize));
 }
 
 export const cleanGroupNumber = (v: unknown) => intIn(v, 1, ROTA_LIMITS.groupNumber);
@@ -309,8 +406,6 @@ export function cleanNote(v: string | null | undefined): string | null {
   return noContact(cleanLine(v, ROTA_LIMITS.note));
 }
 
-export const cleanStaffKind = (v: unknown): StaffKind => (v === "shift" || v === "lead" ? v : fail("bad_value"));
-
 /** Exactly one of a name (a person — a team member's or typed) and a cohort (its whole staff). */
 export function cleanStaffWho(s: Pick<NewStaffShift, "member_id" | "name" | "cohort_id">): Pick<NewStaffShift, "member_id" | "name" | "cohort_id"> {
   const name = cleanStaffName(s.name);
@@ -324,7 +419,7 @@ export function cleanPrepText(v: string | null | undefined): string {
   return noContact(cleanLine(v, ROTA_LIMITS.prepText)) ?? fail("name_required");
 }
 
-/** v19: a cohort's flag — a boolean; anything else, null included → bad_value (the columns are NOT NULL). */
+/** v19: a cohort's flag (can_drive) — a boolean; anything else, null included → bad_value (the column is NOT NULL). */
 export const cleanFlag = (v: unknown): boolean => (typeof v === "boolean" ? v : fail("bad_value"));
 
 /** v19: a Saturday-night row's kind; anything else, null included → bad_value. */
@@ -390,7 +485,7 @@ export function cleanShifts(s: RotaShiftsSetting): RotaShiftsSetting {
   return { cuts: [a, b], labels };
 }
 
-/** A head's phone (app.rota_clean_phone): one line ≤ 40 with at least 6 digits; blank → null (removes it). */
+/** A head's phone — and (v20) a cohort's contact's (set_rota_contact): one line ≤ 40 with at least 6 digits; blank → null (removes it). */
 export function cleanHeadPhone(v: string | null | undefined): string | null {
   const s = cleanLine(v, ROTA_LIMITS.phone);
   if (s == null) return null;

@@ -459,8 +459,8 @@ test.describe("mock build", () => {
     sb.answers.set("load_kk", { groups: [], leaders: [], signups: [], orders: [] }); // 5ב-2: מכריכה לכריכה and the fallen too
     sb.answers.set("get_fallen_contacts", null); // asked for the fallen this edition planned for (the demo's: 1, 2, 3) — none stored
     sb.answers.set("load_reviews", []); // v12: «איך עבר», as the caller reads it
-    sb.answers.set("load_rota", { cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] }); // v16: «תורנויות», never a phone
-    sb.answers.set("get_rota_contacts", []); // the heads' phones the caller may see — none here
+    sb.answers.set("load_rota", { cohorts: [], cohortDuties: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] }); // v16: «תורנויות», never a phone (v20: cohortDuties)
+    sb.answers.set("get_rota_contacts", []); // the heads' and (v20) the cohorts' contacts' phones the caller may see — none here
     await goSection(page, "הגדרות");
     await page.getByRole("tab", { name: "מחזור" }).click();
     const zip = await downloaded(page, () => page.getByRole("button", { name: /^הורדת הארכיון/ }).click());

@@ -33,7 +33,8 @@ describe("a group's page", () => {
   const w = emptyWeek();
   closeWith(w, addLesson(w, 0, 510, 600, { title: "שיעור לדוגמה" }), addSpeaker(w, "f", "מרצה לדוגמה"));
   const data: RotaData = {
-    cohorts: [{ id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1 }],
+    cohorts: [{ id: 1, edition_id: 1, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 }],
+    cohortDuties: [{ cohort_id: 1, duty_id: 1 }],
     presence: [],
     groups: [
       { id: 11, edition_id: 1, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" },

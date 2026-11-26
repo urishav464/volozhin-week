@@ -1,15 +1,17 @@
 // The transport board's lane model (the reset, phase 3): which lessons get a lane, the outbound leg (a bar, clamped at
 // 06:30; a marker when the pickup is unknown; the time typed over a stale pickup_min), the return marker of a round trip
 // at the teaching's end with no length,
-// the three states, the staff shifts of the day (a member, a typed name, a cohort's staff; leads), and a day with nothing.
+// the three states, the staff shifts of the day (a member, a typed name, a cohort's staff), and a day with nothing; and
+// (v20) who could drive: the staff on shift during the trip — a pickup before 06:30 against the night before — and the
+// cohorts that can drive and are on campus in the pickup's shift, with what a pick writes.
 import { describe, expect, it } from "vitest";
 import type { LessonTransport } from "../../data/commands";
 import type { RotaCohort, RotaStaffShift } from "../../data/rota";
 import type { Day } from "../../domain/time";
 import { type Approach, LESSON_STAGE_DEFAULTS, type Lesson, type LessonSpeaker, type Speaker, type Week } from "../../domain/types";
 import {
-  AXIS, AXIS_TICKS, axisPercent, boardCounts, boardDayParam, boardPickupMin, defaultBoardDay, driveCohorts, driverPatch, lanesPerDay, onBoard, outboundOf, pickupText, teachEndOf,
-  transportLanes,
+  AXIS, AXIS_TICKS, axisPercent, boardCounts, boardDayParam, boardPickupMin, cohortDriverText, defaultBoardDay, driveCohorts, driverPatch, driverSuggestions, lanesPerDay, onBoard,
+  outboundOf, pickupText, teachEndOf, transportLanes, tripPieces,
 } from "./lanes";
 
 const speaker = (id: number, title: string | null = null): Speaker => ({
@@ -27,7 +29,7 @@ const transport = (lesson_id: number, extra: Partial<LessonTransport> = {}): Les
 });
 
 const shift = (id: number, day: Day, start: number, end: number, extra: Partial<RotaStaffShift> = {}): RotaStaffShift => ({
-  id, edition_id: 1, day, start_min: start, end_min: end, member_id: null, name: null, cohort_id: null, kind: "shift", note: null, ...extra,
+  id, edition_id: 1, day, start_min: start, end_min: end, member_id: null, name: null, cohort_id: null, note: null, ...extra,
 });
 
 type BoardWeek = Pick<Week, "lessons" | "lessonSpeakers" | "speakers" | "approaches" | "team" | "edition">;
@@ -217,25 +219,26 @@ describe("the states", () => {
 });
 
 describe("the staff shifts of the day", () => {
-  const cohorts: RotaCohort[] = [{ id: 7, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", diets: [], sort: 1 }];
+  const cohorts: RotaCohort[] = [{ id: 7, edition_id: 1, letter: "נ", name: "מכינה לדוגמה נ", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 1 }];
   const staff = [
     shift(1, 0, 870, 1350, { name: "איש/אשת צוות לדוגמה", note: "הקפצת מרצה (לדוגמה)" }),
-    shift(2, 0, 510, 870, { member_id: 5, name: "שם שנשמר לדוגמה", kind: "lead" }),
+    shift(2, 0, 510, 870, { member_id: 5, name: "שם שנשמר לדוגמה" }),
     shift(3, 0, 510, 600, { cohort_id: 7 }),
     shift(4, 0, 1350, 1830, { cohort_id: 99 }),
     shift(5, 1, 390, 720, { name: "איש/אשת צוות לדוגמה ב׳" }),
     shift(6, 0, 600, 700, { member_id: 42, name: "חבר/ת צוות שעזב/ה" }),
   ];
 
-  it("by start then id; a team member by the team's name, a typed name as typed, a cohort's whole staff; leads marked", () => {
+  it("by start then id; a team member by the team's name, a typed name as typed, a cohort's whole staff (v20: no lead)", () => {
     const shifts = transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 0).shifts;
-    expect(shifts.map((s) => [s.shift.id, s.who, s.lead])).toEqual([
-      [2, "לוגיסטיקה לדוגמה", true],
-      [3, "צוות מכינה לדוגמה נ", false],
-      [6, "חבר/ת צוות שעזב/ה", false], // not in the team any more: the name it was saved with
-      [1, "איש/אשת צוות לדוגמה", false],
-      [4, "TBD", false], // a cohort that is gone
+    expect(shifts.map((s) => [s.shift.id, s.who])).toEqual([
+      [2, "לוגיסטיקה לדוגמה"],
+      [3, "צוות מכינה לדוגמה נ"],
+      [6, "חבר/ת צוות שעזב/ה"], // not in the team any more: the name it was saved with
+      [1, "איש/אשת צוות לדוגמה"],
+      [4, "TBD"], // a cohort that is gone
     ]);
+    expect(shifts.every((s) => !("lead" in s))).toBe(true);
     expect(shifts.find((s) => s.shift.id === 1)!.shift.note).toBe("הקפצת מרצה (לדוגמה)");
     expect(transportLanes(weekOf([]), null, { staff, cohorts, presence: [] }, 1).shifts.map((s) => s.who)).toEqual(["איש/אשת צוות לדוגמה ב׳"]);
   });
@@ -250,11 +253,11 @@ describe("the staff shifts of the day", () => {
 
 describe("the cohorts whose staff can drive (v19), beside the shifts", () => {
   const cohort = (id: number, letter: string, sort: number, extra: Partial<RotaCohort> = {}): RotaCohort => ({
-    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, diets: [], sort, ...extra,
+    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort, ...extra,
   });
   const cohorts = [
     cohort(1, "א", 1, { can_drive: true }),
-    cohort(2, "ב", 2, { can_drive: true, helps_rota: false }), // not helping the rota: still drives
+    cohort(2, "ב", 2, { can_drive: true }), // whatever duties it helps in: it drives
     cohort(3, "ג", 3), // can_drive absent = no
     cohort(4, "ד", 2, { can_drive: true }),
     cohort(5, "ה", 5, { can_drive: false }),
@@ -342,5 +345,86 @@ describe("the driver form's patch", () => {
       driver_name: "נהג/ת ב׳ לדוגמה",
       arranged: false,
     });
+  });
+});
+
+describe("v20: who could drive an approved transport", () => {
+  const cohort = (id: number, letter: string, extra: Partial<RotaCohort> = {}): RotaCohort => ({
+    id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: id, ...extra,
+  });
+  const cohorts = [
+    cohort(1, "א", { can_drive: true, contact_name: "איש/אשת קשר לדוגמה א" }),
+    cohort(2, "ב", { can_drive: true }),
+    cohort(3, "ג"), // cannot drive
+    cohort(4, "ד", { can_drive: true }),
+  ];
+  const staff = [
+    shift(1, 0, 1350, 1830, { name: "לילה לדוגמה" }), // Sunday's night, to 06:30 Monday
+    shift(2, 1, 390, 720, { name: "בוקר לדוגמה" }),
+    shift(3, 1, 720, 870, { name: "צהריים לדוגמה" }),
+    shift(4, 1, 510, 600, { member_id: 5, name: "שם שנשמר לדוגמה" }),
+    shift(5, 1, 600, 870, { member_id: 5, name: "שם שנשמר לדוגמה" }), // the same person again: once
+    shift(6, 1, 390, 870, { cohort_id: 3 }),
+  ];
+  const presence = [
+    { cohort_id: 1, day: 0 as Day, shift: 2 as const }, // Sunday night
+    { cohort_id: 2, day: 1 as Day, shift: 0 as const }, // Monday morning
+    { cohort_id: 3, day: 1 as Day, shift: 0 as const }, // on campus, but cannot drive
+    { cohort_id: 4, day: 1 as Day, shift: 1 as const }, // Monday afternoon only
+  ];
+  const rota = { staff, cohorts, presence };
+  const w = weekOf([]);
+  const names = (x: ReturnType<typeof driverSuggestions>) => x.staff.map((s) => s.who);
+
+  it("the trip on the staff's clock: the lesson's day from the pickup to the start; before 06:30 from the night before; at or after the start the minute alone", () => {
+    expect(tripPieces(1, 450, 510)).toEqual([{ day: 1, from: 450, to: 510 }]);
+    expect(tripPieces(1, 370, 510)).toEqual([
+      { day: 0, from: 1810, to: 1830 },
+      { day: 1, from: 390, to: 510 },
+    ]);
+    expect(tripPieces(0, 370, 510)).toEqual([{ day: 0, from: 390, to: 510 }]); // Sunday: no night before it in the week
+    expect(tripPieces(1, 600, 510)).toEqual([{ day: 1, from: 600, to: 601 }]);
+  });
+
+  it("«במשמרת בשעת האיסוף»: the staff whose hours overlap the trip — the team's name for a member, a name once", () => {
+    const x = driverSuggestions(w, rota, { day: 1, start_min: 690 }, 540); // 09:00 → 11:30
+    expect(x.at).toEqual({ day: 1, min: 540 });
+    expect(names(x)).toEqual(["בוקר לדוגמה", "צוות מכינה לדוגמה ג", "לוגיסטיקה לדוגמה"]);
+    // 12:00 → 14:30: the morning ends as the trip begins (half-open), the afternoon is on
+    expect(names(driverSuggestions(w, rota, { day: 1, start_min: 870 }, 720))).toEqual(["צוות מכינה לדוגמה ג", "לוגיסטיקה לדוגמה", "צהריים לדוגמה"]);
+  });
+
+  it("a pickup before 06:30 is checked against the night before: the night staff first, then those who come on before the start", () => {
+    const x = driverSuggestions(w, rota, { day: 1, start_min: 510 }, 370); // Monday 06:10 → 08:30
+    expect(x.at).toEqual({ day: 0, min: 1810 });
+    expect(names(x)).toEqual(["לילה לדוגמה", "בוקר לדוגמה", "צוות מכינה לדוגמה ג"]);
+    // the night shift's cohort on campus then, and able to drive
+    expect(x.cohorts.map((c) => c.cohort.id)).toEqual([1]);
+  });
+
+  it("«אחריות של מכינה»: only cohorts that can drive and are marked on campus in the pickup's shift (never assumed)", () => {
+    expect(driverSuggestions(w, rota, { day: 1, start_min: 690 }, 540).cohorts.map((c) => c.cohort.id)).toEqual([2]);
+    expect(driverSuggestions(w, rota, { day: 1, start_min: 960 }, 900).cohorts.map((c) => c.cohort.id)).toEqual([4]);
+    expect(driverSuggestions(w, { ...rota, presence: [] }, { day: 1, start_min: 690 }, 540).cohorts).toEqual([]);
+  });
+
+  it("no pickup time: no suggestion (typing stays); no rota yet: the moment, no lists", () => {
+    expect(driverSuggestions(w, rota, { day: 1, start_min: 510 }, null)).toEqual({ at: null, staff: [], cohorts: [] });
+    expect(driverSuggestions(w, null, { day: 1, start_min: 510 }, 450)).toEqual({ at: { day: 1, min: 450 }, staff: [], cohorts: [] });
+  });
+
+  it("what a cohort pick writes: «צוות מכינת X — איש/אשת קשר: Y»; without a contact the cohort alone; never past the field's 80 characters", () => {
+    expect(cohortDriverText({ name: "עין לדוגמה", contact_name: "איש/אשת קשר לדוגמה" })).toBe("צוות מכינת עין לדוגמה — איש/אשת קשר: איש/אשת קשר לדוגמה");
+    expect(cohortDriverText({ name: "מכינה לדוגמה א", contact_name: null })).toBe("צוות מכינה לדוגמה א");
+    expect(driverSuggestions(w, rota, { day: 1, start_min: 510 }, 370).cohorts[0].fill).toBe("צוות מכינה לדוגמה א — איש/אשת קשר: איש/אשת קשר לדוגמה א");
+    const long = cohortDriverText({ name: "שם ארוך לדוגמה ".repeat(4).trim(), contact_name: "איש/אשת קשר לדוגמה ".repeat(2).trim() });
+    expect([...long].length).toBeLessThanOrEqual(80);
+    expect(long.startsWith("צוות מכינת שם ארוך")).toBe(true);
+    expect([...cohortDriverText({ name: "א".repeat(80), contact_name: null })].length).toBe(80);
+  });
+
+  it("nothing of a phone in a suggestion: load_rota has none, and a pick carries the cohort and the shift as loaded", () => {
+    const x = driverSuggestions(w, rota, { day: 1, start_min: 510 }, 370);
+    expect(JSON.stringify(x)).not.toMatch(/phone|טלפון/);
   });
 });

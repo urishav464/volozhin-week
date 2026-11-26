@@ -20,8 +20,14 @@ function browserCodes(): Set<string> {
 }
 
 describe("the error catalog", () => {
-  it("has a message for every app.refuse code in schema.sql", () => {
+  it("has a message for every app.refuse code in schema.sql — and (v20) every code an invoker function raises itself", () => {
     const codes = new Set([...SCHEMA.matchAll(/app\.refuse\('([a-z_]+)'\)/g)].map((m) => m[1]));
+    // an invoker (rota_split_cohort, app.rota_cohort_duties_guard) cannot run app.refuse: it raises the code itself
+    const raised = [...SCHEMA.matchAll(/raise exception using message = '([a-z_]+)', errcode = 'P0001'/g)].map((m) => m[1]);
+    expect(raised).toEqual(expect.arrayContaining(["in_use", "bad_value", "forbidden", "stale"]));
+    for (const c of raised) codes.add(c);
+    expect(ERRORS.cohort_not_helping).toBe("המכינה לא עוזרת באף תורנות, ולכן אין לה קבוצות. מסמנים לה תורנות קודם.");
+    expect(ERRORS.rota_diets_exceed).toMatch(/מהם גם וגם/);
     expect(codes.size).toBeGreaterThan(10);
     expect([...codes].filter((c) => !ERRORS[c])).toEqual([]);
   });

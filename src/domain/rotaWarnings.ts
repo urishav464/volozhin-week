@@ -2,11 +2,13 @@
 // Pure: the loaded rota (or the rota with a suggestion added) and the edition's week. A warning names the groups by
 // their codes and the duties by their names, a shift as «יום X · משמרת Y»; it carries the cell it is about (day,
 // shift, duty) and the groups, so the board can mark them. Nothing is deleted or changed here — an assignment on a
-// shift the week no longer has stays, warned about, until someone moves it. A cohort that does not help (v19
-// `helpsRota`) still has its presence asked for — it feeds the meal counts — but its groups are out of the fairness,
-// and a duty given to one of them by hand is the `not_helping` warning.
-import type { RotaAssignment, RotaData, RotaGroup, RotaStaffShift, ShiftIndex } from "../data/rota";
-import { byCohortOrder, groupCode, helpingGroups, helpsRota, leadsOf, loadsOf, needOf, presenceMarked, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
+// shift the week no longer has stays, warned about, until someone moves it. A cohort that helps in no duty (v20
+// `cohortHelps`) still has its presence asked for — it feeds the meal counts — but it has no groups; a duty given by
+// hand to a group whose cohort does not help in it is the `not_eligible` warning (v20, in place of v19's
+// `not_helping`). v20 has no «אחראי/ת משמרת» (no `no_lead`), and the diets cannot exceed the trainees (the guard holds
+// it: no `diets_exceed`).
+import type { RotaAssignment, RotaData, RotaGroup, ShiftIndex } from "../data/rota";
+import { byCohortOrder, cohortHelps, groupCode, groupHelpsIn, helpingGroups, loadsOf, needOf, presenceMarked, presentAt, rotaShiftActive, rotaShiftsOf, rotaSlots, SHIFTS, slotIndex } from "./rota";
 import { overNeed, ROTA_LOAD_TOLERANCE } from "./rotaSuggest";
 import { type Day, DAY_NAMES } from "./time";
 import type { Edition } from "./types";
@@ -22,10 +24,8 @@ export type RotaWarningKind =
   | "outside_week"
   | "uneven"
   | "no_target"
-  | "no_lead"
   | "no_head"
-  | "diets_exceed"
-  | "not_helping";
+  | "not_eligible";
 
 export interface RotaWarning {
   key: string;
@@ -38,14 +38,11 @@ export interface RotaWarning {
   message: string;
 }
 
-export type RotaWarningData = Pick<RotaData, "cohorts" | "presence" | "groups" | "duties" | "assignments"> & Partial<Pick<RotaData, "staff">>;
+export type RotaWarningData = Pick<RotaData, "cohorts" | "cohortDuties" | "presence" | "groups" | "duties" | "assignments">;
 type WeekEdges = Pick<Edition, "first_day_from" | "last_day_until" | "settings">;
 
-/**
- * Every warning of the rota. `staff` (default: the data's) is what «אחראי/ת משמרת» is looked for in: without it, the
- * shifts' leads are not checked.
- */
-export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: readonly RotaStaffShift[] | undefined = data.staff): RotaWarning[] {
+/** Every warning of the rota. */
+export function rotaWarnings(data: RotaWarningData, edition: WeekEdges): RotaWarning[] {
   const out: RotaWarning[] = [];
   const labels = rotaShiftsOf(edition).labels;
   const when = (day: number, shift: number) => `יום ${DAY_NAMES[day as Day]} · משמרת ${labels[shift]}`;
@@ -70,17 +67,9 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   for (const c of cohorts) {
     const mine = groups.filter((g) => g.cohort_id === c.id).map((g) => g.id);
     if (!presenceMarked(data, c.id)) {
-      // a cohort that does not help: the suggestion would not place its groups anyway — only its presence is missing
-      const message = helpsRota(c) ? `לא סומן מתי ${c.name} בקמפוס — ההצעה לא משבצת את הקבוצות שלה` : `לא סומן מתי ${c.name} בקמפוס`;
+      // a cohort that helps in no duty has no groups to place — only its presence (the meals) is missing
+      const message = cohortHelps(data, c.id) ? `לא סומן מתי ${c.name} בקמפוס — ההצעה לא משבצת את הקבוצות שלה` : `לא סומן מתי ${c.name} בקמפוס`;
       out.push({ key: `presence_unknown:${c.id}`, kind: "presence_unknown", severity: "warn", groupIds: mine, message });
-    }
-    const diets = c.diets.reduce((s, d) => s + d.count, 0);
-    const sized = groups.filter((g) => g.cohort_id === c.id);
-    if (diets > 0 && sized.length > 0 && sized.every((g) => g.size != null)) {
-      const total = sized.reduce((s, g) => s + (g.size ?? 0), 0);
-      if (diets > total) {
-        out.push({ key: `diets_exceed:${c.id}`, kind: "diets_exceed", severity: "warn", groupIds: mine, message: `ב${c.name} ${diets} בדיאטות, יותר מ-${total} האנשים בקבוצות שלה` });
-      }
     }
   }
   const headless = groups.filter((g) => g.head_name == null).map((g) => g.id);
@@ -105,10 +94,11 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
   for (const a of assignments) {
     const g = groupOf.get(a.group_id);
     const c = g ? cohortOf.get(g.cohort_id) : undefined;
-    if (c && !helpsRota(c)) {
+    // v20: a hand-made row on a duty its cohort does not help in (the suggestion never makes one)
+    if (g && c && dutyOf.has(a.duty_id) && !groupHelpsIn(data, g, a.duty_id)) {
       out.push({
-        key: `not_helping:${a.id}`, kind: "not_helping", severity: "warn", day: a.day, shift: a.shift, groupIds: [a.group_id], dutyId: a.duty_id,
-        message: `${codeById(a.group_id)} שובצה ב«${dutyName(a.duty_id)}» (${when(a.day, a.shift)}), אבל המכינה שלה לא עוזרת בתורנויות`,
+        key: `not_eligible:${a.id}`, kind: "not_eligible", severity: "warn", day: a.day, shift: a.shift, groupIds: [a.group_id], dutyId: a.duty_id,
+        message: `${codeById(a.group_id)} שובצה ב«${dutyName(a.duty_id)}» (${when(a.day, a.shift)}), אבל ${c.name} לא עוזרת ב«${dutyName(a.duty_id)}»`,
       });
     }
     if (!rotaShiftActive(edition, a.day, a.shift)) {
@@ -150,9 +140,6 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
         }
       }
     }
-    if (staff) {
-      if (leadsOf(edition, staff, s.day, s.shift).length === 0) out.push({ key: `no_lead:${s.day}:${s.shift}`, kind: "no_lead", severity: "warn", day: s.day, shift: s.shift, groupIds: [], message: `אין אחראי/ת משמרת ב${when(s.day, s.shift)}` });
-    }
   }
 
   // ---- each group: two shifts in a row; and the load across the groups
@@ -181,7 +168,7 @@ export function rotaWarnings(data: RotaWarningData, edition: WeekEdges, staff: r
 /**
  * The most and the least loaded groups when they are further apart than ROTA_LOAD_TOLERANCE shifts from their shares
  * (each share in proportion to the shifts its cohort is on campus, compared exactly); null when even. Only the groups
- * of a cohort that helps are weighed (a hand-made row of another is `not_helping`, not a load).
+ * of a cohort that helps in some duty are weighed (v20: such a cohort has no groups).
  */
 export function unevenLoad(data: RotaWarningData, edition: WeekEdges): [{ id: number; shifts: number; present: number }, { id: number; shifts: number; present: number }] | null {
   const loads = [...loadsOf({ groups: helpingGroups(data), presence: data.presence }, data.assignments, edition)].map(([id, l]) => ({ id, shifts: l.shifts, present: l.present })).filter((l) => l.present > 0);

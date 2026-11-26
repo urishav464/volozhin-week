@@ -1,6 +1,6 @@
 // «לוגיסטיקה ← בית» — the reset, phase 4 — in a real browser. Demo build `?as=logistics` (the demo edition made real,
-// its week three weeks ahead — demoLogisticsStart —, a cohort that can drive and one that does not help, two shopping
-// items), every width: `/` lands on the home; its three groups, always all there, «קרוב לשבוע» saying how far the
+// its week three weeks ahead — demoLogisticsStart —, a cohort that can drive and (v20) «ד», which helps in no duty and so
+// has no groups, two shopping items), every width: `/` lands on the home; its three groups, always all there, «קרוב לשבוע» saying how far the
 // week is; every task one line, its state, and its title the link to the page that does it — each lands there; the
 // strip «בית» first and «הסעות וצוות» at /logistics/transports; an unknown tab, `/`, /myday, /after and /day/2 go
 // home; «השבוע» reads the week with «לבית»; the board lists the cohorts whose staff can drive, those on campus that day
@@ -94,8 +94,9 @@ test.describe("demo build — `?as=logistics`", () => {
     await expect(page.locator("[data-week-line]")).toHaveText(`בעוד ${days} ימים`);
     // the demo's state, task by task — the pages' own rules (nothing here is decided by the home)
     expect(await states(page)).toEqual({
-      presence: ["done", "3 מכינות · עוזרות בתורנויות: 2 · יכולות להסיע: 1"],
-      assign: ["open", "12 משמרות בלי אחראי/ת · חסרות קבוצות ב-14 משמרות"], // no assignment yet; a lead on Sunday's and Wednesday's mornings
+      // v20 (plan §א, §ג): the trainees typed are counted (48 + 47 + 40 + «ד»'s 30); «ד» helps in no duty
+      presence: ["done", "4 מכינות · 165 חניכים · עוזרות בתורנויות: 3 · יכולות להסיע: 1"],
+      assign: ["open", "חסרות קבוצות ב-14 משמרות"], // no assignment yet; v20 (plan §ה): no «אחראי/ת משמרת», so no shift is short of one
       requests: ["open", "בקשה אחת ממתינה"],
       books: ["open", "3 ספרים עוד לא הוזמנו · ההרשמה עדיין פתוחה"],
       prints: ["open", "שיעור אחד עוד בלי קבצים"],
@@ -142,8 +143,11 @@ test.describe("demo build — `?as=logistics`", () => {
     await page.getByRole("navigation", { name: "תורנויות" }).getByRole("link", { name: "קבוצות ומכינות" }).click();
     const cohorts = page.getByRole("region", { name: "המכינות" });
     await expect(cohorts.locator('[data-rota-cohort="ב"]')).toHaveAttribute("data-can-drive", "y");
-    await expect(cohorts.locator('[data-rota-cohort="נ"]')).toHaveAttribute("data-helps-rota", "-");
-    await expect(cohorts.locator('[data-rota-cohort="נ"]')).toContainText("לא עוזרת בתורנויות");
+    // v20 (plan §ג): a cohort helps when it has a duty ticked — «נ» in «בית מדרש» alone; «ד» in none
+    await expect(cohorts.locator('[data-rota-cohort="נ"]')).toHaveAttribute("data-helps-rota", "y");
+    await expect(cohorts.locator('[data-rota-cohort="נ"] [data-cohort-duties]')).toHaveText("עוזרת ב: בית מדרש");
+    await expect(cohorts.locator('[data-rota-cohort="ד"]')).toHaveAttribute("data-helps-rota", "-");
+    await expect(cohorts.locator('[data-rota-cohort="ד"]')).toContainText("לא עוזרת בתורנויות");
     await cohorts.getByRole("button", { name: "עריכה: מכינה לדוגמה א" }).click();
     const form = cohorts.getByRole("form", { name: "עריכת המכינה: מכינה לדוגמה א" });
     await form.getByRole("checkbox", { name: "הצוות שלה יכול להסיע" }).check();
@@ -175,6 +179,7 @@ test.describe("demo build — `?as=logistics`", () => {
     await expect(rows.nth(1)).toHaveAttribute("data-present", "-");
     await expect(rows.nth(1)).toContainText("לא בקמפוס ביום הזה");
     await expect(drive).not.toContainText("מכינה לדוגמה נ"); // its staff does not drive
+    await expect(drive).not.toContainText("מכינה לדוגמה ד");
     await noSidewaysScroll(page);
     await page.getByRole("button", { name: "יום שני: הסעה אחת" }).click();
     await expect(rows.nth(0)).toContainText("מכינה לדוגמה א");
@@ -183,7 +188,7 @@ test.describe("demo build — `?as=logistics`", () => {
 
     // the home's first task says so: two cohorts can drive now
     await strip(page).getByRole("link", { name: "בית" }).click();
-    await expect(task(page, "presence")).toContainText("3 מכינות · עוזרות בתורנויות: 2 · יכולות להסיע: 2");
+    await expect(task(page, "presence")).toContainText("4 מכינות · 165 חניכים · עוזרות בתורנויות: 3 · יכולות להסיע: 2");
 
     // «השבוע» reads the week, its way back «לבית»
     await nav(page).getByRole("link", { name: "השבוע" }).click();
@@ -255,13 +260,17 @@ function weekOf(kind: "real" | "practice" = "real") {
   return { week, at };
 }
 
-/** A small rota: one cohort marked on campus, one group with its size and head, one duty — every shift short of it. */
+/**
+ * A small rota: one cohort marked on campus, its trainees typed, no duty yet — so (v20, plan §ב: a cohort that helps in
+ * no duty has no groups) no group either.
+ */
 function rotaOf(): RotaData {
   return {
-    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [], sort: 1, helps_rota: true, can_drive: true }],
+    cohorts: [{ id: 1, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: 8, diet_veg: 1, diet_gf: 0, diet_both: 0, contact_name: null, sort: 1, can_drive: true }],
     presence: [{ cohort_id: 1, day: 0, shift: 0 }],
-    groups: [{ id: 11, edition_id: 7, cohort_id: 1, number: 1, size: 8, head_name: "ראש/ת קבוצה לדוגמה 1" }],
+    groups: [],
     duties: [],
+    cohortDuties: [],
     assignments: [],
     staff: [],
     prep: [{ id: 51, edition_id: 7, text: "משימת הכנה לדוגמה", group_id: null, done: true, sort: 1, kind: "task", qty: null }],
@@ -331,8 +340,8 @@ test.describe("mock build", () => {
 
     // what the reads say, task by task
     expect(await states(page)).toMatchObject({
-      presence: ["done", "מכינה אחת · עוזרות בתורנויות: 1 · יכולות להסיע: 1"],
-      assign: ["empty", "עוד אין תורנויות"],
+      presence: ["done", "מכינה אחת · 8 חניכים · עוזרות בתורנויות: 0 · יכולות להסיע: 1"],
+      assign: ["empty", "עוד אין קבוצות"],
       requests: ["open", "2 בקשות ממתינות"],
       books: ["open", "ספר אחד עוד לא הוזמן"],
       drivers: ["open", "הסעה אחת עוד בלי נהג/ת"],

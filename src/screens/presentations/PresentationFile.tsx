@@ -1,5 +1,6 @@
-// One presentation in a list (the reset, phase 5 — the presentations page, the week's deck, the lesson page): its name,
-// its type and size, who uploaded it and when, «חדש מאז ההורדה» when it came after this device's last zip of the day,
+// One presentation in a list (the reset, phase 5 — the week's deck, the lesson page, the presentations without a lesson): its
+// name, its type and size, who uploaded it and when, its place on the hall's computer (v20: its folder and name in the week's
+// zip), «חדש מאז ההורדה» when this device's last download did not hold it,
 // «פתיחה» (a PDF or a picture, in a new tab) or «הורדה» (PowerPoint or Word, under its own name), and «הסרה» for whoever
 // may remove it (the uploader, or an admin — mayRemove ≡ remove_source_file), asked once.
 import { type ReactNode, useState } from "react";
@@ -14,9 +15,10 @@ import type { Notify } from "../speakers/parts";
 import { LINK_BUTTON, memberName, whenText } from "../stages/parts";
 import { mayRemove } from "../stages/SourceFiles";
 import type { Actor } from "../weekStore";
+import { HallPath } from "./HallPath";
 import { fileAction, openOrDownload } from "./open";
 
-/** The state's chip (PRESENTATION_STATE_LABEL) — on the day's list and the lesson page alike. */
+/** The state's chip (PRESENTATION_STATE_LABEL) — on the lesson page and «חסרות» alike. */
 export const PRESENTATION_TONE: Record<PresentationState, "ok" | "accent" | "bad" | "muted" | "neutral"> = { file: "ok", link: "accent", missing: "bad", none: "muted", memorial: "neutral" };
 
 /** A lesson's link (`presentation_url`, http(s) only): «פתיחת הקישור» in a new tab, and the address itself. */
@@ -46,15 +48,17 @@ export interface PresentationFileProps {
   notify: Notify;
   clear: () => void;
   reload: () => Promise<void>;
-  /** Uploaded after this device's last zip of the day. */
+  /** Not in this device's last download of the week. */
   isNew?: boolean;
+  /** Its path in the week's zip (presentationEntries): «במחשב של האולם: …». None: a file the zip does not hold. */
+  path?: string;
   /** Before the name (an orphan's lesson and why). */
   before?: ReactNode;
   /** After a removal, once the list was read again: the row is gone, the list takes the focus. */
   onRemoved?: () => void;
 }
 
-export function PresentationFile({ port, week, file: f, actor, notify, clear, reload, isNew = false, before, onRemoved }: PresentationFileProps) {
+export function PresentationFile({ port, week, file: f, actor, notify, clear, reload, isNew = false, path, before, onRemoved }: PresentationFileProps) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState<"open" | "remove" | null>(null);
   const focusBack = useFocusBack();
@@ -116,6 +120,11 @@ export function PresentationFile({ port, week, file: f, actor, notify, clear, re
           </span>
         ))}
       </p>
+      {path && (
+        <p data-hall-line className="text-xs text-ink-soft">
+          במחשב של האולם: <HallPath path={path} />
+        </p>
+      )}
       {asking && (
         <Confirm
           text={

@@ -121,11 +121,12 @@ describe("markdown-lite", () => {
     // the four chips (TASK_STATE_LABEL), and the two «לא ידוע» lines (NOT_LOADED, NOT_HERE)
     const states = line("- **כל משימה**");
     for (const w of ["«הושלם»", "«לטיפול»", "«עוד לא התחיל»", "«לא ידוע»", "«לא נטען»", "«לא זמין במחזור הזה»"]) expect(states).toContain(w);
-    // the cohorts' two flags (Setup.tsx), and the board's cohorts that can drive (TransportBoard.tsx)
-    const flags = line("- **שני סימונים לכל מכינה:**");
-    expect(flags).toContain("**«עוזרת בתורנויות»**");
-    expect(flags).toContain("**«הצוות שלה יכול להסיע»**");
-    expect(flags).toContain("הנוכחות שלה עדיין נספרת לארוחות");
+    // the cohorts' flags (Setup.tsx) — v20: «עוזרת» is the duties it helps in (rota_cohort_duties), «יכול להסיע» stays —
+    // and the board's cohorts that can drive (TransportBoard.tsx)
+    const helps = line("- **באילו תורנויות מכינה עוזרת:**");
+    expect(helps).toContain("«לא עוזרת בתורנויות»");
+    expect(helps).toContain("נספרת רק בכמויות האוכל");
+    expect(line("- **«הצוות שלה יכול להסיע»:**")).toContain("בלוח ההסעות");
     expect(line("- **הסעות וצוות — לוח ההסעות:**")).toContain("«מכינות שהצוות שלהן יכול להסיע»");
     // Saturday night: two lists, «נקנה», the quantity after a tab (PrepTasks.tsx); both carry over with the quantities
     const prep = line('- **מוצ"ש–ראשון: שתי רשימות.**');
@@ -164,11 +165,36 @@ describe("markdown-lite", () => {
     expect(guide).not.toContain("וגם בלוח השיעור ברשת");
     expect(guide).not.toContain("אותו טופס גם בלוח של כל שיעור סגור ברשת");
     expect(guide).not.toContain("כששומרים את פרטי ההסעה בלוח השיעור");
-    // «מצגות»: the morning's zip for the hall, its two text files, «חדש מאז ההורדה»; «אתר האורחים»: who fills what
+    // «מצגות»: the zip for the hall (v20: the week's), its two text files, what came since; «אתר האורחים»: who fills what
     const decks = intro(guide, "מצגות").join("\n");
-    for (const w of ["«הורדת כל המצגות של היום»", "בדיסק-און-קי", "«סדר-היום.txt»", "«links.txt»", "«חדש מאז ההורדה»", "«מצגת צפויה — עוד לא הועלתה»", "כל שתי דקות"]) expect(decks).toContain(w);
+    for (const w of ["«הורדת כל המצגות של השבוע»", "בדיסק-און-קי", "«סדר-היום.txt»", "«links.txt»", "«עלו מאז ההורדה»", "«מצגת צפויה — עוד לא הועלתה»", "כל שתי דקות"]) expect(decks).toContain(w);
     const guests = intro(guide, "אתר האורחים").join("\n");
     for (const w of ["«עוד פרטים»", "«מאושר/ת להופיע»", "«תיאור לאורחים»", "«תיאור קצר לשיעור (רשות)»", "«תוצרים ← אתר האורחים»", "בלי תיאורים ובלי תמונות", "ביטול מוריד אותם מהאתר מיד"]) expect(guests).toContain(w);
+  });
+});
+
+describe("«עזרה» in v20", () => {
+  it("says what the cohorts, the staff's schedule, the driver's suggestions, the week's zip and the escort's line do, as the screens do", () => {
+    const guide = readFileSync(new URL("../../docs/GUIDE.he.md", import.meta.url), "utf8");
+    const rota = intro(guide, "תורנויות").join("\n");
+    // the cohort's numbers and the guard's rule (rota_diets_exceed), the split («הצעה»), the duties' order (DUTY_ORDER_HINT)
+    for (const w of ["**«חניכים»**", "**«צמחוני/טבעוני»**", "**«ללא גלוטן»**", "**«מהם גם וגם»**", "**«חלוקה לקבוצות»:**", "«חלוקה מחדש»", "מסומנת «הצעה»", "הסדר כאן הוא הסדר בלוח ובדפים. כשאין מספיק קבוצות, התורנות שלמעלה מתמלאת קודם.", "«כל המכינות העוזרות עוזרות בה»", "**איש/אשת קשר מהצוות (משבץ/ת):**"]) expect(rota).toContain(w);
+    // the free-typed diets and the shift's lead are gone (rota_cohorts.diets, rota_staff_shifts.kind dropped)
+    expect(guide).not.toContain("התוויות כפי שכותבים אותן");
+    expect(guide).not.toContain("משמרת בלי אחראי/ת");
+    expect(guide).not.toContain("ומי האחראי/ת");
+    expect(rota).toContain("אין «אחראי/ת משמרת»");
+    // the staff's schedule (StaffShifts.tsx): day × the grid's rows, «+», the transports on the logistics side only
+    for (const w of ["**משמרות צוות — לו\"ז:**", "**«+»**", "«להאריך עד סוף שורה»", "«מחוץ לשורות הלו״ז»", "**ההסעות בלו\"ז הצוות:**"]) expect(rota).toContain(w);
+    const logistics = intro(guide, "לוגיסטיקה").join("\n");
+    for (const w of ["«במשמרת בשעת האיסוף»", "«אחריות של מכינה»", "«צוות מכינת X — איש/אשת קשר: Y»", "**הדפסה וקבצים — «הסעות וצוות»:**"]) expect(logistics).toContain(w);
+    // the week's zip (weekZipPlan) and the escort's line (escortPresentationLine)
+    const decks = intro(guide, "מצגות").join("\n");
+    for (const w of ["«0-השבוע»", "«1-ראשון» עד «5-חמישי»", "«שיעור זז מאז ההורדה — מורידים שוב»"]) expect(decks).toContain(w);
+    expect(guide).not.toContain("«הורדת כל המצגות של היום»");
+    const links = intro(guide, "קישורים בלי חשבון").join("\n");
+    expect(links).toContain("המלווה גם פותח/ת את המצגת באולם");
+    expect(links).toContain("שם הקובץ עצמו והקישור לא מופיעים בדף");
   });
 });
 

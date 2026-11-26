@@ -50,14 +50,18 @@ describe("SupabaseRota: reading", () => {
         200,
         {
           cohorts: [
-            { id: "3", edition_id: "7", letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: "2" }], sort: 1, helps_rota: false, can_drive: true },
-            { id: "4", edition_id: "7", letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2 }, // a row from before v19: the columns' defaults
+            {
+              id: "3", edition_id: "7", letter: "א", name: "מכינה לדוגמה א", trainees: "23", diet_veg: 4, diet_gf: "3", diet_both: 2, contact_name: "איש/אשת קשר לדוגמה", sort: 1,
+              can_drive: true, helps_rota: false, diets: [{ label: "צמחוני", count: 2 }], // v19's keys, if a stale answer had them: never passed on
+            },
+            { id: "4", edition_id: "7", letter: "ב", name: "מכינה לדוגמה ב", sort: 2 }, // the numbers absent: TBD; can_drive absent: the column's default
           ],
+          cohortDuties: [{ cohort_id: "3", duty_id: "5", edition_id: 7 }],
           presence: [{ edition_id: 7, cohort_id: "3", day: 1, shift: 0 }],
           groups: [{ id: "11", edition_id: "7", cohort_id: "3", number: 1, size: null, head_name: "ראש/ת קבוצה לדוגמה", head_phone: "000-000-0001" }],
           duties: [{ id: "5", edition_id: "7", name: "מטבח", description: null, need_morning: 1, need_afternoon: null, need_night: 1, min_people: null, sort: 1, name_key: "מטבח" }],
           assignments: [{ id: "9", edition_id: "7", day: 1, shift: 0, duty_id: "5", group_id: "11", source: "suggested" }],
-          staff: [{ id: "2", edition_id: "7", day: 0, start_min: 510, end_min: 870, member_id: "4", name: "חבר/ת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }],
+          staff: [{ id: "2", edition_id: "7", day: 0, start_min: 510, end_min: 870, member_id: "4", name: "חבר/ת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }], // v19's kind: dropped
           prep: [
             { id: "8", edition_id: "7", text: "משימה לדוגמה", group_id: null, done: false, sort: 1 }, // before v19: a task
             { id: "9", edition_id: "7", text: "פריט לדוגמה", group_id: null, done: true, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
@@ -69,14 +73,15 @@ describe("SupabaseRota: reading", () => {
     const d = await r.load(7);
     expect(d).toEqual({
       cohorts: [
-        { id: 3, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }], sort: 1, helps_rota: false, can_drive: true },
-        { id: 4, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], sort: 2, helps_rota: true, can_drive: false },
+        { id: 3, edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2, contact_name: "איש/אשת קשר לדוגמה", sort: 1, can_drive: true },
+        { id: 4, edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, sort: 2, can_drive: false },
       ],
+      cohortDuties: [{ cohort_id: 3, duty_id: 5 }],
       presence: [{ cohort_id: 3, day: 1, shift: 0 }],
       groups: [{ id: 11, edition_id: 7, cohort_id: 3, number: 1, size: null, head_name: "ראש/ת קבוצה לדוגמה" }],
       duties: [{ id: 5, edition_id: 7, name: "מטבח", description: null, need_morning: 1, need_afternoon: null, need_night: 1, min_people: null, sort: 1 }],
       assignments: [{ id: 9, edition_id: 7, day: 1, shift: 0, duty_id: 5, group_id: 11, source: "suggested" }],
-      staff: [{ id: 2, edition_id: 7, day: 0, start_min: 510, end_min: 870, member_id: 4, name: "חבר/ת צוות לדוגמה", cohort_id: null, kind: "lead", note: null }],
+      staff: [{ id: 2, edition_id: 7, day: 0, start_min: 510, end_min: 870, member_id: 4, name: "חבר/ת צוות לדוגמה", cohort_id: null, note: null }],
       prep: [
         { id: 8, edition_id: 7, text: "משימה לדוגמה", group_id: null, done: false, sort: 1, kind: "task", qty: null },
         { id: 9, edition_id: 7, text: "פריט לדוגמה", group_id: null, done: true, sort: 2, kind: "item", qty: "2 (לדוגמה)" },
@@ -91,21 +96,59 @@ describe("SupabaseRota: reading", () => {
     ]);
   });
 
-  it("the heads' phones: get_rota_contacts (none → []), set_rota_contact with the phone cleaned — a bad one never sent", async () => {
-    const { r, sent } = port([[200, [{ group_id: "11", head_phone: "000-000-0001" }]], [200, null], [204, null], [204, null], pg("P0001", "rota_contact_hidden")]);
-    expect(await r.contacts(7)).toEqual([{ group_id: 11, head_phone: "000-000-0001" }]);
+  it("the phones: get_rota_contacts — the heads' and (v20) the cohorts' contacts' (none → []); set_rota_contact (kind, id, phone) with the phone cleaned — a bad one never sent", async () => {
+    const { r, sent } = port([
+      [200, [{ group_id: "11", head_phone: "000-000-0001" }, { cohort_id: "3", phone: "000-000-0002" }]], [200, null], [204, null], [204, null], [204, null], pg("P0001", "rota_contact_hidden"),
+    ]);
+    expect(await r.contacts(7)).toEqual([{ group_id: 11, head_phone: "000-000-0001" }, { cohort_id: 3, phone: "000-000-0002" }]);
     expect(await r.contacts(7)).toEqual([]);
-    await r.setContact(11, "  000-000-0001 ");
-    await r.setContact(11, "  ");
-    expect(await code(r.setContact(11, "12-345"))).toBe("bad_phone");
-    expect(await code(r.setContact(11, "000-000-0001"))).toBe("rota_contact_hidden");
+    await r.setContact({ group: 11 }, "  000-000-0001 ");
+    await r.setContact({ group: 11 }, "  ");
+    await r.setContact({ cohort: 3 }, " 000-000-0002");
+    expect(await code(r.setContact({ group: 11 }, "12-345"))).toBe("bad_phone");
+    expect(await code(r.setContact({ cohort: 3 }, "12-345"))).toBe("bad_phone");
+    expect(await code(r.setContact({ group: 11 }, "000-000-0001"))).toBe("rota_contact_hidden");
     expect(sent.map((s) => [s.path, s.body])).toEqual([
       ["rpc/get_rota_contacts", { p_edition: 7 }],
       ["rpc/get_rota_contacts", { p_edition: 7 }],
-      ["rpc/set_rota_contact", { p_group: 11, p_phone: "000-000-0001" }],
-      ["rpc/set_rota_contact", { p_group: 11, p_phone: null }],
-      ["rpc/set_rota_contact", { p_group: 11, p_phone: "000-000-0001" }],
+      ["rpc/set_rota_contact", { p_kind: "group", p_id: 11, p_phone: "000-000-0001" }],
+      ["rpc/set_rota_contact", { p_kind: "group", p_id: 11, p_phone: null }],
+      ["rpc/set_rota_contact", { p_kind: "cohort", p_id: 3, p_phone: "000-000-0002" }],
+      ["rpc/set_rota_contact", { p_kind: "group", p_id: 11, p_phone: "000-000-0001" }],
     ]);
+  });
+
+  it("v20: «חלוקה לקבוצות» is ONE call of rota_split_cohort — the sizes cleaned first; the new groups as the port's types", async () => {
+    const { r, sent } = port([
+      [200, [{ id: "21", edition_id: "7", cohort_id: "3", number: 1, size: 8, head_name: null }, { id: "22", edition_id: "7", cohort_id: "3", number: 2, size: 7, head_name: null }]],
+      pg("P0001", "cohort_not_helping"),
+    ]);
+    expect(await r.splitCohort(7, 3, [8, 7])).toEqual([
+      { id: 21, edition_id: 7, cohort_id: 3, number: 1, size: 8, head_name: null },
+      { id: 22, edition_id: 7, cohort_id: 3, number: 2, size: 7, head_name: null },
+    ]);
+    expect(await code(r.splitCohort(7, 4, [5]))).toBe("cohort_not_helping");
+    expect(await code(r.splitCohort(7, 3, []))).toBe("bad_value");
+    expect(await code(r.splitCohort(7, 3, [201]))).toBe("bad_value");
+    expect(sent.map((s) => [s.path, s.body])).toEqual([
+      ["rpc/rota_split_cohort", { p_edition: 7, p_cohort: 3, p_sizes: [8, 7] }],
+      ["rpc/rota_split_cohort", { p_edition: 7, p_cohort: 4, p_sizes: [5] }],
+    ]);
+  });
+
+  it("v20: the duties a cohort helps in — ONE insert of the set (on conflict nothing), then ONE delete of the rest; an empty set the delete alone", async () => {
+    const { r, sent } = port([[201, null], [204, null], pg("P0001", "in_use"), pg("23503")]);
+    await r.setCohortDuties(7, 3, [5, 6, 5]);
+    expect(await code(r.setCohortDuties(7, 3, []))).toBe("in_use"); // a cohort with groups keeps one (the guard)
+    expect(await code(r.setCohortDuties(7, 3, [99]))).toBe("stale"); // a duty not the edition's
+    expect(await code(r.setCohortDuties(7, 3, [1.5]))).toBe("bad_value"); // never sent
+    expect(sent.map((s) => [s.method, s.path, q(s), s.body])).toEqual([
+      ["POST", "rota_cohort_duties", { on_conflict: "cohort_id,duty_id", columns: '"edition_id","cohort_id","duty_id"' }, [{ edition_id: 7, cohort_id: 3, duty_id: 5 }, { edition_id: 7, cohort_id: 3, duty_id: 6 }]],
+      ["DELETE", "rota_cohort_duties", { edition_id: "eq.7", cohort_id: "eq.3", duty_id: "not.in.(5,6)" }, null],
+      ["DELETE", "rota_cohort_duties", { edition_id: "eq.7", cohort_id: "eq.3" }, null],
+      ["POST", "rota_cohort_duties", { on_conflict: "cohort_id,duty_id", columns: '"edition_id","cohort_id","duty_id"' }, [{ edition_id: 7, cohort_id: 3, duty_id: 99 }]],
+    ]);
+    expect(sent[0].prefer).toContain("resolution=ignore-duplicates");
   });
 
   it("set_rota_shifts with the setting cleaned, null for last year's; a refusal its code", async () => {
@@ -125,10 +168,10 @@ describe("SupabaseRota: reading", () => {
 describe("SupabaseRota: direct writes under RLS", () => {
   it("cohorts: insert / update / delete by id, each asking for its row back; the codes per table", async () => {
     const { r, sent } = port([row, pg("23505"), [200, [{ id: 3 }]], [200, []], pg("23503"), [200, [{ id: 3 }]], pg("42501"), pg("P0001", "rota_contact_in_text")]);
-    await r.addCohort(7, { letter: " א ", name: "  מכינה   לדוגמה א ", diets: [{ label: "צמחוני", count: 2 }] });
+    expect(await r.addCohort(7, { letter: " א ", name: "  מכינה   לדוגמה א ", trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2, contact_name: " איש/אשת קשר " })).toBe(1); // the new id
     expect(await code(r.addCohort(7, { letter: "א", name: "מכינה" }))).toBe("rota_letter_taken");
     await r.updateCohort(3, { name: "מכינה לדוגמה", sort: 2 });
-    expect(await code(r.updateCohort(3, { diets: [] }))).toBe("forbidden"); // RLS: no row back
+    expect(await code(r.updateCohort(3, { trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null }))).toBe("forbidden"); // RLS: no row back
     expect(await code(r.deleteCohort(3))).toBe("in_use"); // a cohort with groups
     await r.deleteCohort(3);
     expect(await code(r.addCohort(7, { letter: "ב", name: "מכינה" }))).toBe("forbidden"); // 42501
@@ -137,8 +180,15 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(await code(r.addCohort(7, { letter: "א1", name: "מכינה" }))).toBe("bad_value");
     expect(await code(r.addCohort(7, { letter: "ד", name: "מכינה 000-000-0055" }))).toBe("rota_contact_in_text");
     expect(await code(r.updateCohort(3, { sort: 1.5 }))).toBe("bad_value");
+    // v20: the numbers' rule before the wire — on a whole set of four; a patch of one is the guard's to hold
+    expect(await code(r.addCohort(7, { letter: "ה", name: "מכינה", trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("rota_diets_exceed");
+    expect(await code(r.updateCohort(3, { trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 }))).toBe("rota_diets_exceed");
+    expect(await code(r.addCohort(7, { letter: "ה", name: "מכינה", trainees: 1001 }))).toBe("bad_value");
+    expect(await code(r.addCohort(7, { letter: "ה", name: "מכינה", contact_name: "טל' 1234567" }))).toBe("rota_contact_in_text");
     expect(sent).toHaveLength(8);
-    expect([sent[0].method, sent[0].path, q(sent[0]).select, sent[0].body]).toEqual(["POST", "rota_cohorts", "id", { edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [{ label: "צמחוני", count: 2 }] }]);
+    expect([sent[0].method, sent[0].path, q(sent[0]).select, sent[0].body]).toEqual([
+      "POST", "rota_cohorts", "id", { edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2, contact_name: "איש/אשת קשר" },
+    ]);
     expect([sent[2].method, q(sent[2]), sent[2].body]).toEqual(["PATCH", { id: "eq.3", select: "id" }, { name: "מכינה לדוגמה", sort: 2 }]);
     expect([sent[4].method, q(sent[4])]).toEqual(["DELETE", { id: "eq.3", select: "id" }]);
   });
@@ -239,10 +289,10 @@ describe("SupabaseRota: direct writes under RLS", () => {
 
   it("staff shifts: cleaned whole on insert; a patch cleaned field by field", async () => {
     const { r, sent } = port([row, pg("P0001", "bad_value"), [200, [{ id: 2 }]], [200, [{ id: 2 }]], [200, [{ id: 2 }]]]);
-    const s = { day: 1 as const, start_min: 510, end_min: 780, member_id: null, name: " איש/אשת צוות לדוגמה ", cohort_id: null, kind: "shift" as const, note: " הקפצת מרצה " };
+    const s = { day: 1 as const, start_min: 510, end_min: 780, member_id: null, name: " איש/אשת צוות לדוגמה ", cohort_id: null, note: " הקפצת מרצה " };
     await r.addStaffShift(7, s);
     expect(await code(r.addStaffShift(7, { ...s, member_id: 99 }))).toBe("bad_value"); // the guard: not an active member
-    await r.updateStaffShift(2, { note: null, kind: "lead" });
+    await r.updateStaffShift(2, { note: null });
     await r.updateStaffShift(2, { start_min: 540, end_min: 600 });
     await r.updateStaffShift(2, { name: null, cohort_id: 3, member_id: null });
     expect(await code(r.addStaffShift(7, { ...s, name: null }))).toBe("name_required");
@@ -251,9 +301,9 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(await code(r.updateStaffShift(2, { start_min: 512 }))).toBe("bad_value");
     expect(await code(r.updateStaffShift(2, { note: "טל' 1234567" }))).toBe("rota_contact_in_text");
     expect(sent.map((x) => x.body)).toEqual([
-      { edition_id: 7, day: 1, start_min: 510, end_min: 780, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, kind: "shift", note: "הקפצת מרצה" },
-      { edition_id: 7, day: 1, start_min: 510, end_min: 780, member_id: 99, name: "איש/אשת צוות לדוגמה", cohort_id: null, kind: "shift", note: "הקפצת מרצה" },
-      { kind: "lead", note: null },
+      { edition_id: 7, day: 1, start_min: 510, end_min: 780, member_id: null, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: "הקפצת מרצה" },
+      { edition_id: 7, day: 1, start_min: 510, end_min: 780, member_id: 99, name: "איש/אשת צוות לדוגמה", cohort_id: null, note: "הקפצת מרצה" },
+      { note: null },
       { start_min: 540, end_min: 600 },
       { member_id: null, name: null, cohort_id: 3 },
     ]);
@@ -301,16 +351,16 @@ describe("SupabaseRota: direct writes under RLS", () => {
     expect(sent[4].body).toEqual({ kind: "item" });
   });
 
-  it("v19: a cohort's two flags — sent only when given, as booleans; null or anything else refused before the wire", async () => {
+  it("v19: «יכול להסיע» — sent only when given, as a boolean; null or anything else refused before the wire (v20: no helps_rota)", async () => {
     const { r, sent } = port([[201, [{ id: 3 }]], [201, [{ id: 4 }]], [200, [{ id: 3 }]]]);
-    await r.addCohort(7, { letter: "א", name: "מכינה לדוגמה א" });
-    await r.addCohort(7, { letter: "ב", name: "מכינה לדוגמה ב", helps_rota: false, can_drive: true });
+    expect(await r.addCohort(7, { letter: "א", name: "מכינה לדוגמה א" })).toBe(3);
+    expect(await r.addCohort(7, { letter: "ב", name: "מכינה לדוגמה ב", can_drive: true })).toBe(4);
     await r.updateCohort(3, { can_drive: true });
-    expect(await code(r.addCohort(7, { letter: "ג", name: "מכינה", helps_rota: null as never }))).toBe("bad_value");
+    expect(await code(r.addCohort(7, { letter: "ג", name: "מכינה", can_drive: null as never }))).toBe("bad_value");
     expect(await code(r.updateCohort(3, { can_drive: "yes" as never }))).toBe("bad_value");
     expect(sent.map((s) => s.body)).toEqual([
-      { edition_id: 7, letter: "א", name: "מכינה לדוגמה א", diets: [] },
-      { edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", diets: [], helps_rota: false, can_drive: true },
+      { edition_id: 7, letter: "א", name: "מכינה לדוגמה א", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null },
+      { edition_id: 7, letter: "ב", name: "מכינה לדוגמה ב", trainees: null, diet_veg: null, diet_gf: null, diet_both: null, contact_name: null, can_drive: true },
       { can_drive: true },
     ]);
   });

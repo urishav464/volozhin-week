@@ -10,12 +10,12 @@
 // Synthetic values only: no scanner takes these phones for real ones.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type pg from "pg";
-import { cleanDiets, cleanHeadPhone, cleanLetter, cleanShifts, cleanStaffWho, EMPTY_ROTA, LAST_YEAR_DUTIES, type ShiftIndex } from "../../src/data/rota";
+import { cleanCohortFields, cleanHeadPhone, cleanLetter, cleanShifts, cleanStaffWho, EMPTY_ROTA, LAST_YEAR_DUTIES, type ShiftIndex } from "../../src/data/rota";
 import { rotaShiftActive, rotaSlots } from "../../src/domain/rota";
 import type { Day } from "../../src/domain/time";
 import type { RotaShiftsSetting } from "../../src/domain/types";
 import { PERSONAL_KEYS } from "../../src/offline/snapshot";
-import { ROTA_ADMIN_CASES, ROTA_CASES, ROTA_FIXTURE, type RotaCase } from "../../src/testing/rotaCases";
+import { MISSING_ID, ROTA_ADMIN_CASES, ROTA_CASES, ROTA_FIXTURE, type RotaCase } from "../../src/testing/rotaCases";
 import { SCHEMA, dropDatabase, freshDatabase, google } from "./db";
 
 const ADMIN = "admin@example.org"; // every edition
@@ -35,7 +35,7 @@ const STRANGER = "stranger@example.org";
 const LABEL = "תשפ\"ז";
 const PHONE = "555 0100 61";
 const PHONE_2 = "555 0100 62";
-const SEVEN = ["cohorts", "presence", "groups", "duties", "assignments", "staff_shifts", "prep_tasks"].map((t) => `rota_${t}`);
+const SEVEN = ["cohorts", "presence", "groups", "duties", "assignments", "staff_shifts", "prep_tasks", "cohort_duties"].map((t) => `rota_${t}`);   // v20: and the cohorts' duties
 /** The port's code for a unique violation, by table (CONTRACT «תורנויות», the port). */
 const UNIQUE: Record<string, string> = { rota_cohorts: "rota_letter_taken", rota_groups: "rota_group_taken", rota_duties: "rota_duty_exists", rota_assignments: "rota_group_busy" };
 
@@ -123,21 +123,26 @@ describe("תורנויות (v16)", () => {
   const val = async (run: Run, who: string, sql: string, params: unknown[] = []) => Object.values((await run(who, sql, params)).rows[0] ?? {})[0];
   const num = async (run: Run, who: string, sql: string, params: unknown[] = []) => Number(await val(run, who, sql, params));
 
-  /** ROTA_FIXTURE in an edition, as the owner (through the guards): ref → id; `A1` is the fixture's assignment. */
+  /** ROTA_FIXTURE in an edition, as the owner (through the guards): ref → id; `A1` is the fixture's assignment; «MISSING» an id nothing has. */
   async function fixture(run: Run, edition: number): Promise<Ids> {
-    const ids: Ids = {};
+    const ids: Ids = { MISSING: MISSING_ID };
     for (const c of ROTA_FIXTURE.cohorts) {
-      ids[c.ref] = await num(run, "owner", "insert into public.rota_cohorts (edition_id, letter, name, diets, sort) values ($1, $2, $3, $4::jsonb, $5) returning id",
-        [edition, c.letter, c.name, JSON.stringify(c.diets), c.sort]);
-    }
-    for (const g of ROTA_FIXTURE.groups) {
-      ids[g.ref] = await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size, head_name) values ($1, $2, $3, $4, $5) returning id",
-        [edition, ids[g.cohort], g.number, g.size, g.head_name]);
+      ids[c.ref] = await num(run, "owner",
+        "insert into public.rota_cohorts (edition_id, letter, name, trainees, diet_veg, diet_gf, diet_both, contact_name, sort) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id",
+        [edition, c.letter, c.name, c.trainees, c.diet_veg, c.diet_gf, c.diet_both, c.contact_name, c.sort]);
     }
     for (const d of ROTA_FIXTURE.duties) {
       ids[d.ref] = await num(run, "owner",
         "insert into public.rota_duties (edition_id, name, description, need_morning, need_afternoon, need_night, min_people, sort) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id",
         [edition, d.name, d.description, d.need_morning, d.need_afternoon, d.need_night, d.min_people, d.sort]);
+    }
+    // v20: the duties each cohort helps in, before the groups (a group needs a cohort that helps)
+    for (const x of ROTA_FIXTURE.cohortDuties) {
+      await run("owner", "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3)", [edition, ids[x.cohort], ids[x.duty]]);
+    }
+    for (const g of ROTA_FIXTURE.groups) {
+      ids[g.ref] = await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size, head_name) values ($1, $2, $3, $4, $5) returning id",
+        [edition, ids[g.cohort], g.number, g.size, g.head_name]);
     }
     for (const a of ROTA_FIXTURE.assignments) {
       ids.A1 = await num(run, "owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, $2, $3, $4, $5) returning id",
@@ -150,7 +155,7 @@ describe("תורנויות (v16)", () => {
   async function fuller(run: Run, edition: number): Promise<Ids> {
     const ids = await fixture(run, edition);
     await run("owner", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 1, 0)", [edition, ids.A]);
-    ids.S = await num(run, "owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name, kind) values ($1, 1, 510, 780, 'איש/אשת צוות לדוגמה', 'shift') returning id", [edition]);
+    ids.S = await num(run, "owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name) values ($1, 1, 510, 780, 'איש/אשת צוות לדוגמה') returning id", [edition]);
     ids.P = await num(run, "owner", "insert into public.rota_prep_tasks (edition_id, text, group_id, sort) values ($1, 'הכנה לדוגמה', $2, 1) returning id", [edition, ids.G1]);
     return ids;
   }
@@ -161,6 +166,7 @@ describe("תורנויות (v16)", () => {
     for (const t of SEVEN) out.push(String(await val(run, "owner", `select md5(coalesce(string_agg(x::text, '|' order by x::text), '')) from public.${t} x where x.edition_id = $1`, [edition])));
     out.push(String(await val(run, "owner",
       "select md5(coalesce(string_agg(c::text, '|' order by c::text), '')) from public.rota_group_contacts c join public.rota_groups g on g.id = c.group_id where g.edition_id = $1", [edition])));
+    out.push(String(await val(run, "owner", "select md5(coalesce(string_agg(c::text, '|' order by c::text), '')) from public.rota_cohort_contacts c where c.edition_id = $1", [edition])));
     out.push(String(await val(run, "owner", "select settings::text from public.editions where id = $1", [edition])));
     return out;
   }
@@ -169,18 +175,16 @@ describe("תורנויות (v16)", () => {
   async function perform(run: Run, who: string, edition: number, ids: Ids, c: RotaCase): Promise<string> {
     switch (c.op) {
       case "addCohort": {
-        // v19: the two flags as columns when the case gives them (absent: the columns' defaults), a null sent as null
-        const flags = (["helps_rota", "can_drive"] as const).filter((k) => k in c.args);
-        const cols = ["edition_id", "letter", "name", "diets", "sort", ...flags];
-        const values = [edition, c.args.letter, c.args.name, JSON.stringify(c.args.diets ?? []), c.args.sort ?? 0, ...flags.map((k) => c.args[k])];
-        return attempt("rota_cohorts", run(who, `insert into public.rota_cohorts (${cols.join(", ")}) values (${cols.map((k, i) => `$${i + 1}${k === "diets" ? "::jsonb" : ""}`).join(", ")}) returning id`,
-          values));
+        // the columns the case gives (v19 can_drive, v20 the numbers and the contact's name; absent: the columns' defaults), a null sent as null
+        const extra = (["trainees", "diet_veg", "diet_gf", "diet_both", "contact_name", "can_drive"] as const).filter((k) => k in c.args);
+        const cols = ["edition_id", "letter", "name", "sort", ...extra];
+        const values = [edition, c.args.letter, c.args.name, c.args.sort ?? 0, ...extra.map((k) => c.args[k])];
+        return attempt("rota_cohorts", run(who, `insert into public.rota_cohorts (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id`, values));
       }
       case "updateCohort": {
         const keys = Object.keys(c.args);
-        const sets = keys.map((k, i) => `${k} = $${i + 2}${k === "diets" ? "::jsonb" : ""}`).join(", ");
-        const values = keys.map((k) => (k === "diets" ? JSON.stringify(c.args[k]) : c.args[k]));
-        return attempt("rota_cohorts", run(who, `update public.rota_cohorts set ${sets} where id = $1 returning id`, [ids[c.ref], ...values]), { row: true });
+        const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(", ");
+        return attempt("rota_cohorts", run(who, `update public.rota_cohorts set ${sets} where id = $1 returning id`, [ids[c.ref], ...keys.map((k) => c.args[k])]), { row: true });
       }
       case "deleteCohort":
         return attempt("rota_cohorts", run(who, "delete from public.rota_cohorts where id = $1 returning id", [ids[c.ref]]), DELETE);
@@ -201,8 +205,8 @@ describe("תורנויות (v16)", () => {
           [edition, JSON.stringify(c.args.map((a) => ({ day: a.day, shift: a.shift, duty_id: ids[a.duty], group_id: ids[a.group] })))]), { apply: true });
       case "addStaffShift":
         return attempt("rota_staff_shifts", run(who,
-          "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id, kind, note) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id",
-          [edition, c.args.day, c.args.start_min, c.args.end_min, c.args.member_id, c.args.name, c.args.cohort ? ids[c.args.cohort] : null, c.args.kind, c.args.note]));
+          "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id, note) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id",
+          [edition, c.args.day, c.args.start_min, c.args.end_min, c.args.member_id, c.args.name, c.args.cohort ? ids[c.args.cohort] : null, c.args.note]));
       case "addPrepTasks": {
         const last = await num(run, who, "select coalesce(max(sort), 0) from public.rota_prep_tasks where edition_id = $1", [edition]);
         return attempt("rota_prep_tasks", run(who,
@@ -223,7 +227,24 @@ describe("תורנויות (v16)", () => {
       case "setShifts":
         return attempt("editions", run(who, "select public.set_rota_shifts($1, $2::jsonb)", [edition, c.args == null ? null : JSON.stringify(c.args)]));
       case "setContact":
-        return attempt("rota_group_contacts", run(who, "select public.set_rota_contact($1, $2)", [ids[c.ref], c.args]));
+        return attempt("rota_group_contacts", run(who, "select public.set_rota_contact('group', $1, $2)", [ids[c.ref], c.args]));
+      // v20
+      case "setCohortContact":
+        return attempt("rota_cohort_contacts", run(who, "select public.set_rota_contact('cohort', $1, $2)", [ids[c.ref], c.args]));
+      case "setCohortDuties": {
+        // as SupabaseRota.setCohortDuties sends it: ONE insert of the set (on conflict nothing), then ONE delete of the rest
+        const duties = [...new Set(c.duties.map((d) => ids[d]))];
+        if (duties.length > 0) {
+          const r = await attempt("rota_cohort_duties", run(who,
+            `insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) select $1, $2, d from unnest($3::bigint[]) as t(d) on conflict (cohort_id, duty_id) do nothing`,
+            [edition, ids[c.ref], duties]));
+          if (r !== "ok") return r;
+        }
+        return attempt("rota_cohort_duties", run(who, "delete from public.rota_cohort_duties where edition_id = $1 and cohort_id = $2 and not (duty_id = any ($3::bigint[]))",
+          [edition, ids[c.ref], duties]), { fk: "in_use" });
+      }
+      case "splitCohort":
+        return attempt("rota_groups", run(who, "select public.rota_split_cohort($1, $2, $3::integer[])", [edition, ids[c.ref], c.args]));
     }
   }
 
@@ -239,10 +260,13 @@ describe("תורנויות (v16)", () => {
     out.duty_update = await attempt("rota_duties", run(who, "update public.rota_duties set need_night = 1 where id = $1 returning id", [ids.D2]), { row: true });
     out.assign_insert = await attempt("rota_assignments", run(who, "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 1, 1, $2, $3) returning id", [edition, ids.D1, ids.G1]));
     out.assign_update = await attempt("rota_assignments", run(who, "update public.rota_assignments set duty_id = $2 where id = $1 returning id", [ids.A1, ids.D1]), { row: true });
-    out.staff_insert = await attempt("rota_staff_shifts", run(who, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name, kind) values ($1, 2, 600, 700, 'שם לבדיקה', 'lead') returning id", [edition]));
+    out.staff_insert = await attempt("rota_staff_shifts", run(who, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name) values ($1, 2, 600, 700, 'שם לבדיקה') returning id", [edition]));
     out.staff_update = await attempt("rota_staff_shifts", run(who, "update public.rota_staff_shifts set note = 'הערה לבדיקה' where id = $1 returning id", [ids.S]), { row: true });
     out.prep_insert = await attempt("rota_prep_tasks", run(who, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'משימה לבדיקה', 5) returning id", [edition]));
     out.prep_update = await attempt("rota_prep_tasks", run(who, "update public.rota_prep_tasks set done = true where id = $1 returning id", [ids.P]), { row: true });
+    // v20: the duties a cohort helps in — an insert, a delete (one that is not a cohort-with-groups' last)
+    out.cohort_duty_insert = await attempt("rota_cohort_duties", run(who, "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3) returning cohort_id", [edition, ids.N, ids.D2]));
+    out.cohort_duty_delete = await attempt("rota_cohort_duties", run(who, "delete from public.rota_cohort_duties where cohort_id = $1 and duty_id = $2 returning cohort_id", [ids.A, ids.D2]), DELETE);
     out.presence_delete = await attempt("rota_presence", run(who, "delete from public.rota_presence where cohort_id = $1 and day = 1 returning cohort_id", [ids.A]), DELETE);
     out.assign_delete = await attempt("rota_assignments", run(who, "delete from public.rota_assignments where id = $1 returning id", [ids.A1]), DELETE);
     out.staff_delete = await attempt("rota_staff_shifts", run(who, "delete from public.rota_staff_shifts where id = $1 returning id", [ids.S]), DELETE);
@@ -301,6 +325,21 @@ describe("תורנויות (v16)", () => {
           if ((c.op === "addPrepRows" || c.op === "updatePrep") && c.prep) {
             expect((await run("owner", "select text, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id", [ed.live])).rows).toEqual(c.prep);
           }
+          // v20 (the last review): what the demo runner holds the cases to, on SQL too — the cohort's duties afterwards, and
+          // its groups after a split (no heads; none of the old groups' assignments or heads' phones left on the cohort)
+          if (c.op === "setCohortDuties" && c.after) {
+            const after = (await run("owner", "select duty_id from public.rota_cohort_duties where cohort_id = $1 order by duty_id", [ids[c.ref]])).rows.map((r) => Number(r.duty_id));
+            expect(after).toEqual(c.after.map((x) => ids[x]).sort((a, b) => a - b));
+          }
+          if (c.op === "splitCohort" && c.groups) {
+            const groups = (await run("owner", "select number, size, head_name from public.rota_groups where cohort_id = $1 order by number", [ids[c.ref]])).rows;
+            expect(groups.map((g) => [g.number, g.size])).toEqual(c.groups);
+            expect(groups.every((g) => g.head_name == null)).toBe(true);
+            const left = async (table: string) =>
+              num(run, "owner", `select count(*) from public.${table} x join public.rota_groups g on g.id = x.group_id where g.cohort_id = $1`, [ids[c.ref]]);
+            expect(await left("rota_assignments"), "the new groups have no assignment").toBe(0);
+            expect(await left("rota_group_contacts"), "nor a head's phone").toBe(0);
+          }
         });
       });
     }
@@ -321,7 +360,8 @@ describe("תורנויות (v16)", () => {
       await inTx(async (run) => {
         const ids = await fuller(run, ed.live);
         const rota = (await val(run, C, "select public.load_rota($1)", [ed.live])) as Record<string, unknown[]>;
-        expect([rota.cohorts.length, rota.presence.length, rota.groups.length, rota.duties.length, rota.assignments.length, rota.staff.length, rota.prep.length]).toEqual([2, 1, 2, 2, 1, 1, 1]);
+        expect([rota.cohorts.length, rota.presence.length, rota.groups.length, rota.duties.length, rota.assignments.length, rota.staff.length, rota.prep.length, rota.cohortDuties.length])
+          .toEqual([3, 1, 2, 2, 1, 1, 1, 3]);
         for (const t of SEVEN) expect(Number(await val(run, C, `select count(*) from public.${t}`)), t).toBeGreaterThan(0);
         const p = await probe(run, C, ed.live, ids);
         expect(p).toEqual(all("forbidden", p));
@@ -372,14 +412,14 @@ describe("תורנויות (v16)", () => {
     it("a member of another edition and a stranger see nothing of it and write nothing", async () => {
       await inTx(async (run) => {
         const ids = await fuller(run, ed.live);
-        await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE]);
+        await run(L, "select public.set_rota_contact('group', $1, $2)", [ids.G1, PHONE]);
         for (const who of [OTHER, OTHER_LOGISTICS, STRANGER, INACTIVE]) {
           expect(await val(run, who, "select public.load_rota($1)", [ed.live]), who).toBeNull();
           expect(await val(run, who, "select public.get_rota_contacts($1)", [ed.live]), who).toEqual([]);
           for (const t of [...SEVEN, "rota_group_contacts"]) expect((await run(who, `select * from public.${t}`)).rows, `${who} ${t}`).toEqual([]);
           const p = await probe(run, who, ed.live, ids);
           expect(p, who).toEqual(all("forbidden", p));
-          expect(await attempt("", run(who, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE_2])), who).toBe("not_member");
+          expect(await attempt("", run(who, "select public.set_rota_contact('group', $1, $2)", [ids.G1, PHONE_2])), who).toBe("not_member");
         }
       });
     });
@@ -500,7 +540,7 @@ describe("תורנויות (v16)", () => {
       await inTx(async (run) => {
         const ids = await fixture(run, ed.live);
         const add = (member_id: number | null, name: string | null, cohort: number | null = null) =>
-          attempt("rota_staff_shifts", run(L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id, kind) values ($1, 2, 510, 600, $2, $3, $4, 'lead') returning id",
+          attempt("rota_staff_shifts", run(L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id) values ($1, 2, 510, 600, $2, $3, $4) returning id",
             [ed.live, member_id, name, cohort]));
         expect(await add(memberId[ED_ADMIN], "מנהל/ת לדוגמה")).toBe("ok");
         expect(await add(memberId[`${ADMIN}*`], "מנהל/ת כללי/ת לדוגמה")).toBe("ok");
@@ -510,7 +550,7 @@ describe("תורנויות (v16)", () => {
         expect(await add(memberId[ED_ADMIN], null, ids.N)).toBe("bad_value");
         expect(await add(memberId[ED_ADMIN], null)).toBe("name_required");
         // the member leaves the team: the shift keeps its name and its note may still change; picking them again is refused
-        const s = await num(run, L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, kind) values ($1, 3, 510, 600, $2, 'מדריך/ה לדוגמה', 'shift') returning id", [ed.live, memberId[C]]);
+        const s = await num(run, L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name) values ($1, 3, 510, 600, $2, 'מדריך/ה לדוגמה') returning id", [ed.live, memberId[C]]);
         await run("owner", "update public.members set active = false where id = $1", [memberId[C]]);
         expect(await attempt("rota_staff_shifts", run(L, "update public.rota_staff_shifts set note = 'הערה' where id = $1 returning id", [s]), { row: true })).toBe("ok");
         expect(await attempt("rota_staff_shifts", run(L, "update public.rota_staff_shifts set member_id = $2 where id = $1 returning id", [s, memberId[C]]), { row: true })).toBe("ok"); // unchanged
@@ -523,7 +563,7 @@ describe("תורנויות (v16)", () => {
       });
     });
 
-    it("the browser's cleaners hold the guards' rules: a letter, the diets, a head's phone, the shifts, a staff shift's who", async () => {
+    it("the browser's cleaners hold the guards' rules: a letter, (v20) a cohort's numbers and contact's name, a head's phone and a cohort contact's, the shifts, a staff shift's who", async () => {
       await inTx(async (run) => {
         const ids = await fixture(run, ed.live);
         let n = 0;
@@ -536,19 +576,30 @@ describe("תורנויות (v16)", () => {
           expect(sql, JSON.stringify(letter)).toEqual(ts(() => cleanLetter(letter)));
           if ("ok" in sql) await run("owner", "delete from public.rota_cohorts where letter = $1", [sql.ok]);
         }
-        // the diets
-        for (const diets of [
-          [], [{ label: "  צמחוני ", count: 2 }], [{ label: "טבעוני", count: 0, extra: true }], [{ label: "", count: 1 }], [{ label: "x", count: 1.5 }],
-          [{ label: "x", count: -1 }], [{ label: "x", count: 1001 }], [{ label: "x" }], [{ label: "x", count: "2" }], ["צמחוני"], Array.from({ length: 7 }, () => ({ label: "x", count: 1 })),
-          Array.from({ length: 6 }, (_, i) => ({ label: `דיאטה ${i}`, count: i })), [{ label: "א".repeat(41), count: 1 }], [{ label: "א".repeat(40), count: 1 }], [{ label: "טל' 1234567", count: 1 }],
-        ]) {
-          const r = await run(L, "update public.rota_cohorts set diets = $2::jsonb where id = $1 returning diets", [ids.A, JSON.stringify(diets)]).catch((e) => e);
-          const sql = r instanceof Error ? { code: portCode(r, "rota_cohorts") } : { ok: r.rows[0].diets };
-          expect(sql, JSON.stringify(diets)).toEqual(ts(() => cleanDiets(diets)));
+        // v20: the four numbers and the contact's name — each 0–1000 or null, the rule between them, a line ≤ 80 with no phone
+        for (const c of [
+          {}, { trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2 }, { trainees: 0 }, { trainees: 1000 }, { trainees: 1001 }, { diet_gf: -1 }, { diet_veg: 1, diet_both: 2 },
+          { diet_gf: 1, diet_both: 2 }, { trainees: 5, diet_veg: 4, diet_gf: 3, diet_both: 1 }, { trainees: 6, diet_veg: 4, diet_gf: 3, diet_both: 1 },
+          { trainees: 1, diet_veg: 400, diet_gf: 400 }, { trainees: null, diet_veg: 400, diet_gf: 400, diet_both: 0 }, { contact_name: "  איש/אשת   קשר " }, { contact_name: "   " },
+          { contact_name: "א".repeat(81) }, { contact_name: "א".repeat(80) }, { contact_name: "טל' 1234567", trainees: 2000 }, { trainees: 2000, diet_veg: 1, diet_both: 5 },
+        ] as Record<string, number | string | null>[]) {
+          const cols = Object.keys(c);
+          const r = await run(L, `insert into public.rota_cohorts (edition_id, letter, name${cols.map((k) => `, ${k}`).join("")}) values ($1, 'ש', 'מכינה לבדיקה'${cols.map((_, i) => `, $${i + 2}`).join("")})
+                                  returning contact_name, trainees, diet_veg, diet_gf, diet_both`, [ed.live, ...cols.map((k) => c[k])]).catch((e) => e);
+          const sql = r instanceof Error ? { code: portCode(r, "rota_cohorts") } : { ok: r.rows[0] };
+          expect(sql, JSON.stringify(c)).toEqual(ts(() => cleanCohortFields(c as never)));
+          if ("ok" in sql) await run("owner", "delete from public.rota_cohorts where letter = 'ש' and edition_id = $1", [ed.live]);
+        }
+        // a cohort contact's phone, by the heads' rule
+        for (const phone of ["555 0100 64", "  555 0100 65 ", "12-345", "", null]) {
+          const r = await run(L, "select public.set_rota_contact('cohort', $1, $2)", [ids.A, phone]).catch((e) => e);
+          const stored = (await run("owner", "select phone from public.rota_cohort_contacts where cohort_id = $1", [ids.A])).rows[0]?.phone ?? null;
+          const sql = r instanceof Error ? { code: portCode(r, "") } : { ok: stored };
+          expect(sql, JSON.stringify(phone)).toEqual(ts(() => cleanHeadPhone(phone)));
         }
         // a head's phone
         for (const phone of ["555 0100 64", "  555 0100 65 ", "12-345", "", "   ", null, `+972 ${"5".repeat(36)}`, `+972 ${"5".repeat(35)}`, "טלפון 123456"]) {
-          const r = await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, phone]).catch((e) => e);
+          const r = await run(L, "select public.set_rota_contact('group', $1, $2)", [ids.G1, phone]).catch((e) => e);
           const stored = (await run("owner", "select head_phone from public.rota_group_contacts where group_id = $1", [ids.G1])).rows[0]?.head_phone ?? null;
           const sql = r instanceof Error ? { code: portCode(r, "") } : { ok: stored };
           expect(sql, JSON.stringify(phone)).toEqual(ts(() => cleanHeadPhone(phone)));
@@ -573,7 +624,7 @@ describe("תורנויות (v16)", () => {
           { member_id: null, name: "שם", cohort_id: ids.N }, { member_id: memberId[L], name: "שם", cohort_id: null }, { member_id: memberId[L], name: null, cohort_id: ids.N },
           { member_id: memberId[L], name: null, cohort_id: null }, { member_id: null, name: "נייד 5550100", cohort_id: null },
         ]) {
-          const r = await run(L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id, kind) values ($1, 1, 600, 700, $2, $3, $4, 'shift') returning member_id, name, cohort_id",
+          const r = await run(L, "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, member_id, name, cohort_id) values ($1, 1, 600, 700, $2, $3, $4) returning member_id, name, cohort_id",
             [ed.live, who.member_id, who.name, who.cohort_id]).catch((e) => e);
           const sql = r instanceof Error ? { code: portCode(r, "rota_staff_shifts") } : { ok: { member_id: r.rows[0].member_id == null ? null : Number(r.rows[0].member_id), name: r.rows[0].name, cohort_id: r.rows[0].cohort_id == null ? null : Number(r.rows[0].cohort_id) } };
           expect(sql, JSON.stringify(who)).toEqual(ts(() => cleanStaffWho(who)));
@@ -613,8 +664,8 @@ describe("תורנויות (v16)", () => {
       await inTx(async (run) => {
         const ids = await fuller(run, ed.live);
         await run("owner", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 1, 0), ($1, $2, 1, 1)", [ed.live, ids.N]);
-        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 1, 510, 780, $2, 'shift')", [ed.live, ids.N]);
-        await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE]);
+        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id) values ($1, 1, 510, 780, $2)", [ed.live, ids.N]);
+        await run(L, "select public.set_rota_contact('group', $1, $2)", [ids.G1, PHONE]);
         await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 2, 0, $2, $3)", [ed.live, ids.D1, ids.G1]);
         expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.A]), DELETE)).toBe("in_use");
         expect(await attempt("rota_cohorts", run(L, "delete from public.rota_cohorts where id = $1 returning id", [ids.N]), DELETE)).toBe("ok");
@@ -642,11 +693,14 @@ describe("תורנויות (v16)", () => {
           ["an assignment moved to its group", "rota_assignments", "update public.rota_assignments set group_id = $2 where id = $1 returning id", [ids.A1, there.G1]],
           ["a group in its cohort", "rota_groups", "insert into public.rota_groups (edition_id, cohort_id, number) values ($1, $2, 9) returning id", [ed.live, there.N]],
           ["a group moved to its cohort", "rota_groups", "update public.rota_groups set cohort_id = $2 where id = $1 returning id", [ids.G1, there.N]],
-          ["a staff shift of its cohort", "rota_staff_shifts", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 2, 510, 600, $2, 'shift') returning id", [ed.live, there.N]],
+          ["a staff shift of its cohort", "rota_staff_shifts", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id) values ($1, 2, 510, 600, $2) returning id", [ed.live, there.N]],
           ["a staff shift moved to its cohort", "rota_staff_shifts", "update public.rota_staff_shifts set name = null, cohort_id = $2 where id = $1 returning id", [ids.S, there.N]],
           ["a preparation for its group", "rota_prep_tasks", "insert into public.rota_prep_tasks (edition_id, text, group_id) values ($1, 'הכנה לבדיקה', $2) returning id", [ed.live, there.G1]],
           ["a preparation moved to its group", "rota_prep_tasks", "update public.rota_prep_tasks set group_id = $2 where id = $1 returning id", [ids.P, there.G1]],
           ["presence of its cohort", "rota_presence", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 2, 0) returning cohort_id", [ed.live, there.A]],
+          // v20: a cohort helping in another edition's duty, or another edition's cohort in this one's
+          ["a cohort here helping in its duty", "rota_cohort_duties", "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3) returning cohort_id", [ed.live, ids.Z, there.D1]],
+          ["its cohort helping in a duty here", "rota_cohort_duties", "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3) returning cohort_id", [ed.live, there.Z, ids.D1]],
         ];
         // logistics of this edition; a global admin, who may write in both (RLS cannot stop it); the owner, past RLS
         for (const who of [L, ADMIN, "owner"]) {
@@ -655,7 +709,7 @@ describe("תורנויות (v16)", () => {
         expect(await state(run, ed.live), "this edition unchanged").toEqual(before.here);
         expect(await state(run, other), "the other unchanged").toEqual(before.there);
         // the other edition deletes its groups, duties and cohorts: nothing here cascades
-        for (const [table, id] of [["rota_groups", there.G1], ["rota_groups", there.G2], ["rota_duties", there.D1], ["rota_duties", there.D2], ["rota_cohorts", there.A], ["rota_cohorts", there.N]] as const) {
+        for (const [table, id] of [["rota_groups", there.G1], ["rota_groups", there.G2], ["rota_duties", there.D1], ["rota_duties", there.D2], ["rota_cohorts", there.A], ["rota_cohorts", there.N], ["rota_cohorts", there.Z]] as const) {
           expect(await attempt(table, run(OTHER_LOGISTICS, `delete from public.${table} where id = $1 returning id`, [id]), DELETE), `${table} ${id}`).toBe("ok");
         }
         expect(await num(run, "owner", "select count(*) from public.rota_cohorts where edition_id = $1", [other])).toBe(0);
@@ -667,7 +721,7 @@ describe("תורנויות (v16)", () => {
       for (const who of ["owner", ADMIN]) {
         await inTx(async (run) => {
           const ids = await fuller(run, ed.demo);
-          await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 1, 510, 780, $2, 'lead')", [ed.demo, ids.N]);
+          await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id) values ($1, 1, 510, 780, $2)", [ed.demo, ids.N]);
           await run("owner", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 2, 2)", [ed.demo, ids.N]);
           await run("owner", "insert into public.rota_group_contacts (group_id, head_phone) values ($1, $2)", [ids.G2, PHONE]);
           await run(who, "delete from public.editions where label = 'הדגמה' and kind = 'demo'");
@@ -684,47 +738,60 @@ describe("תורנויות (v16)", () => {
         // written in scrambled order
         const c3 = await num(run, "owner", "insert into public.rota_cohorts (edition_id, letter, name, sort) values ($1, 'ב', 'מכינה לדוגמה ב', 2) returning id", [ed.live]);
         const c2 = await num(run, "owner", "insert into public.rota_cohorts (edition_id, letter, name, sort) values ($1, 'נ', 'מכינה לדוגמה נ', 1) returning id", [ed.live]);
-        const c1 = await num(run, "owner", "insert into public.rota_cohorts (edition_id, letter, name, diets, sort) values ($1, 'א', 'מכינה לדוגמה א', '[{\"label\": \"צמחוני\", \"count\": 2}]', 1) returning id", [ed.live]);
+        const c1 = await num(run, "owner", "insert into public.rota_cohorts (edition_id, letter, name, trainees, diet_veg, diet_gf, diet_both, contact_name, sort) values ($1, 'א', 'מכינה לדוגמה א', 23, 4, 3, 2, 'איש/אשת קשר לדוגמה', 1) returning id", [ed.live]);
+        const d2 = await num(run, "owner", "insert into public.rota_duties (edition_id, name, sort) values ($1, 'נקיון', 2) returning id", [ed.live]);
+        const d1 = await num(run, "owner", "insert into public.rota_duties (edition_id, name, description, need_morning, min_people, sort) values ($1, 'מטבח', 'תיאור לדוגמה', 1, 10, 1) returning id", [ed.live]);
+        // v20: the duties each helps in (before the groups), scrambled too
+        for (const [c, d] of [[c3, d2], [c1, d2], [c2, d1], [c1, d1], [c3, d1]] as const) {
+          await run("owner", "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3)", [ed.live, c, d]);
+        }
         const g = [] as number[];
         for (const [c, n] of [[c3, 2], [c1, 2], [c1, 1], [c2, 1]] as const) {
           g.push(await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size, head_name) values ($1, $2, $3, 8, 'ראש/ת קבוצה לדוגמה') returning id", [ed.live, c, n]));
         }
-        const d2 = await num(run, "owner", "insert into public.rota_duties (edition_id, name, sort) values ($1, 'נקיון', 2) returning id", [ed.live]);
-        const d1 = await num(run, "owner", "insert into public.rota_duties (edition_id, name, description, need_morning, min_people, sort) values ($1, 'מטבח', 'תיאור לדוגמה', 1, 10, 1) returning id", [ed.live]);
         for (const [day, shift, duty, grp] of [[2, 0, d1, g[0]], [1, 1, d2, g[1]], [1, 1, d1, g[2]], [1, 0, d2, g[3]]] as const) {
           await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id, source) values ($1, $2, $3, $4, $5, 'suggested')", [ed.live, day, shift, duty, grp]);
         }
         await run("owner", "insert into public.rota_presence (edition_id, cohort_id, day, shift) values ($1, $2, 2, 0), ($1, $3, 1, 2), ($1, $3, 1, 0)", [ed.live, c3, c1]);
-        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name, kind, note) values ($1, 2, 600, 700, 'צוות ב', 'shift', null), ($1, 1, 700, 800, 'צוות א', 'lead', 'הקפצת מרצה')", [ed.live]);
-        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id, kind) values ($1, 1, 510, 600, $2, 'shift')", [ed.live, c2]);
+        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, name, note) values ($1, 2, 600, 700, 'צוות ב', null), ($1, 1, 700, 800, 'צוות א', 'הקפצת מרצה')", [ed.live]);
+        await run("owner", "insert into public.rota_staff_shifts (edition_id, day, start_min, end_min, cohort_id) values ($1, 1, 510, 600, $2)", [ed.live, c2]);
         await run("owner", "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה 2', 2), ($1, 'הכנה 1', 1)", [ed.live]);
-        for (const grp of g) await run(L, "select public.set_rota_contact($1, $2)", [grp, PHONE]);
+        for (const grp of g) await run(L, "select public.set_rota_contact('group', $1, $2)", [grp, PHONE]);
+        await run(L, "select public.set_rota_contact('cohort', $1, $2)", [c1, PHONE_2]); // v20: a cohort contact's phone, never in load_rota either
 
         for (const who of [C, L, ED_ADMIN, ADMIN]) {
           const rota = (await val(run, who, "select public.load_rota($1)", [ed.live])) as Record<string, Record<string, unknown>[]>;
           expect(Object.keys(rota).sort(), who).toEqual(Object.keys(EMPTY_ROTA).sort());
           const text = JSON.stringify(rota);
           expect(text, who).not.toContain(PHONE);
+          expect(text, who).not.toContain(PHONE_2);
           const keys = new Set<string>();
           const walk = (v: unknown): void => {
             if (Array.isArray(v)) v.forEach(walk);
             else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) (keys.add(k), walk(x));
           };
           walk(rota);
-          for (const k of [...PERSONAL_KEYS, "head_phone", "phone"]) expect(keys.has(k), `${who}: ${k}`).toBe(false);
+          // v20: `contact_name` is a cohort's staff contact's NAME, the team's to read (a bereaved family's contact person
+          // shares the key in PERSONAL_KEYS; the rota is never in a Week or the offline copy) — every other personal key, never
+          for (const k of [...PERSONAL_KEYS.filter((x) => x !== "contact_name"), "head_phone", "phone"]) expect(keys.has(k), `${who}: ${k}`).toBe(false);
+          expect(rota.cohorts.every((c) => "contact_name" in c)).toBe(true);
           // the shape, record by record (src/data/rota.ts)
-          expect(Object.keys(rota.cohorts[0]).sort()).toEqual(["can_drive", "diets", "edition_id", "helps_rota", "id", "letter", "name", "sort"]);   // v19: the two flags
+          // v20: the numbers and the contact's name — no helps_rota, no diets
+          expect(Object.keys(rota.cohorts[0]).sort()).toEqual(["can_drive", "contact_name", "diet_both", "diet_gf", "diet_veg", "edition_id", "id", "letter", "name", "sort", "trainees"]);
           expect(Object.keys(rota.presence[0]).sort()).toEqual(["cohort_id", "day", "shift"]);
+          expect(Object.keys(rota.cohortDuties[0]).sort()).toEqual(["cohort_id", "duty_id"]);   // v20
           expect(Object.keys(rota.groups[0]).sort()).toEqual(["cohort_id", "edition_id", "head_name", "id", "number", "size"]);
           expect(Object.keys(rota.duties[0]).sort()).toEqual(["description", "edition_id", "id", "min_people", "name", "need_afternoon", "need_morning", "need_night", "sort"]);
           expect(Object.keys(rota.assignments[0]).sort()).toEqual(["day", "duty_id", "edition_id", "group_id", "id", "shift", "source"]);
-          expect(Object.keys(rota.staff[0]).sort()).toEqual(["cohort_id", "day", "edition_id", "end_min", "id", "kind", "member_id", "name", "note", "start_min"]);
+          expect(Object.keys(rota.staff[0]).sort()).toEqual(["cohort_id", "day", "edition_id", "end_min", "id", "member_id", "name", "note", "start_min"]);   // v20: no kind
           expect(Object.keys(rota.prep[0]).sort()).toEqual(["done", "edition_id", "group_id", "id", "kind", "qty", "sort", "text"]);   // v19: a task or an item
           // the order: cohorts by sort, letter; groups by cohort, number; duties by sort; assignments by day, shift, duty, group; staff by day, start; prep by sort
           expect(rota.cohorts.map((c) => c.letter)).toEqual(["א", "נ", "ב"]);
-          expect(rota.cohorts[0].diets).toEqual([{ label: "צמחוני", count: 2 }]);
+          expect(rota.cohorts[0]).toMatchObject({ trainees: 23, diet_veg: 4, diet_gf: 3, diet_both: 2, contact_name: "איש/אשת קשר לדוגמה" });
           expect(rota.presence.map((p) => [p.cohort_id, p.day, p.shift])).toEqual([[c3, 2, 0], [c1, 1, 0], [c1, 1, 2]].sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]));
           expect(rota.groups.map((x) => [x.cohort_id, x.number])).toEqual([[c3, 2], [c2, 1], [c1, 1], [c1, 2]].sort((a, b) => a[0] - b[0] || a[1] - b[1]));
+          // v20: by cohort, then duty
+          expect(rota.cohortDuties.map((x) => [x.cohort_id, x.duty_id])).toEqual([[c3, d2], [c1, d2], [c2, d1], [c1, d1], [c3, d1]].sort((a, b) => a[0] - b[0] || a[1] - b[1]));
           expect(rota.duties.map((x) => x.name)).toEqual(["מטבח", "נקיון"]);
           expect(rota.duties[0]).toMatchObject({ description: "תיאור לדוגמה", need_morning: 1, need_afternoon: null, need_night: null, min_people: 10 });
           const order = (a: Record<string, unknown>) => [a.day, a.shift, a.duty_id, a.group_id] as number[];
@@ -757,15 +824,15 @@ describe("תורנויות (v16)", () => {
             expect(contacts, `${who} in ${kind}`).toEqual(may ? [{ group_id: group[kind], head_phone: PHONE }] : []);
             expect((await run(who, "select head_phone from public.rota_group_contacts")).rows.length, `${who} in ${kind}: the table`).toBe(may ? (who === ADMIN ? KINDS.length : 1) : 0);
             expect(await val(run, who, "select app.may_see_rota_contacts($1)", [group[kind]]), `${who} in ${kind}: the rule`).toBe(may);
-            expect(await attempt("", run(who, "select public.set_rota_contact($1, $2)", [group[kind], PHONE_2])), `${who} writes in ${kind}`).toBe(may ? "ok" : "rota_contact_hidden");
+            expect(await attempt("", run(who, "select public.set_rota_contact('group', $1, $2)", [group[kind], PHONE_2])), `${who} writes in ${kind}`).toBe(may ? "ok" : "rota_contact_hidden");
             if (may) seen.push(`${kind}:${who.split("@")[0]}`);
             await run("owner", "update public.rota_group_contacts set head_phone = $2 where group_id = $1", [group[kind], PHONE]);
           }
         }
         expect(seen.sort()).toEqual(["archive:admin", "archived:admin", "demo:admin", "live:admin", "live:admin.live", "live:logistics.live", "practice:admin"]);
         // nobody of the edition, and no such group
-        for (const who of [OTHER, STRANGER]) expect(await attempt("", run(who, "select public.set_rota_contact($1, $2)", [group.live, PHONE_2])), who).toBe("not_member");
-        expect(await attempt("", run(L, "select public.set_rota_contact(999999, $1)", [PHONE_2]))).toBe("stale");
+        for (const who of [OTHER, STRANGER]) expect(await attempt("", run(who, "select public.set_rota_contact('group', $1, $2)", [group.live, PHONE_2])), who).toBe("not_member");
+        expect(await attempt("", run(L, "select public.set_rota_contact('group', 999999, $1)", [PHONE_2]))).toBe("stale");
       });
     });
 
@@ -837,8 +904,8 @@ describe("תורנויות (v16)", () => {
       await inTx(async (run) => {
         const ids = await fuller(run, ed.live);
         const there = await fixture(run, other);
-        for (const g of [ids.G1, ids.G2]) await run(L, "select public.set_rota_contact($1, $2)", [g, PHONE]);
-        await run(ADMIN, "select public.set_rota_contact($1, $2)", [there.G1, PHONE_2]);
+        for (const g of [ids.G1, ids.G2]) await run(L, "select public.set_rota_contact('group', $1, $2)", [g, PHONE]);
+        await run(ADMIN, "select public.set_rota_contact('group', $1, $2)", [there.G1, PHONE_2]);
         await run("owner", "update public.editions set start_date = (now() at time zone 'Asia/Jerusalem')::date - 7 where id = $1", [ed.live]);
         const before = await state(run, ed.live);
         const report = (await val(run, ADMIN, "select public.purge_edition_private($1, $2)", [ed.live, LABEL])) as Record<string, unknown>;
@@ -858,7 +925,7 @@ describe("תורנויות (v16)", () => {
       });
     });
 
-    it("start_edition carries exactly the duties, the preparations (no group, not done) and the shifts — and its dry run counts them", async () => {
+    it("start_edition carries exactly the duties, the preparations (no group, not done), the shifts and (v20) the cohorts with the duties they help in — and its dry run counts them", async () => {
       await inTx(async (run) => {
         await run("owner", "update public.editions set status = 'archived' where id = $1", [other]); // the live edition is the one carried from
         const ids = await fuller(run, ed.live);
@@ -867,11 +934,11 @@ describe("תורנויות (v16)", () => {
         await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort) values ($1, 'הכנה לדוגמה אחרונה', 9), ($1, 'הכנה לדוגמה ראשונה', 0)", [ed.live]);
         // v19: an item of the shopping list, bought, with its quantity — carried as an item, its quantity kept, not bought
         await run(L, "insert into public.rota_prep_tasks (edition_id, text, sort, kind, qty, done) values ($1, 'פריט לדוגמה', 5, 'item', '2 (לדוגמה)', true)", [ed.live]);
-        await run(L, "select public.set_rota_contact($1, $2)", [ids.G1, PHONE]);
+        await run(L, "select public.set_rota_contact('group', $1, $2)", [ids.G1, PHONE]);
         const shifts = { cuts: [840, 1320], labels: ["בוקר", "צהריים", "לילה"] };
         await run(ED_ADMIN, "select public.set_rota_shifts($1, $2::jsonb)", [ed.live, JSON.stringify(shifts)]);
         const preview = (await val(run, ADMIN, "select public.start_edition_preview(false)")) as Record<string, unknown>;
-        expect(preview).toMatchObject({ carry_from: { id: ed.live }, rota_duties: 3, rota_prep_tasks: 4, rota_shifts: true });
+        expect(preview).toMatchObject({ carry_from: { id: ed.live }, rota_duties: 3, rota_prep_tasks: 4, rota_shifts: true, rota_cohorts: 3, rota_cohort_duties: 3 });
         const duties = "select name, description, need_morning, need_afternoon, need_night, min_people, sort from public.rota_duties where edition_id = $1 order by sort, id";
         const prep = "select text, sort, group_id, done, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id";
         const was = { duties: (await run("owner", duties, [ed.live])).rows, prep: (await run("owner", prep, [ed.live])).rows };
@@ -879,9 +946,18 @@ describe("תורנויות (v16)", () => {
         expect((await run("owner", duties, [next])).rows).toEqual(was.duties);
         expect((await run("owner", prep, [next])).rows).toEqual(was.prep.map((t) => ({ ...t, group_id: null, done: false })));
         expect(await val(run, "owner", "select settings -> 'rota_shifts' from public.editions where id = $1", [next])).toEqual(shifts);
-        for (const t of ["rota_cohorts", "rota_presence", "rota_groups", "rota_assignments", "rota_staff_shifts"]) {
+        for (const t of ["rota_presence", "rota_groups", "rota_assignments", "rota_staff_shifts"]) {
           expect(await num(run, "owner", `select count(*) from public.${t} where edition_id = $1`, [next]), t).toBe(0);
         }
+        // v20: the cohorts — letter, name, «יכול להסיע», order; never their numbers or contact — and their duties, by name and letter
+        expect((await run("owner", "select letter, name, sort, can_drive, trainees, contact_name from public.rota_cohorts where edition_id = $1 order by sort, id", [next])).rows).toEqual([
+          { letter: "א", name: "מכינה לדוגמה א", sort: 1, can_drive: false, trainees: null, contact_name: null },
+          { letter: "נ", name: "מכינה לדוגמה נ", sort: 2, can_drive: false, trainees: null, contact_name: null },
+          { letter: "ז", name: "מכינה לדוגמה ז", sort: 3, can_drive: false, trainees: null, contact_name: null },
+        ]);
+        const helps = "select c.letter || ':' || d.name as x from public.rota_cohort_duties x join public.rota_cohorts c on c.id = x.cohort_id join public.rota_duties d on d.id = x.duty_id where x.edition_id = $1 order by 1";
+        expect((await run("owner", helps, [next])).rows).toEqual((await run("owner", helps, [ed.live])).rows);
+        expect((await run("owner", helps, [next])).rows.map((r) => r.x)).toEqual(["א:מטבח", "א:נקיון", "נ:מטבח"]);
         expect(await num(run, "owner", "select count(*) from public.rota_group_contacts c join public.rota_groups g on g.id = c.group_id where g.edition_id = $1", [next])).toBe(0);
         // last year's rota is as it was
         expect((await run("owner", duties, [ed.live])).rows).toEqual(was.duties);
@@ -890,7 +966,7 @@ describe("תורנויות (v16)", () => {
         await run("owner", "update public.editions set status = 'planning' where id = $1", [ed.practice]);
         await run("owner", "update public.editions set kind = 'real' where id = $1", [ed.practice]);
         const empty = (await val(run, ADMIN, "select public.start_edition_preview(false)")) as Record<string, unknown>;
-        expect(empty).toMatchObject({ carry_from: { id: ed.practice }, rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false });
+        expect(empty).toMatchObject({ carry_from: { id: ed.practice }, rota_duties: 0, rota_prep_tasks: 0, rota_shifts: false, rota_cohorts: 0, rota_cohort_duties: 0 });
         const plain = await num(run, ADMIN, "select public.start_edition('תשפ\"ט', null)");
         expect(await val(run, "owner", "select settings ? 'rota_shifts' from public.editions where id = $1", [plain])).toBe(false);
       });

@@ -12,6 +12,14 @@ import type { Gender, LessonKind, TickItem } from "../domain/types";
 /** When each of the four ticks was made, or null. */
 export type EscortTicks = Record<TickItem, string | null>;
 
+/**
+ * v20: what presentation an escort's lesson has — exactly the state of its row in src/domain/presentations.ts
+ * presentationRows: the current lead speaker's file; else a link; else one expected and not uploaded; else none (a
+ * memorial slot: none). The state alone — never a file's name, a path or a link: the page says where the file is by
+ * the day, the time and the room, as the week's zip names it.
+ */
+export type EscortPresentation = "file" | "link" | "missing" | "none";
+
 /** One of the escort's lessons — exactly the keys public.escort_view returns. */
 export interface EscortLesson {
   lesson_id: number;
@@ -37,6 +45,8 @@ export interface EscortLesson {
   /** The driver, once the transport is approved and arranged. */
   driver: { name: string | null; phone: string | null } | null;
   ticks: EscortTicks;
+  /** v20: the lesson's presentation, as a state (EscortPresentation). */
+  presentation: EscortPresentation;
 }
 
 export interface EscortView {

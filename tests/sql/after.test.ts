@@ -541,6 +541,8 @@ describe("after the week", () => {
           rota_duties: 0,
           rota_prep_tasks: 0,
           rota_shifts: false,
+          rota_cohorts: 0, // v20: the cohorts and the duties each helps in are carried too
+          rota_cohort_duties: 0,
           titles: false,
           deactivate: nonAdmins,
           admins_stay: 1,

@@ -66,7 +66,7 @@ import {
 } from "./speakerRules";
 import { type BookOrder, type CleanGroup, cleanGroupFields, type CleanLeader, type KkData, type KkGroup, type KkGroupFields, type KkLeader, type KkSignup } from "./kk";
 import { type IssuedLink, LINK_SCOPES, linkClient, linkExpiry, linkRate, type LinkScope, randomToken, RATE_WINDOW_MS, type ShareLink, tokenShape } from "./links";
-import type { EscortLesson, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
+import type { EscortLesson, EscortPresentation, EscortTicks, EscortView, KkForm, ScheduleView } from "./publicPort";
 import type { ActivityEntry, CreateOptions, NewSpeaker, SpeakerMatch, SpeakerPatch } from "./speakers";
 import { type ArchiveLessonRow, type ImportKind, type ImportLookup, type ImportResult, ImportRowError, type SpeakerRow } from "./imports";
 import {
@@ -74,7 +74,7 @@ import {
 } from "./importRules";
 import { cleanReview, type LessonReview, type ReturningSpeaker, type ReviewFields, type SpeakerReview } from "./reviews";
 import type { PurgeReport } from "./settings";
-import type { RotaAssignment, RotaCohort, RotaDuty, RotaGroup, RotaPrepTask, RotaPresence, RotaStaffShift } from "./rota";
+import type { RotaAssignment, RotaCohort, RotaCohortDuty, RotaDuty, RotaGroup, RotaPrepTask, RotaPresence, RotaStaffShift } from "./rota";
 import { arrived, BUCKET_MIMES, cleanDisplayName, DOCX, MAX_SOURCE_BYTES, mimeMatches, pagesFor, parseSourcePath, PPTX } from "./sourceRules";
 import {
   cleanAmount, cleanDutyPhrases, cleanPublicNote, cleanTransportDetails, cleanTransportDriver, cleanTransportRequest, cleanUrl, EMPTY_TRANSPORT, pickPrintWhen, pickSourcesKind,
@@ -106,6 +106,8 @@ export const emptyKk = (): KkStore => ({ groups: [], leaders: [], signups: [], o
 /** «תורנויות» (v16): the rota's tables, every edition's, as the database keeps them (DemoRota writes them). */
 export interface RotaStore {
   cohorts: RotaCohort[];
+  /** v20: rota_cohort_duties — the duties each cohort helps in (the table has its edition, the TS row does not). */
+  cohortDuties: (RotaCohortDuty & { edition_id: number })[];
   /** rota_presence: a row = on campus (the table has its edition, the TS row does not). */
   presence: (RotaPresence & { edition_id: number })[];
   groups: RotaGroup[];
@@ -115,7 +117,7 @@ export interface RotaStore {
   prep: RotaPrepTask[];
 }
 
-export const emptyRota = (): RotaStore => ({ cohorts: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] });
+export const emptyRota = (): RotaStore => ({ cohorts: [], cohortDuties: [], presence: [], groups: [], duties: [], assignments: [], staff: [], prep: [] });
 
 /** What the database keeps outside a Week, shared by every edition's engine in the demo. */
 export interface PoolShared {
@@ -148,6 +150,8 @@ export interface PoolShared {
   rota: RotaStore;
   /** rota_group_contacts (v16), by group id: a group head's phone — never in a Week or load_rota; the purge deletes it. */
   rotaContacts: Record<number, string>;
+  /** v20: rota_cohort_contacts — a cohort's staff contact's phone, by cohort id (never in a Week or in load_rota). */
+  rotaCohortContacts: Record<number, string>;
   /**
    * speaker_photos (v19), by speaker id: the JPEG's bytes (as the bytea keeps them — never the base64 it came as),
    * who uploaded it and when. Never in a Week (which says `has_photo`); the guests see it only through schedule_view.
@@ -183,7 +187,7 @@ export interface StoredObject {
 
 export const emptyShared = (): PoolShared => ({
   contacts: {}, log: [], transport: {}, links: [], linkHits: {}, kk: emptyKk(), objects: {}, fallen: [], fallenContacts: {}, reviews: [], importNotes: {}, rota: emptyRota(),
-  rotaContacts: {}, photos: {},
+  rotaContacts: {}, rotaCohortContacts: {}, photos: {},
 });
 
 const EMPTY_CONTACTS: SpeakerContacts = { phone: null, email: null, secretary_note: null, notes: null };
@@ -1660,11 +1664,18 @@ export class Engine {
           revoked++;
         }
       }
-      // v16: the group heads' phones (rota_group_contacts) — the groups, their heads' names and the rota stay
+      // v16: the group heads' phones (rota_group_contacts) — the groups, their heads' names and the rota stay; v20 and the
+      // cohorts' staff contacts' phones (rota_cohort_contacts), counted with them
       let rotaContacts = 0;
       for (const g of this.shared.rota.groups) {
         if (g.edition_id === e.id && g.id in this.shared.rotaContacts) {
           delete this.shared.rotaContacts[g.id];
+          rotaContacts++;
+        }
+      }
+      for (const c of this.shared.rota.cohorts) {
+        if (c.edition_id === e.id && c.id in (this.shared.rotaCohortContacts ?? {})) {
+          delete this.shared.rotaCohortContacts[c.id];
           rotaContacts++;
         }
       }
@@ -1729,6 +1740,18 @@ export class Engine {
 
   // ---------------------------------------------------------------- the anon functions: a token is the only key
 
+  /**
+   * v20: escort_view's `presentation` — a memorial slot none; else the current lead's presentation file (a previous
+   * speaker's never counts), else a link (`presentation_url`: http(s) only, as set_sources stores it), else one the
+   * sources expect, else none. ≡ src/domain/presentations.ts lessonPresentations' state (a unit test holds them equal).
+   */
+  private escortPresentation(l: Lesson, lead: number | null): EscortPresentation {
+    if (l.kind === "memorial") return "none";
+    if (lead != null && this.week.sourceFiles.some((f) => f.lesson_id === l.id && f.kind === "presentation" && f.speaker_id === lead)) return "file";
+    if (l.presentation_url != null) return "link";
+    return l.sources_kind === "presentation" || l.sources_kind === "sheet_presentation" ? "missing" : "none";
+  }
+
   /** public.escort_view: that trainee's closed lessons; the phone only from W−7 of a real edition with a date. */
   escortView(token: unknown): EscortView {
     return this.tx(() => {
@@ -1762,6 +1785,7 @@ export class Engine {
             transport: approved,
             driver: e.kind === "real" && approved && t?.arranged ? { name: t.driver_name, phone: t.driver_phone } : null,
             ticks: this.ticksOf(l.id),
+            presentation: this.escortPresentation(l, lead?.speaker_id ?? null),
           };
         });
       return {

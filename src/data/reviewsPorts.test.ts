@@ -61,13 +61,13 @@ describe("after the week on the wire", () => {
 
   it("starts an edition with the option, previews it, purges with the typed label — by their parameter names", async () => {
     const preview = {
-      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, call_template: true, duty_phrases: 1, rota_duties: 4, rota_prep_tasks: 2, rota_shifts: true, titles: true,
+      archive: [{ id: "7", label: "תשפ\"ז" }], carry_from: { id: "7", label: "תשפ\"ז" }, grid_rows: "21", milestones: "2", confirm_template: true, call_template: true, duty_phrases: 1, rota_duties: 4, rota_prep_tasks: 2, rota_shifts: true, rota_cohorts: "3", rota_cohort_duties: 5, titles: true,
       deactivate: 4, admins_stay: 1, stays: { speakers: 60, categories: 10, fallen: 9, notes: 2 },
     };
     const { sb, sent } = client([[200, 8], [200, preview], [200, { transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, rota_contacts: 6, purged_at: "2027-02-20T10:00:00.000Z" }], [400, { code: "P0001", message: "confirm_mismatch" }]]);
     const s = new SupabaseSettings(sb);
     expect(await s.startEdition({ label: "תשפ\"ח", start_date: null, first_day_from: null }, { deactivateTeam: true })).toBe(8);
-    expect(await s.previewStart(true)).toEqual({ ...preview, archive: [{ id: 7, label: "תשפ\"ז" }], carry_from: { id: 7, label: "תשפ\"ז" }, grid_rows: 21, milestones: 2 });
+    expect(await s.previewStart(true)).toEqual({ ...preview, archive: [{ id: 7, label: "תשפ\"ז" }], carry_from: { id: 7, label: "תשפ\"ז" }, grid_rows: 21, milestones: 2, rota_cohorts: 3 }); // v20: the cohorts carried
     expect(await s.purgeEdition(7, "תשפ\"ז")).toEqual({ transport_details: 3, import_notes: 4, links_revoked: 5, link_hits: 2, rota_contacts: 6, purged_at: "2027-02-20T10:00:00.000Z" });
     expect(await code(s.purgeEdition(7, "x"))).toBe("confirm_mismatch");
     expect(sent.map((x) => [x.path, x.body])).toEqual([

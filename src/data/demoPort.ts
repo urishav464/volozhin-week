@@ -121,7 +121,7 @@ export class DemoPort implements DataPort, DemoStore, DemoPool, DemoKnowledgeSto
     this.shared = {
       contacts: demoContacts(), log: demoLog(week), transport: demoTransport(week), links: [], linkHits: {}, kk: emptyKk(), objects: { ...seeded.objects, ...decks.objects },
       fallen: structuredClone(DEMO_FALLEN), fallenContacts: demoFallenContacts(), reviews: demoReviews(week),
-      importNotes: {}, rota: emptyRota(), rotaContacts: {}, photos: {},
+      importNotes: {}, rota: emptyRota(), rotaContacts: {}, rotaCohortContacts: {}, photos: {},
     };
     this.engines.set(week.edition.id, this.newEngine(week));
     this.roster = week.roster.map((r) => ({ ...r, name_key: nameKey(r.full_name), edition_id: week.edition.id }));

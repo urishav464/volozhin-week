@@ -42,7 +42,7 @@ function Chip({ code, suggested }: { code: string; suggested: boolean }) {
   );
 }
 
-/** One shift's duties and leads; the range when the week cuts it (Sunday's opening, Thursday's close). */
+/** One shift's duties and staff; the range when the week cuts it (Sunday's opening, Thursday's close). */
 function ShiftBody({ cell, edition, showRange }: { cell: LensShift; edition: LensEdition; showRange: boolean }) {
   const base = shiftBounds(rotaShiftsOf(edition), cell.shift);
   const cut = cell.range && (cell.range.start !== base.from || cell.range.end !== base.to);
@@ -67,7 +67,7 @@ function ShiftBody({ cell, edition, showRange }: { cell: LensShift; edition: Len
       ) : (
         <p className="text-xs text-ink-faint">אין שיבוצים</p>
       )}
-      {cell.leads.length > 0 && <p className="mt-1.5 text-xs text-ink-soft">אחראי/ת: {cell.leads.join(", ")}</p>}
+      {cell.staff.length > 0 && <p className="mt-1.5 text-xs text-ink-soft">צוות: {cell.staff.join(", ")}</p>}
     </>
   );
 }
