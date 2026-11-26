@@ -134,6 +134,8 @@ export const ROTA_CASES: RotaCase[] = [
   // v20: «חלוקה לקבוצות»
   { name: "a cohort split into three", op: "splitCohort", ref: "A", args: [8, 8, 7], expect: "ok", groups: [[1, 8], [2, 8], [3, 7]] },
   { name: "a split into one", op: "splitCohort", ref: "N", args: [12], expect: "ok", groups: [[1, 12]] },
+  // the last review: FEWER groups than before — the old higher-numbered ones (G2, with the fixture's assignment) go too
+  { name: "a cohort of two groups split into one", op: "splitCohort", ref: "A", args: [15], expect: "ok", groups: [[1, 15]] },
   { name: "no sizes", op: "splitCohort", ref: "A", args: [], expect: "bad_value" },
   { name: "a size over 200", op: "splitCohort", ref: "A", args: [8, 201], expect: "bad_value" },
   { name: "a size below 0", op: "splitCohort", ref: "A", args: [-1], expect: "bad_value" },

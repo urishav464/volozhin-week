@@ -331,6 +331,41 @@ describe("the kitchen, the food and the campus", () => {
     expect(mealDay({ start_date: null }, { day: 2, start: 795 })).toBe("שלישי"); // the week's date TBD: the day alone
   });
 
+  // The last review: the default cuts (14:30, 22:30) cut through no meal row, and no fixture cohort is there at night but
+  // not the next morning — so «the shift the meal STARTS in» (plan §א) and «a midnight meal is the night of the day
+  // before» (DECISIONS v20, א–ד 2) were never pinned: counting by the shift a meal ends in, or a midnight meal by the
+  // next morning, passed.
+  describe("v20: the shift a meal starts in (the last review)", () => {
+    const cohort = (id: number, letter: string) =>
+      ({ id, edition_id: 1, letter, name: `מכינה לדוגמה ${letter}`, trainees: 10 * id, diet_veg: 0, diet_gf: 0, diet_both: 0, contact_name: null, sort: id }) as RotaData["cohorts"][number];
+    const at = (presence: [number, Day, number][]): Pick<RotaData, "cohorts" | "presence"> => ({
+      cohorts: [cohort(1, "א"), cohort(2, "ב")],
+      presence: presence.map(([cohort_id, day, shift]) => ({ edition_id: 1, cohort_id, day, shift }) as RotaData["presence"][number]),
+    });
+
+    it("lunch 13:15–14:15 with the afternoon from 14:00 (an admin's cut) is the morning's: its cohorts, not the afternoon's", () => {
+      const edition = { ...w.edition, settings: { ...w.edition.settings, rota_shifts: { cuts: [840, 1350] as [number, number], labels: ["בוקר", "אחר צהריים", "לילה"] as [string, string, string] } } };
+      const data = at([[1, 1, 0], [2, 1, 1]]); // א Monday morning only, ב Monday afternoon only
+      const lunch = mealCounts(data, edition, w.rows).find((m) => m.day === 1 && m.start === 795)!;
+      expect([lunch.end, lunch.shift, lunch.cohorts.map((c) => c.letter), lunch.counts.trainees]).toEqual([855, 0, ["א"], 10]);
+      // the same cut moved past the meal's end changes nothing; moved before its start, the afternoon's
+      const late = { ...edition, settings: { ...edition.settings, rota_shifts: { ...edition.settings.rota_shifts, cuts: [900, 1350] as [number, number] } } };
+      expect(mealCounts(data, late, w.rows).find((m) => m.day === 1 && m.start === 795)!.cohorts.map((c) => c.letter)).toEqual(["א"]);
+      const early = { ...edition, settings: { ...edition.settings, rota_shifts: { ...edition.settings.rota_shifts, cuts: [780, 1350] as [number, number] } } };
+      expect(mealCounts(data, early, w.rows).find((m) => m.day === 1 && m.start === 795)!.cohorts.map((c) => c.letter)).toEqual(["ב"]);
+    });
+
+    it("the midnight meal after Monday is Monday NIGHT's: a cohort there at night and gone by morning is fed, one that comes Tuesday morning is not", () => {
+      const data = at([[1, 1, 2], [2, 2, 0]]); // א Monday night only, ב Tuesday morning only
+      const meals = mealCounts(data, w.edition, w.rows);
+      const midnight = meals.find((m) => m.day === 1 && m.start === 1440)!;
+      expect([midnight.shift, midnight.cohorts.map((c) => c.letter), midnight.counts.trainees]).toEqual([2, ["א"], 10]);
+      expect(mealDay(w.edition, midnight)).toBe("ליל שני–שלישי");
+      // and Tuesday's breakfast is ב's
+      expect(meals.find((m) => m.day === 2 && m.start === 420)!.cohorts.map((c) => c.letter)).toEqual(["ב"]);
+    });
+  });
+
   it("v20: a meal never assumes — a cohort marked nowhere makes every meal TBD and is named; none on campus is a known nought", () => {
     const meals = mealCounts(data, w.edition, w.rows); // ב is not marked on campus anywhere
     expect(meals.every((m) => m.unmarked.map((c) => c.letter).join() === "ב")).toBe(true);

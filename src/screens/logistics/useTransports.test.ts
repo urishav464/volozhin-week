@@ -3,7 +3,7 @@
 // the tab is back in view and every two minutes while it is in view (whileVisible), never while it is hidden.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoPort } from "../../data/demoPort";
-import { boardKey, TRANSPORTS_POLL_MS, type VisibleDoc, whileVisible } from "./useTransports";
+import { boardKey, sayFailure, TRANSPORTS_POLL_MS, type VisibleDoc, whileVisible } from "./useTransports";
 
 /** A document whose visibility a test sets, and who listens to it. */
 function fakeDoc(state: DocumentVisibilityState = "visible") {
@@ -43,6 +43,15 @@ describe("whileVisible", () => {
     vi.advanceTimersByTime(3 * TRANSPORTS_POLL_MS);
     doc.set("visible");
     expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a failed read, said or quiet (the last review)", () => {
+  it("a read someone asked for is always said; a background one only while nothing was ever shown", () => {
+    expect(sayFailure(false, false)).toBe(true); // the first read
+    expect(sayFailure(false, true)).toBe(true); // «לנסות שוב», after a write, a lesson changed
+    expect(sayFailure(true, false)).toBe(true); // the tab's return before any read came: nothing on screen to trust
+    expect(sayFailure(true, true)).toBe(false); // the tab's return, the two minutes, with the board on screen
   });
 });
 

@@ -326,6 +326,36 @@ describe("v20", () => {
       });
     });
 
+    it("into FEWER groups (the last review): the old higher-numbered group goes too — its assignment and its head's phone with it; the cohort's other phones and another cohort's groups stay", async () => {
+      await inTx(async (run) => {
+        const r = await rota(run, ed.live);
+        // three groups: the fixture's (assigned), a second, and a third assigned with a head's phone; and «נ», helping, with its own group
+        const g2 = await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size) values ($1, $2, 2, 8) returning id", [ed.live, r.a]);
+        const g3 = await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size, head_name) values ($1, $2, 3, 7, 'ראש/ת קבוצה לדוגמה 3') returning id", [ed.live, r.a]);
+        await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 2, 0, $2, $3)", [ed.live, r.d2, g3]);
+        await run(L, "select public.set_rota_contact('group', $1, $2)", [g3, PHONE]);
+        await run("owner", "insert into public.rota_cohort_duties (edition_id, cohort_id, duty_id) values ($1, $2, $3)", [ed.live, r.n, r.d1]);
+        const other = await num(run, "owner", "insert into public.rota_groups (edition_id, cohort_id, number, size) values ($1, $2, 3, 5) returning id", [ed.live, r.n]);
+        await run("owner", "insert into public.rota_assignments (edition_id, day, shift, duty_id, group_id) values ($1, 3, 0, $2, $3)", [ed.live, r.d1, other]);
+        await run(L, "select public.set_rota_contact('group', $1, $2)", [other, PHONE]);
+        await run(L, "select public.set_rota_contact('cohort', $1, $2)", [r.a, PHONE]);
+
+        const v = (await split(run, L, ed.live, r.a, [12, 11])).rows[0].v as Record<string, unknown>[];
+        expect(v.map((g) => [g.number, g.size])).toEqual([[1, 12], [2, 11]]);
+        expect((await run("owner", "select number, size, head_name from public.rota_groups where cohort_id = $1 order by number", [r.a])).rows).toEqual([
+          { number: 1, size: 12, head_name: null },
+          { number: 2, size: 11, head_name: null },
+        ]);
+        for (const g of [r.g, g2, g3]) expect(await num(run, "owner", "select count(*) from public.rota_groups where id = $1", [g]), `group ${g}`).toBe(0);
+        expect(await num(run, "owner", "select count(*) from public.rota_assignments where group_id = any ($1::bigint[])", [[r.g, g2, g3]])).toBe(0);
+        expect(await num(run, "owner", "select count(*) from public.rota_group_contacts where group_id = $1", [g3])).toBe(0);
+        // what is not the cohort's groups stays: «נ»'s group, its assignment and its head's phone; «א»'s own contact's phone
+        expect(await num(run, "owner", "select count(*) from public.rota_assignments where group_id = $1", [other])).toBe(1);
+        expect(await num(run, "owner", "select count(*) from public.rota_group_contacts where group_id = $1", [other])).toBe(1);
+        expect(await num(run, "owner", "select count(*) from public.rota_cohort_contacts where cohort_id = $1", [r.a])).toBe(1);
+      });
+    });
+
     it("its refusals in order — the sizes, who writes, the cohort, a cohort that helps — and a refusal leaves the old groups as they were", async () => {
       await inTx(async (run) => {
         const r = await rota(run, ed.live);

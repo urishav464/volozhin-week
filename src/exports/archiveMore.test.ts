@@ -234,12 +234,14 @@ describe("the archive's «תורנויות» (v16)", () => {
     const w = demoWeek();
     const leaky = rota();
     (leaky.groups[0] as unknown as Record<string, unknown>).head_phone = "טלפון שדלף לדוגמה"; // never sent; dropped if it were
+    (leaky.cohorts[0] as unknown as Record<string, unknown>).phone = "טלפון שדלף לדוגמה"; // v20's key (a cohort contact's), the last review
     const files = archiveFiles({ week: w, extras, more: { ...base, rota: leaky, rotaPhones: [] }, schemaVersion: 16, exportedAt: AT });
     const json = JSON.parse(strFromU8(files["rota.json"]));
     expect(Object.keys(json)).toEqual(["format", "exported_at", "shifts", "cohorts", "cohortDuties", "presence", "groups", "duties", "assignments", "staff", "prep"]);
     expect(json.groups).toEqual(rota().groups);
     // v20 (format 7): the cohort's numbers and its contact's name, the duties it helps in
     expect(json.cohorts[0]).toMatchObject({ trainees: 15, diet_veg: 3, diet_gf: 2, diet_both: 1, contact_name: "איש/אשת קשר לדוגמה" });
+    expect(Object.keys(json.cohorts[0])).not.toContain("phone");
     expect(json.cohortDuties).toEqual([{ cohort_id: 1, duty_id: 1 }]);
     expect(json.assignments).toEqual(rota().assignments);
     expect(json.shifts).toBeNull(); // last year's: settings.rota_shifts absent

@@ -147,5 +147,9 @@ describe("a new duty's «כל המכינות העוזרות עוזרות בה»"
     expect(sameIds([1, 2, 2], [2, 1])).toBe(true);
     expect(sameIds([1], [1, 2])).toBe(false);
     expect(sameIds([], [])).toBe(true);
+    // the last review: one duty swapped for another is a change — the same count, other members
+    expect(sameIds([1, 2], [1, 3])).toBe(false);
+    expect(sameIds([2], [3])).toBe(false);
+    expect(sameIds([1, 1, 2], [1, 3])).toBe(false);
   });
 });

@@ -745,6 +745,84 @@ test.describe("mock build", () => {
     expect(sb.rpc.get("set_transport_driver")![0]).toEqual({ p_lesson: wed, p_fields: { driver_name: "לוגיסטיקה (הדגמה)", driver_phone: null } });
   });
 
+  test("the last review: a pick of the driver already saved keeps the phone — a staff member's, and a cohort's whose contact has no phone; «סודר» alone is sent", async ({ page }, info) => {
+    desktopOnly(info);
+    const { sb } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
+    const wed = lessonAt(3, 600);
+    const cohortFill = "צוות מכינה לדוגמה ב — איש/אשת קשר: איש/אשת קשר לדוגמה ב";
+    const saved = (driver_name: string, driver_phone: string): LessonTransport[] => [
+      { lesson_id: wed, pickup_address: "כתובת לדוגמה", pickup_time: "08:45", driver_name, driver_phone, arranged: false, approval: "approved", pickup_min: 525 },
+    ];
+    sb.answers.set("load_rota", suggestRota());
+    sb.answers.set("get_rota_contacts", [{ group_id: 11, head_phone: "000-000-0011" }]); // no phone kept for «ב»'s contact
+    const row = boardRow(page, wed);
+    const form = row.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    const suggestions = form.locator("[data-driver-suggestions]");
+
+    // a staff member saved with a phone typed by hand, not yet «סודר»: that member picked again
+    sb.answers.set("get_transports_for", saved("לוגיסטיקה (הדגמה)", "000-000-0001"));
+    await page.goto(`${mockUrl()}/logistics/transports?day=3`);
+    await row.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0001");
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue("לוגיסטיקה (הדגמה)");
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0001");
+    await expect(suggestions.getByRole("status")).toHaveText("מולא שם הנהג/ת: לוגיסטיקה (הדגמה). השם כבר בשדה, והטלפון שבשדה נשאר.");
+    await form.getByRole("checkbox", { name: "סודר" }).check();
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")?.length ?? 0).toBe(1);
+    expect(sb.rpc.get("set_transport_driver")![0]).toEqual({ p_lesson: wed, p_fields: { arranged: true } });
+
+    // a cohort saved with a phone typed by hand (its contact keeps none): the cohort picked again
+    sb.answers.set("get_transports_for", saved(cohortFill, "000-000-0099"));
+    await page.reload();
+    await row.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0099");
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(suggestions.getByRole("status")).toHaveText("מולא שם הנהג/ת. לאיש/אשת הקשר של מכינה לדוגמה ב לא שמור טלפון — השם כבר בשדה, והטלפון שבשדה נשאר.");
+    await expect(form.getByLabel("שם הנהג/ת")).toHaveValue(cohortFill);
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("000-000-0099");
+    // another name still empties it (the review): the staff member, then the cohort again — nothing of the typed phone left
+    await suggestions.locator("[data-suggest-staff]").click();
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await suggestions.locator("[data-suggest-cohort]").click();
+    await expect(suggestions.getByRole("status")).toHaveText("מולא שם הנהג/ת. לאיש/אשת הקשר של מכינה לדוגמה ב לא שמור טלפון — אפשר להקליד.");
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await form.getByLabel("טלפון הנהג/ת").fill("000-000-0099");
+    await form.getByRole("checkbox", { name: "סודר" }).check();
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")?.length ?? 0).toBe(2);
+    expect(sb.rpc.get("set_transport_driver")![1]).toEqual({ p_lesson: wed, p_fields: { arranged: true } });
+  });
+
+  test("the last review: the board read again while the driver's form is open — «שמירה» sends what this form changed, never undoes another device's phone and «סודר»", async ({ page }, info) => {
+    desktopOnly(info);
+    const { sb } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });
+    const wed = lessonAt(3, 600);
+    const row0 = { lesson_id: wed, pickup_address: "כתובת לדוגמה", pickup_time: "08:45", driver_name: "נהג/ת לדוגמה א", driver_phone: null, arranged: false, approval: "approved", pickup_min: 525 } satisfies LessonTransport;
+    sb.answers.set("get_transports_for", [row0]);
+    sb.answers.set("load_rota", suggestRota());
+    await page.goto(`${mockUrl()}/logistics/transports?day=3`);
+    const row = boardRow(page, wed);
+    await row.getByRole("button", { name: /^עריכת הנהג\/ת/ }).click();
+    const form = row.getByRole("form", { name: /^עריכת הנהג\/ת/ });
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await page.waitForLoadState("networkidle");
+    await expect(form.locator("[data-driver-moved-on]")).toHaveCount(0);
+    // meanwhile another device saves the phone and «סודר»; this tab comes back into view and reads the board again
+    const reads = sb.rpc.get("get_transports_for")?.length ?? 0;
+    sb.answers.set("get_transports_for", [{ ...row0, driver_phone: "000-000-0002", arranged: true }]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect.poll(() => sb.rpc.get("get_transports_for")?.length ?? 0).toBe(reads + 1);
+    await expect(form.locator("[data-driver-moved-on]")).toHaveText("פרטי הנהג/ת השתנו במכשיר אחר מאז שהטופס נפתח. «שמירה» שולחת רק את מה ששונה כאן. כדי לראות מה נשמר — «ביטול», ופותחים שוב.");
+    // the form still shows what it opened on; only «סודר» is ticked here
+    await expect(form.getByLabel("טלפון הנהג/ת")).toHaveValue("");
+    await form.getByRole("checkbox", { name: "סודר" }).check();
+    await form.getByRole("button", { name: "שמירה" }).click();
+    await expect.poll(() => sb.rpc.get("set_transport_driver")?.length ?? 0).toBe(1);
+    expect(sb.rpc.get("set_transport_driver")![0]).toEqual({ p_lesson: wed, p_fields: { arranged: true } });
+  });
+
   test("the board when its one transports read fails: it says so, and never what only that read can say — then reads again", async ({ page }, info) => {
     desktopOnly(info);
     const { sb } = await signedIn(page, { email: "logistics@example.org", role: "logistics", global: false, member: 5 });

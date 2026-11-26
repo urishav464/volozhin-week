@@ -5,9 +5,14 @@
 // v20 — two suggestion lists (lanes.ts driverSuggestions; the owner's «הצעה: נהג/ת מהמשמרת»): «במשמרת בשעת האיסוף»
 // (a click fills «שם הנהג/ת») and «אחריות של מכינה» (a click fills «צוות מכינת X — איש/אשת קשר: Y» and — only for whom
 // app.may_see_rota_contacts lets read it, fetched on that click, one call — the contact's phone into «טלפון הנהג/ת»).
-// Every pick sets the phone too (the review): a pick that fills none empties «טלפון הנהג/ת», so the phone of whoever was
-// there before (the saved driver, an earlier pick) is never saved under another name.
+// Every pick sets the phone too (the review): a pick that puts ANOTHER name in the field and fills no phone empties
+// «טלפון הנהג/ת», so the phone of whoever was there before (the saved driver, an earlier pick) is never saved under
+// another name. A pick of the name already in the field (the last review) changes no person, so the phone stays — the
+// saved driver's, or one typed — unless the pick has a phone of its own to fill (a cohort's contact).
 // A pick only fills the fields: typing by hand stays, and nothing is sent before «שמירה».
+// The patch is against the row the form OPENED on (the last review): the board reads the transports again while the form
+// is open (useTransports — the tab back in view, every two minutes), and a field this form never touched must never
+// undo what another device saved meanwhile; a line says the row changed elsewhere (`movedOn`).
 import { type FormEvent, useId, useMemo, useRef, useState } from "react";
 import { CommandError, type TransportDriverPatch } from "../../data/commands";
 import type { DataPort } from "../../data/port";
@@ -68,14 +73,19 @@ export function DriverForm({
   suggest?: DriverSuggest;
 }) {
   const id = useId();
+  // the row as the form opened on it: what «only what changed» is measured against, whatever is read meanwhile
+  const [base] = useState(() => ({ driver_name: d.driver_name, driver_phone: d.driver_phone, arranged: d.arranged }));
   const [name, setName] = useState(d.driver_name ?? "");
   const [phone, setPhone] = useState(d.driver_phone ?? "");
   const [arranged, setArranged] = useState(d.arranged);
   const [problem, setProblem] = useState<string | null>(null);
+  // this form's own save reads the board again before it closes: never «השתנו במכשיר אחר» for that
+  const [sending, setSending] = useState(false);
+  const changedElsewhere = !sending && movedOn(base, d);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setProblem(null);
-    const patch = driverPatch(d, { name, phone, arranged });
+    const patch = driverPatch(base, { name, phone, arranged });
     if (Object.keys(patch).length === 0) return onClose();
     try {
       cleanTransportDriver(patch);
@@ -83,12 +93,14 @@ export function DriverForm({
       setProblem(errorMessage(err instanceof CommandError ? err.code : "bad_value"));
       return;
     }
+    setSending(true);
     const ok = await onSave(patch, (code) => {
       if (code !== "bad_phone" && code !== "bad_value") return false;
       setProblem(errorMessage(code));
       return true;
     });
-    if (ok) onClose();
+    if (ok) return onClose();
+    setSending(false);
   };
   return (
     <form onSubmit={(e) => void submit(e)} aria-label={`עריכת הנהג/ת: ${label}`} className="space-y-3" noValidate>
@@ -112,7 +124,7 @@ export function DriverForm({
           />
         </Field>
       </div>
-      {suggest && <Suggestions suggest={suggest} onName={setName} onPhone={setPhone} />}
+      {suggest && <Suggestions suggest={suggest} name={name} phone={phone} onName={setName} onPhone={setPhone} />}
       <div>
         <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 font-semibold">
           <input type="checkbox" checked={arranged} onChange={(e) => setArranged(e.target.checked)} className="size-5 accent-navy" />
@@ -120,6 +132,11 @@ export function DriverForm({
         </label>
         <p className="text-xs text-ink-soft">{ARRANGED_NOTE}</p>
       </div>
+      {changedElsewhere && (
+        <p role="status" data-driver-moved-on className="rounded-lg border border-line bg-sand-soft p-2 text-sm text-ink">
+          {MOVED_ON_NOTE}
+        </p>
+      )}
       {problem && <Problem id={`${id}-problem`}>{problem}</Problem>}
       <div className="flex flex-wrap gap-2">
         <Button kind="primary" type="submit" busy={busy} busyLabel="שומר…">
@@ -129,6 +146,21 @@ export function DriverForm({
       </div>
     </form>
   );
+}
+
+/** Said in the form when the row it opened on was saved differently elsewhere meanwhile (the last review). */
+export const MOVED_ON_NOTE = "פרטי הנהג/ת השתנו במכשיר אחר מאז שהטופס נפתח. «שמירה» שולחת רק את מה ששונה כאן. כדי לראות מה נשמר — «ביטול», ופותחים שוב.";
+
+type DriverRow = Pick<TransportDetails, "driver_name" | "driver_phone" | "arranged">;
+
+/** Was the row saved differently since the form opened on `base` (a read of the board while the form is open)? */
+export function movedOn(base: DriverRow, now: DriverRow): boolean {
+  return (base.driver_name ?? null) !== (now.driver_name ?? null) || (base.driver_phone ?? null) !== (now.driver_phone ?? null) || base.arranged !== now.arranged;
+}
+
+/** Is a pick's name the one already in the field (as «שמירה» reads it: trimmed)? Then the pick changes no person. */
+export function sameDriver(field: string, picked: string): boolean {
+  return field.trim() !== "" && field.trim() === picked.trim();
 }
 
 /** Would «שמירה» take this as the driver's phone (cleanTransportDriver: one line, at least six digits)? */
@@ -143,33 +175,62 @@ function phoneOk(phone: string): boolean {
 
 const PICK = "inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-navy/40 bg-card px-3 text-start text-sm font-semibold text-navy break-words hover:bg-accent-soft";
 
+/** What the status line adds when a pick of the name already in the field leaves a phone as it was. */
+export const PHONE_KEPT = "השם כבר בשדה, והטלפון שבשדה נשאר.";
+
 /**
  * The two lists; a pick fills the fields, and a line says what it filled (read out, the focus stays on the pick). Every
- * pick sets both fields: a pick with no phone to fill empties «טלפון הנהג/ת» (the review) — another person's phone never
- * stays beside the new name.
+ * pick of another name sets both fields: with no phone to fill it empties «טלפון הנהג/ת» (the review) — another person's
+ * phone never stays beside the new name. A pick of the name already there (`sameDriver`) keeps a phone in the field
+ * unless it brings one of its own (the last review).
  */
-function Suggestions({ suggest, onName, onPhone }: { suggest: DriverSuggest; onName: (v: string) => void; onPhone: (v: string) => void }) {
+function Suggestions({
+  suggest,
+  name,
+  phone: current,
+  onName,
+  onPhone,
+}: {
+  suggest: DriverSuggest;
+  /** The fields as they are now: a pick of the same name changes no person. */
+  name: string;
+  phone: string;
+  onName: (v: string) => void;
+  onPhone: (v: string) => void;
+}) {
   const id = useId();
   const [said, setSaid] = useState("");
   const last = useRef(0);
   const { lists, failed, phoneFor } = suggest;
   const pickCohort = async (c: CohortPick) => {
     const n = ++last.current;
+    // the same person picked again, with a phone beside it: kept unless the contact's phone comes to take its place
+    const keep = sameDriver(name, c.fill) && current.trim() !== "";
+    const or = (typing: string) => (keep ? PHONE_KEPT : typing);
     onName(c.fill);
-    onPhone(""); // until the contact's phone comes (if it does): never the one of whoever was there before
-    if (!phoneFor) return setSaid(`מולא שם הנהג/ת: ${c.fill}. את הטלפון מקלידים.`);
+    if (!keep) onPhone(""); // until the contact's phone comes (if it does): never the one of whoever was there before
+    if (!phoneFor) return setSaid(`מולא שם הנהג/ת: ${c.fill}. ${or("את הטלפון מקלידים.")}`);
     setSaid(`מולא שם הנהג/ת: ${c.fill}. טוען את הטלפון של איש/אשת הקשר…`);
     try {
       const phone = await phoneFor(c.cohort.id);
       if (n !== last.current) return;
-      if (!phone) return setSaid(`מולא שם הנהג/ת. לאיש/אשת הקשר של ${c.cohort.name} לא שמור טלפון — אפשר להקליד.`);
+      if (!phone) return setSaid(`מולא שם הנהג/ת. לאיש/אשת הקשר של ${c.cohort.name} לא שמור טלפון — ${or("אפשר להקליד.")}`);
       // only what «שמירה» would take (a phone of at least six digits, as the database cleans it)
-      if (!phoneOk(phone)) return setSaid(`מולא שם הנהג/ת. הטלפון השמור של איש/אשת הקשר של ${c.cohort.name} לא נראה כמו מספר טלפון — אפשר להקליד.`);
+      if (!phoneOk(phone)) return setSaid(`מולא שם הנהג/ת. הטלפון השמור של איש/אשת הקשר של ${c.cohort.name} לא נראה כמו מספר טלפון — ${or("אפשר להקליד.")}`);
       onPhone(phone);
       setSaid(`מולאו השם והטלפון של איש/אשת הקשר של ${c.cohort.name}.`);
     } catch {
-      if (n === last.current) setSaid("מולא שם הנהג/ת. לא הצלחנו לטעון את הטלפון — אפשר להקליד.");
+      if (n === last.current) setSaid(`מולא שם הנהג/ת. לא הצלחנו לטעון את הטלפון — ${or("אפשר להקליד.")}`);
     }
+  };
+  const pickStaff = (who: string) => {
+    last.current++;
+    const fill = who.slice(0, STAGE_LIMITS.driver_name);
+    // the site keeps no staff member's phone: typed by hand — never the one before, but the same person's stays
+    const keep = sameDriver(name, fill) && current.trim() !== "";
+    onName(fill);
+    if (!keep) onPhone("");
+    setSaid(`מולא שם הנהג/ת: ${who}. ${keep ? PHONE_KEPT : "את הטלפון מקלידים."}`);
   };
   const at = lists?.at;
   const night = at ? nightLabel(at.day, at.min) : null;
@@ -202,12 +263,7 @@ function Suggestions({ suggest, onName, onPhone }: { suggest: DriverSuggest; onN
                       type="button"
                       data-suggest-staff={p.shift.id}
                       className={PICK}
-                      onClick={() => {
-                        last.current++;
-                        onName(p.who.slice(0, STAGE_LIMITS.driver_name));
-                        onPhone(""); // the site keeps no staff member's phone: typed by hand, never the one before
-                        setSaid(`מולא שם הנהג/ת: ${p.who}. את הטלפון מקלידים.`);
-                      }}
+                      onClick={() => pickStaff(p.who)}
                     >
                       <span className="min-w-0">{p.who}</span>
                       <bdi dir="ltr" className="text-xs font-normal text-ink-soft tabular-nums">

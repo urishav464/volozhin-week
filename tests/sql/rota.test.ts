@@ -325,6 +325,21 @@ describe("תורנויות (v16)", () => {
           if ((c.op === "addPrepRows" || c.op === "updatePrep") && c.prep) {
             expect((await run("owner", "select text, kind, qty from public.rota_prep_tasks where edition_id = $1 order by sort, id", [ed.live])).rows).toEqual(c.prep);
           }
+          // v20 (the last review): what the demo runner holds the cases to, on SQL too — the cohort's duties afterwards, and
+          // its groups after a split (no heads; none of the old groups' assignments or heads' phones left on the cohort)
+          if (c.op === "setCohortDuties" && c.after) {
+            const after = (await run("owner", "select duty_id from public.rota_cohort_duties where cohort_id = $1 order by duty_id", [ids[c.ref]])).rows.map((r) => Number(r.duty_id));
+            expect(after).toEqual(c.after.map((x) => ids[x]).sort((a, b) => a - b));
+          }
+          if (c.op === "splitCohort" && c.groups) {
+            const groups = (await run("owner", "select number, size, head_name from public.rota_groups where cohort_id = $1 order by number", [ids[c.ref]])).rows;
+            expect(groups.map((g) => [g.number, g.size])).toEqual(c.groups);
+            expect(groups.every((g) => g.head_name == null)).toBe(true);
+            const left = async (table: string) =>
+              num(run, "owner", `select count(*) from public.${table} x join public.rota_groups g on g.id = x.group_id where g.cohort_id = $1`, [ids[c.ref]]);
+            expect(await left("rota_assignments"), "the new groups have no assignment").toBe(0);
+            expect(await left("rota_group_contacts"), "nor a head's phone").toBe(0);
+          }
         });
       });
     }

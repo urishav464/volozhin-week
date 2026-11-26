@@ -1117,6 +1117,34 @@ test.describe("mock build", () => {
     expect(sb.calls.some((c) => c.path === "/rest/v1/rota_group_contacts")).toBe(false);
   });
 
+  test("the last review: one duty swapped for another (the same count, another duty) is a change — sent as one insert and one delete of the rest", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "one width is enough for the wire");
+    const { sb } = await signedIn(page, "logistics");
+    sb.answers.set("get_rota_contacts", []);
+    const base = mockRota();
+    sb.answers.set("load_rota", {
+      ...base,
+      duties: [...base.duties, { id: 22, edition_id: 7, name: "בית מדרש", description: null, need_morning: 1, need_afternoon: 1, need_night: 1, min_people: null, sort: 2 }],
+      cohortDuties: [{ cohort_id: 1, duty_id: 22 }], // «א» helps in «בית מדרש» alone
+      assignments: [],
+    } satisfies RotaData);
+    await page.goto(`${mockUrl()}/logistics/rota/setup`);
+    const cohorts = page.getByRole("region", { name: "המכינות" });
+    await expect(cohorts.locator('[data-rota-cohort="א"] [data-cohort-duties]')).toHaveText("עוזרת ב: בית מדרש");
+    await cohorts.getByRole("button", { name: "עריכה: מכינה לדוגמה א" }).click();
+    const edit = cohorts.getByRole("form", { name: "עריכת המכינה: מכינה לדוגמה א" });
+    await edit.getByRole("checkbox", { name: "בית מדרש", exact: true }).uncheck();
+    await edit.getByRole("checkbox", { name: "מטבח", exact: true }).check();
+    await edit.getByRole("button", { name: "שמירה" }).click();
+    await expect(toast(page, "המכינה נשמרה")).toBeVisible();
+    const duty = sb.writes.filter((w) => w.table === "rota_cohort_duties");
+    expect(duty.map((w) => [w.method, w.body])).toEqual([
+      ["POST", [{ edition_id: 7, cohort_id: 1, duty_id: 21 }]],
+      ["DELETE", null],
+    ]);
+    expect([duty[1].query.get("cohort_id"), duty[1].query.get("duty_id")]).toEqual(["eq.1", "not.in.(21)"]);
+  });
+
   test("v20 on the wire: a cohort's fields and its duties by the contract's names (rota_cohort_duties: one insert, then one delete of the rest); the suggestion never puts a group on a duty its cohort does not help in; the shopping list — an item with its quantity, «נקנה», a paste as ONE insert", async ({ page }, info) => {
     test.skip(info.project.name !== "desktop", "one width is enough for the wire");
     const { sb, session } = await signedIn(page, "logistics");
@@ -1508,6 +1536,38 @@ test.describe("mock build", () => {
       await page.waitForTimeout(200);
       expect(reads(), path).toBe(start + 2);
       await page.evaluate(() => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }));
+    }
+  });
+
+  test("the last review: a background re-read that fails while the transports are shown is quiet — no alert over a board still drawn; the next one that comes reads on", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop", "timers, not layout: one run is enough");
+    const { sb } = await signedIn(page, "logistics");
+    sb.answers.set("get_transports_for", []);
+    const reads = () => sb.calls.filter((c) => c.path === "/rest/v1/rpc/get_transports_for").length;
+    await page.clock.install();
+    for (const [path, ready, alert] of [
+      ["/logistics/rota/staff", "[data-staff-transports]", "לא הצלחנו לטעון את ההסעות."],
+      ["/logistics/transports", "[data-board-counts], [data-board]", "לא הצלחנו לטעון את פרטי ההסעות."],
+    ] as const) {
+      sb.answers.set("get_transports_for", []);
+      await page.goto(`${mockUrl()}${path}`);
+      await expect(page.locator(ready).first()).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      const start = reads();
+      // the read is refused from now on: the tab comes back into view, then two minutes pass
+      sb.answers.delete("get_transports_for");
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await expect.poll(reads, path).toBe(start + 1);
+      await page.clock.runFor(120_000);
+      await expect.poll(reads, path).toBe(start + 2);
+      await page.waitForTimeout(200);
+      await expect(page.getByRole("alert").filter({ hasText: alert }), path).toHaveCount(0);
+      await expect(page.locator(ready).first(), path).toBeVisible(); // still drawn as last read
+      // the read answers again: the next background one reads on, still no alert
+      sb.answers.set("get_transports_for", []);
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await expect.poll(reads, path).toBe(start + 3);
+      await expect(page.getByRole("alert").filter({ hasText: alert }), path).toHaveCount(0);
     }
   });
 

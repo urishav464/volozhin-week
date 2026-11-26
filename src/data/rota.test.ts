@@ -288,6 +288,18 @@ describe("the privacy page's «תורנויות» says what the screens do (the 
     for (const w of ["בטופס של המכינה", "לא מודפס", "טופס הנהג/ת", "«טלפון הנהג/ת»", "פרטי הנהג/ת של ההסעה", "שמלווה את השיעור", "סודרה"]) expect(cohort, w).toContain(w);
   });
 
+  // The last review: the line said the saved driver's NAME too shows in «הסעות וצוות» only with «כולל כתובות וטלפונים».
+  // The board and transportStaffTable (screen, print, files) show every approved transport's driver name; only the
+  // address and the phone wait for the switch — as the page's own «לוגיסטיקה» line says.
+  it("as a driver: the name in «הסעות וצוות» like any driver's, the phone alone behind «כולל כתובות וטלפונים»", () => {
+    const cohort = item("הטלפון של איש/אשת הקשר של מכינה");
+    expect(cohort).not.toMatch(/הם מופיעים ב«הסעות וצוות» רק עם/);
+    expect(cohort).toContain("השם מופיע ב«הסעות וצוות» (במסך, בהדפסה ובקבצים) כמו השם של כל נהג/ת");
+    expect(cohort).toContain("והטלפון רק עם «כולל כתובות וטלפונים»");
+    // the page's «לוגיסטיקה» line says the same of every driver
+    expect(html).toContain("מופיעות ההסעות שאושרו, עם השם של הנהג/ת");
+  });
+
   it("a staff shift keeps its hours and a note the edition's team reads — no kind of shift (v20)", () => {
     expect(html).not.toContain("סוג המשמרת");
     const staff = item("<strong>משמרות הצוות</strong>");

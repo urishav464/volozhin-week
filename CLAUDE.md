@@ -571,8 +571,9 @@ Playwright 1.56.1 uses the pre-installed Chromium 1194 (`PLAYWRIGHT_BROWSERS_PAT
   `DriverForm` (the board and the lesson page's `StaffTransport`; `driverSuggestions` in `lanes.ts`): «במשמרת בשעת האיסוף»
   (staff on from the pickup to the start; the night before for a pickup before 06:30) and «אחריות של מכינה» (cohorts that
   `can_drive`, on campus in the pickup's shift → «צוות מכינת X — איש/אשת קשר: Y» and the contact's phone, read on that
-  click for `maySeeRotaContacts`); every pick sets the phone too (a staff pick empties it); saved by `set_transport_driver`
-  as before. The board prints «הסעות וצוות». **Presentations, one week zip:** `presentationEntries(week)` (file id → path)
+  click for `maySeeRotaContacts`); a pick of another name sets the phone too (a staff pick empties it; the same name keeps
+  it, `sameDriver`); the form patches against the row it opened on and says when another device saved it meanwhile
+  (`movedOn`); a background re-read that fails keeps the rows quietly; saved by `set_transport_driver` as before. The board prints «הסעות וצוות». **Presentations, one week zip:** `presentationEntries(week)` (file id → path)
   and `entryPrefix(day, startMin, room)` (`src/domain/presentationNames.ts`, the only part the public bundle imports):
   `0-השבוע/` (the week's decks, once), `<n>-<day>/HHMM_<room>_<name>`, each day's `סדר-היום.txt` and, with a link-only
   lesson, `links.txt`; a night lesson in the day before's folder («ליל …»); over 250MB, a part per day with the same paths.
